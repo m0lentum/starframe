@@ -1,30 +1,20 @@
-use std::time;
+use piston::event_loop::*;
+use piston::input::*;
+use piston::window::Window;
 
 pub trait Game {
-    fn continuous_update(&self, elapsed: time::Duration);
-    fn fixed_update(&self);
-    fn draw(&self);
+    fn update(&mut self, args: &UpdateArgs);
+    fn render(&mut self, args: &RenderArgs);
 
-    fn run(&self, frame_duration: time::Duration) {
-        let mut last_updated = time::Instant::now();
-        let mut since_fixed_update = time::Duration::new(0, 0);
-
-        loop {
-            let elapsed = last_updated.elapsed();
-            last_updated = time::Instant::now();
-
-            since_fixed_update += elapsed;
-            if since_fixed_update >= frame_duration {
-                // TODO: if we can't run the game fast enough to meet the desired framerate,
-                // the framerate will fluctuate randomly. This should be controlled somehow
-                since_fixed_update -= frame_duration;
-
-                self.fixed_update();
+    fn run<W: Window>(&mut self, window: &mut W, events: &mut Events) {
+        while let Some(evt) = events.next(window) {
+            if let Some(r) = evt.render_args() {
+                self.render(&r);
             }
 
-            self.continuous_update(elapsed);
-
-            self.draw();
+            if let Some(u) = evt.update_args() {
+                self.update(&u);
+            }
         }
     }
 }
