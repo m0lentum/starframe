@@ -3,7 +3,7 @@ use graphics::polygon;
 use graphics::types::Color;
 use graphics::{Context, Graphics};
 
-use visuals::drawable::Drawable;
+use visuals::Drawable;
 
 pub struct Shape {
     points: Vec<Vec2d<f64>>,

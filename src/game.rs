@@ -1,20 +1,26 @@
-use piston::event_loop::*;
-use piston::input::*;
-use piston::window::Window;
+use graphics::Graphics;
+use piston::input::Event;
 
-pub trait Game {
-    fn update(&mut self, args: &UpdateArgs);
-    fn render(&mut self, args: &RenderArgs);
+pub trait GameState<D, G: Graphics> {
+    fn on_event(&mut self, data: &mut D, evt: &Event) -> Option<Box<GameState<D, G>>>;
+}
 
-    fn run<W: Window>(&mut self, window: &mut W, events: &mut Events) {
-        while let Some(evt) = events.next(window) {
-            if let Some(r) = evt.render_args() {
-                self.render(&r);
-            }
+pub struct Game<D, G: Graphics> {
+    data: D,
+    active_state: Box<GameState<D, G>>,
+}
 
-            if let Some(u) = evt.update_args() {
-                self.update(&u);
-            }
+impl<D, G: Graphics> Game<D, G> {
+    pub fn new(data: D, initial_state: Box<GameState<D, G>>) -> Self {
+        Game {
+            data: data,
+            active_state: initial_state,
+        }
+    }
+
+    pub fn on_event(&mut self, evt: &Event) {
+        if let Some(new_state) = self.active_state.on_event(&mut self.data, evt) {
+            self.active_state = new_state;
         }
     }
 }

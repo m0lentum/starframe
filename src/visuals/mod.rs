@@ -1,5 +1,9 @@
-pub use self::drawable::Drawable;
+use graphics::{Context, Graphics};
+
 pub use self::shape::Shape;
 
-mod drawable;
 mod shape;
+
+pub trait Drawable {
+    fn draw<G: Graphics>(&mut self, ctx: &Context, gfx: &mut G);
+}
