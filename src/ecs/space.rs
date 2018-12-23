@@ -1,5 +1,5 @@
 use ecs::storage::ComponentStorage;
-use ecs::{ComponentContainer, ReadAccess, WriteAccess};
+use ecs::{ComponentContainer, IdType, ReadAccess, WriteAccess};
 
 use hibitset::{BitIter, BitSet, BitSetAnd, BitSetLike};
 use std::any::{Any, TypeId};
@@ -7,8 +7,6 @@ use std::collections::HashMap;
 use tuple_utils::Split;
 
 use std::marker::PhantomData;
-
-pub type IdType = usize;
 
 pub struct Space {
     alive_objects: BitSet,
@@ -82,26 +80,34 @@ impl Space {
         Self::get_container::<T>(&self.components)
     }
 
-    pub fn iter<'a, R, W>(
-        &'a self,
-        reads: R,
-        writes: W,
-    ) -> ComponentIterator<
-        'a,
-        BitSetAnd<&BitSet, BitSetAnd<<R as BitAnd>::Value, <W as BitAnd>::Value>>,
-        R::ReadType,
-        W::WriteType,
-    >
+    //pub fn iter<'a, R, W>(
+    //    &'a self,
+    //    reads: R,
+    //    writes: W,
+    //) -> ComponentIterator<
+    //    'a,
+    //    BitSetAnd<&BitSet, BitSetAnd<<R as BitAnd>::Value, <W as BitAnd>::Value>>,
+    //    R::ReadType,
+    //    W::WriteType,
+    //>
+    //where
+    //    R: ContainerTuple<'a>,
+    //    W: ContainerTuple<'a>,
+    //{
+    //    ComponentIterator {
+    //        iter: BitSetAnd(&self.alive_objects, BitSetAnd(reads.and(), writes.and())).iter(),
+    //        reads: reads.read_access(),
+    //        writes: writes.write_access(),
+    //        _l: PhantomData,
+    //    }
+    //}
+
+    pub fn iter<'a, R, W>(&'a self, reads: R, writes: W) -> CompBitIter<'a, R, W>
     where
         R: ContainerTuple<'a>,
         W: ContainerTuple<'a>,
     {
-        ComponentIterator {
-            iter: BitSetAnd(&self.alive_objects, BitSetAnd(reads.and(), writes.and())).iter(),
-            reads: reads.read_access(),
-            writes: writes.write_access(),
-            _l: PhantomData,
-        }
+        BitSetAnd(&self.alive_objects, BitSetAnd(reads.and(), writes.and())).iter()
     }
 
     /// Used internally to get a type-safe reference to a container.
@@ -120,6 +126,9 @@ impl Space {
         raw.downcast_mut::<ComponentContainer<T>>().unwrap()
     }
 }
+
+pub type CompBitIter<'a, R, W> =
+    BitIter<BitSetAnd<&'a BitSet, BitSetAnd<<R as BitAnd>::Value, <W as BitAnd>::Value>>>;
 
 pub struct ComponentIterator<'a, B, R, W>
 where
@@ -176,7 +185,8 @@ impl<'a, A, B> ContainerTuple<'a> for (&'a ComponentContainer<A>, &'a ComponentC
 
     fn write_access(&self) -> Self::WriteType {
         let (a, b) = *self;
-        (a.write(), b.write())
+        let ret = (a.write(), b.write());
+        ret
     }
 }
 
@@ -273,7 +283,7 @@ pub trait WriteTuple<'a> {
 }
 
 // pair case in plain rust for readability
-impl<'a, A, B> WriteTuple<'a> for (WriteAccess<'a, A>, WriteAccess<'a, B>) {
+impl<'a, A: 'static, B: 'static> WriteTuple<'a> for (WriteAccess<'a, A>, WriteAccess<'a, B>) {
     type ItemType = (&'a mut A, &'a mut B);
 
     fn get_mut(&'a mut self, id: IdType) -> Self::ItemType {
@@ -314,7 +324,7 @@ impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M, N}
 impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
 impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
 
-// BitAnd adapted from Specs: https://github.com/slide-rs/specs/blob/master/src/join.rs
+// BitAnd adapted from Specs: https://github.com/slide-rs/specs/blob/master/src/join/mod.rs
 //
 // ------------------------------------------------------------------------------------------------------
 
@@ -323,13 +333,13 @@ pub trait BitAnd {
     /// The combined bitsets.
     type Value: BitSetLike;
     /// Combines `Self` into a single `BitSetLike` through `BitSetAnd`.
-    fn and(&self) -> Self::Value;
+    fn and(self) -> Self::Value;
 }
 
 /// This needs to be special cased
 impl<'a, A> BitAnd for (&'a ComponentContainer<A>,) {
     type Value = &'a BitSet;
-    fn and(&self) -> Self::Value {
+    fn and(self) -> Self::Value {
         self.0.get_users()
     }
 }
@@ -344,7 +354,7 @@ macro_rules! bitset_and {
                 <<Self as Split>::Right as BitAnd>::Value
             >;
 
-            fn and(&self) -> Self::Value {
+            fn and(self) -> Self::Value {
                 let (l, r) = self.split();
                 BitSetAnd(l.and(), r.and())
             }

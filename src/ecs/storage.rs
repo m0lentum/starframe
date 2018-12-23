@@ -1,4 +1,4 @@
-use ecs::space::IdType;
+use ecs::IdType;
 
 use std::ptr::write;
 

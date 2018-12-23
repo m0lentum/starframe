@@ -1,4 +1,4 @@
-use ecs::space::IdType;
+use ecs::IdType;
 use ecs::storage::ComponentStorage;
 use hibitset::BitSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
