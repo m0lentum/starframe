@@ -1,5 +1,5 @@
-use ecs::storage::ComponentStorage;
-use ecs::{ComponentContainer, IdType, ReadAccess, WriteAccess};
+use crate::storage::ComponentStorage;
+//use crate::{ComponentContainer, IdType, ReadAccess, WriteAccess};
 
 use hibitset::{BitIter, BitSet, BitSetAnd, BitSetLike};
 use std::any::{Any, TypeId};
@@ -8,7 +8,7 @@ use tuple_utils::Split;
 
 use std::marker::PhantomData;
 
-pub struct Space {
+/*pub struct Space {
     alive_objects: BitSet,
     next_obj_id: IdType,
     capacity: IdType,
@@ -379,3 +379,4 @@ bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
 bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
 
 // ------------------------------------------------------------------------------------------------------
+*/

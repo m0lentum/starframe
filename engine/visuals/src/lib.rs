@@ -1,3 +1,5 @@
+extern crate graphics;
+
 use graphics::{Context, Graphics};
 
 pub use self::shape::Shape;

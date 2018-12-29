@@ -1,0 +1,14 @@
+[package]
+name = "testgame"
+version = "0.1.0"
+authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+moleengine_core = { path = "../../engine/core" }
+moleengine_ecs = { path = "../../engine/ecs" }
+moleengine_visuals = { path = "../../engine/visuals" }
+piston = "0.37.0"
+piston2d-graphics = "0.26.0"
+pistoncore-glutin_window = "0.47.0"
+piston2d-opengl_graphics = "0.53.0"

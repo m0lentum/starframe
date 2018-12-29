@@ -1,9 +1,9 @@
-use ecs::IdType;
-use ecs::storage::ComponentStorage;
+use super::IdType;
+use super::storage::ComponentStorage;
 use hibitset::BitSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<ComponentStorage<T>>>;
+/*pub type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<ComponentStorage<T>>>;
 pub type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<ComponentStorage<T>>>;
 
 /// A generic container for components that keeps track of users.
@@ -51,3 +51,4 @@ impl<T> ComponentContainer<T> {
         self.storage.write().unwrap()
     }
 }
+*/

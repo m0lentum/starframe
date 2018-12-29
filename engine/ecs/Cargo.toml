@@ -1,0 +1,9 @@
+[package]
+name = "moleengine_ecs"
+version = "0.1.0"
+authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+hibitset = "0.5.1"
+tuple_utils = "0.2.0"
