@@ -1,5 +1,7 @@
+use crate::componentcontainer::{ComponentContainer, ReadAccess, WriteAccess};
 use crate::storage::ComponentStorage;
-//use crate::{ComponentContainer, IdType, ReadAccess, WriteAccess};
+use crate::system::{System, SystemRunner};
+use crate::IdType;
 
 use hibitset::{BitIter, BitSet, BitSetAnd, BitSetLike};
 use std::any::{Any, TypeId};
@@ -8,7 +10,7 @@ use tuple_utils::Split;
 
 use std::marker::PhantomData;
 
-/*pub struct Space {
+pub struct Space {
     alive_objects: BitSet,
     next_obj_id: IdType,
     capacity: IdType,
@@ -23,6 +25,10 @@ impl Space {
             capacity: capacity,
             components: HashMap::new(),
         }
+    }
+
+    pub fn get_alive(&self) -> &BitSet {
+        &self.alive_objects
     }
 
     /// Reserves an object id for use and marks it as alive.
@@ -108,6 +114,10 @@ impl Space {
         W: ContainerTuple<'a>,
     {
         BitSetAnd(&self.alive_objects, BitSetAnd(reads.and(), writes.and())).iter()
+    }
+
+    pub fn run_system<S: System>(&self) {
+        S::Runner::run(self);
     }
 
     /// Used internally to get a type-safe reference to a container.
@@ -212,21 +222,21 @@ macro_rules! impl_container {
     }
 }
 
-impl_container!{A}
-impl_container!{A, B, C}
-impl_container!{A, B, C, D}
-impl_container!{A, B, C, D, E}
-impl_container!{A, B, C, D, E, F}
-impl_container!{A, B, C, D, E, F, G}
-impl_container!{A, B, C, D, E, F, G, H}
-impl_container!{A, B, C, D, E, F, G, H, I}
-impl_container!{A, B, C, D, E, F, G, H, I, J}
-impl_container!{A, B, C, D, E, F, G, H, I, J, K}
-impl_container!{A, B, C, D, E, F, G, H, I, J, K, L}
-impl_container!{A, B, C, D, E, F, G, H, I, J, K, L, M}
-impl_container!{A, B, C, D, E, F, G, H, I, J, K, L, M, N}
-impl_container!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
-impl_container!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
+impl_container! {A}
+impl_container! {A, B, C}
+impl_container! {A, B, C, D}
+impl_container! {A, B, C, D, E}
+impl_container! {A, B, C, D, E, F}
+impl_container! {A, B, C, D, E, F, G}
+impl_container! {A, B, C, D, E, F, G, H}
+impl_container! {A, B, C, D, E, F, G, H, I}
+impl_container! {A, B, C, D, E, F, G, H, I, J}
+impl_container! {A, B, C, D, E, F, G, H, I, J, K}
+impl_container! {A, B, C, D, E, F, G, H, I, J, K, L}
+impl_container! {A, B, C, D, E, F, G, H, I, J, K, L, M}
+impl_container! {A, B, C, D, E, F, G, H, I, J, K, L, M, N}
+impl_container! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
+impl_container! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
 
 pub trait ReadTuple<'a> {
     type ItemType;
@@ -260,21 +270,21 @@ macro_rules! impl_read {
     }
 }
 
-impl_read!{A}
-impl_read!{A, B, C}
-impl_read!{A, B, C, D}
-impl_read!{A, B, C, D, E}
-impl_read!{A, B, C, D, E, F}
-impl_read!{A, B, C, D, E, F, G}
-impl_read!{A, B, C, D, E, F, G, H}
-impl_read!{A, B, C, D, E, F, G, H, I}
-impl_read!{A, B, C, D, E, F, G, H, I, J}
-impl_read!{A, B, C, D, E, F, G, H, I, J, K}
-impl_read!{A, B, C, D, E, F, G, H, I, J, K, L}
-impl_read!{A, B, C, D, E, F, G, H, I, J, K, L, M}
-impl_read!{A, B, C, D, E, F, G, H, I, J, K, L, M, N}
-impl_read!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
-impl_read!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
+impl_read! {A}
+impl_read! {A, B, C}
+impl_read! {A, B, C, D}
+impl_read! {A, B, C, D, E}
+impl_read! {A, B, C, D, E, F}
+impl_read! {A, B, C, D, E, F, G}
+impl_read! {A, B, C, D, E, F, G, H}
+impl_read! {A, B, C, D, E, F, G, H, I}
+impl_read! {A, B, C, D, E, F, G, H, I, J}
+impl_read! {A, B, C, D, E, F, G, H, I, J, K}
+impl_read! {A, B, C, D, E, F, G, H, I, J, K, L}
+impl_read! {A, B, C, D, E, F, G, H, I, J, K, L, M}
+impl_read! {A, B, C, D, E, F, G, H, I, J, K, L, M, N}
+impl_read! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
+impl_read! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
 
 pub trait WriteTuple<'a> {
     type ItemType;
@@ -308,21 +318,21 @@ macro_rules! impl_write {
     }
 }
 
-impl_write!{A}
-impl_write!{A, B, C}
-impl_write!{A, B, C, D}
-impl_write!{A, B, C, D, E}
-impl_write!{A, B, C, D, E, F}
-impl_write!{A, B, C, D, E, F, G}
-impl_write!{A, B, C, D, E, F, G, H}
-impl_write!{A, B, C, D, E, F, G, H, I}
-impl_write!{A, B, C, D, E, F, G, H, I, J}
-impl_write!{A, B, C, D, E, F, G, H, I, J, K}
-impl_write!{A, B, C, D, E, F, G, H, I, J, K, L}
-impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M}
-impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M, N}
-impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
-impl_write!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
+impl_write! {A}
+impl_write! {A, B, C}
+impl_write! {A, B, C, D}
+impl_write! {A, B, C, D, E}
+impl_write! {A, B, C, D, E, F}
+impl_write! {A, B, C, D, E, F, G}
+impl_write! {A, B, C, D, E, F, G, H}
+impl_write! {A, B, C, D, E, F, G, H, I}
+impl_write! {A, B, C, D, E, F, G, H, I, J}
+impl_write! {A, B, C, D, E, F, G, H, I, J, K}
+impl_write! {A, B, C, D, E, F, G, H, I, J, K, L}
+impl_write! {A, B, C, D, E, F, G, H, I, J, K, L, M}
+impl_write! {A, B, C, D, E, F, G, H, I, J, K, L, M, N}
+impl_write! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
+impl_write! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
 
 // BitAnd adapted from Specs: https://github.com/slide-rs/specs/blob/master/src/join/mod.rs
 //
@@ -362,21 +372,20 @@ macro_rules! bitset_and {
     }
 }
 
-bitset_and!{A, B}
-bitset_and!{A, B, C}
-bitset_and!{A, B, C, D}
-bitset_and!{A, B, C, D, E}
-bitset_and!{A, B, C, D, E, F}
-bitset_and!{A, B, C, D, E, F, G}
-bitset_and!{A, B, C, D, E, F, G, H}
-bitset_and!{A, B, C, D, E, F, G, H, I}
-bitset_and!{A, B, C, D, E, F, G, H, I, J}
-bitset_and!{A, B, C, D, E, F, G, H, I, J, K}
-bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L}
-bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L, M}
-bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L, M, N}
-bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
-bitset_and!{A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
+bitset_and! {A, B}
+bitset_and! {A, B, C}
+bitset_and! {A, B, C, D}
+bitset_and! {A, B, C, D, E}
+bitset_and! {A, B, C, D, E, F}
+bitset_and! {A, B, C, D, E, F, G}
+bitset_and! {A, B, C, D, E, F, G, H}
+bitset_and! {A, B, C, D, E, F, G, H, I}
+bitset_and! {A, B, C, D, E, F, G, H, I, J}
+bitset_and! {A, B, C, D, E, F, G, H, I, J, K}
+bitset_and! {A, B, C, D, E, F, G, H, I, J, K, L}
+bitset_and! {A, B, C, D, E, F, G, H, I, J, K, L, M}
+bitset_and! {A, B, C, D, E, F, G, H, I, J, K, L, M, N}
+bitset_and! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O}
+bitset_and! {A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P}
 
 // ------------------------------------------------------------------------------------------------------
-*/

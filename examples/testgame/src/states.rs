@@ -1,9 +1,8 @@
-// this whole thing is gonna be broken while I rework Space
-
-/*use moleengine_ecs::storage::VecStorage;
-use moleengine_ecs::{Space, IdType, WriteAccess, ReadAccess};
-use moleengine_ecs::space::{ReadTuple, WriteTuple};
 use moleengine_core::game::GameState;
+use moleengine_ecs::space::{ReadTuple, WriteTuple};
+use moleengine_ecs::storage::VecStorage;
+use moleengine_ecs::system::{Position, Velocity};
+use moleengine_ecs::{IdType, ReadAccess, Space, WriteAccess};
 use moleengine_visuals::{Drawable, Shape};
 
 use graphics::{clear, Transformed};
@@ -18,11 +17,6 @@ pub struct Data {
     test_counter: i32,
 }
 
-pub struct Position {
-    x: f32,
-    y: f32,
-}
-
 pub struct Rotation(f32);
 
 pub struct Printer();
@@ -34,6 +28,7 @@ impl Data {
         let mut space = Space::new(100);
         space.create_container::<Shape, _>(VecStorage::new());
         space.create_container::<Position, _>(VecStorage::new());
+        space.create_container::<Velocity, _>(VecStorage::new());
         space.create_container::<Rotation, _>(VecStorage::new());
         space.create_container::<Printer, _>(VecStorage::new());
         space.create_container::<Placeholder, _>(VecStorage::new());
@@ -41,6 +36,8 @@ impl Data {
 
         let obj = space.create_object().unwrap();
         space.create_component(obj, Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]));
+        space.create_component(obj, Position { x: 0.0, y: 0.0 });
+        space.create_component(obj, Velocity { x: 1.0, y: 0.5 });
         //space.create_component(obj, 0 as u32);
 
         for i in 1..10 {
@@ -93,23 +90,26 @@ impl Playing {
     fn update(&mut self, data: &mut Data, _args: &UpdateArgs) {
         data.test_counter = data.test_counter + 1;
 
-        let reads = (data.test_space.open::<Placeholder>(),);
-        let writes = (
-            data.test_space.open::<Position>(),
-            data.test_space.open::<Rotation>(),
-        );
+        data.test_space
+            .run_system::<moleengine_ecs::system::PositionIntegrator>();
 
-        use moleengine::ecs::space::ContainerTuple;
-        let racc = reads.read_access();
-        let wacc = writes.write_access();
-
-        let mut it = data.test_space.iter(reads, writes);
-
-        while let Some(id) = it.next() {
-            let (pos, rot) = wacc.get_mut(id as IdType);
-            pos.x += 1.;
-            rot.0 += 2.;
-        }
+        //let reads = (data.test_space.open::<Placeholder>(),);
+        //let writes = (
+        //    data.test_space.open::<Position>(),
+        //    data.test_space.open::<Rotation>(),
+        //);
+        //
+        //use moleengine_ecs::space::ContainerTuple;
+        //let racc = reads.read_access();
+        //let wacc = writes.write_access();
+        //
+        //let mut it = data.test_space.iter(reads, writes);
+        //
+        //while let Some(id) = it.next() {
+        //    let (pos, rot) = wacc.get_mut(id as IdType);
+        //    pos.x += 1.;
+        //    rot.0 += 2.;
+        //}
 
         //while let Some(((_,), (pos, rot))) = it.next() {
         //    pos.x += 1.;
@@ -152,4 +152,3 @@ impl GameState<Data, GlGraphics> for Paused {
         None
     }
 }
-*/

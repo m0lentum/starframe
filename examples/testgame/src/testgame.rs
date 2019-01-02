@@ -1,6 +1,6 @@
 use moleengine_core::game::*;
 
-//use states::{Data, Playing};
+use crate::states::{Data, Playing};
 
 use glutin_window::GlutinWindow;
 use opengl_graphics::{GlGraphics, OpenGL};
@@ -20,10 +20,10 @@ pub fn launch() {
     let gl = GlGraphics::new(opengl);
     let mut events = Events::new(EventSettings::new().ups(120).max_fps(240));
 
-    /*let mut game = Game::new(Data::init(gl), Box::new(Playing));
+    let mut game = Game::new(Data::init(gl), Box::new(Playing));
 
     // game loop
     while let Some(evt) = events.next(&mut window) {
         game.on_event(&evt);
-    }*/
+    }
 }
