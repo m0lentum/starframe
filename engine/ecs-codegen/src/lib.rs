@@ -1,3 +1,8 @@
+//! This crate provides procedural macros for use with the moleengine_ecs crate
+//! to generate Systems with minimal boilerplate code and a pretty API.
+
+#![recursion_limit = "128"]
+
 extern crate proc_macro;
 
 use syn;
@@ -18,50 +23,62 @@ use quote::quote;
 //     pub y: f32,
 // }
 //
-// #[system_target]
+// //#[system_target]
 // pub struct PositionIntegrator<'a> {
 //     position: &'a mut Position,
 //     velocity: &'a Velocity,
 // }
 //
-// impl<'a> System for PositionIntegrator<'a> {
-//     type Runner = PositionIntegratorRunner;
-//     #[system_logic]
-//     fn operate(item: Self) {
-//         item.position.x += item.velocity.x;
-//         item.position.y += item.velocity.y;
-//         println!("position is {:?}", item.position);
-//     }
-// }
+//pub struct MoverRunner;
+//impl SystemRunner for MoverRunner {
+//    fn run(space: &Space) {
+//        let position = space.open::<Position>();
+//        let velocity = space.open::<Velocity>();
+//        let mut position_access = position.write();
+//        let velocity_access = velocity.read();
 //
-// pub struct PositionIntegratorRunner;
-// impl SystemRunner for PositionIntegratorRunner {
-//     fn run(space: &Space) {
-//         let position = space.open::<Position>();
-//         let velocity = space.open::<Velocity>();
-//         let mut position_access = position.write();
-//         let velocity_access = velocity.read();
+//        let alive = space.get_alive();
+//        let position_users = position.get_users();
+//        let velocity_users = velocity.get_users();
 //
-//         let alive = space.get_alive();
-//         let position_users = position.get_users();
-//         let velocity_users = velocity.get_users();
+//        let and_set = hibitset::BitSetAll;
+//        let and_set = hibitset::BitSetAnd(position_users, and_set);
+//        let and_set = hibitset::BitSetAnd(velocity_users, and_set);
+//        let and_set = hibitset::BitSetAnd(alive, and_set);
 //
-//         let and_set = BitSetAnd(position_users, velocity_users);
-//         let and_set = BitSetAnd(alive, and_set);
-//         let iter = and_set.iter();
+//        let iter = and_set.iter();
+//        let mut items: Vec<_> = iter
+//            .map(|id| unsafe {
+//                Mover {
+//                    position: position_access.get_mut_raw(id as IdType).as_mut().unwrap(),
+//                    velocity: velocity_access.get(id as IdType),
+//                }
+//            })
+//            .collect();
 //
-//         for id in iter {
-//             let item = unsafe {
-//                 PositionIntegrator {
-//                     position: position_access.get_mut(id as IdType),
-//                     velocity: velocity_access.get(id as IdType),
-//                 }
-//             };
-//             PositionIntegrator::operate(item);
-//         }
-//     }
-// }
+//        Mover::operate(items.as_mut_slice());
+//    }
+//}
+//
+//impl<'a> System for PositionIntegrator<'a> {
+//    type Runner = PositionIntegratorRunner;
+//    //#[system_logic]
+//    fn operate(items: &mut [Self]) {
+//        for item in items {
+//             item.position.x += item.velocity.x;
+//             item.position.y += item.velocity.y;
+//        }
+//    }
+//}
 
+/// This attribute denotes a struct that gathers Components for a System to use.
+/// Declaring a field as mutable gives write access to the corresponding Component.
+///
+/// Fields must be named and they must all be reference types.
+/// This must be used in conjunction with a function with the #[system_logic] attribute
+/// to operate on the data this attribute provides; otherwise you will get a compiler error.
+///
+/// See system_logic for usage information.
 #[proc_macro_attribute]
 pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
@@ -79,40 +96,41 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
         let access_ident = append_ident(ident, "_access");
         let users_ident = append_ident(ident, "_users");
 
-        if let syn::Type::Reference(r) = &field.ty {
-            let ty = &r.elem;
-            match &r.mutability {
-                Some(_) => {
-                    let access = quote! {
-                        let #ident = space.open::<#ty>();
-                        let mut #access_ident = #ident.write();
-                        let #users_ident = #ident.get_users();
-                    };
-                    accesses.push(access);
+        let field_type_ref = match &field.ty {
+            syn::Type::Reference(r) => r,
+            _ => panic!("System must only contain reference types"),
+        };
+        let ty = &field_type_ref.elem;
 
-                    let getter = quote! {
-                        #ident: #access_ident.get_mut(id as IdType),
-                    };
-                    field_getters.push(getter);
-                }
-                None => {
-                    let access = quote! {
-                        let #ident = space.open::<#ty>();
-                        let #access_ident = #ident.read();
-                        let #users_ident = #ident.get_users();
-                    };
-                    accesses.push(access);
+        match field_type_ref.mutability {
+            Some(_) => {
+                let access = quote! {
+                    let #ident = space.open::<#ty>();
+                    let mut #access_ident = #ident.write();
+                    let #users_ident = #ident.get_users();
+                };
+                accesses.push(access);
 
-                    let getter = quote! {
-                        #ident: #access_ident.get(id as IdType),
-                    };
-                    field_getters.push(getter);
-                }
+                let getter = quote! {
+                    #ident: #access_ident.get_mut_raw(id as IdType).as_mut().unwrap(),
+                };
+                field_getters.push(getter);
             }
-            users_idents.push(users_ident);
-        } else {
-            panic!("System must only contain reference types");
+            None => {
+                let access = quote! {
+                    let #ident = space.open::<#ty>();
+                    let #access_ident = #ident.read();
+                    let #users_ident = #ident.get_users();
+                };
+                accesses.push(access);
+
+                let getter = quote! {
+                    #ident: #access_ident.get(id as IdType),
+                };
+                field_getters.push(getter);
+            }
         }
+        users_idents.push(users_ident);
     }
 
     let runner = quote! {
@@ -128,14 +146,13 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 #(let and_set = hibitset::BitSetAnd(and_set, #users_idents);)*
                 let iter = and_set.iter();
 
-                for id in iter {
-                    let item = unsafe {
-                        #ident {
-                            #(#field_getters)*
-                        }
-                    };
-                    #ident::operate(item);
-                }
+                let mut items: Vec<_> = iter.map(|id| unsafe {
+                    #ident {
+                        #(#field_getters)*
+                    }
+                }).collect();
+
+                #ident::operate(items.as_mut_slice());
             }
         }
     };
@@ -143,8 +160,31 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
     runner.into()
 }
 
-const MSG_ARG_MISMATCH: &str = "System logic function must take a system data struct as argument";
+const MSG_ARG_MISMATCH: &str =
+    "System logic function must take a mutable slice of a system data struct as argument";
 
+/// This attribute denotes a function that operates on a struct marked with #[system_item]
+///
+/// The function must take as its only argument a mutable slice of a system_item.
+///
+/// # Example
+/// ```
+/// #[system_item]
+/// pub struct Mover<'a> {
+///     position: &'a mut Position,
+///     velocity: &'a Velocity,
+/// }
+///
+/// #[system_logic]
+/// fn do_move(items: &mut [Mover<'_>]) {
+///     for item in items {
+///         item.position.x += item.velocity.x;
+///         item.position.y += item.velocity.y;
+///     }
+/// }
+/// ```
+/// Running this with `Space::run_system::<Mover>()` gives do_move the position (read/write)
+/// and the velocity (read only) of every Entity in the Space that has both of them associated with it.
 #[proc_macro_attribute]
 pub fn system_logic(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input! {item as syn::ItemFn};
@@ -155,11 +195,22 @@ pub fn system_logic(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .first()
         .expect("System logic function must have one argument")
         .into_value();
+    // the argument is a Captured Reference to a Slice of the desired type.
+    // this gets a little cumbersome to write
     let arg_cap = match arg {
         syn::FnArg::Captured(a) => a,
         _ => panic!(MSG_ARG_MISMATCH),
     };
-    let type_ident = match &arg_cap.ty {
+    let arg_ref = match &arg_cap.ty {
+        syn::Type::Reference(r) => r,
+        _ => panic!(MSG_ARG_MISMATCH),
+    };
+    arg_ref.mutability.expect(MSG_ARG_MISMATCH);
+    let arg_slice = match &*arg_ref.elem {
+        syn::Type::Slice(s) => s,
+        _ => panic!(MSG_ARG_MISMATCH),
+    };
+    let type_ident = match &*arg_slice.elem {
         syn::Type::Path(p) => {
             &p.path
                 .segments
@@ -180,7 +231,7 @@ pub fn system_logic(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let result = quote! {
         impl System for #type_ident<'_> {
             type Runner = #runner_ident;
-            fn operate (#arg_ident: Self) {
+            fn operate (#arg_ident: &mut [Self]) {
                 #block
             }
         }

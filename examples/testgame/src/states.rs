@@ -81,7 +81,7 @@ impl Playing {
         clear([0.3, 0.7, 0.8, 1.0], gl);
         let _ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
 
-        let _shapes = (data.test_space.open::<Shape>(),);
+        //let _shapes = (data.test_space.open::<Shape>(),);
 
         gl.draw_end();
     }
@@ -90,7 +90,7 @@ impl Playing {
         data.test_counter = data.test_counter + 1;
 
         data.test_space
-            .run_system::<moleengine_ecs::system::PositionIntegrator<'_>>();
+            .run_system::<moleengine_ecs::system::Mover<'_>>();
     }
 }
 

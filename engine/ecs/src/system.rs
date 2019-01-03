@@ -9,7 +9,7 @@ pub mod macro_deps {
 
 pub trait System: Sized {
     type Runner: SystemRunner;
-    fn operate(item: Self);
+    fn operate(items: &mut [Self]);
 }
 
 pub trait SystemRunner {
@@ -28,14 +28,16 @@ pub struct Velocity {
 }
 
 #[system_item]
-pub struct PositionIntegrator<'a> {
+pub struct Mover<'a> {
     position: &'a mut Position,
     velocity: &'a Velocity,
 }
 
 #[system_logic]
-fn integrate_position(item: PositionIntegrator) {
-    item.position.x += item.velocity.x;
-    item.position.y += item.velocity.y;
-    println!("position is {:?}", item.position);
+fn do_move(items: &mut [Mover<'_>]) {
+    for item in items {
+        item.position.x += item.velocity.x;
+        item.position.y += item.velocity.y;
+        println!("position is {:?}", item.position);
+    }
 }

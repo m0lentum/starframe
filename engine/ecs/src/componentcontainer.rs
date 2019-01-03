@@ -3,12 +3,12 @@ use crate::IdType;
 use hibitset::BitSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<dyn ComponentStorage<T>>>;
-pub type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<dyn ComponentStorage<T>>>;
+pub(crate) type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<dyn ComponentStorage<T>>>;
+pub(crate) type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<dyn ComponentStorage<T>>>;
 
 /// A generic container for components that keeps track of users.
 /// Space handles all the updates for you - none of this should be directly accessed by the user.
-pub struct ComponentContainer<T: 'static> {
+pub(crate) struct ComponentContainer<T: 'static> {
     users: BitSet,
     storage: RwLock<Box<dyn ComponentStorage<T>>>,
 }

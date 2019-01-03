@@ -79,7 +79,7 @@ impl Space {
     }
 
     /// Get access to a single ComponentContainer.
-    pub fn open<T: 'static>(&self) -> &ComponentContainer<T> {
+    pub(crate) fn open<T: 'static>(&self) -> &ComponentContainer<T> {
         Self::get_container::<T>(&self.components)
     }
 
@@ -89,7 +89,9 @@ impl Space {
 
     /// Used internally to get a type-safe reference to a container.
     /// Panics if the container has not been created.
-    fn get_container<T: 'static>(components: &HashMap<TypeId, Box<dyn Any>>) -> &ComponentContainer<T> {
+    fn get_container<T: 'static>(
+        components: &HashMap<TypeId, Box<dyn Any>>,
+    ) -> &ComponentContainer<T> {
         let raw = components.get(&TypeId::of::<T>()).unwrap();
         raw.downcast_ref::<ComponentContainer<T>>().unwrap()
     }
