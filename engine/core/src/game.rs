@@ -2,16 +2,16 @@ use graphics::Graphics;
 use piston::input::Event;
 
 pub trait GameState<D, G: Graphics> {
-    fn on_event(&mut self, data: &mut D, evt: &Event) -> Option<Box<GameState<D, G>>>;
+    fn on_event(&mut self, data: &mut D, evt: &Event) -> Option<Box<dyn GameState<D, G>>>;
 }
 
 pub struct Game<D, G: Graphics> {
     data: D,
-    active_state: Box<GameState<D, G>>,
+    active_state: Box<dyn GameState<D, G>>,
 }
 
 impl<D, G: Graphics> Game<D, G> {
-    pub fn new(data: D, initial_state: Box<GameState<D, G>>) -> Self {
+    pub fn new(data: D, initial_state: Box<dyn GameState<D, G>>) -> Self {
         Game {
             data: data,
             active_state: initial_state,

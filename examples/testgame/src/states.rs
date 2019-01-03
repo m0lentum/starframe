@@ -1,9 +1,8 @@
 use moleengine_core::game::GameState;
-use moleengine_ecs::space::{ReadTuple, WriteTuple};
 use moleengine_ecs::storage::VecStorage;
 use moleengine_ecs::system::{Position, Velocity};
-use moleengine_ecs::{IdType, ReadAccess, Space, WriteAccess};
-use moleengine_visuals::{Drawable, Shape};
+use moleengine_ecs::Space;
+use moleengine_visuals::Shape;
 
 use graphics::{clear, Transformed};
 use opengl_graphics::GlGraphics;
@@ -70,7 +69,7 @@ impl Data {
     }
 }
 
-type State = GameState<Data, GlGraphics>;
+type State = dyn GameState<Data, GlGraphics>;
 
 pub struct Playing;
 
@@ -80,9 +79,9 @@ impl Playing {
         let ctx = gl.draw_begin(args.viewport());
 
         clear([0.3, 0.7, 0.8, 1.0], gl);
-        let ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
+        let _ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
 
-        let shapes = (data.test_space.open::<Shape>(),);
+        let _shapes = (data.test_space.open::<Shape>(),);
 
         gl.draw_end();
     }
@@ -91,39 +90,7 @@ impl Playing {
         data.test_counter = data.test_counter + 1;
 
         data.test_space
-            .run_system::<moleengine_ecs::system::PositionIntegrator>();
-
-        //let reads = (data.test_space.open::<Placeholder>(),);
-        //let writes = (
-        //    data.test_space.open::<Position>(),
-        //    data.test_space.open::<Rotation>(),
-        //);
-        //
-        //use moleengine_ecs::space::ContainerTuple;
-        //let racc = reads.read_access();
-        //let wacc = writes.write_access();
-        //
-        //let mut it = data.test_space.iter(reads, writes);
-        //
-        //while let Some(id) = it.next() {
-        //    let (pos, rot) = wacc.get_mut(id as IdType);
-        //    pos.x += 1.;
-        //    rot.0 += 2.;
-        //}
-
-        //while let Some(((_,), (pos, rot))) = it.next() {
-        //    pos.x += 1.;
-        //    rot.0 += 2.;
-        //}
-
-        //print start
-        //{
-        //    let reads = (data.test_space.open::<Printer>(),);
-        //    let it = data.test_space.iter(reads, writes);
-        //    while let Some(((_,), (pos, rot))) = it.next() {
-        //        println!("({}, {}), {}", pos.x, pos.y, rot.0);
-        //    }
-        //}
+            .run_system::<moleengine_ecs::system::PositionIntegrator<'_>>();
     }
 }
 

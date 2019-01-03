@@ -3,18 +3,18 @@ use crate::IdType;
 use hibitset::BitSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<ComponentStorage<T>>>;
-pub type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<ComponentStorage<T>>>;
+pub type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<dyn ComponentStorage<T>>>;
+pub type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<dyn ComponentStorage<T>>>;
 
 /// A generic container for components that keeps track of users.
 /// Space handles all the updates for you - none of this should be directly accessed by the user.
 pub struct ComponentContainer<T: 'static> {
     users: BitSet,
-    storage: RwLock<Box<ComponentStorage<T>>>,
+    storage: RwLock<Box<dyn ComponentStorage<T>>>,
 }
 
 impl<T> ComponentContainer<T> {
-    pub fn new(storage: Box<ComponentStorage<T>>, capacity: IdType) -> Self {
+    pub fn new(storage: Box<dyn ComponentStorage<T>>, capacity: IdType) -> Self {
         let new_container = ComponentContainer {
             storage: RwLock::new(storage),
             users: BitSet::with_capacity(capacity as u32),
@@ -38,7 +38,7 @@ impl<T> ComponentContainer<T> {
     /// # Panics
     ///
     /// Panics if the storage is poisoned or the current thread already has a lock.
-    pub fn read(&self) -> ReadAccess<T> {
+    pub fn read(&self) -> ReadAccess<'_, T> {
         self.storage.read().unwrap()
     }
 
@@ -47,7 +47,7 @@ impl<T> ComponentContainer<T> {
     /// # Panics
     ///
     /// Panics if the storage is poisoned or the current thread already has a lock.
-    pub fn write(&self) -> WriteAccess<T> {
+    pub fn write(&self) -> WriteAccess<'_, T> {
         self.storage.write().unwrap()
     }
 }

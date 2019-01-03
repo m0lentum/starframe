@@ -1,5 +1,3 @@
-extern crate moleengine_ecs_codegen;
-
 pub mod componentcontainer;
 pub mod space;
 pub mod storage;

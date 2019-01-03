@@ -1,6 +1,6 @@
 extern crate proc_macro;
-extern crate quote;
-extern crate syn;
+
+use syn;
 
 use proc_macro::TokenStream;
 use quote::quote;
@@ -178,7 +178,7 @@ pub fn system_logic(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let result = quote! {
-        impl<'a> System for #type_ident<'a> {
+        impl System for #type_ident<'_> {
             type Runner = #runner_ident;
             fn operate (#arg_ident: Self) {
                 #block
