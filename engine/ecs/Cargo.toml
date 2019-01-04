@@ -7,4 +7,3 @@ edition = "2018"
 [dependencies]
 moleengine_ecs-codegen = { path = "../ecs-codegen" }
 hibitset = "0.5.1"
-tuple_utils = "0.2.0"
