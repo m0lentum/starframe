@@ -31,9 +31,9 @@ use quote::quote;
 //
 //pub struct MoverRunner;
 //impl SystemRunner for MoverRunner {
-//    fn run(space: &Space) {
-//        let position = space.open::<Position>();
-//        let velocity = space.open::<Velocity>();
+//    fn run(space: &Space) -> Option<()> {
+//        let position = space.try_open_container::<Position>()?;
+//        let velocity = space.try_open_container::<Velocity>()?;
 //        let mut position_access = position.write();
 //        let velocity_access = velocity.read();
 //
@@ -57,6 +57,8 @@ use quote::quote;
 //            .collect();
 //
 //        Mover::operate(items.as_mut_slice());
+//
+//        Some(())
 //    }
 //}
 //
@@ -105,7 +107,7 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
         match field_type_ref.mutability {
             Some(_) => {
                 let access = quote! {
-                    let #ident = space.open::<#ty>();
+                    let #ident = space.try_open_container::<#ty>()?;
                     let mut #access_ident = #ident.write();
                     let #users_ident = #ident.get_users();
                 };
@@ -118,7 +120,7 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
             None => {
                 let access = quote! {
-                    let #ident = space.open::<#ty>();
+                    let #ident = space.try_open_container::<#ty>()?;
                     let #access_ident = #ident.read();
                     let #users_ident = #ident.get_users();
                 };
@@ -138,7 +140,7 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #vis struct #runner_ident;
         impl SystemRunner for #runner_ident {
-            fn run(space: &Space) {
+            fn run(space: &Space) -> Option<()> {
                 #(#accesses)*
 
                 let alive = space.get_alive();
@@ -153,6 +155,8 @@ pub fn system_item(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }).collect();
 
                 #ident::operate(items.as_mut_slice());
+
+                Some(())
             }
         }
     };

@@ -74,21 +74,37 @@ impl Space {
 
     /// Create a component for an object. The component can be of any type,
     /// but there has to be a ComponentContainer for it in this Space.
-    ///
     /// # Panics
-    ///
     /// Panics if there is no ComponentContainer for this type in this Space.
     pub fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
-        let container = Self::get_container_mut::<T>(&mut self.components);
+        let container = Self::get_container_mut::<T>(&mut self.components)
+            .expect("Attempted to create a component that doesn't have a container");
         container.insert(id, comp);
     }
 
-    /// Get access to a single ComponentContainer.
-    pub(crate) fn open<T: 'static>(&self) -> &ComponentContainer<T> {
+    /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
+    pub(crate) fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
         Self::get_container::<T>(&self.components)
     }
 
+    /// Run a System on all objects with components that match the System's types.
+    /// For more information see the moleengine_ecs-codegen crate.
+    /// # Panics
+    /// Panics if the System being run requires a Component that doesn't exist in this Space.
     pub fn run_system<S: System>(&self) {
+        let result = S::Runner::run(self);
+        assert!(
+            result.is_some(),
+            "Attempted to run a System without all Components present"
+        );
+    }
+
+    /// Like run_system, but fails silently instead of panicking if required Components are missing.
+    /// Usually you would prefer to panic when trying to access stuff that doesn't exist,
+    /// because silently failing is rarely a desired behavior,
+    /// but this is useful to run prepackaged bundles of Systems (such as renderers for various graphic types)
+    /// without requiring all of them to have their related Components present.
+    pub fn run_optional_system<S: System>(&self) {
         S::Runner::run(self);
     }
 
@@ -96,17 +112,17 @@ impl Space {
     /// Panics if the container has not been created.
     fn get_container<T: 'static>(
         components: &HashMap<TypeId, Box<dyn Any>>,
-    ) -> &ComponentContainer<T> {
-        let raw = components.get(&TypeId::of::<T>()).unwrap();
-        raw.downcast_ref::<ComponentContainer<T>>().unwrap()
+    ) -> Option<&ComponentContainer<T>> {
+        let raw = components.get(&TypeId::of::<T>())?;
+        raw.downcast_ref::<ComponentContainer<T>>()
     }
 
     /// Used internally to get a type-safe mutable reference to a container.
     /// Panics if the container has not been created.
     fn get_container_mut<T: 'static>(
         components: &mut HashMap<TypeId, Box<dyn Any>>,
-    ) -> &mut ComponentContainer<T> {
-        let raw = components.get_mut(&TypeId::of::<T>()).unwrap();
-        raw.downcast_mut::<ComponentContainer<T>>().unwrap()
+    ) -> Option<&mut ComponentContainer<T>> {
+        let raw = components.get_mut(&TypeId::of::<T>())?;
+        raw.downcast_mut::<ComponentContainer<T>>()
     }
 }

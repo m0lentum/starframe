@@ -36,18 +36,14 @@ impl<T> ComponentContainer<T> {
     }
 
     /// Get read access to the underlying storage.
-    ///
     /// # Panics
-    ///
     /// Panics if the storage is poisoned or the current thread already has a lock.
     pub fn read(&self) -> ReadAccess<'_, T> {
         self.storage.read().unwrap()
     }
 
     /// Get write access to the underlying storage.
-    ///
     /// # Panics
-    ///
     /// Panics if the storage is poisoned or the current thread already has a lock.
     pub fn write(&self) -> WriteAccess<'_, T> {
         self.storage.write().unwrap()
