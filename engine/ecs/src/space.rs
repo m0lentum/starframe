@@ -7,6 +7,7 @@ use hibitset::BitSet;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+/// An Entity-Component-System environment.
 pub struct Space {
     alive_objects: BitSet,
     next_obj_id: IdType,
@@ -26,13 +27,8 @@ impl Space {
     }
 
     /// Add a component container to a space in a Builder-like fashion.
-    /// # Example
-    /// ```
-    /// let mut space = Space::with_capacity(100)
-    ///        .with_component::<Position, VecStorage<_>>()
-    ///        .with_component::<Velocity, VecStorage<_>>();
-    /// ```
-    pub fn with<T, S>(mut self) -> Self
+    /// See Space::create_object for a usage example.
+    pub fn with_container<T, S>(mut self) -> Self
     where
         T: 'static,
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
@@ -45,24 +41,33 @@ impl Space {
         self
     }
 
-    pub(crate) fn get_alive(&self) -> &BitSet {
-        &self.alive_objects
-    }
-
     /// Reserves an object id for use and marks it as alive.
-    /// If the space is full, returns None.
-    pub fn create_object(&mut self) -> Option<IdType> {
-        if self.next_obj_id >= self.capacity {
-            return None;
-            // TODO: Find a dead object and replace it if one exists
-        }
+    /// Returns an ObjectBuilder struct that you can use to add Components.
+    /// Note that the ObjectBuilder borrows the Space so it must be dropped before creating another.
+    /// # Example
+    /// ```
+    /// let mut space = Space::with_capacity(100)
+    ///    .with_component::<Position, VecStorage<_>>()
+    ///    .with_component::<Velocity, VecStorage<_>>();
+    ///
+    /// space
+    ///    .create_object()
+    ///    .with(Position { x: 0.0, y: 0.0 })
+    ///    .with(Velocity { x: 1.0, y: 0.5 });
+    /// ```
+    pub fn create_object(&mut self) -> ObjectBuilder {
+        assert!(
+            self.next_obj_id < self.capacity,
+            "Attempted to create an object in a full Space"
+        );
+        // TODO: grow Space here instead
 
         let id = self.next_obj_id;
         self.alive_objects.add(id as u32);
 
         self.next_obj_id += 1;
 
-        Some(id)
+        ObjectBuilder { id, space: self }
     }
 
     /// Mark an object as dead. Does not actually destroy it, but
@@ -70,21 +75,6 @@ impl Space {
     /// can be replaced by something new.
     pub fn destroy_object(&mut self, id: IdType) {
         self.alive_objects.remove(id as u32);
-    }
-
-    /// Create a component for an object. The component can be of any type,
-    /// but there has to be a ComponentContainer for it in this Space.
-    /// # Panics
-    /// Panics if there is no ComponentContainer for this type in this Space.
-    pub fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
-        let container = Self::get_container_mut::<T>(&mut self.components)
-            .expect("Attempted to create a component that doesn't have a container");
-        container.insert(id, comp);
-    }
-
-    /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
-    pub(crate) fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
-        Self::get_container::<T>(&self.components)
     }
 
     /// Run a System on all objects with components that match the System's types.
@@ -108,6 +98,33 @@ impl Space {
         S::Runner::run(self);
     }
 
+    pub(crate) fn get_alive(&self) -> &BitSet {
+        &self.alive_objects
+    }
+
+    /// Create a component for an object. The component can be of any type,
+    /// but there has to be a ComponentContainer for it in this Space.
+    /// # Panics
+    /// Panics if there is no ComponentContainer for this type in this Space.
+    pub(crate) fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
+        let container = self
+            .try_open_container_mut::<T>()
+            .expect("Attempted to create a component that doesn't have a container");
+        container.insert(id, comp);
+    }
+
+    /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
+    pub(crate) fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
+        Self::get_container::<T>(&self.components)
+    }
+
+    /// Get mutable access to a single ComponentContainer if it exists in this Space, otherwise return None.
+    pub(crate) fn try_open_container_mut<T: 'static>(
+        &mut self,
+    ) -> Option<&mut ComponentContainer<T>> {
+        Self::get_container_mut::<T>(&mut self.components)
+    }
+
     /// Used internally to get a type-safe reference to a container.
     /// Panics if the container has not been created.
     fn get_container<T: 'static>(
@@ -124,5 +141,20 @@ impl Space {
     ) -> Option<&mut ComponentContainer<T>> {
         let raw = components.get_mut(&TypeId::of::<T>())?;
         raw.downcast_mut::<ComponentContainer<T>>()
+    }
+}
+
+/// Builder type to create game objects with a concise syntax.
+pub struct ObjectBuilder<'a> {
+    id: IdType,
+    space: &'a mut Space,
+}
+
+impl ObjectBuilder<'_> {
+    /// Add the given component to the Space and associate it with the object.
+    /// See Space::create_object for a usage example.
+    pub fn with<T: 'static>(self, component: T) -> Self {
+        self.space.create_component(self.id, component);
+        self
     }
 }

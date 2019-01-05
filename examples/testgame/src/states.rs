@@ -25,35 +25,33 @@ pub struct Placeholder();
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
         let mut space = Space::with_capacity(100)
-            .with::<Shape, VecStorage<_>>()
-            .with::<Position, VecStorage<_>>()
-            .with::<Velocity, VecStorage<_>>()
-            .with::<Rotation, VecStorage<_>>()
-            .with::<Printer, VecStorage<_>>()
-            .with::<Placeholder, VecStorage<_>>();
+            .with_container::<Shape, VecStorage<_>>()
+            .with_container::<Position, VecStorage<_>>()
+            .with_container::<Velocity, VecStorage<_>>()
+            .with_container::<Rotation, VecStorage<_>>()
+            .with_container::<Printer, VecStorage<_>>()
+            .with_container::<Placeholder, VecStorage<_>>();
 
-        let obj = space.create_object().unwrap();
-        space.create_component(obj, Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]));
-        space.create_component(obj, Position { x: 0.0, y: 0.0 });
-        space.create_component(obj, Velocity { x: 1.0, y: 0.5 });
-        //space.create_component(obj, 0 as u32);
+        space
+            .create_object()
+            .with(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
+            .with(Position { x: 0.0, y: 0.0 })
+            .with(Velocity { x: 1.0, y: 0.5 });
 
         for i in 1..10 {
             let n = 0.1 * i as f32;
-            let o = space.create_object().unwrap();
-            space.create_component(o, Shape::new_square(120.0 - 10.0 * i as f64, [n, n, n, n]));
-            space.create_component(
-                o,
-                Position {
+            let o = space
+                .create_object()
+                .with(Shape::new_square(120.0 - 10.0 * i as f64, [n, n, n, n]))
+                .with(Position {
                     x: i as f32,
                     y: -i as f32,
-                },
-            );
-            space.create_component(o, Rotation(i as f32));
-            space.create_component(o, Placeholder());
+                })
+                .with(Rotation(i as f32))
+                .with(Placeholder());
 
             if i % 4 == 0 {
-                space.create_component(o, Printer());
+                o.with(Printer());
             }
 
             // pad the space with some empty objects to verify that component iteration works correctly
