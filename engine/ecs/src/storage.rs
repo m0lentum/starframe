@@ -5,11 +5,6 @@ use std::ptr::write;
 /// Generic storage to be used internally by ComponentContainer.
 /// None of these methods should ever be called directly by the user.
 pub trait ComponentStorage<T> {
-    /// This will always be called by the Space with its maximum number of objects upon creating the storage.
-    /// Therefore, storage constructors should make the underlying
-    /// collection empty and reserve memory for the whole thing in reserve().
-    fn reserve(&mut self, cap: IdType);
-
     /// Get an immutable reference to a component.
     ///
     /// # Safety
@@ -41,28 +36,31 @@ pub trait ComponentStorage<T> {
     fn insert(&mut self, id: IdType, comp: T);
 }
 
+/// A Storage must be able to create itself with a given capacity.
+/// This trait is separate from ComponentStorage so that ComponentStorage
+/// can be used as a trait object.
+pub trait CreateWithCapacity {
+    fn with_capacity(cap: IdType) -> Self;
+}
+
 /// A sparse vector container. Components are stored in a single Vec
-/// indexed by their id. Unused positions in the vector are left unallocated.
+/// indexed by their id. Unused positions in the vector are left uninitialized.
 pub struct VecStorage<T> {
     content: Vec<T>,
 }
 
-impl<T> VecStorage<T> {
-    pub fn new() -> Self {
-        VecStorage {
-            content: Vec::new(),
+impl<T> CreateWithCapacity for VecStorage<T> {
+    fn with_capacity(cap: IdType) -> Self {
+        let mut content = Vec::new();
+        content.reserve_exact(cap);
+        unsafe {
+            content.set_len(cap);
         }
+        VecStorage { content }
     }
 }
 
 impl<T> ComponentStorage<T> for VecStorage<T> {
-    fn reserve(&mut self, cap: IdType) {
-        self.content.reserve_exact(cap);
-        unsafe {
-            self.content.set_len(cap);
-        }
-    }
-
     unsafe fn get(&self, id: IdType) -> &T {
         assert!(id < self.content.len());
         &self.content[id]

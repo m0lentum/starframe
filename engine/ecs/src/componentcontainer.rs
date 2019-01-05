@@ -1,4 +1,4 @@
-use crate::storage::ComponentStorage;
+use crate::storage::{ComponentStorage, CreateWithCapacity};
 use crate::IdType;
 use hibitset::BitSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -14,12 +14,14 @@ pub(crate) struct ComponentContainer<T: 'static> {
 }
 
 impl<T> ComponentContainer<T> {
-    pub fn new(storage: Box<dyn ComponentStorage<T>>, capacity: IdType) -> Self {
+    pub fn new<S>(capacity: IdType) -> Self
+    where
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
         let new_container = ComponentContainer {
-            storage: RwLock::new(storage),
+            storage: RwLock::new(Box::new(S::with_capacity(capacity))),
             users: BitSet::with_capacity(capacity as u32),
         };
-        new_container.storage.write().unwrap().reserve(capacity);
 
         new_container
     }

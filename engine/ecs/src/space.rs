@@ -1,5 +1,5 @@
 use crate::componentcontainer::ComponentContainer;
-use crate::storage::ComponentStorage;
+use crate::storage::{ComponentStorage, CreateWithCapacity};
 use crate::system::{System, SystemRunner};
 use crate::IdType;
 
@@ -15,7 +15,8 @@ pub struct Space {
 }
 
 impl Space {
-    pub fn new(capacity: IdType) -> Self {
+    /// Create a Space with a given maximum capacity.
+    pub fn with_capacity(capacity: IdType) -> Self {
         Space {
             alive_objects: BitSet::with_capacity(capacity as u32),
             next_obj_id: 0,
@@ -24,7 +25,27 @@ impl Space {
         }
     }
 
-    pub fn get_alive(&self) -> &BitSet {
+    /// Add a component container to a space in a Builder-like fashion.
+    /// # Example
+    /// ```
+    /// let mut space = Space::with_capacity(100)
+    ///        .with_component::<Position, VecStorage<_>>()
+    ///        .with_component::<Velocity, VecStorage<_>>();
+    /// ```
+    pub fn with<T, S>(mut self) -> Self
+    where
+        T: 'static,
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
+        self.components.insert(
+            TypeId::of::<T>(),
+            Box::new(ComponentContainer::new::<S>(self.capacity)),
+        );
+
+        self
+    }
+
+    pub(crate) fn get_alive(&self) -> &BitSet {
         &self.alive_objects
     }
 
@@ -60,22 +81,6 @@ impl Space {
     pub fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
         let container = Self::get_container_mut::<T>(&mut self.components);
         container.insert(id, comp);
-    }
-
-    /// Create a ComponentContainer for a component type (any type)
-    /// with a storage type. The storage should be initialized as empty and
-    /// given to the Space to finish setting it up.
-    ///
-    /// See moleengine::ecs::storage for details about available storage types.
-    pub fn create_container<T, S>(&mut self, storage: S)
-    where
-        T: 'static,
-        S: 'static + ComponentStorage<T>,
-    {
-        self.components.insert(
-            TypeId::of::<T>(),
-            Box::new(ComponentContainer::new(Box::new(storage), self.capacity)),
-        );
     }
 
     /// Get access to a single ComponentContainer.

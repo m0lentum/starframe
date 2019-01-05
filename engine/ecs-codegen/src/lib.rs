@@ -184,7 +184,7 @@ const MSG_ARG_MISMATCH: &str =
 /// }
 /// ```
 /// Running this with `Space::run_system::<Mover>()` gives do_move the position (read/write)
-/// and the velocity (read only) of every Entity in the Space that has both of them associated with it.
+/// and the velocity (read only) of every Object in the Space that has both of them associated with it.
 #[proc_macro_attribute]
 pub fn system_logic(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input! {item as syn::ItemFn};

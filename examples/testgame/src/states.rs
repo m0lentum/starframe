@@ -24,14 +24,13 @@ pub struct Placeholder();
 
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
-        let mut space = Space::new(100);
-        space.create_container::<Shape, _>(VecStorage::new());
-        space.create_container::<Position, _>(VecStorage::new());
-        space.create_container::<Velocity, _>(VecStorage::new());
-        space.create_container::<Rotation, _>(VecStorage::new());
-        space.create_container::<Printer, _>(VecStorage::new());
-        space.create_container::<Placeholder, _>(VecStorage::new());
-        //space.create_container::<u32, VecStorage<u32>>(VecStorage::new());
+        let mut space = Space::with_capacity(100)
+            .with::<Shape, VecStorage<_>>()
+            .with::<Position, VecStorage<_>>()
+            .with::<Velocity, VecStorage<_>>()
+            .with::<Rotation, VecStorage<_>>()
+            .with::<Printer, VecStorage<_>>()
+            .with::<Placeholder, VecStorage<_>>();
 
         let obj = space.create_object().unwrap();
         space.create_component(obj, Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]));
