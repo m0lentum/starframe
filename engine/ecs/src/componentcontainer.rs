@@ -28,7 +28,7 @@ impl<T> ComponentContainer<T> {
 
     pub fn insert(&mut self, id: IdType, comp: T) {
         self.users.add(id as u32);
-        self.storage.write().unwrap().insert(id, comp);
+        self.write().insert(id, comp);
     }
 
     pub fn get_users(&self) -> &BitSet {
@@ -39,13 +39,17 @@ impl<T> ComponentContainer<T> {
     /// # Panics
     /// Panics if the storage is poisoned or the current thread already has a lock.
     pub fn read(&self) -> ReadAccess<'_, T> {
-        self.storage.read().unwrap()
+        self.storage
+            .read()
+            .expect("Read access to a ComponentContainer failed")
     }
 
     /// Get write access to the underlying storage.
     /// # Panics
     /// Panics if the storage is poisoned or the current thread already has a lock.
     pub fn write(&self) -> WriteAccess<'_, T> {
-        self.storage.write().unwrap()
+        self.storage
+            .write()
+            .expect("Write access to a ComponentContainer failed")
     }
 }

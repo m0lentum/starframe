@@ -3,7 +3,7 @@ use crate::storage::{ComponentStorage, CreateWithCapacity};
 use crate::system::{System, SystemRunner};
 use crate::IdType;
 
-use hibitset::BitSet;
+use hibitset::{BitSet, BitSetLike};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
@@ -13,6 +13,7 @@ pub struct Space {
     next_obj_id: IdType,
     capacity: IdType,
     components: HashMap<TypeId, Box<dyn Any>>,
+    on_full: Box<FnMut()>,
 }
 
 impl Space {
@@ -23,6 +24,7 @@ impl Space {
             next_obj_id: 0,
             capacity: capacity,
             components: HashMap::new(),
+            on_full: Box::new(default_full_error),
         }
     }
 
@@ -37,6 +39,15 @@ impl Space {
             TypeId::of::<T>(),
             Box::new(ComponentContainer::new::<S>(self.capacity)),
         );
+
+        self
+    }
+
+    /// Give your own function to call in case the Space is full when creating an object,
+    /// for example to show the player an error message on screen.
+    /// By default a message is printed into standard error.
+    pub fn with_custom_full_error<F: FnMut() + 'static>(mut self, f: F) -> Self {
+        self.on_full = Box::new(f);
 
         self
     }
@@ -56,18 +67,36 @@ impl Space {
     ///    .with(Velocity { x: 1.0, y: 0.5 });
     /// ```
     pub fn create_object(&mut self) -> ObjectBuilder {
-        assert!(
-            self.next_obj_id < self.capacity,
-            "Attempted to create an object in a full Space"
-        );
-        // TODO: grow Space here instead
+        if self.next_obj_id < self.capacity {
+            let id = self.next_obj_id;
+            self.alive_objects.add(id as u32);
 
-        let id = self.next_obj_id;
-        self.alive_objects.add(id as u32);
+            self.next_obj_id += 1;
 
-        self.next_obj_id += 1;
-
-        ObjectBuilder { id, space: self }
+            ObjectBuilder {
+                id: Some(id),
+                space: self,
+            }
+        } else {
+            // find a dead object
+            match (!&self.alive_objects).iter().nth(0) {
+                Some(id) if id < self.capacity as u32 => {
+                    println!("Replaced dead object {}", id);
+                    self.alive_objects.add(id);
+                    ObjectBuilder {
+                        id: Some(id as IdType),
+                        space: self,
+                    }
+                }
+                _ => {
+                    (self.on_full)();
+                    ObjectBuilder {
+                        id: None,
+                        space: self,
+                    }
+                }
+            }
+        }
     }
 
     /// Mark an object as dead. Does not actually destroy it, but
@@ -144,9 +173,15 @@ impl Space {
     }
 }
 
+fn default_full_error() {
+    eprintln!("Error: Attempted to create an object in a full Space");
+}
+
 /// Builder type to create game objects with a concise syntax.
+/// If the Space is full, the same syntax still works but nothing is created.
+/// In this case the Space's full error handler will be called instead.
 pub struct ObjectBuilder<'a> {
-    id: IdType,
+    id: Option<IdType>,
     space: &'a mut Space,
 }
 
@@ -154,7 +189,16 @@ impl ObjectBuilder<'_> {
     /// Add the given component to the Space and associate it with the object.
     /// See Space::create_object for a usage example.
     pub fn with<T: 'static>(self, component: T) -> Self {
-        self.space.create_component(self.id, component);
+        match self.id {
+            Some(id) => self.space.create_component(id, component),
+            None => (),
+        }
+
         self
+    }
+
+    // Extract the id from the Builder. This doesn't have much practical use.
+    pub fn into_id(self) -> Option<IdType> {
+        self.id
     }
 }

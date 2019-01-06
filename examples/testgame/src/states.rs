@@ -24,13 +24,14 @@ pub struct Placeholder();
 
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
-        let mut space = Space::with_capacity(100)
+        let mut space = Space::with_capacity(10)
             .with_container::<Shape, VecStorage<_>>()
             .with_container::<Position, VecStorage<_>>()
             .with_container::<Velocity, VecStorage<_>>()
             .with_container::<Rotation, VecStorage<_>>()
             .with_container::<Printer, VecStorage<_>>()
-            .with_container::<Placeholder, VecStorage<_>>();
+            .with_container::<Placeholder, VecStorage<_>>()
+            .with_custom_full_error(|| eprintln!("Custom full space error"));
 
         space
             .create_object()
@@ -50,8 +51,12 @@ impl Data {
                 .with(Rotation(i as f32))
                 .with(Placeholder());
 
-            if i % 4 == 0 {
-                o.with(Printer());
+            if i % 2 == 0 {
+                // destruction and replacement test
+                match o.into_id() {
+                    Some(id) => space.destroy_object(id),
+                    None => (),
+                }
             }
 
             // pad the space with some empty objects to verify that component iteration works correctly
