@@ -9,7 +9,7 @@ pub mod macro_deps {
 
 /// A System can perform arbitrary operations on game objects with desired associated Components.
 /// They are executed within a Space with Space::run_system::<Type>() or Space::run_optional_system::<Type>().
-/// See the moleengine_ecs-codegen crate for information on how to create these yourself.
+/// See the moleengine_ecs_codegen crate for information on how to create these yourself.
 pub trait System: Sized {
     type Runner: SystemRunner;
     fn operate(items: &mut [Self]);

@@ -5,5 +5,5 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-moleengine_ecs-codegen = { path = "../ecs-codegen" }
+moleengine_ecs_codegen = { path = "../ecs_codegen" }
 hibitset = "0.5.1"

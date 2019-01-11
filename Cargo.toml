@@ -3,7 +3,7 @@
 members = [
     "engine/core",
     "engine/ecs",
-    "engine/ecs-codegen",
+    "engine/ecs_codegen",
     "engine/visuals",
     "examples/testgame",
 ]
