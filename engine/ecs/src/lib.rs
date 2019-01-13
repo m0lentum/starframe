@@ -1,4 +1,5 @@
 pub mod componentcontainer;
+pub mod event;
 pub mod space;
 pub mod storage;
 pub mod system;

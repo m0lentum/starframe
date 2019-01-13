@@ -1,7 +1,8 @@
 use moleengine_core::game::GameState;
+use moleengine_ecs::event::*;
+use moleengine_ecs::space::{LifecycleEvent, Space};
 use moleengine_ecs::storage::VecStorage;
 use moleengine_ecs::system::{Position, Velocity};
-use moleengine_ecs::Space;
 use moleengine_visuals::Shape;
 
 use graphics::{clear, Transformed};
@@ -18,9 +19,38 @@ pub struct Data {
 
 pub struct Rotation(f32);
 
-pub struct Printer();
+pub struct Printer;
 
-pub struct Placeholder();
+pub struct Placeholder;
+
+pub struct DeathListener;
+
+impl EventListener<LifecycleEvent> for DeathListener {
+    fn run(&mut self, evt: &LifecycleEvent, queue: &mut EventQueue) {
+        match evt {
+            LifecycleEvent::Destroy(id) => println!("Object got deleted: {}!", id),
+            _ => (),
+        }
+
+        queue.push(Box::new(TestChainEvent));
+    }
+}
+
+pub struct TestChainEvent;
+
+impl SpaceEvent for TestChainEvent {
+    fn handle(&self, space: &mut Space) {
+        space.run_all_listeners(self);
+    }
+}
+
+pub struct ChainEventListener;
+
+impl EventListener<TestChainEvent> for ChainEventListener {
+    fn run(&mut self, _evt: &TestChainEvent, _queue: &mut EventQueue) {
+        println!("Chain event");
+    }
+}
 
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
@@ -37,7 +67,12 @@ impl Data {
             .create_object()
             .with(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
             .with(Position { x: 0.0, y: 0.0 })
-            .with(Velocity { x: 1.0, y: 0.5 });
+            .with(Velocity { x: 1.0, y: 0.5 })
+            .with_listener(Box::new(ChainEventListener));
+
+        space
+            .create_object()
+            .with_listener(Box::new(ChainEventListener));
 
         for i in 1..10 {
             let n = 0.1 * i as f32;
@@ -49,11 +84,12 @@ impl Data {
                     y: -i as f32,
                 })
                 .with(Rotation(i as f32))
-                .with(Placeholder());
+                .with(Placeholder)
+                .with_listener(Box::new(DeathListener));
 
             if i % 2 == 0 {
                 // destruction and replacement test
-                match o.into_id() {
+                match o.get_id() {
                     Some(id) => space.destroy_object(id),
                     None => (),
                 }
@@ -83,16 +119,14 @@ impl Playing {
         clear([0.3, 0.7, 0.8, 1.0], gl);
         let _ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
 
-        //let _shapes = (data.test_space.open::<Shape>(),);
-
         gl.draw_end();
     }
 
     fn update(&mut self, data: &mut Data, _args: &UpdateArgs) {
         data.test_counter = data.test_counter + 1;
 
-        data.test_space
-            .run_system::<moleengine_ecs::system::Mover<'_>>();
+        //data.test_space
+        //    .run_system::<moleengine_ecs::system::Mover<'_>>();
     }
 }
 
