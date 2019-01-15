@@ -1,7 +1,7 @@
 use crate::componentcontainer::ComponentContainer;
 use crate::event::*;
 use crate::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
-use crate::system::{System, SystemRunner};
+use crate::system::{ComponentFilter, System};
 use crate::IdType;
 
 use hibitset::{BitSet, BitSetLike};
@@ -101,7 +101,6 @@ impl Space {
             // find a dead object
             match (!&self.alive_objects).iter().nth(0) {
                 Some(id) if id < self.capacity as u32 => {
-                    println!("Replaced dead object {}", id);
                     self.alive_objects.add(id);
                     ObjectBuilder {
                         id: Some(id as IdType),
@@ -172,25 +171,34 @@ impl Space {
         }
     }
 
-    /// Run a System on all objects with containers that match the System's types.
+    /// Run a single System on all objects with containers that match the System's types.
     /// For more information see the moleengine_ecs_codegen crate.
     /// # Panics
     /// Panics if the System being run requires a Component that doesn't exist in this Space.
-    pub fn run_system<S: System>(&self) {
-        let result = S::Runner::run(self);
-        assert!(
-            result.is_some(),
-            "Attempted to run a System without all Components present"
-        );
+    pub fn run_system<'a, S: System<'a>>(&mut self) {
+        self.run_system_internal::<S>()
+            .expect("Attempted to run a System without all Components present")
+            .run_all(self);
     }
 
-    /// Like run_system, but fails silently instead of panicking if required Components are missing.
-    /// Usually you would prefer to panic when trying to access stuff that doesn't exist,
-    /// because silently failing is rarely a desired behavior,
-    /// but this is useful to run prepackaged bundles of Systems (such as renderers for various graphic types)
-    /// without requiring all of them to have their related Components present.
-    pub fn run_optional_system<S: System>(&self) {
-        S::Runner::run(self);
+    /// Like run_system, but returns None instead of panicking if a required component is missing.
+    pub fn try_run_system<'a, S: System<'a>>(&mut self) -> Option<()> {
+        self.run_system_internal::<S>().map(|mut evts| {
+            evts.run_all(self);
+            ()
+        })
+    }
+
+    /// Actually runs a system, giving it a queue to put events in if it wants to.
+    pub(crate) fn run_system_internal<'a, S: System<'a>>(&self) -> Option<EventQueue> {
+        let mut queue = EventQueue::new();
+        let result = S::Filter::run(self, |cs| S::operate(cs, self, &mut queue));
+        result.map(|()| queue)
+    }
+
+    /// Helper function to make running stuff through a ComponentFilter more intuitive.
+    pub fn run_filter<'a, F: ComponentFilter<'a>>(&self, f: impl FnMut(&mut [F])) -> Option<()> {
+        F::run(self, f)
     }
 
     /// Convenience method to make running new events from within events more intuitive.

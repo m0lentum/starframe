@@ -23,8 +23,8 @@ use quote::quote;
 //     pub y: f32,
 // }
 //
-// //#[system_target]
-// pub struct PositionIntegrator<'a> {
+// //#[system_item]
+// pub struct Mover<'a> {
 //     position: &'a mut Position,
 //     velocity: &'a Velocity,
 // }
@@ -62,8 +62,8 @@ use quote::quote;
 //    }
 //}
 //
-//impl<'a> System for PositionIntegrator<'a> {
-//    type Runner = PositionIntegratorRunner;
+//impl<'a> System for Mover<'a> {
+//    type Runner = MoverRunner;
 //    //#[system_logic]
 //    fn operate(items: &mut [Self]) {
 //        for item in items {
