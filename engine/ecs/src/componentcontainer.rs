@@ -10,6 +10,7 @@ pub(crate) type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<dyn ComponentStorage
 /// Space handles all the updates for you - none of this should be directly accessed by the user.
 pub(crate) struct ComponentContainer<T: 'static> {
     users: BitSet,
+    generations: Vec<u8>,
     storage: RwLock<Box<dyn ComponentStorage<T>>>,
 }
 
@@ -20,19 +21,25 @@ impl<T> ComponentContainer<T> {
     {
         let new_container = ComponentContainer {
             storage: RwLock::new(Box::new(S::with_capacity(capacity))),
+            generations: vec![0; capacity],
             users: BitSet::with_capacity(capacity as u32),
         };
 
         new_container
     }
 
-    pub fn insert(&mut self, id: IdType, comp: T) {
+    pub fn insert(&mut self, id: IdType, gen: u8, comp: T) {
         self.users.add(id as u32);
+        self.generations[id] = gen;
         self.write().insert(id, comp);
     }
 
     pub fn get_users(&self) -> &BitSet {
         &self.users
+    }
+
+    pub fn get_gen(&self, id: IdType) -> u8 {
+        self.generations[id]
     }
 
     /// Get read access to the underlying storage.

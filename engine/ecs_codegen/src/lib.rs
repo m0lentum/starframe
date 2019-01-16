@@ -49,11 +49,17 @@ use quote::quote;
 //        use hibitset::BitSetLike;
 //        let iter = and_set.iter();
 //        let mut items: Vec<_> = iter
+//            .map(|id| id as IdType)
+//            .filter(|id| {
+//                let space_gen = space.get_gen(*id);
+//                space_gen <= 1
+//                || (space_gen == position.get_gen(*id) && space_gen == velocity.get_gen(*id) && true)
+//            }
 //            .map(|id| unsafe {
 //                PosVel {
-//                    position: position_access.get_mut_raw(id as IdType).as_mut().unwrap(),
-//                    velocity: velocity_access.get_raw(id as IdType).as_ref().unwrap(),
-//                    id: id as IdType,
+//                    position: position_access.get_mut_raw(id).as_mut().unwrap(),
+//                    velocity: velocity_access.get_raw(id).as_ref().unwrap(),
+//                    id: id,
 //                }
 //            })
 //            .collect();
@@ -86,6 +92,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
     let ident = &input.ident;
     let fields = &input.fields;
 
+    let mut container_vars = Vec::new();
     let mut accesses = Vec::new();
     let mut users_idents = Vec::new();
     let mut field_getters = Vec::new();
@@ -95,6 +102,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
             id_field = field.ident.as_ref();
         } else {
             let ident = field.ident.as_ref().expect("Struct fields must be named");
+            container_vars.push(ident);
             let access_ident = append_ident(ident, "_access");
             let users_ident = append_ident(ident, "_users");
 
@@ -114,7 +122,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                     accesses.push(access);
 
                     let getter = quote! {
-                        #ident: #access_ident.get_mut_raw(id as IdType).as_mut().unwrap(),
+                        #ident: #access_ident.get_mut_raw(id).as_mut().unwrap(),
                     };
                     field_getters.push(getter);
                 }
@@ -127,7 +135,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                     accesses.push(access);
 
                     let getter = quote! {
-                        #ident: #access_ident.get_raw(id as IdType).as_ref().unwrap(),
+                        #ident: #access_ident.get_raw(id).as_ref().unwrap(),
                     };
                     field_getters.push(getter);
                 }
@@ -138,7 +146,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
 
     let id_setter = id_field.map(|ident| {
         quote! {
-            #ident: id as IdType,
+            #ident: id,
         }
     });
 
@@ -153,7 +161,14 @@ pub fn system_item(item: TokenStream) -> TokenStream {
 
                 use hibitset::BitSetLike;
                 let iter = and_set.iter();
-                let mut items: Vec<_> = iter.map(|id| unsafe {
+                let mut items: Vec<_> = iter
+                    .map(|id| id as IdType)
+                    .filter(|id| {
+                        let space_gen = space.get_gen(*id);
+                        space_gen <= 1
+                        || (#(space_gen == #container_vars.get_gen(*id) && )* true)
+                    })
+                    .map(|id| unsafe {
                     #ident {
                         #(#field_getters)*
                         #id_setter

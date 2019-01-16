@@ -70,9 +70,14 @@ impl Data {
             .with(Velocity { x: 1.0, y: 0.5 })
             .with_listener(Box::new(ChainEventListener));
 
-        space
+        // testing generations - should only get one chained event
+        let delete_this = space
             .create_object()
-            .with_listener(Box::new(ChainEventListener));
+            .with_listener(Box::new(ChainEventListener))
+            .get_id()
+            .unwrap();
+
+        space.destroy_object(delete_this);
 
         for i in 1..10 {
             let n = 0.1 * i as f32;

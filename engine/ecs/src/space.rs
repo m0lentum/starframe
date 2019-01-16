@@ -11,6 +11,7 @@ use std::collections::HashMap;
 /// An Entity-Component-System environment.
 pub struct Space {
     alive_objects: BitSet,
+    generations: Vec<u8>,
     next_obj_id: IdType,
     capacity: IdType,
     containers: HashMap<TypeId, Box<dyn Any>>,
@@ -22,9 +23,10 @@ impl Space {
     pub fn with_capacity(capacity: IdType) -> Self {
         Space {
             alive_objects: BitSet::with_capacity(capacity as u32),
+            generations: vec![0; capacity],
             next_obj_id: 0,
             capacity: capacity,
-            containers: HashMap::new(), // these are containers, no with_capacity here!
+            containers: HashMap::new(),
             on_full: Box::new(default_full_error),
         }
     }
@@ -89,24 +91,12 @@ impl Space {
     pub fn create_object(&mut self) -> ObjectBuilder {
         if self.next_obj_id < self.capacity {
             let id = self.next_obj_id;
-            self.alive_objects.add(id as u32);
-
             self.next_obj_id += 1;
-
-            ObjectBuilder {
-                id: Some(id),
-                space: self,
-            }
+            self.create_object_at(id)
         } else {
             // find a dead object
             match (!&self.alive_objects).iter().nth(0) {
-                Some(id) if id < self.capacity as u32 => {
-                    self.alive_objects.add(id);
-                    ObjectBuilder {
-                        id: Some(id as IdType),
-                        space: self,
-                    }
-                }
+                Some(id) if id < self.capacity as u32 => self.create_object_at(id as IdType),
                 _ => {
                     (self.on_full)();
                     ObjectBuilder {
@@ -115,6 +105,16 @@ impl Space {
                     }
                 }
             }
+        }
+    }
+
+    fn create_object_at(&mut self, id: IdType) -> ObjectBuilder {
+        self.alive_objects.add(id as u32);
+        self.generations[id] += 1;
+
+        ObjectBuilder {
+            id: Some(id),
+            space: self,
         }
     }
 
@@ -134,7 +134,9 @@ impl Space {
     pub fn has_component<T: 'static>(&self, id: IdType) -> bool {
         match self.try_open_container::<T>() {
             Some(cont) => {
-                self.alive_objects.contains(id as u32) && cont.get_users().contains(id as u32)
+                self.alive_objects.contains(id as u32)
+                    && cont.get_users().contains(id as u32)
+                    && self.generations[id] == cont.get_gen(id)
             }
             None => false,
         }
@@ -150,7 +152,10 @@ impl Space {
         f: impl FnOnce(&T) -> R,
     ) -> Option<R> {
         let cont = self.try_open_container::<T>()?;
-        if cont.get_users().contains(id as u32) && self.alive_objects.contains(id as u32) {
+        if cont.get_users().contains(id as u32)
+            && self.alive_objects.contains(id as u32)
+            && self.generations[id] == cont.get_gen(id)
+        {
             unsafe { Some(f(cont.read().get(id))) }
         } else {
             None
@@ -164,7 +169,10 @@ impl Space {
         f: impl FnOnce(&mut T) -> R,
     ) -> Option<R> {
         let cont = self.try_open_container::<T>()?;
-        if cont.get_users().contains(id as u32) && self.alive_objects.contains(id as u32) {
+        if cont.get_users().contains(id as u32)
+            && self.alive_objects.contains(id as u32)
+            && self.generations[id] == cont.get_gen(id)
+        {
             unsafe { Some(f(cont.write().get_mut(id))) }
         } else {
             None
@@ -218,13 +226,9 @@ impl Space {
     pub fn run_listener<E: SpaceEvent + 'static>(&mut self, id: IdType, evt: &E) {
         let mut queue = EventQueue::new();
 
-        if let Some(listeners_cont) = self.try_open_container::<EventListenerComponent<E>>() {
-            if listeners_cont.get_users().contains(id as u32) {
-                let mut listeners = listeners_cont.write();
-                let l_c = unsafe { listeners.get_mut(id as IdType) };
-                l_c.listener.run(&evt, &mut queue);
-            }
-        }
+        self.do_with_component_mut(id, |l: &mut EventListenerComponent<E>| {
+            l.listener.run(&evt, &mut queue)
+        });
 
         queue.run_all(self);
     }
@@ -237,7 +241,9 @@ impl Space {
         if let Some(listeners_cont) = self.try_open_container::<EventListenerComponent<E>>() {
             let mut listeners = listeners_cont.write();
             let users = hibitset::BitSetAnd(&self.alive_objects, listeners_cont.get_users());
-            for id in users.iter() {
+            for id in users.iter().filter(|id| {
+                self.generations[*id as IdType] == listeners_cont.get_gen(*id as IdType)
+            }) {
                 let l_c = unsafe { listeners.get_mut(id as IdType) };
                 l_c.listener.run(&evt, &mut queue);
             }
@@ -250,15 +256,20 @@ impl Space {
         &self.alive_objects
     }
 
+    pub(crate) fn get_gen(&self, id: IdType) -> u8 {
+        self.generations[id]
+    }
+
     /// Create a component for an object. The component can be of any type,
     /// but there has to be a ComponentContainer for it in this Space.
     /// # Panics
     /// Panics if there is no ComponentContainer for this type in this Space.
     pub(crate) fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
+        let gen = self.generations[id];
         let container = self
             .try_open_container_mut::<T>()
             .expect("Attempted to create a component that doesn't have a container");
-        container.insert(id, comp);
+        container.insert(id, gen, comp);
     }
 
     /// Create a component for an object. If there is no container for it, create one of type S.
@@ -267,11 +278,14 @@ impl Space {
         T: 'static,
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
     {
+        let gen = self.generations[id];
         match self.try_open_container_mut::<T>() {
-            Some(cont) => cont.insert(id, comp),
+            Some(cont) => cont.insert(id, gen, comp),
             None => {
                 self.create_container::<T, S>();
-                self.try_open_container_mut::<T>().unwrap().insert(id, comp);
+                self.try_open_container_mut::<T>()
+                    .unwrap()
+                    .insert(id, gen, comp);
             }
         }
     }
