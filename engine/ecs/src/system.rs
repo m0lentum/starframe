@@ -8,20 +8,20 @@ pub use moleengine_ecs_codegen::*;
 /// They are executed within a Space with Space::(try_)run_system::<Type>().
 pub trait System<'a> {
     type Filter: ComponentFilter<'a>;
-    fn operate(items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue);
+    fn run_system(items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue);
 }
 
 /// A simpler System interface useful to reduce boilerplate
 /// when implementing Systems which only use one filter and don't produce events.
 pub trait SimpleSystem<'a> {
     type Filter: ComponentFilter<'a>;
-    fn operate(items: &mut [Self::Filter]);
+    fn run_system(items: &mut [Self::Filter]);
 }
 
 impl<'a, S: SimpleSystem<'a>> System<'a> for S {
     type Filter = S::Filter;
-    fn operate(items: &mut [Self::Filter], _s: &Space, _q: &mut EventQueue) {
-        <Self as SimpleSystem>::operate(items);
+    fn run_system(items: &mut [Self::Filter], _s: &Space, _q: &mut EventQueue) {
+        <Self as SimpleSystem>::run_system(items);
     }
 }
 
@@ -38,7 +38,7 @@ impl<'a, S: SimpleSystem<'a>> System<'a> for S {
 /// }
 /// ```
 pub trait ComponentFilter<'a>: Sized {
-    fn run(space: &Space, f: impl FnMut(&mut [Self])) -> Option<()>;
+    fn run_filter(space: &Space, f: impl FnMut(&mut [Self])) -> Option<()>;
 }
 
 // test
@@ -61,7 +61,7 @@ pub struct PosVel<'a> {
 pub struct Mover;
 impl<'a> SimpleSystem<'a> for Mover {
     type Filter = PosVel<'a>;
-    fn operate(items: &mut [Self::Filter]) {
+    fn run_system(items: &mut [Self::Filter]) {
         for item in items {
             item.position.x += item.velocity.x;
             item.position.y += item.velocity.y;

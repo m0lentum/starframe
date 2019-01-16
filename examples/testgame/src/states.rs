@@ -26,7 +26,7 @@ pub struct Placeholder;
 pub struct DeathListener;
 
 impl EventListener<LifecycleEvent> for DeathListener {
-    fn run(&mut self, evt: &LifecycleEvent, queue: &mut EventQueue) {
+    fn run_listener(&mut self, evt: &LifecycleEvent, queue: &mut EventQueue) {
         match evt {
             LifecycleEvent::Destroy(id) => println!("Object got deleted: {}!", id),
             _ => (),
@@ -47,7 +47,7 @@ impl SpaceEvent for TestChainEvent {
 pub struct ChainEventListener;
 
 impl EventListener<TestChainEvent> for ChainEventListener {
-    fn run(&mut self, _evt: &TestChainEvent, _queue: &mut EventQueue) {
+    fn run_listener(&mut self, _evt: &TestChainEvent, _queue: &mut EventQueue) {
         println!("Chain event");
     }
 }

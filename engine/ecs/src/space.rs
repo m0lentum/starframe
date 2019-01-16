@@ -200,13 +200,13 @@ impl Space {
     /// Actually runs a system, giving it a queue to put events in if it wants to.
     pub(crate) fn run_system_internal<'a, S: System<'a>>(&self) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
-        let result = S::Filter::run(self, |cs| S::operate(cs, self, &mut queue));
+        let result = S::Filter::run_filter(self, |cs| S::run_system(cs, self, &mut queue));
         result.map(|()| queue)
     }
 
     /// Helper function to make running stuff through a ComponentFilter more intuitive.
     pub fn run_filter<'a, F: ComponentFilter<'a>>(&self, f: impl FnMut(&mut [F])) -> Option<()> {
-        F::run(self, f)
+        F::run_filter(self, f)
     }
 
     /// Convenience method to make running new events from within events more intuitive.
@@ -227,7 +227,7 @@ impl Space {
         let mut queue = EventQueue::new();
 
         self.do_with_component_mut(id, |l: &mut EventListenerComponent<E>| {
-            l.listener.run(&evt, &mut queue)
+            l.listener.run_listener(&evt, &mut queue)
         });
 
         queue.run_all(self);
@@ -238,16 +238,7 @@ impl Space {
     pub fn run_all_listeners<E: SpaceEvent + 'static>(&mut self, evt: &E) {
         let mut queue = EventQueue::new();
 
-        if let Some(listeners_cont) = self.try_open_container::<EventListenerComponent<E>>() {
-            let mut listeners = listeners_cont.write();
-            let users = hibitset::BitSetAnd(&self.alive_objects, listeners_cont.get_users());
-            for id in users.iter().filter(|id| {
-                self.generations[*id as IdType] == listeners_cont.get_gen(*id as IdType)
-            }) {
-                let l_c = unsafe { listeners.get_mut(id as IdType) };
-                l_c.listener.run(&evt, &mut queue);
-            }
-        }
+        EventPropagator(evt).propagate(self, &mut queue);
 
         queue.run_all(self);
     }

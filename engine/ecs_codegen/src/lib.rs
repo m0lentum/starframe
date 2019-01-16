@@ -31,7 +31,7 @@ use quote::quote;
 //}
 //
 //impl<'a> ComponentFilter<'a> for PosVel<'a> {
-//    fn run(space: &Space, mut f: impl FnMut(&mut [Self])) -> Option<()> {
+//    fn run_filter(space: &Space, mut f: impl FnMut(&mut [Self])) -> Option<()> {
 //        let position = space.try_open_container::<Position>()?;
 //        let velocity = space.try_open_container::<Velocity>()?;
 //        let mut position_access = position.write();
@@ -41,10 +41,9 @@ use quote::quote;
 //        let position_users = position.get_users();
 //        let velocity_users = velocity.get_users();
 //
-//        let and_set = hibitset::BitSetAll;
+//        let and_set = hibitset::BitSetAnd(hibitset::BitSetAll{}, alive);
 //        let and_set = hibitset::BitSetAnd(position_users, and_set);
 //        let and_set = hibitset::BitSetAnd(velocity_users, and_set);
-//        let and_set = hibitset::BitSetAnd(alive, and_set);
 //
 //        use hibitset::BitSetLike;
 //        let iter = and_set.iter();
@@ -91,6 +90,25 @@ pub fn system_item(item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
     let ident = &input.ident;
     let fields = &input.fields;
+    let generics = &input.generics.params;
+    let where_clause = &input.generics.where_clause;
+
+    let mut lifetime = None;
+    let mut generics_idents = Vec::new();
+    for param in generics {
+        match param {
+            syn::GenericParam::Lifetime(def) => match lifetime {
+                Some(_) => panic!("Filter must have exactly one lifetime parameter"),
+                None => lifetime = Some(def),
+            },
+            syn::GenericParam::Type(t) => generics_idents.push(&t.ident),
+            syn::GenericParam::Const(_) => {
+                panic!("Const type parameters aren't supported (yet?) on ComponentFilters")
+            }
+        }
+    }
+    let lifetime = lifetime.expect("Filter must have exactly one lifetime parameter");
+    let lifetime_ident = &lifetime.lifetime;
 
     let mut container_vars = Vec::new();
     let mut accesses = Vec::new();
@@ -150,13 +168,15 @@ pub fn system_item(item: TokenStream) -> TokenStream {
         }
     });
 
-    let runner = quote! {
-        impl<'a> ComponentFilter<'a> for #ident<'a> {
-            fn run(space: &Space, mut f: impl FnMut(&mut [Self])) -> Option<()> {
+    let filter = quote! {
+        impl<#generics> ComponentFilter<#lifetime> for #ident<#lifetime_ident, #(#generics_idents,)*>
+        #where_clause
+        {
+            fn run_filter(space: &Space, mut f: impl FnMut(&mut [Self])) -> Option<()> {
                 #(#accesses)*
 
                 let alive = space.get_alive();
-                let and_set = hibitset::BitSetAll{};
+                let and_set = hibitset::BitSetAnd(hibitset::BitSetAll{}, alive);
                 #(let and_set = hibitset::BitSetAnd(and_set, #users_idents);)*
 
                 use hibitset::BitSetLike;
@@ -182,7 +202,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
         }
     };
 
-    runner.into()
+    filter.into()
 }
 
 fn is_id(field: &syn::Field) -> bool {

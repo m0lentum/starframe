@@ -1,4 +1,5 @@
 use crate::space::Space;
+use crate::system::*;
 
 /// An event that causes something to happen within a Space.
 pub trait SpaceEvent {
@@ -16,7 +17,7 @@ pub trait EventListener<E: SpaceEvent> {
     /// The logic to run when a SpaceEvent happens.
     /// Pushing new events onto the EventQueue given as a parameter results in
     /// those events being run later in sequential order.
-    fn run(&mut self, evt: &E, queue: &mut EventQueue);
+    fn run_listener(&mut self, evt: &E, queue: &mut EventQueue);
 }
 
 /// A collection of SpaceEvents, used to allow event listeners and systems to generate new events
@@ -50,4 +51,21 @@ impl EventQueue {
 /// In most cases users need not touch this type.
 pub struct EventListenerComponent<E: SpaceEvent> {
     pub listener: Box<dyn EventListener<E>>,
+}
+
+pub(crate) struct EventPropagator<'a, E: SpaceEvent + 'static>(pub &'a E);
+
+impl<'a, E: SpaceEvent> EventPropagator<'a, E> {
+    pub fn propagate(&self, space: &Space, queue: &mut EventQueue) {
+        space.run_filter(|items: &mut [EventListenerFilter<E>]| {
+            for item in items {
+                item.l.listener.run_listener(self.0, queue);
+            }
+        });
+    }
+}
+
+#[derive(ComponentFilter)]
+struct EventListenerFilter<'a, E: SpaceEvent + 'static> {
+    l: &'a mut EventListenerComponent<E>,
 }
