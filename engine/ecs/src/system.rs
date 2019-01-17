@@ -54,6 +54,8 @@ pub struct Velocity {
 
 #[derive(ComponentFilter)]
 pub struct PosVel<'a> {
+    #[enabled]
+    is_enabled: bool,
     position: &'a mut Position,
     velocity: &'a Velocity,
 }
@@ -63,8 +65,13 @@ impl<'a> SimpleSystem<'a> for Mover {
     type Filter = PosVel<'a>;
     fn run_system(items: &mut [Self::Filter]) {
         for item in items {
+            if !item.is_enabled {
+                println!("Found disabled object!");
+                continue;
+            }
             item.position.x += item.velocity.x;
             item.position.y += item.velocity.y;
+            println!("Position is {}, {}", item.position.x, item.position.y);
         }
     }
 }

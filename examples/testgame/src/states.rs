@@ -23,13 +23,14 @@ pub struct Printer;
 
 pub struct Placeholder;
 
-pub struct DeathListener;
+pub struct LifecycleListener;
 
-impl EventListener<LifecycleEvent> for DeathListener {
+impl EventListener<LifecycleEvent> for LifecycleListener {
     fn run_listener(&mut self, evt: &LifecycleEvent, queue: &mut EventQueue) {
         match evt {
             LifecycleEvent::Destroy(id) => println!("Object got deleted: {}!", id),
-            _ => (),
+            LifecycleEvent::Disable(id) => println!("Object got disabled: {}!", id),
+            LifecycleEvent::Enable(id) => println!("Object got enabled: {}!", id),
         }
 
         queue.push(Box::new(TestChainEvent));
@@ -70,14 +71,16 @@ impl Data {
             .with(Velocity { x: 1.0, y: 0.5 })
             .with_listener(Box::new(ChainEventListener));
 
-        // testing generations - should only get one chained event
         let delete_this = space
             .create_object()
             .with_listener(Box::new(ChainEventListener))
+            .with(Position { x: 0.0, y: 0.0 })
+            .with(Velocity { x: 1.0, y: 0.5 })
+            .with_listener(Box::new(LifecycleListener))
             .get_id()
             .unwrap();
 
-        space.destroy_object(delete_this);
+        space.disable_object(delete_this);
 
         for i in 1..10 {
             let n = 0.1 * i as f32;
@@ -90,7 +93,7 @@ impl Data {
                 })
                 .with(Rotation(i as f32))
                 .with(Placeholder)
-                .with_listener(Box::new(DeathListener));
+                .with_listener(Box::new(LifecycleListener));
 
             if i % 2 == 0 {
                 // destruction and replacement test
@@ -103,6 +106,9 @@ impl Data {
             // pad the space with some empty objects to verify that component iteration works correctly
             space.create_object();
         }
+
+        space.enable_object(delete_this);
+        space.destroy_object(delete_this);
 
         Data {
             gl: gl,
@@ -130,8 +136,8 @@ impl Playing {
     fn update(&mut self, data: &mut Data, _args: &UpdateArgs) {
         data.test_counter = data.test_counter + 1;
 
-        //data.test_space
-        //    .run_system::<moleengine_ecs::system::Mover<'_>>();
+        data.test_space
+            .run_system::<moleengine_ecs::system::Mover>();
     }
 }
 

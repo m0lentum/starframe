@@ -11,6 +11,7 @@ use std::collections::HashMap;
 /// An Entity-Component-System environment.
 pub struct Space {
     alive_objects: BitSet,
+    enabled_objects: BitSet,
     generations: Vec<u8>,
     next_obj_id: IdType,
     capacity: IdType,
@@ -23,6 +24,7 @@ impl Space {
     pub fn with_capacity(capacity: IdType) -> Self {
         Space {
             alive_objects: BitSet::with_capacity(capacity as u32),
+            enabled_objects: BitSet::with_capacity(capacity as u32),
             generations: vec![0; capacity],
             next_obj_id: 0,
             capacity: capacity,
@@ -110,6 +112,7 @@ impl Space {
 
     fn create_object_at(&mut self, id: IdType) -> ObjectBuilder {
         self.alive_objects.add(id as u32);
+        self.enabled_objects.add(id as u32);
         self.generations[id] += 1;
 
         ObjectBuilder {
@@ -125,8 +128,27 @@ impl Space {
     }
 
     /// Actually destroy an object. This is used internally by LifecycleEvent::Destroy.
-    pub(crate) fn actually_destroy_object(&mut self, id: IdType) {
+    pub(self) fn actually_destroy_object(&mut self, id: IdType) {
         self.alive_objects.remove(id as u32);
+    }
+
+    /// Disable an object. This means it will not receive updates from most Systems.
+    /// However, Systems still have access to it and may choose to do something with it.
+    pub fn disable_object(&mut self, id: IdType) {
+        LifecycleEvent::Disable(id).handle(self);
+    }
+
+    pub(self) fn actually_disable_object(&mut self, id: IdType) {
+        self.enabled_objects.remove(id as u32);
+    }
+
+    /// Re-enable a disabled object. It will receive updates from all Systems again.
+    pub fn enable_object(&mut self, id: IdType) {
+        LifecycleEvent::Enable(id).handle(self);
+    }
+
+    pub(self) fn actually_enable_object(&mut self, id: IdType) {
+        self.enabled_objects.add(id as u32);
     }
 
     /// Checks whether an object has a specific type of component.
@@ -245,6 +267,10 @@ impl Space {
 
     pub(crate) fn get_alive(&self) -> &BitSet {
         &self.alive_objects
+    }
+
+    pub(crate) fn get_enabled(&self) -> &BitSet {
+        &self.enabled_objects
     }
 
     pub(crate) fn get_gen(&self, id: IdType) -> u8 {
@@ -391,8 +417,18 @@ impl SpaceEvent for LifecycleEvent {
                 space.run_listener(*id, self);
                 space.actually_destroy_object(*id);
             }
-            Disable(_id) => unimplemented! {},
-            Enable(_id) => unimplemented! {},
+            Disable(id) => {
+                if space.get_enabled().contains(*id as u32) {
+                    space.run_listener(*id, self);
+                    space.actually_disable_object(*id);
+                }
+            }
+            Enable(id) => {
+                if !space.get_enabled().contains(*id as u32) {
+                    space.actually_enable_object(*id);
+                    space.run_listener(*id, self);
+                }
+            }
         }
     }
 }
