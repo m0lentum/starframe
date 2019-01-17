@@ -61,8 +61,7 @@ impl Data {
             .with_container::<Velocity, VecStorage<_>>()
             .with_container::<Rotation, VecStorage<_>>()
             .with_container::<Printer, VecStorage<_>>()
-            .with_container::<Placeholder, VecStorage<_>>()
-            .with_custom_full_error(|| eprintln!("Custom full space error"));
+            .with_container::<Placeholder, VecStorage<_>>();
 
         space
             .create_object()
@@ -77,34 +76,30 @@ impl Data {
             .with(Position { x: 0.0, y: 0.0 })
             .with(Velocity { x: 1.0, y: 0.5 })
             .with_listener(Box::new(LifecycleListener))
-            .get_id()
-            .unwrap();
+            .get_id();
 
         space.disable_object(delete_this);
 
         for i in 1..10 {
             let n = 0.1 * i as f32;
-            let o = space
-                .create_object()
-                .with(Shape::new_square(120.0 - 10.0 * i as f64, [n, n, n, n]))
-                .with(Position {
-                    x: i as f32,
-                    y: -i as f32,
-                })
-                .with(Rotation(i as f32))
-                .with(Placeholder)
-                .with_listener(Box::new(LifecycleListener));
+            let o = space.try_create_object();
+            if let Some(o) = o {
+                let id = o
+                    .with(Shape::new_square(120.0 - 10.0 * i as f64, [n, n, n, n]))
+                    .with(Position {
+                        x: i as f32,
+                        y: -i as f32,
+                    })
+                    .with(Rotation(i as f32))
+                    .with(Placeholder)
+                    .with_listener(Box::new(LifecycleListener))
+                    .get_id();
 
-            if i % 2 == 0 {
-                // destruction and replacement test
-                match o.get_id() {
-                    Some(id) => space.destroy_object(id),
-                    None => (),
+                if i % 2 == 0 {
+                    // destruction and replacement test
+                    space.destroy_object(id);
                 }
             }
-
-            // pad the space with some empty objects to verify that component iteration works correctly
-            space.create_object();
         }
 
         space.enable_object(delete_this);

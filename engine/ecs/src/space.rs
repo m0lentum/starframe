@@ -16,7 +16,6 @@ pub struct Space {
     next_obj_id: IdType,
     capacity: IdType,
     containers: HashMap<TypeId, Box<dyn Any>>,
-    on_full: Box<FnMut()>,
 }
 
 impl Space {
@@ -29,7 +28,6 @@ impl Space {
             next_obj_id: 0,
             capacity: capacity,
             containers: HashMap::new(),
-            on_full: Box::new(default_full_error),
         }
     }
 
@@ -67,18 +65,11 @@ impl Space {
         self
     }
 
-    /// Give your own function to call in case the Space is full when creating an object,
-    /// for example to show the player an error message on screen.
-    /// By default a message is printed into standard error.
-    pub fn with_custom_full_error<F: FnMut() + 'static>(mut self, f: F) -> Self {
-        self.on_full = Box::new(f);
-
-        self
-    }
-
     /// Reserves an object id for use and marks it as alive.
     /// Returns an ObjectBuilder struct that you can use to add Components.
     /// Note that the ObjectBuilder borrows the Space so it must be dropped before creating another.
+    /// # Panics
+    /// Panics if the Space is full.
     /// # Example
     /// ```
     /// let mut space = Space::with_capacity(100)
@@ -91,6 +82,12 @@ impl Space {
     ///    .with(Velocity { x: 1.0, y: 0.5 });
     /// ```
     pub fn create_object(&mut self) -> ObjectBuilder {
+        self.try_create_object()
+            .expect("Tried to add an object to a full space")
+    }
+
+    /// Like create_object, but returns None instead of panicking if the Space is full.
+    pub fn try_create_object(&mut self) -> Option<ObjectBuilder> {
         if self.next_obj_id < self.capacity {
             let id = self.next_obj_id;
             self.next_obj_id += 1;
@@ -99,26 +96,20 @@ impl Space {
             // find a dead object
             match (!&self.alive_objects).iter().nth(0) {
                 Some(id) if id < self.capacity as u32 => self.create_object_at(id as IdType),
-                _ => {
-                    (self.on_full)();
-                    ObjectBuilder {
-                        id: None,
-                        space: self,
-                    }
-                }
+                _ => None,
             }
         }
     }
 
-    fn create_object_at(&mut self, id: IdType) -> ObjectBuilder {
+    fn create_object_at(&mut self, id: IdType) -> Option<ObjectBuilder> {
         self.alive_objects.add(id as u32);
         self.enabled_objects.add(id as u32);
         self.generations[id] += 1;
 
-        ObjectBuilder {
-            id: Some(id),
+        Some(ObjectBuilder {
+            id: id,
             space: self,
-        }
+        })
     }
 
     /// Send a LifecycleEvent::Destroy to mark an object as dead. Does not actually destroy it, but
@@ -338,17 +329,13 @@ impl Space {
     }
 }
 
-fn default_full_error() {
-    eprintln!("Error: Attempted to create an object in a full Space");
-}
-
 /// Builder type to create game objects with a concise syntax.
 /// Note that this actually executes its operations immediately and does not have
 /// a finalizing method you need to call at the end.
 /// If the Space is full, the same syntax still works but nothing is created.
 /// In this case the Space's full error handler will be called instead.
 pub struct ObjectBuilder<'a> {
-    id: Option<IdType>,
+    id: IdType,
     space: &'a mut Space,
 }
 
@@ -356,32 +343,9 @@ impl ObjectBuilder<'_> {
     /// Add the given component to the Space and associate it with the object.
     /// See Space::create_object for a usage example.
     pub fn with<T: 'static>(self, component: T) -> Self {
-        match self.id {
-            Some(id) => self.space.create_component(id, component),
-            None => (),
-        }
+        self.space.create_component(self.id, component);
 
         self
-    }
-
-    /// Like `with`, but adds a storage to the Space first if one doesn't exist yet.
-    pub fn with_safe<T, S>(self, component: T) -> Self
-    where
-        T: 'static,
-        S: ComponentStorage<T> + CreateWithCapacity + 'static,
-    {
-        match self.id {
-            Some(id) => self.space.create_component_safe::<T, S>(id, component),
-            None => (),
-        }
-
-        self
-    }
-
-    /// Like `with_safe`, but adds a VecStorage specifically, so you don't
-    /// need to specify which storage type to use.
-    pub fn with_safe_default<T: 'static>(self, component: T) -> Self {
-        self.with_safe::<_, VecStorage<_>>(component)
     }
 
     /// Add the given EventListener to the Space and associate it with the object.
@@ -393,8 +357,29 @@ impl ObjectBuilder<'_> {
         self.with_safe::<_, VecStorage<_>>(EventListenerComponent { listener })
     }
 
+    /// Have the object initially disabled. You'll probably want some mechanism that
+    /// enables it later (an object pool, usually).
+    pub fn disable(self) -> Self {
+        self.space.actually_disable_object(self.id);
+
+        self
+    }
+
+    /// Like `with`, but adds a storage to the Space first if one doesn't exist yet.
+    /// Creating the containers explicitly before adding objects is strongly encouraged
+    /// (i.e. don't use this unless you have a good reason!).
+    pub fn with_safe<T, S>(self, component: T) -> Self
+    where
+        T: 'static,
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
+        self.space.create_component_safe::<T, S>(self.id, component);
+
+        self
+    }
+
     /// Get the id given to this object by the Space. This is rarely useful.
-    pub fn get_id(&self) -> Option<IdType> {
+    pub fn get_id(&self) -> IdType {
         self.id
     }
 }
