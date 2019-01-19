@@ -5,6 +5,7 @@ use graphics::{Context, Graphics};
 
 use super::Drawable;
 
+#[derive(Clone)]
 pub struct Shape {
     points: Vec<Vec2d<f64>>,
     color: Color,

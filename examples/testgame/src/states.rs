@@ -1,6 +1,6 @@
 use moleengine_core::game::GameState;
 use moleengine_ecs::event::*;
-use moleengine_ecs::space::{LifecycleEvent, Space};
+use moleengine_ecs::space::{LifecycleEvent, ObjectBuilder, ObjectRecipe, Space};
 use moleengine_ecs::storage::VecStorage;
 use moleengine_ecs::system::{Position, Velocity};
 use moleengine_visuals::Shape;
@@ -17,12 +17,13 @@ pub struct Data {
     test_counter: i32,
 }
 
+#[derive(Clone)]
 pub struct Rotation(f32);
-
+#[derive(Clone)]
 pub struct Printer;
-
+#[derive(Clone)]
 pub struct Placeholder;
-
+#[derive(Clone)]
 pub struct LifecycleListener;
 
 impl EventListener<LifecycleEvent> for LifecycleListener {
@@ -37,6 +38,7 @@ impl EventListener<LifecycleEvent> for LifecycleListener {
     }
 }
 
+#[derive(Clone)]
 pub struct TestChainEvent;
 
 impl SpaceEvent for TestChainEvent {
@@ -45,6 +47,7 @@ impl SpaceEvent for TestChainEvent {
     }
 }
 
+#[derive(Clone)]
 pub struct ChainEventListener;
 
 impl EventListener<TestChainEvent> for ChainEventListener {
@@ -63,26 +66,31 @@ impl Data {
             .with_container::<Printer, VecStorage<_>>()
             .with_container::<Placeholder, VecStorage<_>>();
 
-        space
-            .create_object()
-            .with(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
-            .with(Position { x: 0.0, y: 0.0 })
-            .with(Velocity { x: 1.0, y: 0.5 })
-            .with_listener(Box::new(ChainEventListener));
+        let mut thingy = ObjectRecipe::new();
+        thingy
+            .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
+            .add(Position { x: 0.0, y: 0.0 })
+            .add(Velocity { x: 1.0, y: 0.5 })
+            .add_listener(ChainEventListener);
 
-        let delete_this = space
-            .create_object()
-            .with_listener(Box::new(ChainEventListener))
-            .with(Position { x: 0.0, y: 0.0 })
-            .with(Velocity { x: 1.0, y: 0.5 })
-            .with_listener(Box::new(LifecycleListener))
-            .get_id();
+        thingy.apply(&mut space);
+        thingy.apply(&mut space);
+        thingy.start_disabled();
+        thingy.apply(&mut space);
 
+        let delete_this = ObjectRecipe::new()
+            .add_listener(ChainEventListener)
+            .add(Position { x: 0.0, y: 0.0 })
+            .add(Velocity { x: 1.0, y: 0.5 })
+            .add_listener(LifecycleListener)
+            .apply(&mut space);
+
+        println!("disabling delete_this");
         space.disable_object(delete_this);
 
         for i in 1..10 {
             let n = 0.1 * i as f32;
-            let o = space.try_create_object();
+            let o = ObjectBuilder::try_create(&mut space);
             if let Some(o) = o {
                 let id = o
                     .with(Shape::new_square(120.0 - 10.0 * i as f64, [n, n, n, n]))
@@ -102,7 +110,9 @@ impl Data {
             }
         }
 
+        println!("enabling delete_this");
         space.enable_object(delete_this);
+        println!("destroying delete_this");
         space.destroy_object(delete_this);
 
         Data {

@@ -66,50 +66,66 @@ impl Space {
     }
 
     /// Reserves an object id for use and marks it as alive.
-    /// Returns an ObjectBuilder struct that you can use to add Components.
-    /// Note that the ObjectBuilder borrows the Space so it must be dropped before creating another.
     /// # Panics
     /// Panics if the Space is full.
-    /// # Example
-    /// ```
-    /// let mut space = Space::with_capacity(100)
-    ///    .with_component::<Position, VecStorage<_>>()
-    ///    .with_component::<Velocity, VecStorage<_>>();
-    ///
-    /// space
-    ///    .create_object()
-    ///    .with(Position { x: 0.0, y: 0.0 })
-    ///    .with(Velocity { x: 1.0, y: 0.5 });
-    /// ```
-    pub fn create_object(&mut self) -> ObjectBuilder {
+    pub(self) fn create_object(&mut self) -> IdType {
         self.try_create_object()
             .expect("Tried to add an object to a full space")
     }
 
     /// Like create_object, but returns None instead of panicking if the Space is full.
-    pub fn try_create_object(&mut self) -> Option<ObjectBuilder> {
+    pub(self) fn try_create_object(&mut self) -> Option<IdType> {
         if self.next_obj_id < self.capacity {
             let id = self.next_obj_id;
             self.next_obj_id += 1;
-            self.create_object_at(id)
+            self.create_object_at(id);
+            Some(id)
         } else {
             // find a dead object
             match (!&self.alive_objects).iter().nth(0) {
-                Some(id) if id < self.capacity as u32 => self.create_object_at(id as IdType),
+                Some(id) if id < self.capacity as u32 => {
+                    self.create_object_at(id as IdType);
+                    Some(id as IdType)
+                }
                 _ => None,
             }
         }
     }
 
-    fn create_object_at(&mut self, id: IdType) -> Option<ObjectBuilder> {
+    /// Create a component for an object. The component can be of any type,
+    /// but there has to be a ComponentContainer for it in this Space.
+    /// # Panics
+    /// Panics if there is no ComponentContainer for this type in this Space.
+    pub(self) fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
+        let gen = self.generations[id];
+        let container = self
+            .try_open_container_mut::<T>()
+            .expect("Attempted to create a component that doesn't have a container");
+        container.insert(id, gen, comp);
+    }
+
+    /// Create a component for an object. If there is no container for it, create one of type S.
+    pub(self) fn create_component_safe<T, S>(&mut self, id: IdType, comp: T)
+    where
+        T: 'static,
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
+        let gen = self.generations[id];
+        match self.try_open_container_mut::<T>() {
+            Some(cont) => cont.insert(id, gen, comp),
+            None => {
+                self.create_container::<T, S>();
+                self.try_open_container_mut::<T>()
+                    .unwrap()
+                    .insert(id, gen, comp);
+            }
+        }
+    }
+
+    fn create_object_at(&mut self, id: IdType) {
         self.alive_objects.add(id as u32);
         self.enabled_objects.add(id as u32);
         self.generations[id] += 1;
-
-        Some(ObjectBuilder {
-            id: id,
-            space: self,
-        })
     }
 
     /// Send a LifecycleEvent::Destroy to mark an object as dead. Does not actually destroy it, but
@@ -268,36 +284,6 @@ impl Space {
         self.generations[id]
     }
 
-    /// Create a component for an object. The component can be of any type,
-    /// but there has to be a ComponentContainer for it in this Space.
-    /// # Panics
-    /// Panics if there is no ComponentContainer for this type in this Space.
-    pub(crate) fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
-        let gen = self.generations[id];
-        let container = self
-            .try_open_container_mut::<T>()
-            .expect("Attempted to create a component that doesn't have a container");
-        container.insert(id, gen, comp);
-    }
-
-    /// Create a component for an object. If there is no container for it, create one of type S.
-    pub(crate) fn create_component_safe<T, S>(&mut self, id: IdType, comp: T)
-    where
-        T: 'static,
-        S: ComponentStorage<T> + CreateWithCapacity + 'static,
-    {
-        let gen = self.generations[id];
-        match self.try_open_container_mut::<T>() {
-            Some(cont) => cont.insert(id, gen, comp),
-            None => {
-                self.create_container::<T, S>();
-                self.try_open_container_mut::<T>()
-                    .unwrap()
-                    .insert(id, gen, comp);
-            }
-        }
-    }
-
     /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
     pub(crate) fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
         Self::get_container::<T>(&self.containers)
@@ -329,17 +315,154 @@ impl Space {
     }
 }
 
-/// Builder type to create game objects with a concise syntax.
+/// A reusable builder type that creates objects in a Space with a given set of components.
+/// Because this is reusable, all component types used must implement Clone.
+/// To create an object from a recipe, call create() or try_create().
+/// # Example
+/// ```
+/// let mut space = Space::with_capacity(100)
+///     .with_component::<Position, VecStorage<_>>()
+///     .with_component::<Shape, VecStorage<_>>();
+///
+/// let mut recipe = ObjectRecipe::new()
+/// recipe
+///     .add(Position{x: 1.0, y: 2.0})
+///     .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]));
+///
+/// recipe.create(&mut space);
+/// recipe.create(&mut space);
+/// ```
+pub struct ObjectRecipe {
+    steps: Vec<Box<Fn(&mut Space, IdType)>>,
+}
+
+impl ObjectRecipe {
+    pub fn new() -> Self {
+        ObjectRecipe { steps: Vec::new() }
+    }
+
+    /// Add the given component to the recipe.
+    pub fn add<T: Clone + 'static>(&mut self, component: T) -> &mut Self {
+        self.steps
+            .push(Box::new(move |space: &mut Space, id: IdType| {
+                space.create_component(id, component.clone())
+            }));
+
+        self
+    }
+
+    /// Add the given EventListener to the recipe.
+    /// Internally these are stored as components.
+    pub fn add_listener<E, L>(&mut self, listener: L) -> &mut Self
+    where
+        E: SpaceEvent + 'static,
+        L: EventListener<E> + Clone + 'static,
+    {
+        self.steps
+            .push(Box::new(move |space: &mut Space, id: IdType| {
+                space.create_component_safe::<_, VecStorage<_>>(
+                    id,
+                    EventListenerComponent {
+                        listener: Box::new(listener.clone()),
+                    },
+                );
+            }));
+
+        self
+    }
+
+    /// Have the object initially disabled. You'll probably want some mechanism that
+    /// enables it later (an object pool, usually).
+    pub fn start_disabled(&mut self) -> &mut Self {
+        self.steps
+            .push(Box::new(move |space: &mut Space, id: IdType| {
+                space.actually_disable_object(id);
+            }));
+
+        self
+    }
+
+    /// Like `add`, but adds a storage to the Space first if one doesn't exist yet.
+    /// Creating the containers explicitly before adding objects is strongly encouraged
+    /// (i.e. don't use this unless you have a good reason!).
+    pub fn add_safe<T, S>(&mut self, component: T) -> &mut Self
+    where
+        T: Clone + 'static,
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
+        self.steps
+            .push(Box::new(move |space: &mut Space, id: IdType| {
+                space.create_component_safe::<T, S>(id, component.clone());
+            }));
+
+        self
+    }
+
+    /// Use this recipe to create an object in a Space.
+    /// Returns the id of the object created.
+    /// # Panics
+    /// Panics if there is no room left in the Space.
+    pub fn apply(&self, space: &mut Space) -> IdType {
+        let id = space.create_object();
+        for step in &self.steps {
+            step(space, id);
+        }
+        id
+    }
+
+    /// Like `create`, but returns None instead of panicking if the Space is full.
+    pub fn try_apply(&self, space: &mut Space) -> Option<IdType> {
+        let id = space.try_create_object();
+        match id {
+            Some(id) => {
+                for step in &self.steps {
+                    step(space, id);
+                }
+            }
+            None => {}
+        }
+        id
+    }
+}
+
+/// Builder type to create a one-shot object without the Clone requirement of ObjectRecipe.
+/// `with` methods are analogous to ObjectRecipe's `add` methods.
 /// Note that this actually executes its operations immediately and does not have
 /// a finalizing method you need to call at the end.
-/// If the Space is full, the same syntax still works but nothing is created.
-/// In this case the Space's full error handler will be called instead.
+/// This carries a mutable reference to the Space so it needs to be dropped before using the Space again.
+/// # Example
+/// ```
+/// let mut space = Space::with_capacity(100)
+///    .with_component::<Position, VecStorage<_>>()
+///    .with_component::<Shape, VecStorage<_>>();
+///
+/// ObjectBuilder::create(&mut space)
+///    .with(Position { x: 0.0, y: 0.0 })
+///    .with(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]));
+/// ```
 pub struct ObjectBuilder<'a> {
     id: IdType,
     space: &'a mut Space,
 }
 
-impl ObjectBuilder<'_> {
+impl<'a> ObjectBuilder<'a> {
+    /// Create a new object in the given Space and attach a Builder to it.
+    /// # Panics
+    /// Panics if there is no room left in the Space.
+    pub fn create(space: &'a mut Space) -> Self {
+        ObjectBuilder {
+            id: space.create_object(),
+            space: space,
+        }
+    }
+
+    /// Like `create` but returns None instead of panicking if the Space is full.
+    pub fn try_create(space: &'a mut Space) -> Option<Self> {
+        space
+            .try_create_object()
+            .map(move |id| ObjectBuilder { id, space })
+    }
+
     /// Add the given component to the Space and associate it with the object.
     /// See Space::create_object for a usage example.
     pub fn with<T: 'static>(self, component: T) -> Self {
@@ -359,7 +482,7 @@ impl ObjectBuilder<'_> {
 
     /// Have the object initially disabled. You'll probably want some mechanism that
     /// enables it later (an object pool, usually).
-    pub fn disable(self) -> Self {
+    pub fn start_disabled(self) -> Self {
         self.space.actually_disable_object(self.id);
 
         self

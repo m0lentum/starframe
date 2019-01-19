@@ -43,10 +43,12 @@ pub trait ComponentFilter<'a>: Sized {
 
 // test
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Position {
     pub x: f32,
     pub y: f32,
 }
+#[derive(Clone)]
 pub struct Velocity {
     pub x: f32,
     pub y: f32,
