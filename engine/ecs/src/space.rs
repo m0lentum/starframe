@@ -318,6 +318,7 @@ impl Space {
 /// A reusable builder type that creates objects in a Space with a given set of components.
 /// Because this is reusable, all component types used must implement Clone.
 /// To create an object from a recipe, call create() or try_create().
+/// Recipes can also be cloned, so it's easy to create multiple different variants of one thing.
 /// # Example
 /// ```
 /// let mut space = Space::with_capacity(100)
@@ -333,7 +334,37 @@ impl Space {
 /// recipe.create(&mut space);
 /// ```
 pub struct ObjectRecipe {
-    steps: Vec<Box<Fn(&mut Space, IdType)>>,
+    steps: Vec<Box<dyn ClonableStep>>,
+}
+
+impl Clone for ObjectRecipe {
+    fn clone(&self) -> Self {
+        let mut cloned_steps = Vec::with_capacity(self.steps.len());
+        for step in &self.steps {
+            cloned_steps.push(step.clone_step());
+        }
+        ObjectRecipe {
+            steps: cloned_steps,
+        }
+    }
+}
+
+trait ClonableStep {
+    fn clone_step(&self) -> Box<dyn ClonableStep>;
+    fn call(&self, space: &mut Space, id: IdType);
+}
+
+impl<T> ClonableStep for T
+where
+    T: Fn(&mut Space, IdType) + Clone + 'static,
+{
+    fn clone_step(&self) -> Box<dyn ClonableStep> {
+        Box::new(self.clone())
+    }
+
+    fn call(&self, space: &mut Space, id: IdType) {
+        self(space, id);
+    }
 }
 
 impl ObjectRecipe {
@@ -366,6 +397,32 @@ impl ObjectRecipe {
                         listener: Box::new(listener.clone()),
                     },
                 );
+            }));
+
+        self
+    }
+
+    /// Modify a component that already exists in this recipe using a clonable closure.
+    /// # Example
+    /// ```
+    /// let mut thingy = ObjectRecipe::new();
+    /// thingy
+    ///     .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
+    ///     .add(Position { x: 0.0, y: 0.0 });
+    ///
+    /// thingy.apply(&mut space);
+    /// let offset = -5.0;
+    /// thingy.modify(move |pos: &mut Position| pos.x = offset);
+    /// thingy.apply(&mut space);
+    /// ```
+    pub fn modify<T, F>(&mut self, f: F) -> &mut Self 
+    where
+        T: 'static,
+        F: Fn(&mut T) + Clone + 'static
+    {
+        self.steps
+            .push(Box::new(move |space: &mut Space, id: IdType| {
+                space.do_with_component_mut(id, f.clone());
             }));
 
         self
@@ -405,7 +462,7 @@ impl ObjectRecipe {
     pub fn apply(&self, space: &mut Space) -> IdType {
         let id = space.create_object();
         for step in &self.steps {
-            step(space, id);
+            step.call(space, id);
         }
         id
     }
@@ -416,7 +473,7 @@ impl ObjectRecipe {
         match id {
             Some(id) => {
                 for step in &self.steps {
-                    step(space, id);
+                    step.call(space, id);
                 }
             }
             None => {}

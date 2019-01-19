@@ -74,6 +74,8 @@ impl Data {
             .add_listener(ChainEventListener);
 
         thingy.apply(&mut space);
+        let offset = -5.0;
+        thingy.modify(move |pos: &mut Position| pos.x = offset);
         thingy.apply(&mut space);
         thingy.start_disabled();
         thingy.apply(&mut space);
