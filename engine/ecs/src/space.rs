@@ -1,12 +1,11 @@
 use crate::componentcontainer::ComponentContainer;
 use crate::event::*;
 use crate::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
-use crate::system::{ComponentFilter, System};
+use crate::system::{ComponentFilter, StatefulSystem, System};
 use crate::IdType;
 
+use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};
-use std::any::{Any, TypeId};
-use std::collections::HashMap;
 
 /// An Entity-Component-System environment.
 pub struct Space {
@@ -15,7 +14,8 @@ pub struct Space {
     generations: Vec<u8>,
     next_obj_id: IdType,
     capacity: IdType,
-    containers: HashMap<TypeId, Box<dyn Any>>,
+    containers: AnyMap,
+    global_data: AnyMap,
 }
 
 impl Space {
@@ -27,40 +27,38 @@ impl Space {
             generations: vec![0; capacity],
             next_obj_id: 0,
             capacity: capacity,
-            containers: HashMap::new(),
+            containers: AnyMap::new(),
+            global_data: AnyMap::new(),
         }
     }
 
     /// Add a component container to a space. The first type parameter determines the
     /// type of the component and the second the type of storage to hold it.
+    /// This returns &mut Self, so it can be chained like a builder.
     /// # Example
     /// ```
     /// let mut space = Space::with_capacity(100);
-    /// space.create_container::<Position, VecStorage<_>>();
+    /// space.add_container::<Position, VecStorage<_>>();
     /// ```
-    pub fn create_container<T, S>(&mut self)
+    pub fn add_container<T, S>(&mut self) -> &mut Self
     where
         T: 'static,
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
     {
-        self.containers.insert(
-            TypeId::of::<T>(),
-            Box::new(ComponentContainer::new::<S>(self.capacity)),
-        );
+        self.containers
+            .insert(ComponentContainer::new::<S>(self.capacity));
+
+        self
     }
 
-    /// Add a component container to a space in a Builder-like fashion.
-    /// Otherwise, works exactly like Space::create_container.
-    /// See Space::create_object for a usage example.
-    pub fn with_container<T, S>(mut self) -> Self
-    where
-        T: 'static,
-        S: ComponentStorage<T> + CreateWithCapacity + 'static,
-    {
-        self.containers.insert(
-            TypeId::of::<T>(),
-            Box::new(ComponentContainer::new::<S>(self.capacity)),
-        );
+    /// Store the initial state of a stateful system in this space.
+    /// This must be done before attempting to run such a system.
+    /// This returns &mut Self, so it can be chained like a builder.
+    pub fn init_stateful_system<'a, S: StatefulSystem<'a> + 'static>(
+        &mut self,
+        system: S,
+    ) -> &mut Self {
+        self.global_data.insert(system);
 
         self
     }
@@ -114,7 +112,7 @@ impl Space {
         match self.try_open_container_mut::<T>() {
             Some(cont) => cont.insert(id, gen, comp),
             None => {
-                self.create_container::<T, S>();
+                self.add_container::<T, S>();
                 self.try_open_container_mut::<T>()
                     .unwrap()
                     .insert(id, gen, comp);
@@ -211,25 +209,54 @@ impl Space {
     /// Run a single System on all objects with containers that match the System's types.
     /// For more information see the moleengine_ecs_codegen crate.
     /// # Panics
-    /// Panics if the System being run requires a Component that doesn't exist in this Space.
+    /// Panics if the System being run requires a component that doesn't have a container in this Space.
     pub fn run_system<'a, S: System<'a>>(&mut self) {
-        self.run_system_internal::<S>()
+        self.actually_run_system::<S>()
             .expect("Attempted to run a System without all Components present")
             .run_all(self);
     }
 
     /// Like run_system, but returns None instead of panicking if a required component is missing.
     pub fn try_run_system<'a, S: System<'a>>(&mut self) -> Option<()> {
-        self.run_system_internal::<S>().map(|mut evts| {
+        self.actually_run_system::<S>().map(|mut evts| {
             evts.run_all(self);
             ()
         })
     }
 
     /// Actually runs a system, giving it a queue to put events in if it wants to.
-    pub(crate) fn run_system_internal<'a, S: System<'a>>(&self) -> Option<EventQueue> {
+    fn actually_run_system<'a, S: System<'a>>(&self) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
         let result = S::Filter::run_filter(self, |cs| S::run_system(cs, self, &mut queue));
+        result.map(|()| queue)
+    }
+
+    /// Run a StatefulSystem. These are like Systems but can store information between updates.
+    /// # Panics
+    /// Panics if the StatefulSystem being run has not been initialized or requires a component
+    /// that doesn't have a container in the Space.
+    pub fn run_stateful_system<'a, S: StatefulSystem<'a> + 'static>(&mut self) {
+        let system = self
+            .global_data
+            .get_mut::<S>()
+            .expect("Attempted to run an uninitialized StatefulSystem");
+
+        // without this the Space is mutably borrowed by system
+        // it is safe because the StatefulSystem has no way to access itself through the
+        // immutable reference to the Space that it receives
+        let system_detached = unsafe { (system as *mut S).as_mut().unwrap() };
+
+        self.actually_run_stateful(system_detached)
+            .expect("Attempted to run a StatefulSystem without all Components present")
+            .run_all(self);
+    }
+
+    fn actually_run_stateful<'a, S: StatefulSystem<'a>>(
+        &self,
+        system: &mut S,
+    ) -> Option<EventQueue> {
+        let mut queue = EventQueue::new();
+        let result = S::Filter::run_filter(self, |cs| system.run_system(cs, self, &mut queue));
         result.map(|()| queue)
     }
 
@@ -286,32 +313,14 @@ impl Space {
 
     /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
     pub(crate) fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
-        Self::get_container::<T>(&self.containers)
+        self.containers.get::<ComponentContainer<T>>()
     }
 
     /// Get mutable access to a single ComponentContainer if it exists in this Space, otherwise return None.
     pub(crate) fn try_open_container_mut<T: 'static>(
         &mut self,
     ) -> Option<&mut ComponentContainer<T>> {
-        Self::get_container_mut::<T>(&mut self.containers)
-    }
-
-    /// Used internally to get a type-safe reference to a container.
-    /// Panics if the container has not been created.
-    fn get_container<T: 'static>(
-        containers: &HashMap<TypeId, Box<dyn Any>>,
-    ) -> Option<&ComponentContainer<T>> {
-        let raw = containers.get(&TypeId::of::<T>())?;
-        raw.downcast_ref::<ComponentContainer<T>>()
-    }
-
-    /// Used internally to get a type-safe mutable reference to a container.
-    /// Panics if the container has not been created.
-    fn get_container_mut<T: 'static>(
-        containers: &mut HashMap<TypeId, Box<dyn Any>>,
-    ) -> Option<&mut ComponentContainer<T>> {
-        let raw = containers.get_mut(&TypeId::of::<T>())?;
-        raw.downcast_mut::<ComponentContainer<T>>()
+        self.containers.get_mut::<ComponentContainer<T>>()
     }
 }
 
@@ -415,10 +424,10 @@ impl ObjectRecipe {
     /// thingy.modify(move |pos: &mut Position| pos.x = offset);
     /// thingy.apply(&mut space);
     /// ```
-    pub fn modify<T, F>(&mut self, f: F) -> &mut Self 
+    pub fn modify<T, F>(&mut self, f: F) -> &mut Self
     where
         T: 'static,
-        F: Fn(&mut T) + Clone + 'static
+        F: Fn(&mut T) + Clone + 'static,
     {
         self.steps
             .push(Box::new(move |space: &mut Space, id: IdType| {

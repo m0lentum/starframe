@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 moleengine_ecs_codegen = { path = "../ecs_codegen" }
 hibitset = "0.5.1"
+anymap = "0.12.1"

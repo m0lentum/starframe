@@ -2,7 +2,7 @@ use moleengine_core::game::GameState;
 use moleengine_ecs::event::*;
 use moleengine_ecs::space::{LifecycleEvent, ObjectBuilder, ObjectRecipe, Space};
 use moleengine_ecs::storage::VecStorage;
-use moleengine_ecs::system::{Position, Velocity};
+use moleengine_ecs::system::{Mover, Position, Velocity};
 use moleengine_visuals::Shape;
 
 use graphics::{clear, Transformed};
@@ -58,13 +58,15 @@ impl EventListener<TestChainEvent> for ChainEventListener {
 
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
-        let mut space = Space::with_capacity(10)
-            .with_container::<Shape, VecStorage<_>>()
-            .with_container::<Position, VecStorage<_>>()
-            .with_container::<Velocity, VecStorage<_>>()
-            .with_container::<Rotation, VecStorage<_>>()
-            .with_container::<Printer, VecStorage<_>>()
-            .with_container::<Placeholder, VecStorage<_>>();
+        let mut space = Space::with_capacity(10);
+        space
+            .add_container::<Shape, VecStorage<_>>()
+            .add_container::<Position, VecStorage<_>>()
+            .add_container::<Velocity, VecStorage<_>>()
+            .add_container::<Rotation, VecStorage<_>>()
+            .add_container::<Printer, VecStorage<_>>()
+            .add_container::<Placeholder, VecStorage<_>>()
+            .init_stateful_system(Mover::new());
 
         let mut thingy = ObjectRecipe::new();
         thingy
@@ -143,8 +145,7 @@ impl Playing {
     fn update(&mut self, data: &mut Data, _args: &UpdateArgs) {
         data.test_counter = data.test_counter + 1;
 
-        data.test_space
-            .run_system::<moleengine_ecs::system::Mover>();
+        data.test_space.run_stateful_system::<Mover>();
     }
 }
 

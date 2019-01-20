@@ -25,6 +25,14 @@ impl<'a, S: SimpleSystem<'a>> System<'a> for S {
     }
 }
 
+/// A system that can store data within itself. This is only necessary in the unusual case that
+/// the system needs some information to persist between updates.
+/// These need to be initialized in a Space before using them.
+pub trait StatefulSystem<'a> {
+    type Filter: ComponentFilter<'a>;
+    fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue);
+}
+
 /// A set of Components that knows how to extract itself from a Space.
 /// These do not need to be implemented by hand - there is a derive macro available
 /// in the moleengine_ecs_codegen crate.
@@ -42,8 +50,7 @@ pub trait ComponentFilter<'a>: Sized {
 }
 
 // test
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Position {
     pub x: f32,
     pub y: f32,
@@ -62,10 +69,17 @@ pub struct PosVel<'a> {
     velocity: &'a Velocity,
 }
 
-pub struct Mover;
-impl<'a> SimpleSystem<'a> for Mover {
+pub struct Mover {
+    counter: u32,
+}
+impl Mover {
+    pub fn new() -> Self {
+        Mover { counter: 0 }
+    }
+}
+impl<'a> StatefulSystem<'a> for Mover {
     type Filter = PosVel<'a>;
-    fn run_system(items: &mut [Self::Filter]) {
+    fn run_system(&mut self, items: &mut [Self::Filter], _space: &Space, _queue: &mut EventQueue) {
         for item in items {
             if !item.is_enabled {
                 println!("Found disabled object!");
@@ -75,5 +89,8 @@ impl<'a> SimpleSystem<'a> for Mover {
             item.position.y += item.velocity.y;
             println!("Position is {}, {}", item.position.x, item.position.y);
         }
+
+        self.counter += 1;
+        println!("Counter is {}", self.counter);
     }
 }
