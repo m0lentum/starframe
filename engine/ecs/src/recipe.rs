@@ -3,6 +3,9 @@ use crate::space::Space;
 use crate::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
 use crate::IdType;
 
+use std::collections::HashMap;
+use std::str::FromStr;
+
 /// A reusable builder type that creates objects in a Space with a given set of components.
 /// Because this is reusable, all component types used must implement Clone.
 /// To create an object from a recipe, call create() or try_create().
@@ -25,24 +28,13 @@ pub struct ObjectRecipe {
     steps: Vec<Box<dyn ClonableStep>>,
     vars: VarMap,
     default_vars: VarMap,
+    parsers: HashMap<String, fn(&str, &mut VarMap)>,
 }
 
 type VarMap = anymap::Map<anymap::any::CloneAny>;
 
-impl Clone for ObjectRecipe {
-    fn clone(&self) -> Self {
-        let mut cloned_steps = Vec::with_capacity(self.steps.len());
-        for step in &self.steps {
-            cloned_steps.push(step.clone_step());
-        }
-        ObjectRecipe {
-            steps: cloned_steps,
-            vars: self.vars.clone(),
-            default_vars: self.default_vars.clone(),
-        }
-    }
-}
-
+/// Wrapper trait for a Fn(&mut Space, IdType, &VarMap) + Clone + 'static
+/// that can be used as a trait object.
 trait ClonableStep {
     fn clone_step(&self) -> Box<dyn ClonableStep>;
     fn call(&self, space: &mut Space, id: IdType, vars: &VarMap);
@@ -61,12 +53,28 @@ where
     }
 }
 
+impl Clone for ObjectRecipe {
+    fn clone(&self) -> Self {
+        let mut cloned_steps = Vec::with_capacity(self.steps.len());
+        for step in &self.steps {
+            cloned_steps.push(step.clone_step());
+        }
+        ObjectRecipe {
+            steps: cloned_steps,
+            vars: self.vars.clone(),
+            default_vars: self.default_vars.clone(),
+            parsers: self.parsers.clone(),
+        }
+    }
+}
+
 impl ObjectRecipe {
     pub fn new() -> Self {
         ObjectRecipe {
             steps: Vec::new(),
             vars: VarMap::new(),
             default_vars: VarMap::new(),
+            parsers: HashMap::new(),
         }
     }
 
@@ -105,6 +113,7 @@ impl ObjectRecipe {
     /// Add a component that is allowed to be modified to the recipe.
     /// If no default value is provided, the variable must be set elsewhere
     /// with `set_variable` before creating objects with the recipe.
+    /// If you want to be able to parse the variable from a string, use `add_variable_named` instead.
     /// # Example
     /// ```
     /// let mut thingy = ObjectRecipe::new();
@@ -134,6 +143,44 @@ impl ObjectRecipe {
             }));
 
         self
+    }
+
+    /// Like `add_variable`, but with the additional restriction of T: FromStr.
+    /// A variable created with this can have its value parsed from a string.
+    pub fn add_named_variable<T>(&mut self, name: &str, default: Option<T>) -> &mut Self
+    where
+        T: FromStr + Clone + 'static,
+        <T as FromStr>::Err: std::fmt::Debug,
+    {
+        self.add_variable(default);
+
+        self.parsers
+            .insert(name.to_string(), Self::do_parse_var::<T>);
+
+        self
+    }
+
+    fn do_parse_var<T>(src: &str, vars: &mut VarMap)
+    where
+        T: FromStr + Clone + 'static,
+        <T as FromStr>::Err: std::fmt::Debug,
+    {
+        let item = src.parse::<T>();
+        match item {
+            Ok(item) => {
+                vars.insert(Some(item));
+            }
+            Err(err) => panic!("Error parsing recipe variable: {:?}", err),
+        }
+    }
+
+    /// Parse a variable from a string and apply it to this recipe.
+    pub(self) fn parse_variable(&mut self, name: &str, value: &str) {
+        let parser = self
+            .parsers
+            .get(name)
+            .expect(format!("Recipe variable does not exist: {}", name).as_str());
+        parser(value, &mut self.vars);
     }
 
     /// Set the value of a variable in the recipe.
@@ -218,4 +265,82 @@ impl ObjectRecipe {
         }
         id
     }
+}
+
+/// A (String, ObjectRecipe) map. The strings identify recipes when
+/// parsing the MoleEngineSpace (MES) format.
+pub struct RecipeBook {
+    recipes: HashMap<String, ObjectRecipe>,
+}
+
+impl RecipeBook {
+    /// Create an empty RecipeBook.
+    pub fn new() -> Self {
+        RecipeBook {
+            recipes: HashMap::new(),
+        }
+    }
+
+    /// Add a recipe with the given identifier to the book.
+    pub fn add(&mut self, key: &str, recipe: ObjectRecipe) {
+        self.recipes.insert(key.to_string(), recipe);
+    }
+
+    /// Get an immutable reference to a recipe in the book.
+    pub fn get(&self, key: &str) -> Option<&ObjectRecipe> {
+        self.recipes.get(key)
+    }
+
+    /// Get a mutable reference to a recipe in the book.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut ObjectRecipe> {
+        self.recipes.get_mut(key)
+    }
+}
+
+use pest::iterators::Pair;
+use pest::Parser;
+
+#[derive(Parser)]
+#[grammar = "space.pest"]
+struct SpaceParser;
+
+/// Parse a string in the plaintext MoleEngineSpace (MES) format into the given Space
+/// using the given RecipeBook to identify recipes.
+/// This format should be documented here at a later date.
+pub fn parse_into_space(src: &str, space: &mut Space, recipes: &mut RecipeBook) {
+    let everything = SpaceParser::parse(Rule::everything, src)
+        .expect("Parsing failed")
+        .next()
+        .unwrap();
+
+    for object in everything.into_inner() {
+        match object.as_rule() {
+            Rule::object => eval_object(object, space, recipes),
+            Rule::EOI => (),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn eval_object(object: Pair<Rule>, space: &mut Space, recipes: &mut RecipeBook) {
+    let mut pairs = object.into_inner();
+    let ident = pairs.next().unwrap();
+    let recipe = recipes
+        .get_mut(ident.as_str())
+        .expect("Unknown recipe identifier");
+
+    for var in pairs {
+        eval_var(var, recipe);
+    }
+
+    recipe.apply(space);
+    recipe.reset_variables();
+}
+
+fn eval_var(var: Pair<Rule>, recipe: &mut ObjectRecipe) {
+    let mut pairs = var.into_inner();
+    let ident = pairs.next().unwrap();
+    let value = pairs.next().unwrap();
+
+    recipe.parse_variable(ident.as_str(), value.as_str());
 }

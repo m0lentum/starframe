@@ -8,7 +8,7 @@ pub(crate) type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<dyn ComponentStorage
 
 /// A generic container for components that keeps track of users.
 /// Space handles all the updates for you - none of this should be directly accessed by the user.
-pub(crate) struct ComponentContainer<T: 'static> {
+pub struct ComponentContainer<T: 'static> {
     users: BitSet,
     generations: Vec<u8>,
     storage: RwLock<Box<dyn ComponentStorage<T>>>,

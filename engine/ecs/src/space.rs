@@ -299,27 +299,32 @@ impl Space {
         queue.run_all(self);
     }
 
-    pub(crate) fn get_alive(&self) -> &BitSet {
+    /// Get a reference to the bitset of alive objects in this space.
+    /// Used by the ComponentFilter derive macro.
+    pub fn get_alive(&self) -> &BitSet {
         &self.alive_objects
     }
 
-    pub(crate) fn get_enabled(&self) -> &BitSet {
+    /// Get a reference to the bitset of enabled objects in this space.
+    /// Used by the ComponentFilter derive macro.
+    pub fn get_enabled(&self) -> &BitSet {
         &self.enabled_objects
     }
 
-    pub(crate) fn get_gen(&self, id: IdType) -> u8 {
+    /// Get the generation value of a given object.
+    /// Used by the ComponentFilter derive macro.
+    pub fn get_gen(&self, id: IdType) -> u8 {
         self.generations[id]
     }
 
     /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
-    pub(crate) fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
+    /// Used by the ComponentFilter derive macro.
+    pub fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
         self.containers.get::<ComponentContainer<T>>()
     }
 
     /// Get mutable access to a single ComponentContainer if it exists in this Space, otherwise return None.
-    pub(crate) fn try_open_container_mut<T: 'static>(
-        &mut self,
-    ) -> Option<&mut ComponentContainer<T>> {
+    fn try_open_container_mut<T: 'static>(&mut self) -> Option<&mut ComponentContainer<T>> {
         self.containers.get_mut::<ComponentContainer<T>>()
     }
 }

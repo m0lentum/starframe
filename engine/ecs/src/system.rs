@@ -1,6 +1,7 @@
-use crate::event::EventQueue;
-use crate::space::Space;
+pub use crate::event::EventQueue;
+pub use crate::space::Space;
 pub use crate::IdType;
+pub use hibitset;
 pub use moleengine_ecs_codegen::*;
 
 /// A System can perform arbitrary operations on game objects with desired associated Components,
@@ -47,50 +48,4 @@ pub trait StatefulSystem<'a> {
 /// ```
 pub trait ComponentFilter<'a>: Sized {
     fn run_filter(space: &Space, f: impl FnMut(&mut [Self])) -> Option<()>;
-}
-
-// test
-#[derive(Debug, Clone)]
-pub struct Position {
-    pub x: f32,
-    pub y: f32,
-}
-#[derive(Clone)]
-pub struct Velocity {
-    pub x: f32,
-    pub y: f32,
-}
-
-#[derive(ComponentFilter)]
-pub struct PosVel<'a> {
-    #[enabled]
-    is_enabled: bool,
-    position: &'a mut Position,
-    velocity: &'a Velocity,
-}
-
-pub struct Mover {
-    counter: u32,
-}
-impl Mover {
-    pub fn new() -> Self {
-        Mover { counter: 0 }
-    }
-}
-impl<'a> StatefulSystem<'a> for Mover {
-    type Filter = PosVel<'a>;
-    fn run_system(&mut self, items: &mut [Self::Filter], _space: &Space, _queue: &mut EventQueue) {
-        for item in items {
-            if !item.is_enabled {
-                println!("Found disabled object!");
-                continue;
-            }
-            item.position.x += item.velocity.x;
-            item.position.y += item.velocity.y;
-            println!("Position is {}, {}", item.position.x, item.position.y);
-        }
-
-        self.counter += 1;
-        println!("Counter is {}", self.counter);
-    }
 }

@@ -6,6 +6,9 @@ pub mod storage;
 pub mod system;
 
 extern crate anymap;
-extern crate hibitset;
+pub extern crate hibitset;
+extern crate pest;
+#[macro_use]
+extern crate pest_derive;
 
 pub type IdType = usize;

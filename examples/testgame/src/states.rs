@@ -1,9 +1,9 @@
+use crate::test_system::{Mover, Position, Velocity};
 use moleengine_core::game::GameState;
 use moleengine_ecs::event::*;
-use moleengine_ecs::recipe::ObjectRecipe;
+use moleengine_ecs::recipe::{ObjectRecipe, RecipeBook};
 use moleengine_ecs::space::{LifecycleEvent, ObjectBuilder, Space};
 use moleengine_ecs::storage::VecStorage;
-use moleengine_ecs::system::{Mover, Position, Velocity};
 use moleengine_visuals::Shape;
 
 use graphics::{clear, Transformed};
@@ -69,12 +69,37 @@ impl Data {
             .add_container::<Placeholder, VecStorage<_>>()
             .init_stateful_system(Mover::new());
 
+        let mut recipes = RecipeBook::new();
+
         let mut thingy = ObjectRecipe::new();
         thingy
             .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
-            .add_variable(Some(Position { x: 0.0, y: 0.0 }))
-            .add_variable(None::<Velocity>)
+            .add_named_variable("pos", Some(Position { x: 0.0, y: 0.0 }))
+            .add_named_variable("vel", None::<Velocity>)
             .add_listener(ChainEventListener);
+
+        recipes.add("thingy", thingy.clone());
+
+        let mut other_thingy = ObjectRecipe::new();
+        other_thingy
+            .add_listener(ChainEventListener)
+            .add_named_variable("P", Some(Position { x: 0.0, y: 0.0 }))
+            .add(Velocity { x: 1.0, y: 0.5 })
+            .add_listener(LifecycleListener);
+
+        recipes.add("other", other_thingy);
+
+        moleengine_ecs::recipe::parse_into_space(
+            "thingy|pos=12,0|vel=-1,1
+            other
+            thingy|vel=2,0.5
+            other|P=0,50.879564",
+            &mut space,
+            &mut recipes,
+        );
+
+        /*
+        A bunch of currently unuseful stuff I don't want to delete yet
 
         // this causes a panic because there's no Velocity
         //thingy.apply(&mut space);
@@ -123,6 +148,8 @@ impl Data {
         space.enable_object(delete_this);
         println!("destroying delete_this");
         space.destroy_object(delete_this);
+
+        */
 
         Data {
             gl: gl,
