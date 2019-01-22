@@ -1,7 +1,7 @@
 use moleengine_core::game::GameState;
 use moleengine_ecs::event::*;
-use moleengine_ecs::recipe::{ObjectBuilder, ObjectRecipe};
-use moleengine_ecs::space::{LifecycleEvent, Space};
+use moleengine_ecs::recipe::ObjectRecipe;
+use moleengine_ecs::space::{LifecycleEvent, ObjectBuilder, Space};
 use moleengine_ecs::storage::VecStorage;
 use moleengine_ecs::system::{Mover, Position, Velocity};
 use moleengine_visuals::Shape;
