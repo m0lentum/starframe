@@ -1,6 +1,7 @@
 use moleengine_core::game::GameState;
 use moleengine_ecs::event::*;
-use moleengine_ecs::space::{LifecycleEvent, ObjectBuilder, ObjectRecipe, Space};
+use moleengine_ecs::recipe::{ObjectBuilder, ObjectRecipe};
+use moleengine_ecs::space::{LifecycleEvent, Space};
 use moleengine_ecs::storage::VecStorage;
 use moleengine_ecs::system::{Mover, Position, Velocity};
 use moleengine_visuals::Shape;
@@ -71,15 +72,19 @@ impl Data {
         let mut thingy = ObjectRecipe::new();
         thingy
             .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
-            .add(Position { x: 0.0, y: 0.0 })
-            .add(Velocity { x: 1.0, y: 0.5 })
+            .add_variable(Some(Position { x: 0.0, y: 0.0 }))
+            .add_variable(None::<Velocity>)
             .add_listener(ChainEventListener);
 
+        // this causes a panic because there's no Velocity
+        //thingy.apply(&mut space);
+        thingy.set_variable(Velocity { x: 1.0, y: 2.0 });
         thingy.apply(&mut space);
-        let offset = -5.0;
-        thingy.modify(move |pos: &mut Position| pos.x = offset);
+        //thingy.start_disabled();
+        thingy.set_variable(Position { x: -5.0, y: 2.5 });
         thingy.apply(&mut space);
-        thingy.start_disabled();
+        thingy.reset_variables();
+        thingy.set_variable(Velocity { x: 0.1, y: 0.0 });
         thingy.apply(&mut space);
 
         let delete_this = ObjectRecipe::new()
