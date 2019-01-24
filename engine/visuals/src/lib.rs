@@ -1,5 +1,3 @@
-extern crate moleengine_ecs;
-
 use graphics::{Context, Graphics};
 
 pub mod shape;
