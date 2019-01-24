@@ -4,7 +4,7 @@ use moleengine_ecs::event::*;
 use moleengine_ecs::recipe::{ObjectRecipe, RecipeBook};
 use moleengine_ecs::space::{LifecycleEvent, ObjectBuilder, Space};
 use moleengine_ecs::storage::VecStorage;
-use moleengine_visuals::Shape;
+use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
 use graphics::{clear, Transformed};
 use opengl_graphics::GlGraphics;
@@ -169,7 +169,10 @@ impl Playing {
         let ctx = gl.draw_begin(args.viewport());
 
         clear([0.3, 0.7, 0.8, 1.0], gl);
-        let _ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
+        let ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
+
+        data.test_space
+            .run_system(ShapeRenderer::context(&ctx_, gl));
 
         gl.draw_end();
     }

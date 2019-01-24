@@ -210,24 +210,24 @@ impl Space {
     /// For more information see the moleengine_ecs_codegen crate.
     /// # Panics
     /// Panics if the System being run requires a component that doesn't have a container in this Space.
-    pub fn run_system<'a, S: System<'a>>(&mut self) {
-        self.actually_run_system::<S>()
+    pub fn run_system<'a, S: System<'a>>(&mut self, system: S) {
+        self.actually_run_system(system)
             .expect("Attempted to run a System without all Components present")
             .run_all(self);
     }
 
     /// Like run_system, but returns None instead of panicking if a required component is missing.
-    pub fn try_run_system<'a, S: System<'a>>(&mut self) -> Option<()> {
-        self.actually_run_system::<S>().map(|mut evts| {
+    pub fn try_run_system<'a, S: System<'a>>(&mut self, system: S) -> Option<()> {
+        self.actually_run_system(system).map(|mut evts| {
             evts.run_all(self);
             ()
         })
     }
 
     /// Actually runs a system, giving it a queue to put events in if it wants to.
-    fn actually_run_system<'a, S: System<'a>>(&self) -> Option<EventQueue> {
+    fn actually_run_system<'a, S: System<'a>>(&self, system: S) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
-        let result = S::Filter::run_filter(self, |cs| S::run_system(cs, self, &mut queue));
+        let result = S::Filter::run_filter(self, |cs| system.run_system(cs, self, &mut queue));
         result.map(|()| queue)
     }
 
@@ -261,7 +261,7 @@ impl Space {
     }
 
     /// Helper function to make running stuff through a ComponentFilter more intuitive.
-    pub fn run_filter<'a, F: ComponentFilter<'a>>(&self, f: impl FnMut(&mut [F])) -> Option<()> {
+    pub fn run_filter<'a, F: ComponentFilter<'a>>(&self, f: impl FnOnce(&mut [F])) -> Option<()> {
         F::run_filter(self, f)
     }
 

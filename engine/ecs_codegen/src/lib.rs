@@ -132,7 +132,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
         impl<#generics> ComponentFilter<#lifetime> for #ident<#lifetime_ident, #(#generics_idents,)*>
         #where_clause
         {
-            fn run_filter(space: &Space, mut f: impl FnMut(&mut [Self])) -> Option<()> {
+            fn run_filter(space: &Space, mut f: impl FnOnce(&mut [Self])) -> Option<()> {
                 #(#accesses)*
 
                 let and_set = space.get_alive();
