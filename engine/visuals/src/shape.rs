@@ -1,8 +1,9 @@
 use graphics::math::Vec2d;
 use graphics::types::Color;
-use graphics::{Context, Graphics};
+use graphics::{Context, Graphics, Transformed};
 
 use crate::Drawable;
+use moleengine_core::transform::*;
 use moleengine_ecs::system::*;
 
 #[derive(Clone)]
@@ -36,6 +37,7 @@ impl Drawable for Shape {
 }
 
 /// System that draws Shapes on the screen.
+/// A Transform must also be present for the Shape to be drawn.
 /// See the moleengine_ecs crate for more information on Systems.
 pub struct ShapeRenderer<'a, G: Graphics> {
     ctx: &'a Context,
@@ -44,9 +46,7 @@ pub struct ShapeRenderer<'a, G: Graphics> {
 
 impl<'a, G: Graphics> ShapeRenderer<'a, G> {
     /// Create a ShapeRenderer from the given references.
-    /// Named `context` instead of `new` to emphasize that these objects are
-    /// only used as consumed contexts when running the system.
-    pub fn context(ctx: &'a Context, gfx: &'a mut G) -> Self {
+    pub fn new(ctx: &'a Context, gfx: &'a mut G) -> Self {
         ShapeRenderer { ctx, gfx }
     }
 }
@@ -54,14 +54,17 @@ impl<'a, G: Graphics> ShapeRenderer<'a, G> {
 /// The component filter for ShapeRenderer.
 #[derive(ComponentFilter)]
 pub struct ShapeFilter<'a> {
+    transform: &'a Transform,
     shape: &'a Shape,
 }
 
 impl<'a, G: Graphics> SimpleSystem<'a> for ShapeRenderer<'a, G> {
     type Filter = ShapeFilter<'a>;
+
     fn run_system(self, items: &mut [Self::Filter]) {
         for item in items {
-            item.shape.draw(self.ctx, self.gfx);
+            let ctx_ = self.ctx.append_transform(transform_for_gfx(item.transform));
+            item.shape.draw(&ctx_, self.gfx);
         }
     }
 }

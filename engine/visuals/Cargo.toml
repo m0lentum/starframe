@@ -8,3 +8,4 @@ edition = "2018"
 piston = "0.37.0"
 piston2d-graphics = "0.26.0"
 moleengine_ecs = { path = "../ecs" }
+moleengine_core = { path = "../core" }
