@@ -13,7 +13,7 @@ pub struct Game<D, G: Graphics> {
 impl<D, G: Graphics> Game<D, G> {
     pub fn new(data: D, initial_state: Box<dyn GameState<D, G>>) -> Self {
         Game {
-            data: data,
+            data,
             active_state: initial_state,
         }
     }

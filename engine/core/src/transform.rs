@@ -1,9 +1,6 @@
 use graphics::math::Matrix2d;
 use nalgebra::{Similarity2, Vector2};
-use std::error::Error;
 use std::f32::consts::PI;
-use std::fmt::Display;
-use std::num::ParseFloatError;
 
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
 /// The wrapped Similarity is public so its methods can be used directly.
@@ -51,7 +48,7 @@ impl Transform {
     /// for rendering with piston-graphics.
     pub fn for_gfx(&self) -> Matrix2d {
         // Matrix2d == [[f32;3];2]
-        let h = self.0.to_homogeneous().map(|f| f as f64);
+        let h = self.0.to_homogeneous().map(f64::from);
         [[h[0], h[3], h[6]], [h[1], h[4], h[7]]]
     }
 }

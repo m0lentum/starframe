@@ -28,8 +28,10 @@ pub struct ObjectRecipe {
     steps: Vec<Box<dyn ClonableStep>>,
     vars: VarMap,
     default_vars: VarMap,
-    parsers: HashMap<String, fn(&str, &mut VarMap) -> Result<(), ()>>,
+    parsers: HashMap<String, ParseFn>,
 }
+
+type ParseFn = fn(&str, &mut VarMap) -> Result<(), ()>;
 
 type VarMap = anymap::Map<anymap::any::CloneAny>;
 
@@ -250,13 +252,10 @@ impl ObjectRecipe {
     /// Panics if a variable included in the recipe has not been set.
     pub fn try_apply(&self, space: &mut Space) -> Option<IdType> {
         let id = space.try_create_object();
-        match id {
-            Some(id) => {
-                for step in &self.steps {
-                    step.call(space, id, &self.vars);
-                }
+        if let Some(id) = id {
+            for step in &self.steps {
+                step.call(space, id, &self.vars);
             }
-            None => {}
         }
         id
     }
@@ -308,7 +307,7 @@ pub fn parse_into_space(
     recipes: &mut RecipeBook,
 ) -> Result<(), ParseSpaceError> {
     let everything = SpaceParser::parse(Rule::everything, src)
-        .map_err(|e| ParseSpaceError::Format(e))?
+        .map_err(ParseSpaceError::Format)?
         .next()
         .unwrap();
 
@@ -333,10 +332,7 @@ fn eval_object(
     let (line_num, _) = ident.as_span().start_pos().line_col();
     let recipe = recipes
         .get_mut(ident.as_str())
-        .ok_or(ParseSpaceError::UnknownRecipe(
-            line_num,
-            String::from(ident.as_str()),
-        ))?;
+        .ok_or_else(|| ParseSpaceError::UnknownRecipe(line_num, String::from(ident.as_str())))?;
 
     for var in pairs {
         eval_var(var, recipe)?;

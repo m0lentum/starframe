@@ -163,7 +163,7 @@ impl Data {
         */
 
         Data {
-            gl: gl,
+            gl,
             test_space: space,
             test_counter: 0,
         }
@@ -175,7 +175,7 @@ type State = dyn GameState<Data, GlGraphics>;
 pub struct Playing;
 
 impl Playing {
-    fn draw(&mut self, data: &mut Data, args: &RenderArgs) {
+    fn draw(&mut self, data: &mut Data, args: RenderArgs) {
         let gl = &mut data.gl;
         let ctx = gl.draw_begin(args.viewport());
 
@@ -187,8 +187,8 @@ impl Playing {
         gl.draw_end();
     }
 
-    fn update(&mut self, data: &mut Data, _args: &UpdateArgs) {
-        data.test_counter = data.test_counter + 1;
+    fn update(&mut self, data: &mut Data, _args: UpdateArgs) {
+        data.test_counter += 1;
 
         data.test_space.run_stateful_system::<Mover>();
     }
@@ -197,9 +197,9 @@ impl Playing {
 impl GameState<Data, GlGraphics> for Playing {
     fn on_event(&mut self, data: &mut Data, evt: &Event) -> Option<Box<State>> {
         if let Some(args) = evt.render_args() {
-            self.draw(data, &args);
+            self.draw(data, args);
         } else if let Some(args) = evt.update_args() {
-            self.update(data, &args);
+            self.update(data, args);
         } else if let Some(Button::Keyboard(Key::Space)) = evt.press_args() {
             return Some(Box::new(Paused));
         }

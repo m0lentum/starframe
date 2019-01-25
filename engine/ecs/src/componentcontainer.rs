@@ -19,13 +19,11 @@ impl<T> ComponentContainer<T> {
     where
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
     {
-        let new_container = ComponentContainer {
+        ComponentContainer {
             storage: RwLock::new(Box::new(S::with_capacity(capacity))),
             generations: vec![0; capacity],
             users: BitSet::with_capacity(capacity as u32),
-        };
-
-        new_container
+        }
     }
 
     pub fn insert(&mut self, id: IdType, gen: u8, comp: T) {

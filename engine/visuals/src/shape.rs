@@ -17,8 +17,8 @@ pub struct Shape {
 impl Shape {
     pub fn new(points: Vec<Vec2d<f64>>, color: Color) -> Self {
         Shape {
-            points: points,
-            color: color,
+            points,
+            color,
             _outline_thickness: 0.0,
             _outline_color: [0.0, 0.0, 0.0, 0.0],
         }

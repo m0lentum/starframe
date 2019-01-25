@@ -26,7 +26,7 @@ impl Space {
             enabled_objects: BitSet::with_capacity(capacity as u32),
             generations: vec![0; capacity],
             next_obj_id: 0,
-            capacity: capacity,
+            capacity,
             containers: AnyMap::new(),
             global_data: AnyMap::new(),
         }
@@ -220,7 +220,6 @@ impl Space {
     pub fn try_run_system<'a, S: System<'a>>(&mut self, system: S) -> Option<()> {
         self.actually_run_system(system).map(|mut evts| {
             evts.run_all(self);
-            ()
         })
     }
 
@@ -390,7 +389,7 @@ impl<'a> ObjectBuilder<'a> {
     pub fn create(space: &'a mut Space) -> Self {
         ObjectBuilder {
             id: space.create_object(),
-            space: space,
+            space,
         }
     }
 
