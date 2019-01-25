@@ -28,7 +28,7 @@ pub struct ObjectRecipe {
     steps: Vec<Box<dyn ClonableStep>>,
     vars: VarMap,
     default_vars: VarMap,
-    parsers: HashMap<String, fn(&str, &mut VarMap)>,
+    parsers: HashMap<String, fn(&str, &mut VarMap) -> Result<(), ()>>,
 }
 
 type VarMap = anymap::Map<anymap::any::CloneAny>;
@@ -160,27 +160,22 @@ impl ObjectRecipe {
         self
     }
 
-    fn do_parse_var<T>(src: &str, vars: &mut VarMap)
+    fn do_parse_var<T>(src: &str, vars: &mut VarMap) -> Result<(), ()>
     where
         T: FromStr + Clone + 'static,
         <T as FromStr>::Err: std::fmt::Debug,
     {
-        let item = src.parse::<T>();
-        match item {
-            Ok(item) => {
-                vars.insert(Some(item));
-            }
-            Err(err) => panic!("Error parsing recipe variable: {:?}", err),
-        }
+        let item = src.parse::<T>().map_err(|_| ())?;
+        vars.insert(Some(item));
+
+        Ok(())
     }
 
     /// Parse a variable from a string and apply it to this recipe.
-    pub(self) fn parse_variable(&mut self, name: &str, value: &str) {
-        let parser = self
-            .parsers
-            .get(name)
-            .expect(format!("Recipe variable does not exist: {}", name).as_str());
-        parser(value, &mut self.vars);
+    pub(self) fn parse_variable(&mut self, name: &str, value: &str) -> Result<(), ParseVarError> {
+        let parser = self.parsers.get(name).ok_or(ParseVarError::UnknownVar)?;
+
+        parser(value, &mut self.vars).map_err(|_| ParseVarError::InvalidFormat)
     }
 
     /// Set the value of a variable in the recipe.
@@ -304,43 +299,105 @@ use pest::Parser;
 #[grammar = "space.pest"]
 struct SpaceParser;
 
-/// Parse a string in the plaintext MoleEngineSpace (MES) format into the given Space
-/// using the given RecipeBook to identify recipes.
-/// This format should be documented here at a later date.
-pub fn parse_into_space(src: &str, space: &mut Space, recipes: &mut RecipeBook) {
+/// Parse a string in the plaintext MoleEngineSpace (MES) format (currently undocumented)
+/// into the given Space using the given RecipeBook to identify recipes.
+/// If an error occurs during parsing, everything up to that point is still added to the Space.
+pub fn parse_into_space(
+    src: &str,
+    space: &mut Space,
+    recipes: &mut RecipeBook,
+) -> Result<(), ParseSpaceError> {
     let everything = SpaceParser::parse(Rule::everything, src)
-        .expect("Parsing failed")
+        .map_err(|e| ParseSpaceError::Format(e))?
         .next()
         .unwrap();
 
     for object in everything.into_inner() {
         match object.as_rule() {
-            Rule::object => eval_object(object, space, recipes),
+            Rule::object => eval_object(object, space, recipes)?,
             Rule::EOI => (),
             _ => unreachable!(),
         }
     }
+
+    Ok(())
 }
 
-fn eval_object(object: Pair<Rule>, space: &mut Space, recipes: &mut RecipeBook) {
+fn eval_object(
+    object: Pair<Rule>,
+    space: &mut Space,
+    recipes: &mut RecipeBook,
+) -> Result<(), ParseSpaceError> {
     let mut pairs = object.into_inner();
     let ident = pairs.next().unwrap();
+    let (line_num, _) = ident.as_span().start_pos().line_col();
     let recipe = recipes
         .get_mut(ident.as_str())
-        .expect("Unknown recipe identifier");
+        .ok_or(ParseSpaceError::UnknownRecipe(
+            line_num,
+            String::from(ident.as_str()),
+        ))?;
 
     for var in pairs {
-        eval_var(var, recipe);
+        eval_var(var, recipe)?;
     }
 
     recipe.apply(space);
     recipe.reset_variables();
+
+    Ok(())
 }
 
-fn eval_var(var: Pair<Rule>, recipe: &mut ObjectRecipe) {
+fn eval_var(var: Pair<Rule>, recipe: &mut ObjectRecipe) -> Result<(), ParseSpaceError> {
     let mut pairs = var.into_inner();
     let ident = pairs.next().unwrap();
     let value = pairs.next().unwrap();
 
-    recipe.parse_variable(ident.as_str(), value.as_str());
+    recipe
+        .parse_variable(ident.as_str(), value.as_str())
+        .map_err(|e| {
+            let (line_num, _) = ident.as_span().start_pos().line_col();
+            match e {
+                ParseVarError::UnknownVar => {
+                    ParseSpaceError::UnknownVar(line_num, String::from(value.as_str()))
+                }
+                ParseVarError::InvalidFormat => ParseSpaceError::ObjectFormat(line_num),
+            }
+        })
+}
+
+enum ParseVarError {
+    UnknownVar,
+    InvalidFormat,
+}
+
+/// An error type for parse errors on reading a MoleEngineSpace.
+/// At least for now, failure to parse a component for an object only gives you
+/// the line number and no details. As the format is very simple, this should
+/// hopefully be enough to easily figure out the problem.
+#[derive(Debug)]
+pub enum ParseSpaceError {
+    Format(pest::error::Error<Rule>),
+    UnknownRecipe(usize, String),
+    UnknownVar(usize, String),
+    ObjectFormat(usize),
+}
+
+impl std::error::Error for ParseSpaceError {}
+
+impl std::fmt::Display for ParseSpaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ParseSpaceError::Format(pest_err) => write!(f, "Invalid Space format! {}", pest_err),
+            ParseSpaceError::UnknownRecipe(line, name) => {
+                write!(f, "Unknown recipe identifier on line {}: '{}'", line, name)
+            }
+            ParseSpaceError::UnknownVar(line, name) => {
+                write!(f, "Unknown recipe variable on line {}: '{}'", line, name)
+            }
+            ParseSpaceError::ObjectFormat(num) => {
+                write!(f, "Failed to parse an object on line {}", num)
+            }
+        }
+    }
 }

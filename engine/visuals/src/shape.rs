@@ -63,7 +63,7 @@ impl<'a, G: Graphics> SimpleSystem<'a> for ShapeRenderer<'a, G> {
 
     fn run_system(self, items: &mut [Self::Filter]) {
         for item in items {
-            let ctx_ = self.ctx.append_transform(transform_for_gfx(item.transform));
+            let ctx_ = self.ctx.append_transform(item.transform.for_gfx());
             item.shape.draw(&ctx_, self.gfx);
         }
     }

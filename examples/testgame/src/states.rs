@@ -13,8 +13,6 @@ use piston::input::keyboard::Key;
 use piston::input::Button;
 use piston::input::*;
 
-use nalgebra::Vector2;
-
 pub struct Data {
     gl: GlGraphics,
     test_space: Space,
@@ -80,11 +78,7 @@ impl Data {
             .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
             .add_named_variable("pos", Some(Position { x: 0.0, y: 0.0 }))
             .add_named_variable("vel", None::<Velocity>)
-            .add(Transform::new(
-                Vector2::new(50.0, 70.0),
-                std::f32::consts::PI / 3.0,
-                1.0,
-            ))
+            .add_named_variable("T", None::<Transform>)
             .add_listener(ChainEventListener);
 
         recipes.add("thingy", thingy.clone());
@@ -94,20 +88,26 @@ impl Data {
             .add_listener(ChainEventListener)
             .add_named_variable("P", Some(Position { x: 0.0, y: 0.0 }))
             .add(Velocity { x: 1.0, y: 0.5 })
-            .add(Transform::new(Vector2::new(120.0, 180.0), 0.0, 1.5))
+            .add(Transform::new([120.0, 180.0], 0.0, 1.5))
             .add(Shape::new_square(50.0, [1.0, 0.8, 0.2, 1.0]))
             .add_listener(LifecycleListener);
 
         recipes.add("other", other_thingy);
 
-        moleengine_ecs::recipe::parse_into_space(
-            "thingy|pos=12,0|vel=-1,1
+        let r = moleengine_ecs::recipe::parse_into_space(
+            "thingy|pos=12,0|vel=-1,1|T=P180,260&R35
             other
-            thingy|vel=2,0.5
-            other|P=0,50.879564",
+            thingy|vel=2,0.5|T=P300,200&S2&R70
+            other|P=0,50.879564
+            ",
             &mut space,
             &mut recipes,
         );
+
+        match r {
+            Ok(_) => (),
+            Err(e) => eprintln!("Error parsing space: {}", e),
+        }
 
         /*
         A bunch of currently unuseful stuff I don't want to delete yet
