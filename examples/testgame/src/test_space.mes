@@ -1,0 +1,5 @@
+thingy|pos=12,0|vel=-1,1|T=P180,260&R35
+other
+thingy|vel=2,0.5|T=P300,200&S2&R70
+other|P=0,50.879564
+thingy|vel=2,0.5|T=P500,200&S2&R105

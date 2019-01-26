@@ -137,6 +137,11 @@ impl Space {
         self.alive_objects.remove(id as u32);
     }
 
+    /// Destroys every object in the Space.
+    pub fn destroy_all(&mut self) {
+        self.alive_objects.clear();
+    }
+
     /// Disable an object. This means it will not receive updates from most Systems.
     /// However, Systems still have access to it and may choose to do something with it.
     pub fn disable_object(&mut self, id: IdType) {

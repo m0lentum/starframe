@@ -2,7 +2,7 @@ use crate::test_system::{Mover, Position, Velocity};
 use moleengine_core::game::GameState;
 use moleengine_core::transform::Transform;
 use moleengine_ecs::event::*;
-use moleengine_ecs::recipe::{ObjectRecipe, RecipeBook};
+use moleengine_ecs::recipe::{parse_into_space, ObjectRecipe, RecipeBook};
 use moleengine_ecs::space::{LifecycleEvent, Space};
 use moleengine_ecs::storage::VecStorage;
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
@@ -14,8 +14,9 @@ use piston::input::Button;
 use piston::input::*;
 
 pub struct Data {
+    recipes: RecipeBook,
     gl: GlGraphics,
-    test_space: Space,
+    space: Space,
     test_counter: i32,
 }
 
@@ -94,21 +95,6 @@ impl Data {
 
         recipes.add("other", other_thingy);
 
-        let r = moleengine_ecs::recipe::parse_into_space(
-            "thingy|pos=12,0|vel=-1,1|T=P180,260&R35
-            other
-            thingy|vel=2,0.5|T=P300,200&S2&R70
-            other|P=0,50.879564
-            ",
-            &mut space,
-            &mut recipes,
-        );
-
-        match r {
-            Ok(_) => (),
-            Err(e) => eprintln!("Error parsing space: {}", e),
-        }
-
         /*
         A bunch of currently unuseful stuff I don't want to delete yet
 
@@ -163,9 +149,24 @@ impl Data {
         */
 
         Data {
+            recipes,
             gl,
-            test_space: space,
+            space,
             test_counter: 0,
+        }
+    }
+
+    pub fn reload_space(&mut self) {
+        let mes = std::fs::read_to_string("./examples/testgame/src/test_space.mes")
+            .expect("File read failed");
+
+        self.space.destroy_all();
+
+        let r = parse_into_space(mes.as_str(), &mut self.space, &mut self.recipes);
+
+        match r {
+            Ok(_) => (),
+            Err(e) => eprintln!("Error parsing space: {}", e),
         }
     }
 }
@@ -182,7 +183,7 @@ impl Playing {
         clear([0.3, 0.7, 0.8, 1.0], gl);
         //let ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
 
-        data.test_space.run_system(ShapeRenderer::new(&ctx, gl));
+        data.space.run_system(ShapeRenderer::new(&ctx, gl));
 
         gl.draw_end();
     }
@@ -190,7 +191,7 @@ impl Playing {
     fn update(&mut self, data: &mut Data, _args: UpdateArgs) {
         data.test_counter += 1;
 
-        data.test_space.run_stateful_system::<Mover>();
+        data.space.run_stateful_system::<Mover>();
     }
 }
 
@@ -202,6 +203,8 @@ impl GameState<Data, GlGraphics> for Playing {
             self.update(data, args);
         } else if let Some(Button::Keyboard(Key::Space)) = evt.press_args() {
             return Some(Box::new(Paused));
+        } else if let Some(Button::Keyboard(Key::Return)) = evt.press_args() {
+            data.reload_space();
         }
 
         None
