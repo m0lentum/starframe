@@ -1,5 +1,5 @@
-use crate::storage::{ComponentStorage, CreateWithCapacity};
-use crate::IdType;
+use super::storage::{ComponentStorage, CreateWithCapacity};
+use super::IdType;
 use hibitset::BitSet;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 

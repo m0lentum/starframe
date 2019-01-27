@@ -1,4 +1,4 @@
-use crate::IdType;
+use super::IdType;
 
 use std::ptr::write;
 

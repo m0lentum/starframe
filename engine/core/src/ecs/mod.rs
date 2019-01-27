@@ -7,7 +7,4 @@ pub mod system;
 
 pub use hibitset;
 
-#[macro_use]
-extern crate pest_derive;
-
 pub type IdType = usize;

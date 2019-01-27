@@ -1,8 +1,8 @@
-use crate::componentcontainer::ComponentContainer;
-use crate::event::*;
-use crate::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
-use crate::system::{ComponentFilter, StatefulSystem, System};
-use crate::IdType;
+use super::componentcontainer::ComponentContainer;
+use super::event::*;
+use super::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
+use super::system::{ComponentFilter, StatefulSystem, System};
+use super::IdType;
 
 use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};

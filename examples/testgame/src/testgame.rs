@@ -1,4 +1,4 @@
-use moleengine_core::game::*;
+use moleengine::game::*;
 
 use crate::states::{Data, Playing};
 

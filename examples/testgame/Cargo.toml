@@ -5,8 +5,7 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-moleengine_core = { path = "../../engine/core" }
-moleengine_ecs = { path = "../../engine/ecs" }
+moleengine = { path = "../../engine/core" }
 moleengine_visuals = { path = "../../engine/visuals" }
 piston = "0.40"
 piston2d-graphics = "0.30"

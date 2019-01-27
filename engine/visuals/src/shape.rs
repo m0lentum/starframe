@@ -3,8 +3,8 @@ use graphics::types::Color;
 use graphics::{Context, Graphics, Transformed};
 
 use crate::Drawable;
-use moleengine_core::transform::*;
-use moleengine_ecs::system::*;
+use moleengine::ecs::system::*;
+use moleengine::transform::*;
 
 #[derive(Clone)]
 pub struct Shape {

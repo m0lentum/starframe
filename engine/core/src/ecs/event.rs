@@ -1,5 +1,5 @@
-use crate::space::Space;
-use crate::system::*;
+use super::space::Space;
+use super::system::*;
 
 /// An event that causes something to happen within a Space.
 pub trait SpaceEvent {

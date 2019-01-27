@@ -1,6 +1,6 @@
-pub use crate::event::EventQueue;
-pub use crate::space::Space;
-pub use crate::IdType;
+pub use super::event::EventQueue;
+pub use super::space::Space;
+pub use super::IdType;
 pub use hibitset;
 pub use moleengine_ecs_codegen::*;
 

@@ -1,5 +1,5 @@
 [package]
-name = "moleengine_core"
+name = "moleengine"
 version = "0.1.0"
 authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2018"
@@ -7,6 +7,9 @@ edition = "2018"
 [dependencies]
 piston = "0.40"
 piston2d-graphics = "0.30"
-pistoncore-glutin_window = "0.52"
-piston2d-opengl_graphics = "0.59"
 nalgebra = "0.16"
+moleengine_ecs_codegen = { path = "../ecs_codegen" }
+hibitset = "0.5.1"
+anymap = "0.12.1"
+pest = "2.1.0"
+pest_derive = "2.1.0"

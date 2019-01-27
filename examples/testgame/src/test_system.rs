@@ -1,8 +1,8 @@
-use moleengine_core::inputstate::KeyState;
-use moleengine_core::InputState;
-use moleengine_core::Transform;
-use moleengine_ecs::space::Space;
-use moleengine_ecs::system::*;
+use moleengine::ecs::space::Space;
+use moleengine::ecs::system::*;
+use moleengine::inputstate::KeyState;
+use moleengine::InputState;
+use moleengine::Transform;
 use nalgebra::geometry::Translation2;
 use piston::input::keyboard::Key;
 

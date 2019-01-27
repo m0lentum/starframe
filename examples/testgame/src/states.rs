@@ -1,12 +1,12 @@
 use crate::test_system::{KeyboardControls, KeyboardMover, Position, Velocity};
 
-use moleengine_core::game::GameState;
-use moleengine_core::inputstate::*;
-use moleengine_core::transform::Transform;
-use moleengine_ecs::event::*;
-use moleengine_ecs::recipe::{parse_into_space, ObjectRecipe, RecipeBook};
-use moleengine_ecs::space::{LifecycleEvent, Space};
-use moleengine_ecs::storage::VecStorage;
+use moleengine::ecs::event::*;
+use moleengine::ecs::recipe::{parse_into_space, ObjectRecipe, RecipeBook};
+use moleengine::ecs::space::{LifecycleEvent, Space};
+use moleengine::ecs::storage::VecStorage;
+use moleengine::game::GameState;
+use moleengine::inputstate::*;
+use moleengine::transform::Transform;
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
 use graphics::clear;

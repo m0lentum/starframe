@@ -2,7 +2,6 @@
 
 members = [
     "engine/core",
-    "engine/ecs",
     "engine/ecs_codegen",
     "engine/visuals",
     "examples/testgame",

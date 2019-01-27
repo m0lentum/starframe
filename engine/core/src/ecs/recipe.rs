@@ -1,7 +1,7 @@
-use crate::event::{EventListener, EventListenerComponent, SpaceEvent};
-use crate::space::Space;
-use crate::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
-use crate::IdType;
+use super::event::{EventListener, EventListenerComponent, SpaceEvent};
+use super::space::Space;
+use super::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
+use super::IdType;
 
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -295,7 +295,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 
 #[derive(Parser)]
-#[grammar = "space.pest"]
+#[grammar = "ecs/space.pest"]
 struct SpaceParser;
 
 /// Parse a string in the plaintext MoleEngineSpace (MES) format (currently undocumented)
