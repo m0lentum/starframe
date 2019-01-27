@@ -1,5 +1,7 @@
-use crate::test_system::{Mover, Position, Velocity};
+use crate::test_system::{KeyboardControls, KeyboardMover, Position, Velocity};
+
 use moleengine_core::game::GameState;
+use moleengine_core::inputstate::*;
 use moleengine_core::transform::Transform;
 use moleengine_ecs::event::*;
 use moleengine_ecs::recipe::{parse_into_space, ObjectRecipe, RecipeBook};
@@ -12,13 +14,6 @@ use opengl_graphics::GlGraphics;
 use piston::input::keyboard::Key;
 use piston::input::Button;
 use piston::input::*;
-
-pub struct Data {
-    recipes: RecipeBook,
-    gl: GlGraphics,
-    space: Space,
-    test_counter: i32,
-}
 
 #[derive(Clone, Copy)]
 pub struct Rotation(f32);
@@ -59,18 +54,32 @@ impl EventListener<TestChainEvent> for ChainEventListener {
     }
 }
 
+pub struct Data {
+    input_state: InputState,
+    recipes: RecipeBook,
+    gl: GlGraphics,
+    space: Space,
+    test_counter: i32,
+}
+
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
+        let mut input_state = InputState::with_buffer_frames(2);
+        {
+            use Key::*;
+            input_state.track_keys(&[Left, Right, Down, Up]);
+        }
+
         let mut space = Space::with_capacity(10);
         space
             .add_container::<Shape, VecStorage<_>>()
             .add_container::<Transform, VecStorage<_>>()
             .add_container::<Position, VecStorage<_>>()
             .add_container::<Velocity, VecStorage<_>>()
+            .add_container::<KeyboardControls, VecStorage<_>>()
             .add_container::<Rotation, VecStorage<_>>()
             .add_container::<Printer, VecStorage<_>>()
-            .add_container::<Placeholder, VecStorage<_>>()
-            .init_stateful_system(Mover::new());
+            .add_container::<Placeholder, VecStorage<_>>();
 
         let mut recipes = RecipeBook::new();
 
@@ -80,6 +89,7 @@ impl Data {
             .add_named_variable("pos", Some(Position { x: 0.0, y: 0.0 }))
             .add_named_variable("vel", None::<Velocity>)
             .add_named_variable("T", None::<Transform>)
+            .add(KeyboardControls)
             .add_listener(ChainEventListener);
 
         recipes.add("thingy", thingy.clone());
@@ -149,6 +159,7 @@ impl Data {
         */
 
         Data {
+            input_state,
             recipes,
             gl,
             space,
@@ -191,16 +202,19 @@ impl Playing {
     fn update(&mut self, data: &mut Data, _args: UpdateArgs) {
         data.test_counter += 1;
 
-        data.space.run_stateful_system::<Mover>();
+        data.space.run_system(KeyboardMover::new(&data.input_state));
     }
 }
 
 impl GameState<Data, GlGraphics> for Playing {
     fn on_event(&mut self, data: &mut Data, evt: &Event) -> Option<Box<State>> {
+        data.input_state.handle_event(evt);
+
         if let Some(args) = evt.render_args() {
             self.draw(data, args);
         } else if let Some(args) = evt.update_args() {
             self.update(data, args);
+            data.input_state.update_ages();
         } else if let Some(Button::Keyboard(Key::Space)) = evt.press_args() {
             return Some(Box::new(Paused));
         } else if let Some(Button::Keyboard(Key::Return)) = evt.press_args() {

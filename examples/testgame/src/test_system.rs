@@ -1,7 +1,12 @@
+use moleengine_core::inputstate::KeyState;
+use moleengine_core::InputState;
+use moleengine_core::Transform;
 use moleengine_ecs::space::Space;
 use moleengine_ecs::system::*;
+use nalgebra::geometry::Translation2;
+use piston::input::keyboard::Key;
 
-// quick and dirty test thingy
+// useless crap that needs to be deleted
 
 #[derive(Debug, Clone)]
 pub struct Position {
@@ -30,36 +35,49 @@ impl std::str::FromStr for Velocity {
     }
 }
 
+// end useless crap that needs to be deleted
+
+#[derive(Copy, Clone)]
+pub struct KeyboardControls;
+
 #[derive(ComponentFilter)]
 pub struct PosVel<'a> {
-    #[enabled]
-    is_enabled: bool,
-    position: &'a mut Position,
-    velocity: &'a Velocity,
+    _marker: &'a KeyboardControls,
+    tr: &'a mut Transform,
 }
 
-pub struct Mover {
-    counter: u32,
+pub struct KeyboardMover<'a> {
+    input: &'a InputState,
 }
-impl Mover {
-    pub fn new() -> Self {
-        Mover { counter: 0 }
+impl<'a> KeyboardMover<'a> {
+    pub fn new(input: &'a InputState) -> Self {
+        KeyboardMover { input }
     }
 }
-impl<'a> StatefulSystem<'a> for Mover {
+impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     type Filter = PosVel<'a>;
-    fn run_system(&mut self, items: &mut [Self::Filter], _space: &Space, _queue: &mut EventQueue) {
-        for item in items {
-            if !item.is_enabled {
-                println!("Found disabled object!");
-                continue;
-            }
-            item.position.x += item.velocity.x;
-            item.position.y += item.velocity.y;
-            println!("Position is {}, {}", item.position.x, item.position.y);
+    fn run_system(self, items: &mut [Self::Filter]) {
+        let mut t = Translation2::identity();
+        if check_key(self.input, Key::Left) {
+            t.vector[0] = -10.0;
+        } else if check_key(self.input, Key::Right) {
+            t.vector[0] = 10.0;
+        }
+        if check_key(self.input, Key::Up) {
+            t.vector[1] = -10.0;
+        } else if check_key(self.input, Key::Down) {
+            t.vector[1] = 10.0;
         }
 
-        self.counter += 1;
-        println!("Counter is {}", self.counter);
+        for item in items {
+            item.tr.0.isometry.append_translation_mut(&t);
+        }
+    }
+}
+
+fn check_key(states: &InputState, key: Key) -> bool {
+    match states.get_key(key) {
+        Some((KeyState::Pressed, _)) => true,
+        _ => false,
     }
 }
