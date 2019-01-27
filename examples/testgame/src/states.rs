@@ -20,13 +20,13 @@ pub struct Data {
     test_counter: i32,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Rotation(f32);
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Printer;
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Placeholder;
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct LifecycleListener;
 
 impl EventListener<LifecycleEvent> for LifecycleListener {
@@ -41,7 +41,7 @@ impl EventListener<LifecycleEvent> for LifecycleListener {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct TestChainEvent;
 
 impl SpaceEvent for TestChainEvent {
@@ -50,7 +50,7 @@ impl SpaceEvent for TestChainEvent {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct ChainEventListener;
 
 impl EventListener<TestChainEvent> for ChainEventListener {

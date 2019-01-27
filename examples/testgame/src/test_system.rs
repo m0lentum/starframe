@@ -17,7 +17,7 @@ impl std::str::FromStr for Position {
         Ok(Position { x, y })
     }
 }
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Velocity {
     pub x: f32,
     pub y: f32,

@@ -9,7 +9,7 @@ use std::f32::consts::PI;
 /// and Scale respectively) and x, y, r, and s are f32-parseable strings.
 /// Rotation is expressed in degrees.
 /// Any of these can be omitted, which will leave them at the default value (no transformation).
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Transform(pub Similarity2<f32>);
 
 impl Transform {
