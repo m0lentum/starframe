@@ -64,7 +64,7 @@ pub struct Data {
 
 impl Data {
     pub fn init(gl: GlGraphics) -> Self {
-        let mut input_state = InputState::with_buffer_frames(2);
+        let mut input_state = InputState::new();
         {
             use Key::*;
             input_state.track_keys(&[Left, Right, Down, Up]);
