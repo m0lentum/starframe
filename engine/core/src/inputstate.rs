@@ -71,8 +71,14 @@ impl InputState {
                 Button::Keyboard(key) => {
                     if let Some((state, age)) = self.keyboard.get_mut(&key) {
                         match btn.state {
-                            ButtonState::Press => *state = KeyState::Pressed,
-                            ButtonState::Release => *state = KeyState::Released,
+                            ButtonState::Press => match state {
+                                KeyState::Unheld | KeyState::Released => *state = KeyState::Pressed,
+                                _ => (),
+                            },
+                            ButtonState::Release => match state {
+                                KeyState::Held | KeyState::Pressed => *state = KeyState::Released,
+                                _ => (),
+                            },
                         }
                         *age = 0;
                     }
