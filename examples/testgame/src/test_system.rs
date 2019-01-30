@@ -59,14 +59,14 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     fn run_system(self, items: &mut [Self::Filter]) {
         let mut t = Translation2::identity();
         if check_key(self.input, Key::Left) {
-            t.vector[0] = -10.0;
+            t.vector[0] = -5.0;
         } else if check_key(self.input, Key::Right) {
-            t.vector[0] = 10.0;
+            t.vector[0] = 5.0;
         }
         if check_key(self.input, Key::Up) {
-            t.vector[1] = -10.0;
+            t.vector[1] = -5.0;
         } else if check_key(self.input, Key::Down) {
-            t.vector[1] = 10.0;
+            t.vector[1] = 5.0;
         }
 
         for item in items {
