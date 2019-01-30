@@ -81,7 +81,7 @@ impl ObjectRecipe {
     }
 
     /// Add the given component to the recipe.
-    pub fn add<T: Clone + 'static>(&mut self, component: T) -> &mut Self {
+    pub fn add<T: Clone + 'static>(mut self, component: T) -> Self {
         self.steps.push(Box::new(
             move |space: &mut Space, id: IdType, _: &VarMap| {
                 space.create_component(id, component.clone())
@@ -93,7 +93,7 @@ impl ObjectRecipe {
 
     /// Add the given EventListener to the recipe.
     /// Internally these are stored as components.
-    pub fn add_listener<E, L>(&mut self, listener: L) -> &mut Self
+    pub fn add_listener<E, L>(mut self, listener: L) -> Self
     where
         E: SpaceEvent + 'static,
         L: EventListener<E> + Clone + 'static,
@@ -128,7 +128,7 @@ impl ObjectRecipe {
     /// thingy.set_variable(Velocity { x: 1.0, y: 2.0 });
     /// thingy.apply(&mut space);
     /// ```
-    pub fn add_variable<T: Clone + 'static>(&mut self, default: Option<T>) -> &mut Self {
+    pub fn add_variable<T: Clone + 'static>(mut self, default: Option<T>) -> Self {
         self.vars.insert(default.clone());
         self.default_vars.insert(default);
 
@@ -149,12 +149,12 @@ impl ObjectRecipe {
 
     /// Like `add_variable`, but with the additional restriction of T: FromStr.
     /// A variable created with this can have its value parsed from a string.
-    pub fn add_named_variable<T>(&mut self, name: &str, default: Option<T>) -> &mut Self
+    pub fn add_named_variable<T>(mut self, name: &str, default: Option<T>) -> Self
     where
         T: FromStr + Clone + 'static,
         <T as FromStr>::Err: std::fmt::Debug,
     {
-        self.add_variable(default);
+        self = self.add_variable(default);
 
         self.parsers
             .insert(name.to_string(), Self::do_parse_var::<T>);

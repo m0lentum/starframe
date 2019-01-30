@@ -83,8 +83,7 @@ impl Data {
 
         let mut recipes = RecipeBook::new();
 
-        let mut thingy = ObjectRecipe::new();
-        thingy
+        let thingy = ObjectRecipe::new()
             .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
             .add_named_variable("pos", Some(Position { x: 0.0, y: 0.0 }))
             .add_named_variable("vel", None::<Velocity>)
@@ -94,8 +93,7 @@ impl Data {
 
         recipes.add("thingy", thingy.clone());
 
-        let mut other_thingy = ObjectRecipe::new();
-        other_thingy
+        let other_thingy = ObjectRecipe::new()
             .add_listener(ChainEventListener)
             .add_named_variable("P", Some(Position { x: 0.0, y: 0.0 }))
             .add(Velocity { x: 1.0, y: 0.5 })
@@ -104,59 +102,6 @@ impl Data {
             .add_listener(LifecycleListener);
 
         recipes.add("other", other_thingy);
-
-        /*
-        A bunch of currently unuseful stuff I don't want to delete yet
-
-        // this causes a panic because there's no Velocity
-        //thingy.apply(&mut space);
-        thingy.set_variable(Velocity { x: 1.0, y: 2.0 });
-        thingy.apply(&mut space);
-        //thingy.start_disabled();
-        thingy.set_variable(Position { x: -5.0, y: 2.5 });
-        thingy.apply(&mut space);
-        thingy.reset_variables();
-        thingy.set_variable(Velocity { x: 0.1, y: 0.0 });
-        thingy.apply(&mut space);
-
-        let delete_this = ObjectRecipe::new()
-            .add_listener(ChainEventListener)
-            .add(Position { x: 0.0, y: 0.0 })
-            .add(Velocity { x: 1.0, y: 0.5 })
-            .add_listener(LifecycleListener)
-            .apply(&mut space);
-
-        println!("disabling delete_this");
-        space.disable_object(delete_this);
-
-        for i in 1..10 {
-            let n = 0.1 * i as f32;
-            let o = ObjectBuilder::try_create(&mut space);
-            if let Some(o) = o {
-                let id = o
-                    .with(Shape::new_square(120.0 - 10.0 * i as f64, [n, n, n, n]))
-                    .with(Position {
-                        x: i as f32,
-                        y: -i as f32,
-                    })
-                    .with(Rotation(i as f32))
-                    .with(Placeholder)
-                    .with_listener(Box::new(LifecycleListener))
-                    .get_id();
-
-                if i % 2 == 0 {
-                    // destruction and replacement test
-                    space.destroy_object(id);
-                }
-            }
-        }
-
-        println!("enabling delete_this");
-        space.enable_object(delete_this);
-        println!("destroying delete_this");
-        space.destroy_object(delete_this);
-
-        */
 
         Data {
             input_state,
