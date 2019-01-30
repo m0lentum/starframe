@@ -1,0 +1,9 @@
+[package]
+name = "moleengnine_physics"
+version = "0.1.0"
+authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+moleengine = { path = "../core" }
+nalgebra = "0.16"
