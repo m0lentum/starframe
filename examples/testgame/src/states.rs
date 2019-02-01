@@ -10,6 +10,7 @@ use moleengine::game::GameState;
 use moleengine::inputstate::*;
 use moleengine::transform::Transform;
 use moleengine_physics::{
+    collision::RigidBodySolver,
     systems::{Gravity, Motion},
     Collider, RigidBody,
 };
@@ -75,16 +76,17 @@ impl Data {
             .add_container::<Transform, VecStorage<_>>()
             .add_container::<Collider, VecStorage<_>>()
             .add_container::<RigidBody, VecStorage<_>>()
-            .add_container::<KeyboardControls, VecStorage<_>>();
+            .add_container::<KeyboardControls, VecStorage<_>>()
+            .init_stateful_system(RigidBodySolver);
 
         let mut recipes = RecipeBook::new();
 
-        let coll = Collider::new_circle(40.0);
+        let coll = Collider::new_circle(20.0);
         let thingy = ObjectRecipe::new()
             .add(Shape::new(coll.as_points(), [1.0, 1.0, 1.0, 1.0]))
             .add(coll)
+            .add(RigidBody::new())
             .add_named_variable("T", None::<Transform>)
-            .add(KeyboardControls)
             .add_listener(ChainEventListener);
 
         recipes.add("thingy", thingy.clone());
@@ -92,8 +94,10 @@ impl Data {
         let other_thingy = ObjectRecipe::new()
             .add_listener(ChainEventListener)
             .add(Transform::new([120.0, 180.0], 0.0, 1.5))
-            .add(Shape::new_square(50.0, [1.0, 0.8, 0.2, 1.0]))
+            .add(Shape::new(coll.as_points(), [0.5, 1.0, 0.2, 1.0]))
+            .add(coll)
             .add(RigidBody::new())
+            .add(KeyboardControls)
             .add_listener(LifecycleListener);
 
         recipes.add("other", other_thingy);
@@ -142,7 +146,8 @@ impl Playing {
         data.test_counter += 1;
 
         data.space.run_system(KeyboardMover::new(&data.input_state));
-        data.space.run_system(Gravity::down(0.2));
+        //data.space.run_system(Gravity::down(0.2));
+        data.space.run_stateful_system::<RigidBodySolver>();
         data.space.run_system(Motion);
     }
 }

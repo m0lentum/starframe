@@ -22,7 +22,7 @@ impl RigidBody {
             elasticity: 0.75,
             drag: 0.002,
             angular_drag: 0.001,
-            velocity: Vector2::identity(),
+            velocity: Vector2::zeros(),
             angular_vel: 0.0,
         }
     }
