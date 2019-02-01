@@ -1,5 +1,6 @@
 use graphics::math::Matrix2d;
-use nalgebra::{Similarity2, Vector2};
+use nalgebra::geometry::UnitComplex;
+use nalgebra::{Similarity2, Translation2, Vector2};
 use std::f32::consts::PI;
 
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
@@ -14,7 +15,7 @@ pub struct Transform(pub Similarity2<f32>);
 
 impl Transform {
     /// Create a new Transform with an initial position, rotation and scale.
-    /// This is simtply a slightly more concise syntax for Similarity2::new (with [f32;2] instead of Vector2<f32>).
+    /// This is simply a slightly more concise syntax for Similarity2::new (with [f32;2] instead of Vector2<f32>).
     pub fn new(position: [f32; 2], rotation: f32, scale: f32) -> Self {
         Transform(Similarity2::new(Vector2::from(position), rotation, scale))
     }
@@ -30,18 +31,54 @@ impl Transform {
     }
 
     /// Create a transform with just a rotation, expressed in radians.
-    pub fn from_rotation_rad(rot: f32) -> Self {
-        Self::new([0.0, 0.0], rot, 1.0)
+    pub fn from_rotation_rad(angle: f32) -> Self {
+        Self::new([0.0, 0.0], angle, 1.0)
     }
 
     /// Create a transform with just a rotation, expressed in degrees.
-    pub fn from_rotation_deg(rot: f32) -> Self {
-        Self::from_rotation_rad(rot * PI / 180.0)
+    pub fn from_rotation_deg(angle: f32) -> Self {
+        Self::from_rotation_rad(angle * PI / 180.0)
     }
 
     /// Create a transform with just a scaling.
     pub fn from_scaling(s: f32) -> Self {
         Transform(Similarity2::from_scaling(s))
+    }
+
+    pub fn translate(&mut self, amount: Vector2<f32>) {
+        self.0
+            .isometry
+            .append_translation_mut(&Translation2::from(amount));
+    }
+
+    pub fn set_position(&mut self, pos: Vector2<f32>) {
+        self.0.isometry.translation = nalgebra::Translation2::from(pos);
+    }
+
+    pub fn rotate_rad(&mut self, angle: f32) {
+        self.0
+            .isometry
+            .append_rotation_mut(&UnitComplex::new(angle));
+    }
+
+    pub fn rotate_deg(&mut self, angle: f32) {
+        self.rotate_rad(angle * PI / 180.0);
+    }
+
+    pub fn set_rotation_rad(&mut self, angle: f32) {
+        self.0.isometry.rotation = UnitComplex::new(angle);
+    }
+
+    pub fn set_rotation_deg(&mut self, angle: f32) {
+        self.set_rotation_rad(angle * PI / 180.0);
+    }
+
+    pub fn scale(&mut self, factor: f32) {
+        self.0.append_scaling(factor);
+    }
+
+    pub fn set_scale(&mut self, s: f32) {
+        self.0.set_scaling(s);
     }
 
     /// Maps the wrapped Similarity into the less sophisticated graphics::Matrix2d
