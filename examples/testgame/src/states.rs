@@ -1,4 +1,4 @@
-use crate::test_system::{KeyboardControls, KeyboardMover, Position, Velocity};
+use crate::controls::*;
 
 use moleengine::ecs::event::*;
 use moleengine::ecs::recipe::{parse_into_space, ObjectRecipe, RecipeBook};
@@ -7,20 +7,14 @@ use moleengine::ecs::storage::VecStorage;
 use moleengine::game::GameState;
 use moleengine::inputstate::*;
 use moleengine::transform::Transform;
+use moleengine_physics::Collider;
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
-use graphics::clear;
 use opengl_graphics::GlGraphics;
 use piston::input::keyboard::Key;
 use piston::input::Button;
 use piston::input::*;
 
-#[derive(Clone, Copy)]
-pub struct Rotation(f32);
-#[derive(Clone, Copy)]
-pub struct Printer;
-#[derive(Clone, Copy)]
-pub struct Placeholder;
 #[derive(Clone, Copy)]
 pub struct LifecycleListener;
 
@@ -74,19 +68,15 @@ impl Data {
         space
             .add_container::<Shape, VecStorage<_>>()
             .add_container::<Transform, VecStorage<_>>()
-            .add_container::<Position, VecStorage<_>>()
-            .add_container::<Velocity, VecStorage<_>>()
-            .add_container::<KeyboardControls, VecStorage<_>>()
-            .add_container::<Rotation, VecStorage<_>>()
-            .add_container::<Printer, VecStorage<_>>()
-            .add_container::<Placeholder, VecStorage<_>>();
+            .add_container::<Collider, VecStorage<_>>()
+            .add_container::<KeyboardControls, VecStorage<_>>();
 
         let mut recipes = RecipeBook::new();
 
+        let coll = Collider::new_circle(40.0);
         let thingy = ObjectRecipe::new()
-            .add(Shape::new_square(50.0, [1.0, 1.0, 1.0, 1.0]))
-            .add_named_variable("pos", Some(Position { x: 0.0, y: 0.0 }))
-            .add_named_variable("vel", None::<Velocity>)
+            .add(Shape::new(coll.as_points(), [1.0, 1.0, 1.0, 1.0]))
+            .add(coll)
             .add_named_variable("T", None::<Transform>)
             .add(KeyboardControls)
             .add_listener(ChainEventListener);
@@ -95,8 +85,6 @@ impl Data {
 
         let other_thingy = ObjectRecipe::new()
             .add_listener(ChainEventListener)
-            .add_named_variable("P", Some(Position { x: 0.0, y: 0.0 }))
-            .add(Velocity { x: 1.0, y: 0.5 })
             .add(Transform::new([120.0, 180.0], 0.0, 1.5))
             .add(Shape::new_square(50.0, [1.0, 0.8, 0.2, 1.0]))
             .add_listener(LifecycleListener);
@@ -136,8 +124,7 @@ impl Playing {
         let gl = &mut data.gl;
         let ctx = gl.draw_begin(args.viewport());
 
-        clear([0.3, 0.7, 0.8, 1.0], gl);
-        //let ctx_ = ctx.trans(50.0, 50.0).rot_deg(data.test_counter as f64);
+        graphics::clear([0.3, 0.7, 0.8, 1.0], gl);
 
         data.space.run_system(ShapeRenderer::new(&ctx, gl));
 

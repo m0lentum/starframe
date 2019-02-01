@@ -6,37 +6,6 @@ use moleengine::Transform;
 use nalgebra::geometry::Translation2;
 use piston::input::keyboard::Key;
 
-// useless crap that needs to be deleted
-
-#[derive(Debug, Clone)]
-pub struct Position {
-    pub x: f32,
-    pub y: f32,
-}
-impl std::str::FromStr for Position {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, ()> {
-        let mut halves = s.split(',');
-        let x = halves.next().unwrap().parse().unwrap();
-        let y = halves.next().unwrap().parse().unwrap();
-        Ok(Position { x, y })
-    }
-}
-#[derive(Clone, Copy)]
-pub struct Velocity {
-    pub x: f32,
-    pub y: f32,
-}
-impl std::str::FromStr for Velocity {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, ()> {
-        let pos = s.parse::<Position>()?; // lol
-        Ok(Velocity { x: pos.x, y: pos.y })
-    }
-}
-
-// end useless crap that needs to be deleted
-
 #[derive(Copy, Clone)]
 pub struct KeyboardControls;
 

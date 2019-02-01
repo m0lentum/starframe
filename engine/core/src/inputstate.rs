@@ -58,7 +58,7 @@ impl InputState {
                         }
                     }
                 }
-                _ => unimplemented!(),
+                _ => (),
             }
         }
     }

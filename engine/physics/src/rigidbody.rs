@@ -61,6 +61,10 @@ impl RigidBody {
         self.angular_drag = d;
         self
     }
+
+    pub fn get_body_type(&self) -> BodyType {
+        self.body_type
+    }
 }
 
 /// The type of a rigid body determines how it is treated in physics updates.

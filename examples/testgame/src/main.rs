@@ -1,5 +1,5 @@
 mod states;
-mod test_system;
+mod controls;
 mod testgame;
 
 fn main() {
