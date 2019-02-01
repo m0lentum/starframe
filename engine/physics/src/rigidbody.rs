@@ -40,24 +40,24 @@ impl RigidBody {
     }
 
     /// Mass determines how much collisions affect this body vs. the other one.
-    pub fn mass(mut self, mass: Mass) -> Self {
+    pub fn with_mass(mut self, mass: Mass) -> Self {
         self.mass = mass;
         self
     }
 
     /// Elasticity determines how much energy is preserved in collisions
     /// (0 = none, 1 = all)
-    pub fn elasticity(mut self, e: f32) -> Self {
+    pub fn with_elasticity(mut self, e: f32) -> Self {
         self.elasticity = e;
         self
     }
 
-    pub fn drag(mut self, d: f32) -> Self {
+    pub fn with_drag(mut self, d: f32) -> Self {
         self.drag = d;
         self
     }
 
-    pub fn angular_drag(mut self, d: f32) -> Self {
+    pub fn with_angular_drag(mut self, d: f32) -> Self {
         self.angular_drag = d;
         self
     }

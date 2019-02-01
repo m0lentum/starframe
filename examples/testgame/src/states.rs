@@ -1,13 +1,18 @@
 use crate::controls::*;
 
-use moleengine::ecs::event::*;
-use moleengine::ecs::recipe::{parse_into_space, ObjectRecipe, RecipeBook};
-use moleengine::ecs::space::{LifecycleEvent, Space};
-use moleengine::ecs::storage::VecStorage;
+use moleengine::ecs::{
+    event::*,
+    recipe::{parse_into_space, ObjectRecipe, RecipeBook},
+    space::{LifecycleEvent, Space},
+    storage::VecStorage,
+};
 use moleengine::game::GameState;
 use moleengine::inputstate::*;
 use moleengine::transform::Transform;
-use moleengine_physics::Collider;
+use moleengine_physics::{
+    systems::{Gravity, Motion},
+    Collider, RigidBody,
+};
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
 use opengl_graphics::GlGraphics;
@@ -69,6 +74,7 @@ impl Data {
             .add_container::<Shape, VecStorage<_>>()
             .add_container::<Transform, VecStorage<_>>()
             .add_container::<Collider, VecStorage<_>>()
+            .add_container::<RigidBody, VecStorage<_>>()
             .add_container::<KeyboardControls, VecStorage<_>>();
 
         let mut recipes = RecipeBook::new();
@@ -87,6 +93,7 @@ impl Data {
             .add_listener(ChainEventListener)
             .add(Transform::new([120.0, 180.0], 0.0, 1.5))
             .add(Shape::new_square(50.0, [1.0, 0.8, 0.2, 1.0]))
+            .add(RigidBody::new())
             .add_listener(LifecycleListener);
 
         recipes.add("other", other_thingy);
@@ -135,6 +142,8 @@ impl Playing {
         data.test_counter += 1;
 
         data.space.run_system(KeyboardMover::new(&data.input_state));
+        data.space.run_system(Gravity::down(0.2));
+        data.space.run_system(Motion);
     }
 }
 
