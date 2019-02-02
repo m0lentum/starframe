@@ -14,6 +14,11 @@ use std::f32::consts::PI;
 pub struct Transform(pub Similarity2<f32>);
 
 impl Transform {
+    /// The identity transform, i.e. no translation, rotation or scaling.
+    pub fn identity() -> Self {
+        Transform(Similarity2::identity())
+    }
+
     /// Create a new Transform with an initial position, rotation and scale.
     /// This is simply a slightly more concise syntax for Similarity2::new (with [f32;2] instead of Vector2<f32>).
     pub fn new(position: [f32; 2], rotation: f32, scale: f32) -> Self {
@@ -51,7 +56,7 @@ impl Transform {
             .append_translation_mut(&Translation2::from(amount));
     }
 
-    pub fn set_position(&mut self, pos: Vector2<f32>) {
+    pub fn set_translation(&mut self, pos: Vector2<f32>) {
         self.0.isometry.translation = nalgebra::Translation2::from(pos);
     }
 

@@ -33,7 +33,14 @@ impl<'a, S: SimpleSystem<'a>> System<'a> for S {
 /// These need to be initialized in a Space before using them.
 pub trait StatefulSystem<'a> {
     type Filter: ComponentFilter<'a>;
-    fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue);
+    type State: 'static;
+    fn run_system(
+        self,
+        state: &mut Self::State,
+        items: &mut [Self::Filter],
+        space: &Space,
+        queue: &mut EventQueue,
+    );
 }
 
 /// A set of Components that knows how to extract itself from a Space.

@@ -39,6 +39,11 @@ impl EventQueue {
         self.content.push(evt);
     }
 
+    /// Move everything from another queue into this one, leaving it empty.
+    pub fn append(&mut self, other: &mut EventQueue) {
+        self.content.append(&mut other.content);
+    }
+
     /// Run all the events in the queue and drain it so they can't be run again.
     pub(crate) fn run_all(&mut self, space: &mut Space) {
         for evt in self.content.drain(..) {

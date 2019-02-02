@@ -6,6 +6,7 @@ use super::IdType;
 
 use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};
+use parking_lot::RwLock;
 
 /// An Entity-Component-System environment.
 pub struct Space {
@@ -51,14 +52,11 @@ impl Space {
         self
     }
 
-    /// Store the initial state of a stateful system in this space.
-    /// This must be done before attempting to run such a system.
-    /// This returns &mut Self, so it can be chained like a builder.
-    pub fn init_stateful_system<'a, S: StatefulSystem<'a> + 'static>(
-        &mut self,
-        system: S,
-    ) -> &mut Self {
-        self.global_data.insert(system);
+    /// Store some globally accessible state behind a RwLock in this space. This is mostly used by
+    /// stateful systems and must be done before attempting to run such a system.
+    /// This method can be chained like a builder together with add_container.
+    pub fn init_global_state<'a, S: 'static>(&mut self, state: S) -> &mut Self {
+        self.global_data.insert(RwLock::new(state));
 
         self
     }
@@ -228,6 +226,13 @@ impl Space {
         })
     }
 
+    /// Like try_run_system, but instead of firing generated events immediately, returns them.
+    /// This is useful because it allows us to run Systems through an immutable Space reference,
+    /// which in turn lets us run them in parallel or chain them from within one another.
+    pub fn try_run_system_pass_events<'a, S: System<'a>>(&self, system: S) -> Option<EventQueue> {
+        self.actually_run_system(system)
+    }
+
     /// Actually runs a system, giving it a queue to put events in if it wants to.
     fn actually_run_system<'a, S: System<'a>>(&self, system: S) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
@@ -239,28 +244,30 @@ impl Space {
     /// # Panics
     /// Panics if the StatefulSystem being run has not been initialized or requires a component
     /// that doesn't have a container in the Space.
-    pub fn run_stateful_system<'a, S: StatefulSystem<'a> + 'static>(&mut self) {
-        let system = self
-            .global_data
-            .get_mut::<S>()
-            .expect("Attempted to run an uninitialized StatefulSystem");
+    pub fn run_stateful_system<'a, S: StatefulSystem<'a> + 'static>(&mut self, system: S) {
+        let mut evts = self
+            .try_run_stateful_pass_events(system)
+            .expect("Attempted to run a StatefulSystem without all Components present");
 
-        // without this the Space is mutably borrowed by system
-        // it is safe because the StatefulSystem has no way to access itself through the
-        // immutable reference to the Space that it receives
-        let system_detached = unsafe { (system as *mut S).as_mut().unwrap() };
-
-        self.actually_run_stateful(system_detached)
-            .expect("Attempted to run a StatefulSystem without all Components present")
-            .run_all(self);
+        evts.run_all(self);
     }
 
-    fn actually_run_stateful<'a, S: StatefulSystem<'a>>(
+    /// Like run_system_pass_events, but for stateful systems.
+    pub fn try_run_stateful_pass_events<'a, S: StatefulSystem<'a>>(
         &self,
-        system: &mut S,
+        system: S,
     ) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
-        let result = S::Filter::run_filter(self, |cs| system.run_system(cs, self, &mut queue));
+        let mut state = self
+            .global_data
+            .get::<RwLock<S::State>>()
+            .expect("Attempted to run an uninitialized StatefulSystem")
+            .write();
+
+        use std::ops::DerefMut;
+        let result = S::Filter::run_filter(self, |cs| {
+            system.run_system(state.deref_mut(), cs, self, &mut queue)
+        });
         result.map(|()| queue)
     }
 

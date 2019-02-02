@@ -7,8 +7,7 @@ use moleengine::ecs::{
     storage::VecStorage,
 };
 use moleengine::game::GameState;
-use moleengine::util::inputstate::*;
-use moleengine::util::Transform;
+use moleengine::util::{debug::*, inputstate::*, Transform};
 use moleengine_physics::{collision::RigidBodySolver, systems::Motion, Collider, RigidBody};
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
@@ -16,6 +15,8 @@ use opengl_graphics::GlGraphics;
 use piston::input::keyboard::Key;
 use piston::input::Button;
 use piston::input::*;
+
+use nalgebra::Point2;
 
 #[derive(Clone, Copy)]
 pub struct LifecycleListener;
@@ -66,14 +67,15 @@ impl Data {
             input_state.track_keys(&[Left, Right, Down, Up]);
         }
 
-        let mut space = Space::with_capacity(10);
+        let mut space = Space::with_capacity(100);
         space
             .add_container::<Shape, VecStorage<_>>()
             .add_container::<Transform, VecStorage<_>>()
             .add_container::<Collider, VecStorage<_>>()
             .add_container::<RigidBody, VecStorage<_>>()
             .add_container::<KeyboardControls, VecStorage<_>>()
-            .init_stateful_system(RigidBodySolver);
+            .add_container::<PointVisualizer, VecStorage<_>>()
+            .init_global_state(vec![Point2::new(100_f32, 200_f32)]);
 
         let mut recipes = RecipeBook::new();
 
@@ -84,7 +86,6 @@ impl Data {
             .add(RigidBody::new())
             .add_named_variable("T", None::<Transform>)
             .add_listener(ChainEventListener);
-
         recipes.add("thingy", thingy.clone());
 
         let other_thingy = ObjectRecipe::new()
@@ -95,8 +96,14 @@ impl Data {
             .add(RigidBody::new())
             .add(KeyboardControls)
             .add_listener(LifecycleListener);
-
         recipes.add("other", other_thingy);
+
+        let coll_vis = ObjectRecipe::new()
+            .add(Transform::identity())
+            .add(PointVisualizer)
+            .add(Shape::new_square(8.0, [0.1, 0.5, 0.4, 1.0]))
+            .start_disabled();
+        recipes.add("cv", coll_vis);
 
         Data {
             input_state,
@@ -114,6 +121,11 @@ impl Data {
         self.space.destroy_all();
 
         let r = parse_into_space(mes.as_str(), &mut self.space, &mut self.recipes);
+
+        let coll_vis = self.recipes.get_mut("cv").unwrap();
+        for _ in 1..10 {
+            coll_vis.apply(&mut self.space);
+        }
 
         match r {
             Ok(_) => (),
@@ -143,7 +155,8 @@ impl Playing {
 
         data.space.run_system(KeyboardMover::new(&data.input_state));
         //data.space.run_system(Gravity::down(0.2));
-        data.space.run_stateful_system::<RigidBodySolver>();
+        data.space.run_stateful_system(RigidBodySolver);
+        data.space.run_stateful_system(PointVisualizerSystem);
         data.space.run_system(Motion);
     }
 }

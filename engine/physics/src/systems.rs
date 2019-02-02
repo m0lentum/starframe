@@ -20,9 +20,7 @@ impl<'a> SimpleSystem<'a> for Motion {
     fn run_system(self, items: &mut [Self::Filter]) {
         for item in items {
             match item.body.get_body_type() {
-                BodyType::Dynamic | BodyType::Kinematic => {
-                    item.tr.translate(dbg!(item.body.velocity))
-                }
+                BodyType::Dynamic | BodyType::Kinematic => item.tr.translate(item.body.velocity),
                 BodyType::Static => (),
             }
         }

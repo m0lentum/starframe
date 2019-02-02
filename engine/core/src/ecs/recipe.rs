@@ -162,6 +162,35 @@ impl ObjectRecipe {
         self
     }
 
+    /// Like `add`, but adds a storage to the Space first if one doesn't exist yet.
+    /// Creating the containers explicitly before adding objects is encouraged
+    /// (i.e. don't use this unless you have a good reason!).
+    pub fn add_safe<T, S>(mut self, component: T) -> Self
+    where
+        T: Clone + 'static,
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
+        self.steps.push(Box::new(
+            move |space: &mut Space, id: IdType, _: &VarMap| {
+                space.create_component_safe::<T, S>(id, component.clone());
+            },
+        ));
+
+        self
+    }
+
+    /// Have the object initially disabled. You'll probably want some mechanism that
+    /// enables it later (an object pool, for example).
+    pub fn start_disabled(mut self) -> Self {
+        self.steps.push(Box::new(
+            move |space: &mut Space, id: IdType, _: &VarMap| {
+                space.actually_disable_object(id);
+            },
+        ));
+
+        self
+    }
+
     fn do_parse_var<T>(src: &str, vars: &mut VarMap) -> Result<(), ()>
     where
         T: FromStr + Clone + 'static,
@@ -204,35 +233,6 @@ impl ObjectRecipe {
     /// This includes removing values from the variables without default values.
     pub fn reset_variables(&mut self) {
         self.vars = self.default_vars.clone();
-    }
-
-    /// Have the object initially disabled. You'll probably want some mechanism that
-    /// enables it later (an object pool, usually).
-    pub fn start_disabled(&mut self) -> &mut Self {
-        self.steps.push(Box::new(
-            move |space: &mut Space, id: IdType, _: &VarMap| {
-                space.actually_disable_object(id);
-            },
-        ));
-
-        self
-    }
-
-    /// Like `add`, but adds a storage to the Space first if one doesn't exist yet.
-    /// Creating the containers explicitly before adding objects is strongly encouraged
-    /// (i.e. don't use this unless you have a good reason!).
-    pub fn add_safe<T, S>(&mut self, component: T) -> &mut Self
-    where
-        T: Clone + 'static,
-        S: ComponentStorage<T> + CreateWithCapacity + 'static,
-    {
-        self.steps.push(Box::new(
-            move |space: &mut Space, id: IdType, _: &VarMap| {
-                space.create_component_safe::<T, S>(id, component.clone());
-            },
-        ));
-
-        self
     }
 
     /// Use this recipe to create an object in a Space.
