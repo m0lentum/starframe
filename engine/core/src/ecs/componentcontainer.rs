@@ -1,7 +1,7 @@
 use super::storage::{ComponentStorage, CreateWithCapacity};
 use super::IdType;
 use hibitset::BitSet;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub(crate) type WriteAccess<'a, T> = RwLockWriteGuard<'a, Box<dyn ComponentStorage<T>>>;
 pub(crate) type ReadAccess<'a, T> = RwLockReadGuard<'a, Box<dyn ComponentStorage<T>>>;
@@ -41,20 +41,12 @@ impl<T> ComponentContainer<T> {
     }
 
     /// Get read access to the underlying storage.
-    /// # Panics
-    /// Panics if the storage is poisoned or the current thread already has a lock.
     pub fn read(&self) -> ReadAccess<'_, T> {
-        self.storage
-            .read()
-            .expect("Read access to a ComponentContainer failed")
+        self.storage.read_recursive()
     }
 
     /// Get write access to the underlying storage.
-    /// # Panics
-    /// Panics if the storage is poisoned or the current thread already has a lock.
     pub fn write(&self) -> WriteAccess<'_, T> {
-        self.storage
-            .write()
-            .expect("Write access to a ComponentContainer failed")
+        self.storage.write()
     }
 }
