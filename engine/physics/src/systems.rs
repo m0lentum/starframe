@@ -1,6 +1,6 @@
 use crate::rigidbody::{BodyType, RigidBody};
 use moleengine::ecs::system::*;
-use moleengine::Transform;
+use moleengine::util::Transform;
 use nalgebra::Vector2;
 
 /// System that applies velocity to position.
@@ -20,7 +20,9 @@ impl<'a> SimpleSystem<'a> for Motion {
     fn run_system(self, items: &mut [Self::Filter]) {
         for item in items {
             match item.body.get_body_type() {
-                BodyType::Dynamic | BodyType::Kinematic => item.tr.translate(dbg!(item.body.velocity)),
+                BodyType::Dynamic | BodyType::Kinematic => {
+                    item.tr.translate(dbg!(item.body.velocity))
+                }
                 BodyType::Static => (),
             }
         }

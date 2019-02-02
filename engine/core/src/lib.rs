@@ -1,10 +1,6 @@
 pub mod ecs;
 pub mod game;
-pub mod inputstate;
-pub mod transform;
-
-pub use inputstate::InputState;
-pub use transform::Transform;
+pub mod util;
 
 #[macro_use]
 extern crate pest_derive;

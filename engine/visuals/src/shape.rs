@@ -4,7 +4,7 @@ use graphics::{Context, Graphics, Transformed};
 
 use crate::Drawable;
 use moleengine::ecs::system::*;
-use moleengine::transform::*;
+use moleengine::util::Transform;
 
 #[derive(Clone)]
 pub struct Shape {

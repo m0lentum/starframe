@@ -7,13 +7,9 @@ use moleengine::ecs::{
     storage::VecStorage,
 };
 use moleengine::game::GameState;
-use moleengine::inputstate::*;
-use moleengine::transform::Transform;
-use moleengine_physics::{
-    collision::RigidBodySolver,
-    systems::{Gravity, Motion},
-    Collider, RigidBody,
-};
+use moleengine::util::inputstate::*;
+use moleengine::util::Transform;
+use moleengine_physics::{collision::RigidBodySolver, systems::Motion, Collider, RigidBody};
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
 use opengl_graphics::GlGraphics;
