@@ -8,7 +8,9 @@ use moleengine::ecs::{
 };
 use moleengine::game::GameState;
 use moleengine::util::{debug::*, inputstate::*, Transform};
-use moleengine_physics::{collision::RigidBodySolver, systems::Motion, Collider, RigidBody};
+use moleengine_physics::{
+    collision::Collision, collision::RigidBodySolver, systems::Motion, Collider, RigidBody,
+};
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
 use opengl_graphics::GlGraphics;
@@ -16,13 +18,13 @@ use piston::input::keyboard::Key;
 use piston::input::Button;
 use piston::input::*;
 
-use nalgebra::Point2;
+use nalgebra::{Point2, Vector2};
 
 #[derive(Clone, Copy)]
 pub struct LifecycleListener;
 
 impl EventListener<LifecycleEvent> for LifecycleListener {
-    fn run_listener(&mut self, evt: &LifecycleEvent, queue: &mut EventQueue) {
+    fn run_listener(&mut self, evt: &LifecycleEvent, _space: &Space, queue: &mut EventQueue) {
         match evt {
             LifecycleEvent::Destroy(id) => println!("Object got deleted: {}!", id),
             LifecycleEvent::Disable(id) => println!("Object got disabled: {}!", id),
@@ -46,8 +48,19 @@ impl SpaceEvent for TestChainEvent {
 pub struct ChainEventListener;
 
 impl EventListener<TestChainEvent> for ChainEventListener {
-    fn run_listener(&mut self, _evt: &TestChainEvent, _queue: &mut EventQueue) {
+    fn run_listener(&mut self, _evt: &TestChainEvent, _space: &Space, _queue: &mut EventQueue) {
         println!("Chain event");
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TestCollisionListener;
+
+impl EventListener<Collision> for TestCollisionListener {
+    fn run_listener(&mut self, evt: &Collision, space: &Space, _q: &mut EventQueue) {
+        space.do_with_component_mut(evt.source, |tr: &mut Transform| {
+            tr.rotate_deg(2.0);
+        });
     }
 }
 
@@ -85,7 +98,8 @@ impl Data {
             .add(coll)
             .add(RigidBody::new())
             .add_named_variable("T", None::<Transform>)
-            .add_listener(ChainEventListener);
+            .add_listener(ChainEventListener)
+            .add_listener(TestCollisionListener);
         recipes.add("thingy", thingy.clone());
 
         let other_thingy = ObjectRecipe::new()

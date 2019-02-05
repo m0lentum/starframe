@@ -17,7 +17,7 @@ pub trait EventListener<E: SpaceEvent> {
     /// The logic to run when a SpaceEvent happens.
     /// Pushing new events onto the EventQueue given as a parameter results in
     /// those events being run later in sequential order.
-    fn run_listener(&mut self, evt: &E, queue: &mut EventQueue);
+    fn run_listener(&mut self, evt: &E, space: &Space, queue: &mut EventQueue);
 }
 
 /// A collection of SpaceEvents, used to allow event listeners and systems to generate new events
@@ -54,9 +54,7 @@ impl EventQueue {
 
 /// Wrapper used to store EventListeners as components in a more readable manner.
 /// In most cases users need not touch this type.
-pub struct EventListenerComponent<E: SpaceEvent> {
-    pub listener: Box<dyn EventListener<E>>,
-}
+pub struct EventListenerComponent<E: SpaceEvent>(pub Box<dyn EventListener<E>>);
 
 pub(crate) struct EventPropagator<'a, E: SpaceEvent + 'static>(pub &'a E);
 
@@ -64,7 +62,7 @@ impl<'a, E: SpaceEvent> EventPropagator<'a, E> {
     pub fn propagate(&self, space: &Space, queue: &mut EventQueue) {
         space.run_filter(|items: &mut [EventListenerFilter<E>]| {
             for item in items {
-                item.l.listener.run_listener(self.0, queue);
+                item.l.0.run_listener(self.0, space, queue);
             }
         });
     }

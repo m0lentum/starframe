@@ -102,9 +102,7 @@ impl ObjectRecipe {
             move |space: &mut Space, id: IdType, _: &VarMap| {
                 space.create_component_safe::<_, VecStorage<_>>(
                     id,
-                    EventListenerComponent {
-                        listener: Box::new(listener.clone()),
-                    },
+                    EventListenerComponent(Box::new(listener.clone())),
                 );
             },
         ));

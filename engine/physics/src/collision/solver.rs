@@ -22,7 +22,7 @@ impl<'a> StatefulSystem<'a> for RigidBodySolver {
         state: &mut Self::State,
         items: &mut [Self::Filter],
         _space: &Space,
-        _queue: &mut EventQueue,
+        queue: &mut EventQueue,
     ) {
         let mut collisions = Vec::new();
         // ugly brute force for now
@@ -35,7 +35,9 @@ impl<'a> StatefulSystem<'a> for RigidBodySolver {
                     // testing
                     collisions.push(colls[0]);
                     collisions.push(colls[1]);
-                    // TODO: push events to queue
+
+                    queue.push(Box::new(colls[0]));
+                    queue.push(Box::new(colls[1]));
                 }
             }
         }

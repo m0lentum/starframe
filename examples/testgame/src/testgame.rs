@@ -18,7 +18,7 @@ pub fn launch() {
         .build()
         .unwrap();
     let gl = GlGraphics::new(opengl);
-    let mut events = Events::new(EventSettings::new().ups(120).max_fps(240));
+    let mut events = Events::new(EventSettings::new().ups(60).max_fps(240));
 
     let mut game = Game::new(Data::init(gl), Box::new(Playing));
 

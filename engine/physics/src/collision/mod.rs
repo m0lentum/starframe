@@ -1,6 +1,6 @@
 use crate::collider::Collider;
 
-use moleengine::ecs::IdType;
+use moleengine::ecs::{event::SpaceEvent, space::Space, IdType};
 use moleengine::util::Transform;
 use nalgebra::{Point2, Unit, Vector2};
 
@@ -10,6 +10,9 @@ pub use solver::RigidBodySolver;
 
 /// Information about a collision relative to one of the objects involved.
 /// Two of these are generated for every colliding pair.
+/// They also function as SpaceEvents and can be listened to.
+/// # Event behavior
+/// Only the listener for the involved object is called.
 #[derive(Clone, Copy, Debug)]
 pub struct Collision {
     pub source: IdType,
@@ -17,6 +20,12 @@ pub struct Collision {
     pub normal: Unit<Vector2<f32>>,
     pub depth: f32,
     pub manifold: Manifold,
+}
+
+impl SpaceEvent for Collision {
+    fn handle(&self, space: &mut Space) {
+        space.run_listener(self.source, self);
+    }
 }
 
 /// The point(s) where a collision occurred, exactly on the surface of the related object.

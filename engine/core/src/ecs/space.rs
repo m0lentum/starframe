@@ -294,7 +294,7 @@ impl Space {
         let mut queue = EventQueue::new();
 
         self.do_with_component_mut(id, |l: &mut EventListenerComponent<E>| {
-            l.listener.run_listener(&evt, &mut queue)
+            l.0.run_listener(&evt, &self, &mut queue)
         });
 
         queue.run_all(self);
@@ -426,7 +426,7 @@ impl<'a> ObjectBuilder<'a> {
         self,
         listener: Box<dyn EventListener<E>>,
     ) -> Self {
-        self.with_safe::<_, VecStorage<_>>(EventListenerComponent { listener })
+        self.with_safe::<_, VecStorage<_>>(EventListenerComponent(listener))
     }
 
     /// Have the object initially disabled. You'll probably want some mechanism that
