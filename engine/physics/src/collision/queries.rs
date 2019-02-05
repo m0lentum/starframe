@@ -41,14 +41,14 @@ pub fn circle_circle(
             other: obj2,
             normal,
             depth,
-            manifold: Manifold(pos1 + (normal.as_ref() * r1), None),
+            manifold: Manifold(pos1 + (normal.as_ref() * r1_s), None),
         },
         Collision {
             source: obj2,
             other: obj1,
             normal: -normal,
             depth,
-            manifold: Manifold(pos2 - (normal.as_ref() * r2), None),
+            manifold: Manifold(pos2 - (normal.as_ref() * r2_s), None),
         },
     ])
 }
