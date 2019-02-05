@@ -63,7 +63,7 @@ impl Transform {
     pub fn rotate_rad(&mut self, angle: f32) {
         self.0
             .isometry
-            .append_rotation_mut(&UnitComplex::new(angle));
+            .append_rotation_wrt_center_mut(&UnitComplex::new(angle));
     }
 
     pub fn rotate_deg(&mut self, angle: f32) {
