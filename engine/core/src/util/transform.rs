@@ -111,7 +111,7 @@ impl std::str::FromStr for Transform {
             }
         }
 
-        Ok(Transform::new(pos, rot, scale))
+        Ok(Transform::new(pos, rot * PI / 180.0, scale))
     }
 }
 
