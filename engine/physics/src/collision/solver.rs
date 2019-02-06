@@ -1,6 +1,9 @@
-use crate::{collision::intersection_check, Collider, RigidBody};
+use crate::{
+    collision::{debug, intersection_check},
+    Collider, Collision, RigidBody,
+};
 use moleengine::ecs::{system::*, IdType};
-use moleengine::util::{debug::PointVisualizerSystem, Transform};
+use moleengine::util::Transform;
 
 pub struct RigidBodySolver;
 
@@ -15,7 +18,7 @@ pub struct ColliderFilter<'a> {
 
 impl<'a> StatefulSystem<'a> for RigidBodySolver {
     type Filter = ColliderFilter<'a>;
-    type State = Vec<nalgebra::Point2<f32>>;
+    type State = Vec<Collision>;
 
     fn run_system(
         self,
@@ -42,8 +45,6 @@ impl<'a> StatefulSystem<'a> for RigidBodySolver {
             }
         }
 
-        let mut points: Vec<_> = collisions.iter().map(|c| c.manifold.center()).collect();
-        state.clear();
-        state.append(&mut points);
+        std::mem::replace(state, collisions);
     }
 }

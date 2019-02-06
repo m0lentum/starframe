@@ -7,9 +7,11 @@ use moleengine::ecs::{
     storage::VecStorage,
 };
 use moleengine::game::GameState;
-use moleengine::util::{debug::*, inputstate::*, Transform};
+use moleengine::util::{inputstate::*, Transform};
 use moleengine_physics::{
-    collision::Collision, collision::RigidBodySolver, systems::Motion, Collider, RigidBody,
+    collision::{debug::*, Collision, RigidBodySolver},
+    systems::Motion,
+    Collider, RigidBody,
 };
 use moleengine_visuals::shape::{Shape, ShapeRenderer};
 
@@ -87,19 +89,19 @@ impl Data {
             .add_container::<Collider, VecStorage<_>>()
             .add_container::<RigidBody, VecStorage<_>>()
             .add_container::<KeyboardControls, VecStorage<_>>()
-            .add_container::<PointVisualizer, VecStorage<_>>()
-            .init_global_state(vec![Point2::new(100_f32, 200_f32)]);
+            .add_container::<CollisionVisualizer, VecStorage<_>>()
+            .init_global_state::<Vec<Collision>>(Vec::new());
 
         let mut recipes = RecipeBook::new();
 
-        let coll = Collider::new_circle(20.0);
+        let coll = Collider::new_rect(150.0, 130.0);
         let thingy = ObjectRecipe::new()
             .add(Shape::new(coll.as_points(), [1.0, 1.0, 1.0, 1.0]))
             .add(coll)
             .add(RigidBody::new())
             .add_named_variable("T", None::<Transform>)
-            .add_listener(ChainEventListener)
-            .add_listener(TestCollisionListener);
+            //.add_listener(TestCollisionListener)
+            .add_listener(ChainEventListener);
         recipes.add("thingy", thingy.clone());
 
         let other_thingy = ObjectRecipe::new()
@@ -114,7 +116,7 @@ impl Data {
 
         let coll_vis = ObjectRecipe::new()
             .add(Transform::identity())
-            .add(PointVisualizer)
+            .add(CollisionVisualizer)
             .add(Shape::new_square(8.0, [0.1, 0.5, 0.4, 1.0]))
             .start_disabled();
         recipes.add("cv", coll_vis);
@@ -170,7 +172,7 @@ impl Playing {
         data.space.run_system(KeyboardMover::new(&data.input_state));
         //data.space.run_system(Gravity::down(0.2));
         data.space.run_stateful_system(RigidBodySolver);
-        data.space.run_stateful_system(PointVisualizerSystem);
+        data.space.run_stateful_system(CollisionVisualizerSystem);
         data.space.run_system(Motion);
     }
 }

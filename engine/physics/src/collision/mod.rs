@@ -4,6 +4,7 @@ use moleengine::ecs::{event::SpaceEvent, space::Space, IdType};
 use moleengine::util::Transform;
 use nalgebra::{Point2, Unit, Vector2};
 
+pub mod debug;
 mod queries;
 mod solver;
 pub use solver::RigidBodySolver;
@@ -60,8 +61,10 @@ pub fn intersection_check(
         (Circle { r: r1 }, Circle { r: r2 }) => {
             queries::circle_circle(obj1, tr1, *r1, obj2, tr2, *r2)
         }
-        (Circle { r }, Rect { hw, hh }) => None,
+        (Circle { .. }, Rect { .. }) => None,
         (Rect { .. }, Circle { .. }) => None,
-        (Rect { .. }, Rect { .. }) => None,
+        (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
+            queries::rect_rect(obj1, tr1, *hw1, *hh1, obj2, tr2, *hw2, *hh2)
+        }
     }
 }
