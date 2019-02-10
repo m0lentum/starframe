@@ -10,8 +10,8 @@ use moleengine::util::Transform;
 pub struct Shape {
     points: Vec<Vec2d<f64>>,
     color: Color,
-    _outline_thickness: f64, // unimplemented
-    _outline_color: Color,   // unimplemented
+    outline_radius: f64,
+    outline_color: Color,
 }
 
 impl Shape {
@@ -19,8 +19,22 @@ impl Shape {
         Shape {
             points,
             color,
-            _outline_thickness: 0.0,
-            _outline_color: [0.0, 0.0, 0.0, 0.0],
+            outline_radius: 0.0,
+            outline_color: [0.0; 4],
+        }
+    }
+
+    pub fn new_outlined(
+        points: Vec<Vec2d<f64>>,
+        color: Color,
+        outline_thickness: f64,
+        outline_color: Color,
+    ) -> Self {
+        Shape {
+            points,
+            color,
+            outline_radius: outline_thickness * 0.5,
+            outline_color,
         }
     }
 
@@ -33,6 +47,34 @@ impl Shape {
 impl Drawable for Shape {
     fn draw<G: Graphics>(&self, ctx: &Context, gfx: &mut G) {
         graphics::polygon(self.color, &self.points, ctx.transform, gfx);
+        if self.outline_radius > 0.0 {
+            for i in 0..(self.points.len() - 1) {
+                graphics::line(
+                    self.outline_color,
+                    self.outline_radius,
+                    [
+                        self.points[i][0],
+                        self.points[i][1],
+                        self.points[i + 1][0],
+                        self.points[i + 1][1],
+                    ],
+                    ctx.transform,
+                    gfx,
+                );
+            }
+            graphics::line(
+                self.outline_color,
+                self.outline_radius,
+                [
+                    self.points.last().unwrap()[0],
+                    self.points.last().unwrap()[1],
+                    self.points[0][0],
+                    self.points[0][1],
+                ],
+                ctx.transform,
+                gfx,
+            )
+        }
     }
 }
 

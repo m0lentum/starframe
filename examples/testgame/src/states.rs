@@ -20,7 +20,9 @@ use piston::input::keyboard::Key;
 use piston::input::Button;
 use piston::input::*;
 
-use nalgebra::{Point2, Vector2};
+const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
+const _CYAN_COLOR: [f32; 4] = [0.3, 0.7, 0.8, 1.0];
+const LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];
 
 #[derive(Clone, Copy)]
 pub struct LifecycleListener;
@@ -94,9 +96,14 @@ impl Data {
 
         let mut recipes = RecipeBook::new();
 
-        let coll = Collider::new_rect(150.0, 130.0);
+        let coll = Collider::new_rect(180.0, 100.0);
         let thingy = ObjectRecipe::new()
-            .add(Shape::new(coll.as_points(), [1.0, 1.0, 1.0, 1.0]))
+            .add(Shape::new_outlined(
+                coll.as_points(),
+                [0.0; 4],
+                1.0,
+                LINE_COLOR,
+            ))
             .add(coll)
             .add(RigidBody::new())
             .add_named_variable("T", None::<Transform>)
@@ -106,8 +113,13 @@ impl Data {
 
         let other_thingy = ObjectRecipe::new()
             .add_listener(ChainEventListener)
-            .add(Transform::new([120.0, 180.0], 0.0, 1.5))
-            .add(Shape::new(coll.as_points(), [0.5, 1.0, 0.2, 1.0]))
+            .add(Transform::new([120.0, 180.0], 0.0, 1.0))
+            .add(Shape::new_outlined(
+                coll.as_points(),
+                [0.0; 4],
+                1.0,
+                LINE_COLOR,
+            ))
             .add(coll)
             .add(RigidBody::new())
             .add(KeyboardControls)
@@ -159,7 +171,7 @@ impl Playing {
         let gl = &mut data.gl;
         let ctx = gl.draw_begin(args.viewport());
 
-        graphics::clear([0.3, 0.7, 0.8, 1.0], gl);
+        graphics::clear(BG_COLOR, gl);
 
         data.space.run_system(ShapeRenderer::new(&ctx, gl));
 
