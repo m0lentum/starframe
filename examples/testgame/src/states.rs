@@ -79,7 +79,7 @@ impl Data {
         let mut input_state = InputState::new();
         {
             use Key::*;
-            input_state.track_keys(&[Left, Right, Down, Up]);
+            input_state.track_keys(&[Left, Right, Down, Up, PageDown, PageUp]);
         }
 
         let mut space = Space::with_capacity(100);

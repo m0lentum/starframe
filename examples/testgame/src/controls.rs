@@ -2,7 +2,7 @@ use moleengine::ecs::space::Space;
 use moleengine::ecs::system::*;
 use moleengine::util::inputstate::*;
 use moleengine::util::Transform;
-use nalgebra::geometry::Translation2;
+use nalgebra::Vector2;
 use piston::input::keyboard::Key;
 
 #[derive(Copy, Clone)]
@@ -25,20 +25,27 @@ impl<'a> KeyboardMover<'a> {
 impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     type Filter = PosVel<'a>;
     fn run_system(self, items: &mut [Self::Filter]) {
-        let mut t = Translation2::identity();
+        let mut t = Vector2::zeros();
+        let mut r = 0.0;
         if check_key(self.input, Key::Left) {
-            t.vector[0] = -5.0;
+            t[0] = -5.0;
         } else if check_key(self.input, Key::Right) {
-            t.vector[0] = 5.0;
+            t[0] = 5.0;
         }
         if check_key(self.input, Key::Up) {
-            t.vector[1] = -5.0;
+            t[1] = -5.0;
         } else if check_key(self.input, Key::Down) {
-            t.vector[1] = 5.0;
+            t[1] = 5.0;
+        }
+        if check_key(self.input, Key::PageDown) {
+            r = 0.03;
+        } else if check_key(self.input, Key::PageUp) {
+            r = -0.03;
         }
 
         for item in items {
-            item.tr.0.isometry.append_translation_mut(&t);
+            item.tr.translate(t);
+            item.tr.rotate_rad(r);
         }
     }
 }

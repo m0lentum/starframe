@@ -50,7 +50,9 @@ impl<'a> StatefulSystem<'a> for CollisionVisualizerSystem {
 
         // disable remaining items
         for item in items {
-            queue.push(Box::new(LifecycleEvent::Disable(item.id)));
+            if item.enabled {
+                queue.push(Box::new(LifecycleEvent::Disable(item.id)));
+            }
         }
     }
 }
