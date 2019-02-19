@@ -9,7 +9,7 @@ use moleengine::ecs::{
 use moleengine::game::GameState;
 use moleengine::util::{inputstate::*, Transform};
 use moleengine_physics::{
-    collision::{debug::*, Collision, RigidBodySolver},
+    collision::{Collision, RigidBodySolver},
     systems::Motion,
     Collider, RigidBody,
 };
@@ -91,7 +91,6 @@ impl Data {
             .add_container::<Collider, VecStorage<_>>()
             .add_container::<RigidBody, VecStorage<_>>()
             .add_container::<KeyboardControls, VecStorage<_>>()
-            .add_container::<CollisionVisualizer, VecStorage<_>>()
             .init_global_state::<Vec<Collision>>(Vec::new());
 
         let mut recipes = RecipeBook::new();
@@ -126,13 +125,6 @@ impl Data {
             .add_listener(LifecycleListener);
         recipes.add("other", other_thingy);
 
-        let coll_vis = ObjectRecipe::new()
-            .add(Transform::identity())
-            .add(CollisionVisualizer)
-            .add(Shape::new_square(8.0, [0.1, 0.5, 0.4, 1.0]))
-            .start_disabled();
-        recipes.add("cv", coll_vis);
-
         Data {
             input_state,
             recipes,
@@ -149,11 +141,6 @@ impl Data {
         self.space.destroy_all();
 
         let r = parse_into_space(mes.as_str(), &mut self.space, &mut self.recipes);
-
-        let coll_vis = self.recipes.get_mut("cv").unwrap();
-        for _ in 1..10 {
-            coll_vis.apply(&mut self.space);
-        }
 
         match r {
             Ok(_) => (),
@@ -174,6 +161,12 @@ impl Playing {
         graphics::clear(BG_COLOR, gl);
 
         data.space.run_system(ShapeRenderer::new(&ctx, gl));
+        moleengine_physics::collision::debug::draw_collisions(
+            &data.space,
+            &ctx,
+            gl,
+            [1.0, 0.3, 0.2, 1.0],
+        );
 
         gl.draw_end();
     }
@@ -184,7 +177,6 @@ impl Playing {
         data.space.run_system(KeyboardMover::new(&data.input_state));
         //data.space.run_system(Gravity::down(0.2));
         data.space.run_stateful_system(RigidBodySolver);
-        data.space.run_stateful_system(CollisionVisualizerSystem);
         data.space.run_system(Motion);
     }
 }

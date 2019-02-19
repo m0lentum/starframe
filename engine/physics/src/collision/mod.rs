@@ -44,6 +44,14 @@ impl Manifold {
             p1
         }
     }
+
+    /// Execute a closure for all points present in the manifold.
+    pub fn for_each<F: FnMut(&Point2<f32>)>(&self, mut f: F) {
+        f(&self.0);
+        if let Some(p) = self.1 {
+            f(&p);
+        }
+    }
 }
 
 /// Checks two transformed colliders for intersection. If one is found,

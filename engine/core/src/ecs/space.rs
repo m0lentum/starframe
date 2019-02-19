@@ -16,7 +16,7 @@ pub struct Space {
     next_obj_id: IdType,
     capacity: IdType,
     containers: AnyMap,
-    global_data: AnyMap,
+    global_state: AnyMap, // everything in this is under an RwLock
 }
 
 impl Space {
@@ -29,7 +29,7 @@ impl Space {
             next_obj_id: 0,
             capacity,
             containers: AnyMap::new(),
-            global_data: AnyMap::new(),
+            global_state: AnyMap::new(),
         }
     }
 
@@ -56,7 +56,7 @@ impl Space {
     /// stateful systems and must be done before attempting to run such a system.
     /// This method can be chained like a builder together with add_container.
     pub fn init_global_state<'a, S: 'static>(&mut self, state: S) -> &mut Self {
-        self.global_data.insert(RwLock::new(state));
+        self.global_state.insert(RwLock::new(state));
 
         self
     }
@@ -209,6 +209,21 @@ impl Space {
         }
     }
 
+    /// Execute a closure if this Space has the desired type of global state data.
+    pub fn do_with_global_state<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        let state = self.global_state.get::<RwLock<T>>()?;
+        Some(f(&state.read()))
+    }
+
+    /// Like do_with_global_state, but with a mutable reference.
+    pub fn do_with_global_state_mut<T: 'static, R>(
+        &mut self,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Option<R> {
+        let state = self.global_state.get_mut::<RwLock<T>>()?;
+        Some(f(&mut state.write()))
+    }
+
     /// Run a single System on all objects with containers that match the System's types.
     /// For more information see the moleengine_ecs_codegen crate.
     /// # Panics
@@ -259,7 +274,7 @@ impl Space {
     ) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
         let mut state = self
-            .global_data
+            .global_state
             .get::<RwLock<S::State>>()
             .expect("Attempted to run an uninitialized StatefulSystem")
             .write();
