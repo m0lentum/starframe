@@ -2,7 +2,7 @@ use super::{Collision, Manifold};
 use moleengine::ecs::IdType;
 use moleengine::util::Transform;
 
-use nalgebra::{Point2, Unit, Vector2};
+use nalgebra::{Point2, Unit, UnitComplex, Vector2};
 use std::f32::consts::PI;
 
 /// determines how close to parallel two surfaces need to be for their collision
@@ -222,8 +222,8 @@ fn aabb_aabb(
         let y1 = (-hh1).max(dist[1] - hh2);
         let y2 = hh1.min(dist[1] + hh2);
 
-        let m1 = Manifold(Point2::new(x1, y1), Some(Point2::new(x2, y1)));
-        let m2 = Manifold(Point2::new(x1, y2), Some(Point2::new(x2, y2)));
+        let m1 = Manifold(Point2::new(x1, y1), Some(Point2::new(x1, y2)));
+        let m2 = Manifold(Point2::new(x2, y1), Some(Point2::new(x2, y2)));
 
         Some([
             Collision {
@@ -247,21 +247,21 @@ fn aabb_aabb(
         let x1 = (-hw1).max(dist[0] - hw2);
         let x2 = hw1.min(dist[0] + hw2);
 
-        let m1 = Manifold(Point2::new(x1, y1), Some(Point2::new(x1, y2)));
-        let m2 = Manifold(Point2::new(x2, y1), Some(Point2::new(x2, y2)));
+        let m1 = Manifold(Point2::new(x1, y1), Some(Point2::new(x2, y1)));
+        let m2 = Manifold(Point2::new(x1, y2), Some(Point2::new(x2, y2)));
 
         Some([
             Collision {
                 source: obj1,
                 other: obj2,
-                normal: Unit::new_unchecked(Vector2::new(y_dir, 0.0)),
+                normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
                 depth: y_pen,
                 manifold: m1,
             },
             Collision {
                 source: obj2,
                 other: obj1,
-                normal: Unit::new_unchecked(Vector2::new(-y_dir, 0.0)),
+                normal: Unit::new_unchecked(Vector2::new(0.0, -y_dir)),
                 depth: y_pen,
                 manifold: m2,
             },
