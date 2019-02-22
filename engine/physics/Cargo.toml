@@ -7,4 +7,4 @@ edition = "2018"
 [dependencies]
 moleengine = { path = "../core" }
 piston2d-graphics = "0.30"
-nalgebra = "0.16"
+nalgebra = "0.17.2"

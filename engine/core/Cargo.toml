@@ -5,11 +5,11 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-piston = "0.40"
+piston = "0.42.0"
 piston2d-graphics = "0.30"
-nalgebra = "0.16"
+nalgebra = "0.17.2"
 moleengine_ecs_codegen = { path = "../ecs_codegen" }
-hibitset = "0.5.1"
+hibitset = "0.5.4"
 anymap = "0.12.1"
 pest = "2.1.0"
 pest_derive = "2.1.0"
