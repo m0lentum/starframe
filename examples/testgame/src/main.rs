@@ -1,7 +1,7 @@
-mod states;
 mod controls;
-mod testgame;
+mod gameloop;
 
 fn main() {
-    testgame::launch();
+    let res = gameloop::init();
+    gameloop::begin(res);
 }

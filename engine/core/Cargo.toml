@@ -7,6 +7,7 @@ edition = "2018"
 [dependencies]
 piston = "0.42.0"
 piston2d-graphics = "0.30"
+piston_window = "0.89.0"
 nalgebra = "0.17.2"
 moleengine_ecs_codegen = { path = "../ecs_codegen" }
 hibitset = "0.5.4"
