@@ -7,4 +7,5 @@ members = [
     "engine/visuals",
     "examples/template",
     "examples/testgame",
+    "examples/fluidsim",
 ]
