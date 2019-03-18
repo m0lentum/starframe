@@ -161,6 +161,7 @@ pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {
 }
 
 fn draw_space(gl: &mut GlGraphics, args: RenderArgs, space: &mut Space) {
+    microprofile::scope!("render", "all");
     let ctx = gl.draw_begin(args.viewport());
 
     graphics::clear(BG_COLOR, gl);
@@ -172,8 +173,13 @@ fn draw_space(gl: &mut GlGraphics, args: RenderArgs, space: &mut Space) {
 }
 
 fn update_playing(res: &mut Resources, _args: UpdateArgs) {
+    microprofile::flip();
+    microprofile::scope!("update", "all");
     res.space.run_system(KeyboardMover::new(&res.input_state));
-    res.space.run_stateful_system(RigidBodySolver);
+    {
+        microprofile::scope!("update", "rigid body solver");
+        res.space.run_stateful_system(RigidBodySolver);
+    }
     res.space.run_system(Motion);
 }
 

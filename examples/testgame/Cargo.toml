@@ -14,3 +14,6 @@ pistoncore-glutin_window = "0.54.0"
 piston2d-opengl_graphics = "0.59"
 nalgebra = "0.17.2"
 piston_window = "0.89.0"
+
+[dependencies.microprofile]
+version = "0.1.0"
