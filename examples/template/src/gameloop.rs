@@ -13,9 +13,9 @@ use moleengine::{
     util::{inputstate::*, Transform},
 };
 
-use moleengine_visuals::shape::*;
+use moleengine::visuals::shape::*;
 
-use moleengine_physics::{systems::Motion, RigidBody};
+use moleengine::physics2d::{systems::Motion, RigidBody};
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 const LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];

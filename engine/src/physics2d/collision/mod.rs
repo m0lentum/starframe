@@ -1,7 +1,7 @@
-use crate::collider::Collider;
+use crate::physics2d::Collider;
 
-use moleengine::ecs::{event::SpaceEvent, space::Space, IdType};
-use moleengine::util::Transform;
+use crate::ecs::{event::SpaceEvent, space::Space, IdType};
+use crate::util::Transform;
 use nalgebra::{Point2, Unit, Vector2};
 
 pub mod debug;

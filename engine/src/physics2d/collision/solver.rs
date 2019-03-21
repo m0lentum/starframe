@@ -1,9 +1,9 @@
-use crate::{
+use crate::ecs::{system::*, IdType};
+use crate::physics2d::{
     collision::{debug, intersection_check},
     Collider, Collision, RigidBody,
 };
-use moleengine::ecs::{system::*, IdType};
-use moleengine::util::Transform;
+use crate::util::Transform;
 
 pub struct RigidBodySolver;
 

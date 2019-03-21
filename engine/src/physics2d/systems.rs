@@ -1,6 +1,6 @@
-use crate::rigidbody::{BodyType, RigidBody};
-use moleengine::ecs::system::*;
-use moleengine::util::Transform;
+use super::rigidbody::{BodyType, RigidBody};
+use crate::ecs::system::*;
+use crate::util::Transform;
 use nalgebra::Vector2;
 
 /// System that applies velocity to position.

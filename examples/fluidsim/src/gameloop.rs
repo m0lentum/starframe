@@ -8,7 +8,6 @@ use moleengine::util::inputstate::*;
 use crate::fluidbox::FluidBox;
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
-const LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];
 
 pub struct Resources {
     pub window: PistonWindow,
@@ -33,7 +32,7 @@ pub fn init() -> Resources {
         input_state.track_keys(&[Up, Down, Left, Right]);
     }
 
-    let fluid = FluidBox::new(50, 50);
+    let fluid = FluidBox::new(50, 50, 10.0);
 
     Resources {
         window,
@@ -55,9 +54,10 @@ fn state_playing(res: &mut Resources) {
             res.window.draw_2d(&evt, |_ctx, gfx| {
                 graphics::clear(BG_COLOR, gfx);
             });
-            res.fluid.draw_density(10.0, &evt, &mut res.window);
+            res.fluid.draw_density(&evt, &mut res.window);
+            res.fluid.draw_velocity(&evt, &mut res.window);
         } else if let Some(_args) = evt.update_args() {
-            //
+            res.fluid.add_source_at(5, 5, 0.2);
             res.input_state.update_ages();
         } else if let Some(Button::Keyboard(Key::Space)) = evt.press_args() {
             state_paused(res);

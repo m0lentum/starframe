@@ -2,9 +2,9 @@ use graphics::math::Vec2d;
 use graphics::types::Color;
 use graphics::{Context, Graphics, Transformed};
 
-use crate::Drawable;
-use moleengine::ecs::system::*;
-use moleengine::util::Transform;
+use super::Drawable;
+use crate::ecs::system::*;
+use crate::util::Transform;
 
 #[derive(Clone)]
 pub struct Shape {

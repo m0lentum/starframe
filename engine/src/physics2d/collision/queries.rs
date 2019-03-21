@@ -1,6 +1,6 @@
 use super::{Collision, Manifold};
-use moleengine::ecs::IdType;
-use moleengine::util::Transform;
+use crate::ecs::IdType;
+use crate::util::Transform;
 
 use nalgebra::{Point2, Unit, UnitComplex, Vector2};
 use std::f32::consts::PI;

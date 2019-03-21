@@ -6,13 +6,13 @@ use moleengine::ecs::{
     space::{LifecycleEvent, Space},
     storage::VecStorage,
 };
-use moleengine::util::{inputstate::*, Transform};
-use moleengine_physics::{
+use moleengine::physics2d::{
     collision::{Collision, RigidBodySolver},
     systems::Motion,
     Collider, RigidBody,
 };
-use moleengine_visuals::shape::{Shape, ShapeRenderer};
+use moleengine::util::{inputstate::*, Transform};
+use moleengine::visuals::shape::{Shape, ShapeRenderer};
 
 use opengl_graphics::{GlGraphics, OpenGL};
 use piston::event_loop::*;
@@ -167,7 +167,12 @@ fn draw_space(gl: &mut GlGraphics, args: RenderArgs, space: &mut Space) {
     graphics::clear(BG_COLOR, gl);
 
     space.run_system(ShapeRenderer::new(&ctx, gl));
-    moleengine_physics::collision::debug::draw_collisions(&space, &ctx, gl, [1.0, 0.3, 0.2, 1.0]);
+    moleengine::physics2d::collision::debug::draw_collisions(
+        &space,
+        &ctx,
+        gl,
+        [1.0, 0.3, 0.2, 1.0],
+    );
 
     gl.draw_end();
 }

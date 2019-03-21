@@ -9,9 +9,19 @@ piston = "0.42.0"
 piston2d-graphics = "0.30"
 piston_window = "0.89.0"
 nalgebra = "0.17.2"
-moleengine_ecs_codegen = { path = "../ecs_codegen" }
 hibitset = "0.5.4"
 anymap = "0.12.1"
 pest = "2.1.0"
 pest_derive = "2.1.0"
 parking_lot = "0.7.1"
+
+[dependencies.moleengine_ecs_codegen]
+path = "./ecs_codegen"
+optional = true
+
+[features]
+ecs = ["moleengine_ecs_codegen"]
+physics2d = []
+visuals = []
+
+default = ["ecs", "physics2d", "visuals"]

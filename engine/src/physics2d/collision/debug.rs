@@ -1,6 +1,6 @@
-use crate::Collision;
+use super::Collision;
+use crate::ecs::space::Space;
 use graphics::{types::Color, Context, Graphics};
-use moleengine::ecs::space::Space;
 use nalgebra::Point2;
 
 const COLL_INDICATOR_RADIUS: f32 = 5.0;
