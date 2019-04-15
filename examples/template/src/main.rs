@@ -29,15 +29,15 @@ fn main() {
 }
 
 pub fn init_resources() -> Resources {
-    let mut events = glutin::EventsLoop::new();
+    let events = glutin::EventsLoop::new();
     let window = glutin::WindowBuilder::new();
     let context = glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events).expect("Failed to create display");
 
     let mut input_state = InputState::new();
     {
-        //use Key::*;
-        //input_state.track_keys(&[Up, Down, Left, Right]);
+        use glutin::VirtualKeyCode::*;
+        input_state.track_keys(&[Escape, Space]);
     }
 
     let mut space = Space::with_capacity(100);

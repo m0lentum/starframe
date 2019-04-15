@@ -7,7 +7,6 @@ use moleengine::{
         gameloop::{GameLoop, LockstepLoop},
         statemachine::{GameState, StateMachine, StateOp},
     },
-    visuals::shape::*,
 };
 
 use crate::Resources;
@@ -29,33 +28,30 @@ pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
-        // TODO these are ugly as hell, come up with a better alternative
+        let input_state = &mut res.input_state;
         let mut should_close = false;
-        let mut should_pause = false;
         res.events.poll_events(|evt| match evt {
             glutin::Event::WindowEvent { event, .. } => match event {
                 glutin::WindowEvent::CloseRequested => should_close = true,
-                glutin::WindowEvent::KeyboardInput { input, .. } => match input.virtual_keycode {
-                    Some(glutin::VirtualKeyCode::Space) => should_pause = true,
-                    Some(glutin::VirtualKeyCode::Escape) => should_close = true,
-                    _ => (),
-                },
+                glutin::WindowEvent::KeyboardInput { input, .. } => {
+                    input_state.handle_keyboard(input)
+                }
                 _ => (),
             },
             _ => (),
         });
-        if should_close {
+        if should_close || input_state.is_key_pressed(glutin::VirtualKeyCode::Escape, None) {
             return StateOp::Destroy;
         }
-        if should_pause {
+        if input_state.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
             return StateOp::Push(Box::new(StatePaused));
         }
 
         update_space(&mut res.space);
-        res.input_state.update_ages();
 
         println!("updated");
 
+        res.input_state.update_ages();
         StateOp::Stay
     }
 
@@ -74,13 +70,9 @@ pub struct StatePaused;
 
 impl GameState<Resources> for StatePaused {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
-        //while let Some(evt) = res.window.next() {
-        //    if let Some(Button::Keyboard(Key::Space)) = evt.press_args() {
-        //        return StateOp::Pop;
-        //    }
-        //}
+        // TODO: only pop if space is pressed
 
-        StateOp::Stay
+        StateOp::Pop
     }
 
     fn render(&mut self, res: &mut Resources) {}
