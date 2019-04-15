@@ -28,22 +28,22 @@ pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
-        let input_state = &mut res.input_state;
+        let input_cache = &mut res.input_cache;
         let mut should_close = false;
         res.events.poll_events(|evt| match evt {
             glutin::Event::WindowEvent { event, .. } => match event {
                 glutin::WindowEvent::CloseRequested => should_close = true,
                 glutin::WindowEvent::KeyboardInput { input, .. } => {
-                    input_state.handle_keyboard(input)
+                    input_cache.handle_keyboard(input)
                 }
                 _ => (),
             },
             _ => (),
         });
-        if should_close || input_state.is_key_pressed(glutin::VirtualKeyCode::Escape, None) {
+        if should_close || input_cache.is_key_pressed(glutin::VirtualKeyCode::Escape, None) {
             return StateOp::Destroy;
         }
-        if input_state.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
+        if input_cache.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
             return StateOp::Push(Box::new(StatePaused));
         }
 
@@ -51,7 +51,7 @@ impl GameState<Resources> for StatePlaying {
 
         println!("updated");
 
-        res.input_state.update_ages();
+        res.input_cache.update_ages();
         StateOp::Stay
     }
 

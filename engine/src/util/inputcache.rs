@@ -1,16 +1,16 @@
 use glutin::VirtualKeyCode;
 use std::collections::HashMap;
 
-/// A global input state tracker that you can feed piston input events into
-/// and then poll from Systems to avoid complicated event piping.
-pub struct InputState {
+/// A global input state cache that you can feed input events into
+/// and poll from anywhere to avoid complicated event piping.
+pub struct InputCache {
     keyboard: HashMap<VirtualKeyCode, (KeyState, u32)>,
 }
 
-impl InputState {
+impl InputCache {
     /// Create a new InputState.
     pub fn new() -> Self {
-        InputState {
+        InputCache {
             keyboard: HashMap::new(),
         }
     }

@@ -9,7 +9,7 @@ use moleengine::{
         storage::VecStorage,
     },
     physics2d::RigidBody,
-    util::{inputstate::*, Transform},
+    util::{inputcache::InputCache, Transform},
     visuals::shape::*,
 };
 
@@ -18,7 +18,7 @@ use moleengine::{
 pub struct Resources {
     pub display: glium::Display,
     pub events: glutin::EventsLoop,
-    pub input_state: InputState,
+    pub input_cache: InputCache,
     pub recipes: RecipeBook,
     pub space: Space,
 }
@@ -34,10 +34,10 @@ pub fn init_resources() -> Resources {
     let context = glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events).expect("Failed to create display");
 
-    let mut input_state = InputState::new();
+    let mut input_cache = InputCache::new();
     {
         use glutin::VirtualKeyCode::*;
-        input_state.track_keys(&[Escape, Space]);
+        input_cache.track_keys(&[Escape, Space]);
     }
 
     let mut space = Space::with_capacity(100);
@@ -64,7 +64,7 @@ pub fn init_resources() -> Resources {
     Resources {
         display,
         events,
-        input_state,
+        input_cache,
         recipes,
         space,
     }
