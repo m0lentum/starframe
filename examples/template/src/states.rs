@@ -4,6 +4,7 @@ use moleengine::{
     ecs::space::Space,
     physics2d::systems::Motion,
     util::{
+        inputcache::InputCache,
         gameloop::{GameLoop, LockstepLoop},
         statemachine::{GameState, StateMachine, StateOp},
     },
@@ -28,28 +29,18 @@ pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
-        let input_cache = &mut res.input_cache;
-        let mut should_close = false;
-        res.events.poll_events(|evt| match evt {
-            glutin::Event::WindowEvent { event, .. } => match event {
-                glutin::WindowEvent::CloseRequested => should_close = true,
-                glutin::WindowEvent::KeyboardInput { input, .. } => {
-                    input_cache.handle_keyboard(input)
-                }
-                _ => (),
-            },
-            _ => (),
-        });
-        if should_close || input_cache.is_key_pressed(glutin::VirtualKeyCode::Escape, None) {
+        if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
+            return op;
+        }
+
+        if res.input_cache.is_key_pressed(glutin::VirtualKeyCode::Escape, None) {
             return StateOp::Destroy;
         }
-        if input_cache.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
+        if res.input_cache.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
             return StateOp::Push(Box::new(StatePaused));
         }
 
         update_space(&mut res.space);
-
-        println!("updated");
 
         res.input_cache.update_ages();
         StateOp::Stay
@@ -59,8 +50,6 @@ impl GameState<Resources> for StatePlaying {
         let mut target = res.display.draw();
         target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
         target.finish().unwrap();
-
-        println!("rendered");
     }
 }
 
@@ -70,9 +59,15 @@ pub struct StatePaused;
 
 impl GameState<Resources> for StatePaused {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
-        // TODO: only pop if space is pressed
+        if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
+            return op;
+        }
 
-        StateOp::Pop
+        if res.input_cache.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
+            return StateOp::Pop;
+        }
+
+        StateOp::Stay
     }
 
     fn render(&mut self, res: &mut Resources) {}
@@ -92,4 +87,24 @@ impl GameState<Resources> for StatePaused {
 
 fn update_space(space: &mut Space) {
     space.run_system(Motion);
+}
+
+fn handle_events(events: &mut glutin::EventsLoop, input_cache: &mut InputCache) -> Option<StateOp<Resources>> {
+    let mut should_close = false;
+    events.poll_events(|evt| match evt {
+        glutin::Event::WindowEvent { event, .. } => match event {
+            glutin::WindowEvent::CloseRequested => should_close = true,
+            glutin::WindowEvent::KeyboardInput { input, .. } => {
+                input_cache.handle_keyboard(input)
+            }
+            _ => (),
+        },
+        _ => (),
+    });
+
+    if should_close {
+        Some(StateOp::Destroy)
+    } else {
+        None
+    }
 }
