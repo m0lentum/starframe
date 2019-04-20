@@ -1,3 +1,5 @@
+pub const COLLIDER_MAX_VERTS: usize = 16;
+
 /// A component that allows a game object to collide with others.
 /// Note that a Transform component must also be present.
 #[derive(Clone, Copy)]

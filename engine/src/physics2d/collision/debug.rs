@@ -1,10 +1,11 @@
 use super::Collision;
 use crate::ecs::space::Space;
-use graphics::{types::Color, Context, Graphics};
 use nalgebra::Point2;
 
 const COLL_INDICATOR_RADIUS: f32 = 5.0;
 
+// TODO: do this with glium instead
+/*
 /// Draws a cross at the intersection points of each collision that happened in the previous physics update,
 /// and a line representing the collision depth and normal direction.
 pub fn draw_collisions<G: Graphics>(space: &Space, ctx: &Context, gfx: &mut G, color: Color) {
@@ -54,3 +55,4 @@ pub fn draw_collisions<G: Graphics>(space: &Space, ctx: &Context, gfx: &mut G, c
         }
     });
 }
+*/

@@ -1,4 +1,3 @@
-use graphics::math::Matrix2d;
 use nalgebra::geometry::UnitComplex;
 use nalgebra::{Similarity2, Translation2, Vector2};
 use std::f32::consts::PI;
@@ -84,14 +83,6 @@ impl Transform {
 
     pub fn set_scale(&mut self, s: f32) {
         self.0.set_scaling(s);
-    }
-
-    /// Maps the wrapped Similarity into the less sophisticated graphics::Matrix2d
-    /// for rendering with piston-graphics.
-    pub fn for_gfx(&self) -> Matrix2d {
-        // Matrix2d == [[f32;3];2]
-        let h = self.0.to_homogeneous().map(f64::from);
-        [[h[0], h[3], h[6]], [h[1], h[4], h[7]]]
     }
 }
 

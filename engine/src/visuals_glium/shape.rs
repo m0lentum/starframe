@@ -1,20 +1,20 @@
-use graphics::math::Vec2d;
-use graphics::types::Color;
-use graphics::{Context, Graphics, Transformed};
-
-use super::Drawable;
+use super::Color;
 use crate::ecs::system::*;
 use crate::util::Transform;
 
+use nalgebra::Vector2;
+
 #[derive(Clone)]
 pub struct Shape {
-    points: Vec<Vec2d<f64>>,
+    points: Vec<Vector2<f32>>,
     color: Color,
     outline_radius: f64,
     outline_color: Color,
 }
 
-impl Shape {
+// TODO: do I need this at all if I have a separate collider visualizer?
+
+/*impl Shape {
     pub fn new(points: Vec<Vec2d<f64>>, color: Color) -> Self {
         Shape {
             points,
@@ -110,3 +110,4 @@ impl<'a, G: Graphics> SimpleSystem<'a> for ShapeRenderer<'a, G> {
         }
     }
 }
+*/
