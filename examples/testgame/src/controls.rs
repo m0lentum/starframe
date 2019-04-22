@@ -1,9 +1,9 @@
-use moleengine::ecs::space::Space;
-use moleengine::ecs::system::*;
-use moleengine::util::inputstate::*;
-use moleengine::util::Transform;
+use glium::glutin::VirtualKeyCode as Key;
+use moleengine::{
+    ecs::{space::Space, system::*},
+    util::{inputcache::*, Transform},
+};
 use nalgebra::Vector2;
-use piston::input::keyboard::Key;
 
 #[derive(Copy, Clone)]
 pub struct KeyboardControls;
@@ -15,10 +15,10 @@ pub struct PosVel<'a> {
 }
 
 pub struct KeyboardMover<'a> {
-    input: &'a InputState,
+    input: &'a InputCache,
 }
 impl<'a> KeyboardMover<'a> {
-    pub fn new(input: &'a InputState) -> Self {
+    pub fn new(input: &'a InputCache) -> Self {
         KeyboardMover { input }
     }
 }
@@ -27,19 +27,19 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     fn run_system(self, items: &mut [Self::Filter]) {
         let mut t = Vector2::zeros();
         let mut r = 0.0;
-        if check_key(self.input, Key::Left) {
+        if self.input.is_key_pressed(Key::Left, None) {
             t[0] = -5.0;
-        } else if check_key(self.input, Key::Right) {
+        } else if self.input.is_key_pressed(Key::Right, None) {
             t[0] = 5.0;
         }
-        if check_key(self.input, Key::Up) {
+        if self.input.is_key_pressed(Key::Up, None) {
             t[1] = -5.0;
-        } else if check_key(self.input, Key::Down) {
+        } else if self.input.is_key_pressed(Key::Down, None) {
             t[1] = 5.0;
         }
-        if check_key(self.input, Key::PageDown) {
+        if self.input.is_key_pressed(Key::PageDown, None) {
             r = 0.03;
-        } else if check_key(self.input, Key::PageUp) {
+        } else if self.input.is_key_pressed(Key::PageUp, None) {
             r = -0.03;
         }
 
@@ -47,12 +47,5 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
             item.tr.translate(t);
             item.tr.rotate_rad(r);
         }
-    }
-}
-
-fn check_key(states: &InputState, key: Key) -> bool {
-    match states.get_key(key) {
-        Some((KeyState::Pressed, _)) => true,
-        _ => false,
     }
 }
