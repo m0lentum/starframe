@@ -20,8 +20,8 @@ pub fn circle_circle(
     let pos1 = tr1.0 * Point2::origin();
     let pos2 = tr2.0 * Point2::origin();
 
-    let r1_s = r1 * tr1.0.scaling();
-    let r2_s = r2 * tr2.0.scaling();
+    let r1_s = r1 * tr1.scaling();
+    let r2_s = r2 * tr2.scaling();
 
     let dist = pos2 - pos1;
     let dist_sq = dist.norm_squared();
@@ -68,7 +68,7 @@ pub fn rect_rect(
     hw2: f32,
     hh2: f32,
 ) -> Option<[Collision; 2]> {
-    let tr2_wrt_tr1 = tr1.0.inverse() * tr2.0;
+    let tr2_wrt_tr1 = tr1.inverse() * tr2.0;
 
     // obj1 is axis-aligned at origin, these are obj2's values
     let dist = tr2_wrt_tr1 * Point2::origin();
@@ -143,8 +143,8 @@ pub fn rect_rect(
 
     // orient axis of penetration towards obj2 (remember to flip if axis is on obj2!)
     let axis = Unit::new_unchecked(axis.dot(&dist.coords).signum() * (**axis));
-    let depth_s = *depth * tr1.0.scaling();
-    let normal = tr1.0.isometry.rotation * axis;
+    let depth_s = *depth * tr1.scaling();
+    let normal = tr1.isometry.rotation * axis;
 
     if axis_i <= 1 {
         // axis is on obj1, penetrating point is on obj2

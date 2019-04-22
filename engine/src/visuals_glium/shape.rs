@@ -54,7 +54,7 @@ impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
             nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0);
 
         for item in items {
-            let model = item.transform.0.to_homogeneous();
+            let model = item.transform.to_homogeneous();
             let mv: [[f32; 3]; 3] = (view * model).into();
             let uniforms = glium::uniform! {
                 model_view: mv,

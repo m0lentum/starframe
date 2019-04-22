@@ -54,6 +54,8 @@ impl EventQueue {
 
 /// Wrapper used to store EventListeners as components in a more readable manner.
 /// In most cases users need not touch this type.
+#[derive(shrinkwraprs::Shrinkwrap)]
+#[shrinkwrap(mutable)]
 pub struct EventListenerComponent<E: SpaceEvent>(pub Box<dyn EventListener<E>>);
 
 pub(crate) struct EventPropagator<'a, E: SpaceEvent + 'static>(pub &'a E);
@@ -62,7 +64,7 @@ impl<'a, E: SpaceEvent> EventPropagator<'a, E> {
     pub fn propagate(&self, space: &Space, queue: &mut EventQueue) {
         space.run_filter(|items: &mut [EventListenerFilter<E>]| {
             for item in items {
-                item.l.0.run_listener(self.0, space, queue);
+                item.l.run_listener(self.0, space, queue);
             }
         });
     }

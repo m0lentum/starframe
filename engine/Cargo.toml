@@ -13,6 +13,7 @@ pest = "2.1.0"
 pest_derive = "2.1.0"
 parking_lot = "0.7.1"
 lazy_static = "1.3.0"
+shrinkwraprs = "0.2.1"
 
 [dependencies.moleengine_ecs_codegen]
 path = "./ecs_codegen"

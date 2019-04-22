@@ -3,13 +3,15 @@ use nalgebra::{Similarity2, Translation2, Vector2};
 use std::f32::consts::PI;
 
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
-/// The wrapped Similarity is public so its methods can be used directly.
+/// All Similarity2 methods and members can be accessed from a Transform reference thanks to shrinkwraprs.
+/// See https://www.nalgebra.org/rustdoc/nalgebra/geometry/struct.Similarity.html
 /// # MoleEngineSpace format
 /// `Px,y&Rr&Ss` where T, R and S are character literals (standing for Position, Rotation
 /// and Scale respectively) and x, y, r, and s are f32-parseable strings.
 /// Rotation is expressed in degrees.
 /// Any of these can be omitted, which will leave them at the default value (no transformation).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, shrinkwraprs::Shrinkwrap)]
+#[shrinkwrap(mutable)]
 pub struct Transform(pub Similarity2<f32>);
 
 impl Transform {
@@ -50,18 +52,16 @@ impl Transform {
     }
 
     pub fn translate(&mut self, amount: Vector2<f32>) {
-        self.0
-            .isometry
+        self.isometry
             .append_translation_mut(&Translation2::from(amount));
     }
 
     pub fn set_translation(&mut self, pos: Vector2<f32>) {
-        self.0.isometry.translation = nalgebra::Translation2::from(pos);
+        self.isometry.translation = nalgebra::Translation2::from(pos);
     }
 
     pub fn rotate_rad(&mut self, angle: f32) {
-        self.0
-            .isometry
+        self.isometry
             .append_rotation_wrt_center_mut(&UnitComplex::new(angle));
     }
 
@@ -70,7 +70,7 @@ impl Transform {
     }
 
     pub fn set_rotation_rad(&mut self, angle: f32) {
-        self.0.isometry.rotation = UnitComplex::new(angle);
+        self.isometry.rotation = UnitComplex::new(angle);
     }
 
     pub fn set_rotation_deg(&mut self, angle: f32) {
@@ -78,11 +78,11 @@ impl Transform {
     }
 
     pub fn scale(&mut self, factor: f32) {
-        self.0.append_scaling(factor);
+        self.append_scaling(factor);
     }
 
     pub fn set_scale(&mut self, s: f32) {
-        self.0.set_scaling(s);
+        self.set_scaling(s);
     }
 }
 
