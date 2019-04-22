@@ -31,7 +31,9 @@ fn main() {
 
 pub fn init_resources() -> Resources {
     let events = glutin::EventsLoop::new();
-    let window = glutin::WindowBuilder::new();
+    let window = glutin::WindowBuilder::new()
+        .with_title("MoleEngine project template")
+        .with_dimensions(glutin::dpi::LogicalSize::new(800.0, 600.0));
     let context = glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events).expect("Failed to create display");
 
