@@ -3,11 +3,19 @@ use glium::{
     program::{Program, ProgramCreationError},
 };
 
-type ResultType = Result<Program, ProgramCreationError>;
+pub struct Shaders {
+    pub ortho_2d: Program,
+}
 
-const ORTHO_2D_VERT: &'static str = include_str!("ortho_2d.vert");
-const ORTHO_2D_FRAG: &'static str = include_str!("ortho_2d.frag");
+impl Shaders {
+    pub fn compile<F: Facade + ?Sized>(facade: &F) -> Result<Self, ProgramCreationError> {
+        let ortho_2d = Program::from_source(
+            facade,
+            include_str!("ortho_2d.vert"),
+            include_str!("ortho_2d.frag"),
+            None,
+        )?;
 
-pub fn compile_ortho_2d<F: Facade + ?Sized>(facade: &F) -> ResultType {
-    Program::from_source(facade, ORTHO_2D_VERT, ORTHO_2D_FRAG, None)
+        Ok(Shaders { ortho_2d })
+    }
 }

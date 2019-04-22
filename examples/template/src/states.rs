@@ -4,10 +4,11 @@ use moleengine::{
     ecs::space::Space,
     physics2d::systems::Motion,
     util::{
-        inputcache::InputCache,
         gameloop::{GameLoop, LockstepLoop},
+        inputcache::InputCache,
         statemachine::{GameState, StateMachine, StateOp},
     },
+    visuals_glium::shape::ShapeRenderer,
 };
 
 use crate::Resources;
@@ -33,10 +34,16 @@ impl GameState<Resources> for StatePlaying {
             return op;
         }
 
-        if res.input_cache.is_key_pressed(glutin::VirtualKeyCode::Escape, None) {
+        if res
+            .input_cache
+            .is_key_pressed(glutin::VirtualKeyCode::Escape, None)
+        {
             return StateOp::Destroy;
         }
-        if res.input_cache.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
+        if res
+            .input_cache
+            .is_key_pressed(glutin::VirtualKeyCode::Space, Some(1))
+        {
             return StateOp::Push(Box::new(StatePaused));
         }
 
@@ -47,9 +54,7 @@ impl GameState<Resources> for StatePlaying {
     }
 
     fn render(&mut self, res: &mut Resources) {
-        let mut target = res.display.draw();
-        target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
-        target.finish().unwrap();
+        draw_space(res);
     }
 }
 
@@ -63,40 +68,49 @@ impl GameState<Resources> for StatePaused {
             return op;
         }
 
-        if res.input_cache.is_key_pressed(glutin::VirtualKeyCode::Space, Some(1)) {
+        if res
+            .input_cache
+            .is_key_pressed(glutin::VirtualKeyCode::Space, Some(1))
+        {
             return StateOp::Pop;
         }
 
         StateOp::Stay
     }
 
-    fn render(&mut self, res: &mut Resources) {}
+    fn render(&mut self, res: &mut Resources) {
+        draw_space(res);
+    }
 }
 
 // ============== Helper functions ==================
 
-//fn draw_space(gl: &mut GlGraphics, args: RenderArgs, space: &mut Space) {
-//    let ctx = gl.draw_begin(args.viewport());
-//
-//    graphics::clear(BG_COLOR, gl);
-//
-//    space.run_system(ShapeRenderer::new(&ctx, gl));
-//
-//    gl.draw_end();
-//}
+fn draw_space(res: &mut Resources) {
+    let mut target = res.display.draw();
+
+    target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
+
+    res.space.run_system(ShapeRenderer {
+        target: &mut target,
+        shaders: &res.shaders,
+    });
+
+    target.finish().unwrap();
+}
 
 fn update_space(space: &mut Space) {
     space.run_system(Motion);
 }
 
-fn handle_events(events: &mut glutin::EventsLoop, input_cache: &mut InputCache) -> Option<StateOp<Resources>> {
+fn handle_events(
+    events: &mut glutin::EventsLoop,
+    input_cache: &mut InputCache,
+) -> Option<StateOp<Resources>> {
     let mut should_close = false;
     events.poll_events(|evt| match evt {
         glutin::Event::WindowEvent { event, .. } => match event {
             glutin::WindowEvent::CloseRequested => should_close = true,
-            glutin::WindowEvent::KeyboardInput { input, .. } => {
-                input_cache.handle_keyboard(input)
-            }
+            glutin::WindowEvent::KeyboardInput { input, .. } => input_cache.handle_keyboard(input),
             _ => (),
         },
         _ => (),
