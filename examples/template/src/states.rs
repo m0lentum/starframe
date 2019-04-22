@@ -1,4 +1,5 @@
 use glium::{glutin, Surface};
+use glutin::VirtualKeyCode as Key;
 
 use moleengine::{
     ecs::space::Space,
@@ -14,7 +15,7 @@ use moleengine::{
 use crate::Resources;
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
-const LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];
+const _LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];
 
 // ============= Begin ===============
 
@@ -30,26 +31,21 @@ pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
+        res.input_cache.update_ages();
+
         if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
             return op;
         }
 
-        if res
-            .input_cache
-            .is_key_pressed(glutin::VirtualKeyCode::Escape, None)
-        {
+        if res.input_cache.is_key_pressed(Key::Escape, None) {
             return StateOp::Destroy;
         }
-        if res
-            .input_cache
-            .is_key_pressed(glutin::VirtualKeyCode::Space, Some(1))
-        {
+        if res.input_cache.is_key_pressed(Key::Space, Some(0)) {
             return StateOp::Push(Box::new(StatePaused));
         }
 
         update_space(&mut res.space);
 
-        res.input_cache.update_ages();
         StateOp::Stay
     }
 
@@ -64,14 +60,15 @@ pub struct StatePaused;
 
 impl GameState<Resources> for StatePaused {
     fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
+        res.input_cache.update_ages();
+
         if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
             return op;
         }
-
-        if res
-            .input_cache
-            .is_key_pressed(glutin::VirtualKeyCode::Space, Some(1))
-        {
+        if res.input_cache.is_key_pressed(Key::Escape, None) {
+            return StateOp::Destroy;
+        }
+        if res.input_cache.is_key_pressed(Key::Space, Some(0)) {
             return StateOp::Pop;
         }
 
