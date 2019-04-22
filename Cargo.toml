@@ -5,5 +5,4 @@ members = [
     "engine/ecs_codegen",
     "examples/template",
     "examples/testgame",
-    "examples/fluidsim",
 ]
