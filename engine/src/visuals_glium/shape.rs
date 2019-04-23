@@ -26,7 +26,28 @@ impl Shape {
 
     pub fn new_square<F: Facade + ?Sized>(facade: &F, width: f32, color: Color) -> Self {
         let hw = width / 2.0;
-        Shape::new(facade, &[[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]], color)
+        Self::new(facade, &[[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]], color)
+    }
+
+    #[cfg(feature = "physics2d")]
+    pub fn from_collider<F: Facade + ?Sized>(
+        facade: &F,
+        coll: &crate::physics2d::Collider,
+        color: Color,
+    ) -> Self {
+        use crate::physics2d::Collider;
+        match coll {
+            Collider::Circle { r } => {
+                let pts: Vec<[f32; 2]> =
+                    CIRCLE_VERTS.iter().map(|p| [r * p[0], r * p[1]]).collect();
+                Self::new(facade, pts.as_slice(), color)
+            }
+            Collider::Rect { hw, hh } => Self::new(
+                facade,
+                &[[-hw, -hh], [*hw, -hh], [*hw, *hh], [-hw, *hh]],
+                color,
+            ),
+        }
     }
 }
 
@@ -73,15 +94,15 @@ impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
     }
 }
 
-// not sure if I want to use this or let the user set number of verts
-//
-//lazy_static::lazy_static! {
-//    /// All circles are the same so we can precalculate their vertices
-//    static ref CIRCLE_POINTS: Vec<Vector2<f32>> = {
-//        let angle_incr = 2.0 * std::f32::consts::PI / COLLIDER_MAX_VERTS as f32;
-//        (0..COLLIDER_MAX_VERTS).map(|i| {
-//            let angle = angle_incr * i as f32;
-//            Vector2::new(angle.cos(), angle.sin())
-//        }).collect()
-//    };
-//}
+const CIRCLE_VERTS_COUNT: u32 = 16;
+
+lazy_static::lazy_static! {
+    /// All circles are the same so we can precalculate their vertices
+    static ref CIRCLE_VERTS: Vec<[f32; 2]> = {
+        let angle_incr = 2.0 * std::f32::consts::PI / CIRCLE_VERTS_COUNT as f32;
+        (0..CIRCLE_VERTS_COUNT).map(|i| {
+            let angle = angle_incr * i as f32;
+            [angle.cos(), angle.sin()]
+        }).collect()
+    };
+}
