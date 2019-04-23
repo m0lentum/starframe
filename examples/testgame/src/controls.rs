@@ -33,14 +33,14 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
             t[0] = 5.0;
         }
         if self.input.is_key_pressed(Key::Up, None) {
-            t[1] = -5.0;
-        } else if self.input.is_key_pressed(Key::Down, None) {
             t[1] = 5.0;
+        } else if self.input.is_key_pressed(Key::Down, None) {
+            t[1] = -5.0;
         }
         if self.input.is_key_pressed(Key::PageDown, None) {
-            r = 0.03;
-        } else if self.input.is_key_pressed(Key::PageUp, None) {
             r = -0.03;
+        } else if self.input.is_key_pressed(Key::PageUp, None) {
+            r = 0.03;
         }
 
         for item in items {

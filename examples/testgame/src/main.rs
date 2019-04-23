@@ -45,7 +45,7 @@ fn main() {
 pub fn init_resources() -> Resources {
     let events = glutin::EventsLoop::new();
     let window = glutin::WindowBuilder::new()
-        .with_title("MoleEngine project template")
+        .with_title("MoleEngine test")
         .with_dimensions(glutin::dpi::LogicalSize::new(800.0, 600.0));
     let context = glutin::ContextBuilder::new();
     let display = glium::Display::new(window, context, &events).expect("Failed to create display");
@@ -55,7 +55,9 @@ pub fn init_resources() -> Resources {
     let mut input_cache = InputCache::new();
     {
         use glutin::VirtualKeyCode::*;
-        input_cache.track_keys(&[Left, Right, Down, Up, PageDown, PageUp]);
+        input_cache.track_keys(&[
+            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space,
+        ]);
     }
 
     let mut space = Space::with_capacity(100);
@@ -69,16 +71,11 @@ pub fn init_resources() -> Resources {
 
     let mut recipes = RecipeBook::new();
 
-    let coll = Collider::new_rect(180.0, 100.0);
+    let coll_rect = Collider::new_rect(180.0, 100.0);
+    let coll_circle = Collider::new_circle(50.0);
     let thingy = ObjectRecipe::new()
-        // TODO
-        //.add(Shape::new_outlined(
-        //    coll.as_points(),
-        //    [0.0; 4],
-        //    1.0,
-        //    LINE_COLOR,
-        //))
-        .add(coll)
+        .add(Shape::from_collider(&display, &coll_circle, [1.0; 4]))
+        .add(coll_circle)
         .add(RigidBody::new())
         .add_named_variable("T", None::<Transform>)
         //.add_listener(TestCollisionListener)
@@ -87,14 +84,9 @@ pub fn init_resources() -> Resources {
 
     let other_thingy = ObjectRecipe::new()
         .add_listener(ChainEventListener)
-        .add(Transform::new([120.0, 180.0], 0.0, 1.0))
-        //.add(Shape::new_outlined(
-        //    coll.as_points(),
-        //    [0.0; 4],
-        //    1.0,
-        //    LINE_COLOR,
-        //))
-        .add(coll)
+        .add(Transform::identity())
+        .add(Shape::from_collider(&display, &coll_rect, [1.0; 4]))
+        .add(coll_rect)
         .add(RigidBody::new())
         .add(KeyboardControls)
         .add_listener(LifecycleListener);
