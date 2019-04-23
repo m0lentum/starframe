@@ -35,10 +35,16 @@ impl InputCache {
         self.keyboard.get(&key)
     }
 
-    /// True if the requested key is currently pressed and less than age_limit if provided,
-    /// false if it isn't pressed or if it isn't tracked
+    /// True if the requested key is currently pressed
+    /// (for fewer frames than age_limit if provided), false otherwise.
+    /// # Panics
+    /// Panics if the requested key is not tracked.
     pub fn is_key_pressed(&self, key: VirtualKeyCode, age_limit: Option<u32>) -> bool {
-        if let Some((KeyState::Pressed, age)) = self.keyboard.get(&key) {
+        let (state, age) = self
+            .keyboard
+            .get(&key)
+            .expect(format!("Untracked key: {:?}", key).as_str());
+        if let KeyState::Pressed = state {
             if let Some(al) = age_limit {
                 *age <= al
             } else {
