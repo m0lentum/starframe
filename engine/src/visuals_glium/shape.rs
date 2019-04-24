@@ -5,6 +5,10 @@ use crate::util::Transform;
 use glium::{backend::Facade, uniform, Surface};
 use std::sync::Arc;
 
+/// A flat-colored convex polygon shape, rendered using the ShapeRenderer system.
+/// When creating multiple identical shapes, it is preferable to create one and clone it,
+/// as this reuses the same vertex buffer for all clones.
+/// Concavity will not result in an error but will be rendered incorrectly.
 #[derive(Clone)]
 pub struct Shape {
     pub(self) verts: Arc<glium::VertexBuffer<Vertex2D>>,
@@ -12,6 +16,7 @@ pub struct Shape {
 }
 
 impl Shape {
+    /// Create a new Shape from a set of points.
     pub fn new<F: Facade + ?Sized>(facade: &F, points: &[[f32; 2]], color: Color) -> Self {
         let points_as_verts: Vec<Vertex2D> =
             points.iter().map(|p| Vertex2D { v_position: *p }).collect();
@@ -24,11 +29,38 @@ impl Shape {
         }
     }
 
+    /// Create an axis-aligned square Shape with the given side length.
     pub fn new_square<F: Facade + ?Sized>(facade: &F, width: f32, color: Color) -> Self {
-        let hw = width / 2.0;
+        let hw = width * 0.5;
         Self::new(facade, &[[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]], color)
     }
 
+    /// Create an axis-aligned rectangle Shape with the given dimensions.
+    pub fn new_rect<F: Facade + ?Sized>(facade: &F, width: f32, height: f32, color: Color) -> Self {
+        let hw = width * 0.5;
+        let hh = height * 0.5;
+        Self::new(facade, &[[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], color)
+    }
+
+    /// Create a polygonal approximation of a circle with the given radius and number of points.
+    pub fn new_circle<F: Facade + ?Sized>(
+        facade: &F,
+        radius: f32,
+        point_count: u32,
+        color: Color,
+    ) -> Self {
+        let angle_incr = 2.0 * std::f32::consts::PI / point_count as f32;
+        let pts: Vec<[f32; 2]> = (0..point_count)
+            .map(|i| {
+                let angle = angle_incr * i as f32;
+                [radius * angle.cos(), radius * angle.sin()]
+            })
+            .collect();
+        Self::new(facade, pts.as_slice(), color)
+    }
+
+    /// Create a Shape that matches the given Collider.
+    /// Circle colliders are approximated with a polygon.
     #[cfg(feature = "physics2d")]
     pub fn from_collider<F: Facade + ?Sized>(
         facade: &F,
