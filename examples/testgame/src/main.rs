@@ -17,7 +17,7 @@ use moleengine::{
     },
     physics2d::{Collider, Collision, RigidBody},
     util::{inputcache::InputCache, Transform},
-    visuals_glium::{shaders::Shaders, shape::Shape},
+    visuals_glium::{debug::IntersectionIndicator, shaders::Shaders, shape::Shape},
 };
 
 //
@@ -29,6 +29,7 @@ pub struct Resources {
     pub input_cache: InputCache,
     pub recipes: RecipeBook,
     pub space: Space,
+    pub intersection_vis: IntersectionIndicator,
 }
 
 fn main() {
@@ -69,12 +70,28 @@ pub fn init_resources() -> Resources {
         .add_container::<KeyboardControls, VecStorage<_>>()
         .init_global_state::<Vec<Collision>>(Vec::new());
 
+    let recipes = make_recipes(&display);
+
+    let intersection_vis = IntersectionIndicator::new(&display, 20);
+
+    Resources {
+        display,
+        events,
+        shaders,
+        input_cache,
+        recipes,
+        space,
+        intersection_vis,
+    }
+}
+
+fn make_recipes(display: &glium::Display) -> RecipeBook {
     let mut recipes = RecipeBook::new();
 
     let coll_rect = Collider::new_rect(180.0, 100.0);
     let coll_circle = Collider::new_circle(50.0);
     let thingy = ObjectRecipe::new()
-        .add(Shape::from_collider(&display, &coll_circle, [1.0; 4]))
+        .add(Shape::from_collider(display, &coll_circle, [1.0; 4]))
         .add(coll_circle)
         .add(RigidBody::new())
         .add_named_variable("T", None::<Transform>)
@@ -85,19 +102,23 @@ pub fn init_resources() -> Resources {
     let other_thingy = ObjectRecipe::new()
         .add_listener(ChainEventListener)
         .add(Transform::identity())
-        .add(Shape::from_collider(&display, &coll_rect, [1.0; 4]))
+        .add(Shape::from_collider(
+            display,
+            &coll_rect,
+            [0.2, 0.8, 0.6, 0.7],
+        ))
         .add(coll_rect)
         .add(RigidBody::new())
         .add(KeyboardControls)
         .add_listener(LifecycleListener);
-    recipes.add("other", other_thingy);
+    recipes.add("player", other_thingy);
 
-    Resources {
-        display,
-        events,
-        shaders,
-        input_cache,
-        recipes,
-        space,
-    }
+    let obj_box = ObjectRecipe::new()
+        .add_named_variable("T", None::<Transform>)
+        .add(Shape::from_collider(display, &coll_rect, [1.0; 4]))
+        .add(coll_rect)
+        .add(RigidBody::new());
+    recipes.add("box", obj_box);
+
+    recipes
 }

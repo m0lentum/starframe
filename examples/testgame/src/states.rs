@@ -118,7 +118,8 @@ fn draw_space(res: &mut Resources) {
         target: &mut target,
         shaders: &res.shaders,
     });
-    // TODO: remake collision visualizer with glutin
+    res.intersection_vis
+        .draw_space(&mut target, &res.space, [0.8, 0.1, 0.2, 1.0], &res.shaders);
 
     target.finish().unwrap();
 }

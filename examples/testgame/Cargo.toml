@@ -10,7 +10,7 @@ nalgebra = "0.18.0"
 
 [dependencies.moleengine]
 path = "../../engine"
-features = ["default"]
+features = ["all"]
 
 [dependencies.microprofile]
 version = "0.1.0"

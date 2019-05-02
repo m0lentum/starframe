@@ -27,5 +27,7 @@ optional = true
 ecs = ["moleengine_ecs_codegen"]
 physics2d = []
 visuals_glium = ["glium"]
+debug_visuals = []
 
 default = ["ecs", "physics2d", "visuals_glium"]
+all = ["ecs", "physics2d", "visuals_glium", "debug_visuals"]

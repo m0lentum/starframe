@@ -1,2 +1,6 @@
 thingy|T=P200,100&R90&S1.5
-other
+box|T=P250,-100
+box|T=P-200,150&R30
+box|T=P-250,-200&R45&S1.5
+box|T=P150,-250&R20&S0.7
+player

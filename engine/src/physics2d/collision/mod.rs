@@ -31,7 +31,7 @@ impl SpaceEvent for Collision {
 
 /// The point(s) where a collision occurred, exactly on the surface of the related object.
 #[derive(Clone, Copy, Debug)]
-pub struct Manifold(Point2<f32>, Option<Point2<f32>>);
+pub struct Manifold(pub Point2<f32>, pub Option<Point2<f32>>);
 
 impl Manifold {
     /// If there are two points in the manifold, returns the center of the line segment between them.
