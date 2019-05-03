@@ -8,7 +8,8 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 - no crash on unset recipe var
 - reconsider Space builder syntax (use `cascade` instead?)
 - preset recipes for common objects (can use as template for more specific stuff)
-- LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)
+- ~~LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)~~
+    - Consider using RwLock::try_read instead of read for non-blocking failure on untimely access
 
 **physics**
 - collider types: ~~circle~~, ~~rect~~, polygon

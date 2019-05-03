@@ -6,7 +6,7 @@ use super::IdType;
 
 use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// An Entity-Component-System environment.
 pub struct Space {
@@ -16,7 +16,7 @@ pub struct Space {
     next_obj_id: IdType,
     capacity: IdType,
     containers: AnyMap,
-    global_state: AnyMap, // everything in this is under an RwLock
+    global_state: LockedAnyMap,
 }
 
 impl Space {
@@ -29,7 +29,7 @@ impl Space {
             next_obj_id: 0,
             capacity,
             containers: AnyMap::new(),
-            global_state: AnyMap::new(),
+            global_state: LockedAnyMap::new(),
         }
     }
 
@@ -56,7 +56,7 @@ impl Space {
     /// stateful systems and must be done before attempting to run such a system.
     /// This method can be chained like a builder together with add_container.
     pub fn init_global_state<'a, S: 'static>(&mut self, state: S) -> &mut Self {
-        self.global_state.insert(RwLock::new(state));
+        self.global_state.insert(state);
 
         self
     }
@@ -211,8 +211,8 @@ impl Space {
 
     /// Execute a closure if this Space has the desired type of global state data.
     pub fn do_with_global_state<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
-        let state = self.global_state.get::<RwLock<T>>()?;
-        Some(f(&state.read()))
+        let access = self.global_state.read::<T>()?;
+        Some(f(&access))
     }
 
     /// Like do_with_global_state, but with a mutable reference.
@@ -220,8 +220,8 @@ impl Space {
         &mut self,
         f: impl FnOnce(&mut T) -> R,
     ) -> Option<R> {
-        let state = self.global_state.get_mut::<RwLock<T>>()?;
-        Some(f(&mut state.write()))
+        let mut access = self.global_state.write::<T>()?;
+        Some(f(&mut access))
     }
 
     /// Run a single System on all objects with containers that match the System's types.
@@ -275,13 +275,11 @@ impl Space {
         let mut queue = EventQueue::new();
         let mut state = self
             .global_state
-            .get::<RwLock<S::State>>()
-            .expect("Attempted to run an uninitialized StatefulSystem")
-            .write();
+            .write::<S::State>()
+            .expect("Attempted to run an uninitialized StatefulSystem");
 
-        use std::ops::DerefMut;
         let result = S::Filter::run_filter(self, |cs| {
-            system.run_system(state.deref_mut(), cs, self, &mut queue)
+            system.run_system(&mut *state, cs, self, &mut queue)
         });
         result.map(|()| queue)
     }
@@ -468,5 +466,26 @@ impl<'a> ObjectBuilder<'a> {
     /// Get the id given to this object by the Space. This is rarely useful.
     pub fn get_id(&self) -> IdType {
         self.id
+    }
+}
+
+/// An AnyMap but with everything under a RwLock for concurrent interior mutable access.
+struct LockedAnyMap(AnyMap);
+
+impl LockedAnyMap {
+    pub fn new() -> Self {
+        LockedAnyMap(AnyMap::new())
+    }
+
+    pub fn insert<T: 'static>(&mut self, thing: T) {
+        self.0.insert(RwLock::new(thing));
+    }
+
+    pub fn read<T: 'static>(&self) -> Option<RwLockReadGuard<T>> {
+        Some(self.0.get::<RwLock<T>>()?.read())
+    }
+
+    pub fn write<T: 'static>(&self) -> Option<RwLockWriteGuard<T>> {
+        Some(self.0.get::<RwLock<T>>()?.write())
     }
 }
