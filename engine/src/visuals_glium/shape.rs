@@ -2,8 +2,14 @@ use super::{shaders::Shaders, Color, Vertex2D};
 use crate::ecs::system::*;
 use crate::util::Transform;
 
-use glium::{backend::Facade, uniform, Surface};
+use glium::{backend::Facade, index::PrimitiveType, uniform, Surface};
 use std::sync::Arc;
+
+#[derive(Clone, Copy)]
+pub enum ShapeStyle {
+    Fill(Color),
+    Outline(Color),
+}
 
 /// A flat-colored convex polygon shape, rendered using the ShapeRenderer system.
 /// When creating multiple identical shapes, it is preferable to create one and clone it,
@@ -13,33 +19,43 @@ use std::sync::Arc;
 pub struct Shape {
     pub(self) verts: Arc<glium::VertexBuffer<Vertex2D>>,
     pub(self) color: Color,
+    pub(self) primitive_type: PrimitiveType,
 }
 
 impl Shape {
     /// Create a new Shape from a set of points.
-    pub fn new<F: Facade + ?Sized>(facade: &F, points: &[[f32; 2]], color: Color) -> Self {
-        let points_as_verts: Vec<Vertex2D> =
-            points.iter().map(|p| Vertex2D { v_position: *p }).collect();
+    pub fn new<F: Facade + ?Sized>(facade: &F, points: &[[f32; 2]], style: ShapeStyle) -> Self {
+        let points_as_verts: Vec<Vertex2D> = points.iter().map(|p| Vertex2D::from(*p)).collect();
+        let (color, primitive_type) = match style {
+            ShapeStyle::Fill(c) => (c, PrimitiveType::TriangleFan),
+            ShapeStyle::Outline(c) => (c, PrimitiveType::LineLoop),
+        };
         Shape {
             verts: Arc::new(
                 glium::VertexBuffer::new(facade, points_as_verts.as_slice())
                     .expect("Failed to create vertex buffer"),
             ),
             color,
+            primitive_type,
         }
     }
 
     /// Create an axis-aligned square Shape with the given side length.
-    pub fn new_square<F: Facade + ?Sized>(facade: &F, width: f32, color: Color) -> Self {
+    pub fn new_square<F: Facade + ?Sized>(facade: &F, width: f32, style: ShapeStyle) -> Self {
         let hw = width * 0.5;
-        Self::new(facade, &[[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]], color)
+        Self::new(facade, &[[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]], style)
     }
 
     /// Create an axis-aligned rectangle Shape with the given dimensions.
-    pub fn new_rect<F: Facade + ?Sized>(facade: &F, width: f32, height: f32, color: Color) -> Self {
+    pub fn new_rect<F: Facade + ?Sized>(
+        facade: &F,
+        width: f32,
+        height: f32,
+        style: ShapeStyle,
+    ) -> Self {
         let hw = width * 0.5;
         let hh = height * 0.5;
-        Self::new(facade, &[[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], color)
+        Self::new(facade, &[[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], style)
     }
 
     /// Create a polygonal approximation of a circle with the given radius and number of points.
@@ -47,7 +63,7 @@ impl Shape {
         facade: &F,
         radius: f32,
         point_count: u32,
-        color: Color,
+        style: ShapeStyle,
     ) -> Self {
         let angle_incr = 2.0 * std::f32::consts::PI / point_count as f32;
         let pts: Vec<[f32; 2]> = (0..point_count)
@@ -56,7 +72,7 @@ impl Shape {
                 [radius * angle.cos(), radius * angle.sin()]
             })
             .collect();
-        Self::new(facade, pts.as_slice(), color)
+        Self::new(facade, pts.as_slice(), style)
     }
 
     /// Create a Shape that matches the given Collider.
@@ -65,19 +81,19 @@ impl Shape {
     pub fn from_collider<F: Facade + ?Sized>(
         facade: &F,
         coll: &crate::physics2d::Collider,
-        color: Color,
+        style: ShapeStyle,
     ) -> Self {
         use crate::physics2d::Collider;
         match coll {
             Collider::Circle { r } => {
                 let pts: Vec<[f32; 2]> =
                     CIRCLE_VERTS.iter().map(|p| [r * p[0], r * p[1]]).collect();
-                Self::new(facade, pts.as_slice(), color)
+                Self::new(facade, pts.as_slice(), style)
             }
             Collider::Rect { hw, hh } => Self::new(
                 facade,
                 &[[-hw, -hh], [*hw, -hh], [*hw, *hh], [-hw, *hh]],
-                color,
+                style,
             ),
         }
     }
@@ -109,6 +125,7 @@ impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
         for item in items {
             let model = item.transform.to_homogeneous();
             let mv: [[f32; 3]; 3] = (view * model).into();
+
             let uniforms = glium::uniform! {
                 model_view: mv,
                 color: item.shape.color,
@@ -116,7 +133,7 @@ impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
             self.target
                 .draw(
                     &*item.shape.verts,
-                    glium::index::NoIndices(glium::index::PrimitiveType::TriangleFan),
+                    glium::index::NoIndices(item.shape.primitive_type),
                     &self.shaders.ortho_2d,
                     &uniforms,
                     &Default::default(),

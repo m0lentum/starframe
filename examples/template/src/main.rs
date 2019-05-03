@@ -10,7 +10,10 @@ use moleengine::{
     },
     physics2d::RigidBody,
     util::{inputcache::InputCache, Transform},
-    visuals_glium::{shaders::Shaders, shape::Shape},
+    visuals_glium::{
+        shaders::Shaders,
+        shape::{Shape, ShapeStyle},
+    },
 };
 
 //
@@ -59,7 +62,11 @@ pub fn init_resources() -> Resources {
             rb.angular_vel = 0.03;
             rb
         })
-        .add(Shape::new_square(&display, 80.0, [1.0; 4]));
+        .add(Shape::new_square(
+            &display,
+            80.0,
+            ShapeStyle::Fill([1.0; 4]),
+        ));
     block.apply(&mut space);
     for pos in [[100.0, 0.0], [-100.0, 0.0], [0.0, 100.0], [0.0, -100.0]].iter() {
         block.set_variable(Transform::new(*pos, 0.0, 0.5));

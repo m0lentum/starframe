@@ -17,7 +17,11 @@ use moleengine::{
     },
     physics2d::{Collider, Collision, RigidBody},
     util::{inputcache::InputCache, Transform},
-    visuals_glium::{debug::IntersectionIndicator, shaders::Shaders, shape::Shape},
+    visuals_glium::{
+        debug::IntersectionIndicator,
+        shaders::Shaders,
+        shape::{Shape, ShapeStyle},
+    },
 };
 
 //
@@ -91,7 +95,11 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
     let coll_rect = Collider::new_rect(180.0, 100.0);
     let coll_circle = Collider::new_circle(50.0);
     let thingy = ObjectRecipe::new()
-        .add(Shape::from_collider(display, &coll_circle, [1.0; 4]))
+        .add(Shape::from_collider(
+            display,
+            &coll_circle,
+            ShapeStyle::Outline([1.0; 4]),
+        ))
         .add(coll_circle)
         .add(RigidBody::new())
         .add_named_variable("T", None::<Transform>)
@@ -105,7 +113,7 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
         .add(Shape::from_collider(
             display,
             &coll_rect,
-            [0.2, 0.8, 0.6, 0.7],
+            ShapeStyle::Outline([0.2, 0.8, 0.6, 0.7]),
         ))
         .add(coll_rect)
         .add(RigidBody::new())
@@ -115,7 +123,11 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
 
     let obj_box = ObjectRecipe::new()
         .add_named_variable("T", None::<Transform>)
-        .add(Shape::from_collider(display, &coll_rect, [1.0; 4]))
+        .add(Shape::from_collider(
+            display,
+            &coll_rect,
+            ShapeStyle::Outline([1.0; 4]),
+        ))
         .add(coll_rect)
         .add(RigidBody::new());
     recipes.add("box", obj_box);
