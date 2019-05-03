@@ -1,8 +1,5 @@
 use crate::ecs::{system::*, IdType};
-use crate::physics2d::{
-    collision::{debug, intersection_check},
-    Collider, Collision, RigidBody,
-};
+use crate::physics2d::{collision::intersection_check, Collider, Collision, RigidBody};
 use crate::util::Transform;
 
 pub struct RigidBodySolver;

@@ -4,7 +4,6 @@ use crate::ecs::{event::SpaceEvent, space::Space, IdType};
 use crate::util::Transform;
 use nalgebra::{Point2, Unit, Vector2};
 
-pub mod debug;
 mod queries;
 mod solver;
 pub use solver::RigidBodySolver;
