@@ -29,21 +29,6 @@ impl<'a, S: SimpleSystem<'a>> System<'a> for S {
     }
 }
 
-/// A system that can store data within itself. This is only necessary in the unusual case that
-/// the system needs some information to persist between updates.
-/// These need to be initialized in a Space before using them.
-pub trait StatefulSystem<'a> {
-    type Filter: ComponentFilter<'a>;
-    type State: 'static;
-    fn run_system(
-        self,
-        state: &mut Self::State,
-        items: &mut [Self::Filter],
-        space: &Space,
-        queue: &mut EventQueue,
-    );
-}
-
 /// A set of Components that knows how to extract itself from a Space.
 /// These do not need to be implemented by hand - there is a derive macro available
 /// in the moleengine_ecs_codegen crate.

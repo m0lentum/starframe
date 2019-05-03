@@ -1,7 +1,7 @@
 use super::componentcontainer::ComponentContainer;
 use super::event::*;
 use super::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
-use super::system::{ComponentFilter, StatefulSystem, System};
+use super::system::{ComponentFilter, System};
 use super::IdType;
 
 use anymap::AnyMap;
@@ -53,7 +53,7 @@ impl Space {
     }
 
     /// Store some globally accessible state behind a RwLock in this space. This is mostly used by
-    /// stateful systems and must be done before attempting to run such a system.
+    /// Systems which need to persist data between frames or share it between multiple Systems,
     /// This method can be chained like a builder together with add_container.
     pub fn init_global_state<'a, S: 'static>(&mut self, state: S) -> &mut Self {
         self.global_state.insert(state);
@@ -210,16 +210,13 @@ impl Space {
     }
 
     /// Execute a closure if this Space has the desired type of global state data.
-    pub fn do_with_global_state<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
+    pub fn read_global_state<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
         let access = self.global_state.read::<T>()?;
         Some(f(&access))
     }
 
-    /// Like do_with_global_state, but with a mutable reference.
-    pub fn do_with_global_state_mut<T: 'static, R>(
-        &mut self,
-        f: impl FnOnce(&mut T) -> R,
-    ) -> Option<R> {
+    /// Like read_global_state, but with a mutable reference.
+    pub fn write_global_state<T: 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         let mut access = self.global_state.write::<T>()?;
         Some(f(&mut access))
     }
@@ -252,35 +249,6 @@ impl Space {
     fn actually_run_system<'a, S: System<'a>>(&self, system: S) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
         let result = S::Filter::run_filter(self, |cs| system.run_system(cs, self, &mut queue));
-        result.map(|()| queue)
-    }
-
-    /// Run a StatefulSystem. These are like Systems but can store information between updates.
-    /// # Panics
-    /// Panics if the StatefulSystem being run has not been initialized or requires a component
-    /// that doesn't have a container in the Space.
-    pub fn run_stateful_system<'a, S: StatefulSystem<'a> + 'static>(&mut self, system: S) {
-        let mut evts = self
-            .try_run_stateful_pass_events(system)
-            .expect("Attempted to run a StatefulSystem without all Components present");
-
-        evts.run_all(self);
-    }
-
-    /// Like run_system_pass_events, but for stateful systems.
-    pub fn try_run_stateful_pass_events<'a, S: StatefulSystem<'a>>(
-        &self,
-        system: S,
-    ) -> Option<EventQueue> {
-        let mut queue = EventQueue::new();
-        let mut state = self
-            .global_state
-            .write::<S::State>()
-            .expect("Attempted to run an uninitialized StatefulSystem");
-
-        let result = S::Filter::run_filter(self, |cs| {
-            system.run_system(&mut *state, cs, self, &mut queue)
-        });
         result.map(|()| queue)
     }
 

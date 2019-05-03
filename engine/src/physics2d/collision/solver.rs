@@ -16,35 +16,30 @@ pub struct ColliderFilter<'a> {
     coll: &'a Collider,
 }
 
-impl<'a> StatefulSystem<'a> for RigidBodySolver {
+impl<'a> System<'a> for RigidBodySolver {
     type Filter = ColliderFilter<'a>;
-    type State = Vec<Collision>;
 
-    fn run_system(
-        self,
-        state: &mut Self::State,
-        items: &mut [Self::Filter],
-        _space: &Space,
-        queue: &mut EventQueue,
-    ) {
-        let mut collisions = Vec::new();
-        // ugly brute force for now
-        let mut iter = items.iter();
-        while let Some(o1) = iter.next() {
-            for o2 in iter.clone() {
-                if let Some(colls) =
-                    intersection_check(o1.id, o1.tr, o1.coll, o2.id, o2.tr, o2.coll)
-                {
-                    // testing
-                    collisions.push(colls[0]);
-                    collisions.push(colls[1]);
+    fn run_system(self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
+        space.write_global_state(|colls| {
+            let mut collisions = Vec::new();
+            // ugly brute force for now
+            let mut iter = items.iter();
+            while let Some(o1) = iter.next() {
+                for o2 in iter.clone() {
+                    if let Some(colls) =
+                        intersection_check(o1.id, o1.tr, o1.coll, o2.id, o2.tr, o2.coll)
+                    {
+                        // testing
+                        collisions.push(colls[0]);
+                        collisions.push(colls[1]);
 
-                    queue.push(Box::new(colls[0]));
-                    queue.push(Box::new(colls[1]));
+                        queue.push(Box::new(colls[0]));
+                        queue.push(Box::new(colls[1]));
+                    }
                 }
             }
-        }
 
-        std::mem::replace(state, collisions);
+            std::mem::replace(colls, collisions);
+        });
     }
 }

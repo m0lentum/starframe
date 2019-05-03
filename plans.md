@@ -4,8 +4,12 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 - more storage types (see specs)
 - automatic object pooling API
 - optional components in ComponentFilters
-    - investigate using these instead of event listeners
-- no crash on unset recipe var
+    - ~~investigate using these instead of event listeners~~\
+      probably not a good idea - event listeners should be called when no Systems are running
+      so that they can have effects on any component of their choosing and be guaranteed not to block
+- better error reporting for Systems
+    - currently just fails and tells you it failed, could tell which component was missing etc.
+- no panic on unset recipe var
 - reconsider Space builder syntax (use `cascade` instead?)
 - preset recipes for common objects (can use as template for more specific stuff)
 - ~~LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)~~

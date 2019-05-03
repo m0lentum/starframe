@@ -130,7 +130,7 @@ fn update_space(res: &mut Resources) {
     res.space.run_system(KeyboardMover::new(&res.input_cache));
     {
         microprofile::scope!("update", "rigid body solver");
-        res.space.run_stateful_system(RigidBodySolver);
+        res.space.run_system(RigidBodySolver);
     }
     res.space.run_system(Motion);
 }

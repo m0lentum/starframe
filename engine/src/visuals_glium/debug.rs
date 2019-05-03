@@ -34,7 +34,7 @@ impl IntersectionIndicator {
         color: Color,
         shaders: &Shaders,
     ) {
-        space.do_with_global_state(|colls: &Vec<Collision>| {
+        space.read_global_state(|colls: &Vec<Collision>| {
             // update vertex buffer
 
             for (coll, verts) in colls
