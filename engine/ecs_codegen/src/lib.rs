@@ -132,7 +132,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
         impl<#generics> ComponentFilter<#lifetime> for #ident<#lifetime_ident, #(#generics_idents,)*>
         #where_clause
         {
-            fn run_filter(space: &Space, mut f: impl FnOnce(&mut [Self])) -> Option<()> {
+            fn run_filter(space: &moleengine::ecs::Space, mut f: impl FnOnce(&mut [Self])) -> Option<()> {
                 #(#accesses)*
 
                 let and_set = space.get_alive();
@@ -143,7 +143,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                 use hibitset::BitSetLike;
                 let iter = and_set.iter();
                 let mut items: Vec<_> = iter
-                    .map(|id| id as IdType)
+                    .map(|id| id as moleengine::ecs::IdType)
                     .filter(|id| {
                         let space_gen = space.get_gen(*id);
                         space_gen <= 1

@@ -1,6 +1,7 @@
-pub use super::event::EventQueue;
-pub use super::space::Space;
-pub use super::IdType;
+use super::event::EventQueue;
+use super::space::Space;
+
+pub(crate) use crate as moleengine; // the macros use the form moleengine::* for moleengine types
 pub use hibitset;
 pub use moleengine_ecs_codegen::*;
 
