@@ -25,6 +25,8 @@ impl IntersectionIndicator {
         }
     }
 
+    /// Draws an indicator on all intersections reported by the Space.
+    /// This requires the Space to have data of the type `Vec<Collision>`.
     pub fn draw_space<S: glium::Surface>(
         &mut self,
         target: &mut S,
@@ -61,6 +63,8 @@ impl IntersectionIndicator {
 
             // draw
 
+            // TODO: view should be saved in a Space probably, also consider a vertex buffer storage thingy that also goes in a Space and is shared by all batched drawing systems???
+            // also scale being less than 1 looks to be fucking up my penetration depth calculation
             let view: [[f32; 3]; 3] =
                 nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0)
                     .into();
