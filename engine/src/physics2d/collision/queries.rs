@@ -84,16 +84,16 @@ pub fn rect_rect(
         || (rot_ang.abs() - PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
     {
         return aabb_aabb(dist.coords, obj1, hw1, hh1, obj2, hw2, hh2).map(|mut colls| {
-            transform_collision(&tr1.0, &mut colls[0]);
-            transform_collision(&tr1.0, &mut colls[1]);
+            transform_collision(&tr1, &mut colls[0]);
+            transform_collision(&tr1, &mut colls[1]);
             colls
         });
     } else if (rot_ang - 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
         || (rot_ang + 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
     {
         return aabb_aabb(dist.coords, obj1, hw1, hh1, obj2, hh2, hw2).map(|mut colls| {
-            transform_collision(&tr1.0, &mut colls[0]);
-            transform_collision(&tr1.0, &mut colls[1]);
+            transform_collision(&tr1, &mut colls[0]);
+            transform_collision(&tr1, &mut colls[1]);
             colls
         });
     }
@@ -189,10 +189,11 @@ pub fn rect_rect(
     }
 }
 
-fn transform_collision(tr: &nalgebra::Similarity2<f32>, coll: &mut Collision) {
+fn transform_collision(tr: &Transform, coll: &mut Collision) {
     coll.normal = tr.isometry.rotation * coll.normal;
-    coll.manifold.0 = tr * coll.manifold.0;
-    coll.manifold.1 = coll.manifold.1.map(|p| tr * p);
+    coll.manifold.0 = tr.0 * coll.manifold.0;
+    coll.manifold.1 = coll.manifold.1.map(|p| tr.0 * p);
+    coll.depth *= tr.scaling();
 }
 
 fn aabb_aabb(
