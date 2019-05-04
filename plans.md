@@ -3,7 +3,7 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 **ECS**
 - more storage types (see specs)
 - automatic object pooling API
-- optional components in ComponentFilters
+- ~~optional components in ComponentFilters~~
     - ~~investigate using these instead of event listeners~~\
       probably not a good idea - event listeners should be called when no Systems are running
       so that they can have effects on any component of their choosing and be guaranteed not to block

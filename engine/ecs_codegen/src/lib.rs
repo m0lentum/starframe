@@ -15,18 +15,21 @@ use quote::quote;
 /// Declaring a field as mutable gives write access to the corresponding component.
 ///
 /// The struct must have exactly one lifetime parameter.
-/// Fields must be named and they must all be reference types. Additionally, two optional fields
-/// can be included to gain extra information: an IdType field with the #[id] attribute to identify objects,
+/// Fields must be named and they must all be reference types or Options containing reference types.
+/// Options, instead of filtering out an object if it does not have a given component, are set to None.
+/// Additionally, two optional annotated fields can be included to gain extra information:
+/// an IdType field with the #[id] attribute to identify objects,
 /// and a bool field with the #[enabled] attribute to identify the enabled/disabled state of an object.
 /// If an #[enabled] field is not provided, disabled objects will be filtered out.
 /// #Example
 /// ```
 ///#[derive(ComponentFilter)]
-///pub struct PosVel<'a> {
+///pub struct Filter<'a> {
 ///    #[id] id: IdType,
 ///    #[enabled] is_enabled: bool,
-///    position: &'a mut Position,
-///    velocity: &'a Velocity,
+///    mutable_thing: &'a mut Thing,
+///    immutable_thing: &'a OtherThing,
+///    optional_thing: Option<&'a Something>,
 ///}
 ///```
 #[proc_macro_derive(ComponentFilter, attributes(id, enabled))]
@@ -70,9 +73,25 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                 let access_ident = append_ident(ident, "_access");
                 let users_ident = append_ident(ident, "_users");
 
-                let field_type_ref = match &field.ty {
-                    syn::Type::Reference(r) => r,
-                    _ => panic!("Filter must only contain reference types (maybe you're missing a #[id] attribute?)"),
+                let (field_type_ref, field_is_optional) = match &field.ty {
+                    syn::Type::Reference(r) => (r, false),
+                    syn::Type::Path(p) => {
+                        let seg = p.path.segments.last().unwrap().into_value();
+                        if seg.ident == "Option" {
+                            match &seg.arguments {
+                                syn::PathArguments::AngleBracketed(args) => {
+                                    match args.args.first().unwrap().into_value() {
+                                        syn::GenericArgument::Type(syn::Type::Reference(r)) => (r, true),
+                                        _ => panic!("Option must contain a reference type"),
+                                    }
+                                }
+                                _ => panic!("Option must have angle bracketed arguments"),
+                            }
+                        } else {
+                            panic!("Filter must only contain reference and Option types (maybe you're missing a #[id] attribute?)")
+                        }
+                    }
+                    _ => panic!("Filter must only contain reference and Option types (maybe you're missing a #[id] attribute?)"),
                 };
                 let ty = &field_type_ref.elem;
 
@@ -85,8 +104,18 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                         };
                         accesses.push(access);
 
-                        let getter = quote! {
-                            #ident: #access_ident.get_mut_raw(id).as_mut().unwrap(),
+                        let getter = if !field_is_optional {
+                            quote! {
+                                #ident: #access_ident.get_mut_raw(id).as_mut().unwrap(),
+                            }
+                        } else {
+                            quote! {
+                                #ident: if #users_ident.contains(id as u32) {
+                                    Some(#access_ident.get_mut_raw(id).as_mut().unwrap())
+                                } else {
+                                    None
+                                },
+                            }
                         };
                         field_getters.push(getter);
                     }
@@ -98,13 +127,25 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                         };
                         accesses.push(access);
 
-                        let getter = quote! {
-                            #ident: #access_ident.get_raw(id).as_ref().unwrap(),
+                        let getter = if !field_is_optional {
+                            quote! {
+                                #ident: #access_ident.get_raw(id).as_ref().unwrap(),
+                            }
+                        } else {
+                            quote! {
+                                #ident: if #users_ident.contains(id as u32) {
+                                    Some(#access_ident.get_raw(id).as_ref().unwrap())
+                                } else {
+                                    None
+                                },
+                            }
                         };
                         field_getters.push(getter);
                     }
                 }
-                users_idents.push(users_ident);
+                if !field_is_optional {
+                    users_idents.push(users_ident);
+                }
             }
         }
     }
