@@ -9,6 +9,10 @@ Everything I've thought of doing but haven't gotten around to yet is here.
       so that they can have effects on any component of their choosing and be guaranteed not to block
 - better error reporting for Systems
     - currently just fails and tells you it failed, could tell which component was missing etc.
+- ability to run Systems in parallel
+    - this is already kind of possible but the API doesn't have good tools for it
+    - investigate usefulness of Futures (maybe wait for async/await)
+    - alternatively, a macro (something like `run_systems_par!(space, system1, system2, ...))`)
 - no panic on unset recipe var
 - reconsider Space builder syntax (use `cascade` instead?)
 - preset recipes for common objects (can use as template for more specific stuff)
@@ -27,7 +31,7 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 - camera
     - store in or out of Space? how best to access in rendering Systems?
     - smoothed movement
-    - attach to game objects (separate thing that follows or component?)
+    - attach to game objects (as a separate thing linked to the object somehow or component of the object itself?)
 
 **misc**
 - add loading level from file to the project template
