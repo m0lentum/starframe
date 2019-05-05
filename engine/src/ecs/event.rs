@@ -1,5 +1,4 @@
-use super::space::Space;
-use super::system::*;
+use super::{space::LifecycleEvent, system::*, IdType, Space};
 
 /// An event that causes something to happen within a Space.
 pub trait SpaceEvent {
@@ -12,7 +11,7 @@ pub trait SpaceEvent {
 }
 
 /// Something that does something when a SpaceEvent happens.
-/// For now, these can only be stored as components to an object in the Space.
+/// These can only be stored as components to an object in the Space.
 pub trait EventListener<E: SpaceEvent> {
     /// The logic to run when a SpaceEvent happens.
     /// Pushing new events onto the EventQueue given as a parameter results in
@@ -20,8 +19,11 @@ pub trait EventListener<E: SpaceEvent> {
     fn run_listener(&mut self, evt: &E, space: &Space, queue: &mut EventQueue);
 }
 
-/// A collection of SpaceEvents, used to allow event listeners and systems to generate new events
-/// without need to give them mutable access to a Space.
+/// A collection of SpaceEvents accumulated during a System running.
+/// If the System is run with `Space::run_system`,
+/// the queue is consumed and the events fired automatically when the System finishes.
+/// If you wish to delay firing of events you can use `Space::run_system_pass_events`,
+/// which returns the generated events.
 pub struct EventQueue {
     content: Vec<Box<dyn SpaceEvent>>,
 }
@@ -39,9 +41,27 @@ impl EventQueue {
         self.content.push(evt);
     }
 
-    /// Move everything from another queue into this one, leaving it empty.
+    /// Move everything from another queue into this one, leaving the other queue empty.
     pub fn append(&mut self, other: &mut EventQueue) {
         self.content.append(&mut other.content);
+    }
+
+    /// Convenience function to queue the given object to be destroyed.
+    /// This is equivalent to `push(Box::new(LifecycleEvent::Destroy(id)))`.
+    pub fn destroy_object(&mut self, id: IdType) {
+        self.content.push(Box::new(LifecycleEvent::Destroy(id)));
+    }
+
+    /// Convenience function to queue the given object to be disabled.
+    /// This is equivalent to `push(Box::new(LifecycleEvent::Disable(id)))`.
+    pub fn disable_object(&mut self, id: IdType) {
+        self.content.push(Box::new(LifecycleEvent::Disable(id)));
+    }
+
+    /// Convenience function to queue the given object to be enabled.
+    /// This is equivalent to `push(Box::new(LifecycleEvent::Enable(id)))`.
+    pub fn enable_object(&mut self, id: IdType) {
+        self.content.push(Box::new(LifecycleEvent::Enable(id)));
     }
 
     /// Run all the events in the queue and drain it so they can't be run again.

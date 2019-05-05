@@ -6,7 +6,9 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 - ~~optional components in ComponentFilters~~
     - ~~investigate using these instead of event listeners~~\
       probably not a good idea - event listeners should be called when no Systems are running
-      so that they can have effects on any component of their choosing and be guaranteed not to block
+      so that they can have effects on any component of their choosing and be guaranteed not to block\
+      **however**, this might gain a few microseconds e.g. with collision events
+      if I don't push them into queue at all if there's no listener to receive them
 - better error reporting for Systems
     - currently just fails and tells you it failed, could tell which component was missing etc.
 - ability to run Systems in parallel

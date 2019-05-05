@@ -264,10 +264,8 @@ impl Space {
     }
 
     /// Handle a series of SpaceEvents in sequential order.
-    pub fn handle_events(&mut self, events: Vec<Box<dyn SpaceEvent>>) {
-        for event in events {
-            event.handle(self);
-        }
+    pub fn handle_events(&mut self, mut events: EventQueue) {
+        events.run_all(self);
     }
 
     /// Run a listener associated with a specific object and a specific event type.
