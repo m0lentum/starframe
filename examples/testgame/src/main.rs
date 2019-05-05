@@ -61,7 +61,7 @@ pub fn init_resources() -> Resources {
     {
         use glutin::VirtualKeyCode::*;
         input_cache.track_keys(&[
-            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space,
+            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S,
         ]);
     }
 
@@ -76,7 +76,7 @@ pub fn init_resources() -> Resources {
 
     let recipes = make_recipes(&display);
 
-    let intersection_vis = IntersectionIndicator::new(&display, 20);
+    let intersection_vis = IntersectionIndicator::new(&display, 50);
 
     Resources {
         display,
@@ -122,12 +122,12 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
     recipes.add("player", other_thingy);
 
     let obj_box = ObjectRecipe::new()
-        .add_named_variable("T", None::<Transform>)
-        .add(Shape::from_collider(
+        .add_named_variable("T", Some(Transform::identity()))
+        .add_variable(Some(Shape::from_collider(
             display,
             &coll_rect,
             ShapeStyle::Outline([1.0; 4]),
-        ))
+        )))
         .add(coll_rect)
         .add(RigidBody::new());
     recipes.add("box", obj_box);

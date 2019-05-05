@@ -40,6 +40,10 @@ impl Shape {
         }
     }
 
+    pub fn set_color(&mut self, color: Color) {
+        self.color = color;
+    }
+
     /// Create an axis-aligned square Shape with the given side length.
     pub fn new_square<F: Facade + ?Sized>(facade: &F, width: f32, style: ShapeStyle) -> Self {
         let hw = width * 0.5;

@@ -7,10 +7,9 @@ edition = "2018"
 [dependencies]
 glium = "0.24.0"
 nalgebra = "0.18.0"
+microprofile = "0.1.0"
+rand = "0.6.5"
 
 [dependencies.moleengine]
 path = "../../engine"
 features = ["all"]
-
-[dependencies.microprofile]
-version = "0.1.0"

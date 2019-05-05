@@ -1,12 +1,16 @@
-use super::componentcontainer::ComponentContainer;
-use super::event::*;
-use super::storage::{ComponentStorage, CreateWithCapacity, VecStorage};
-use super::system::{ComponentFilter, System};
-use super::IdType;
+use super::{
+    componentcontainer::ComponentContainer,
+    event::*,
+    recipe::ObjectRecipe,
+    storage::{ComponentStorage, CreateWithCapacity, VecStorage},
+    system::{ComponentFilter, System},
+    IdType,
+};
 
 use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::collections::HashMap;
 
 /// An Entity-Component-System environment.
 pub struct Space {
@@ -16,6 +20,7 @@ pub struct Space {
     next_obj_id: IdType,
     capacity: IdType,
     containers: AnyMap,
+    pools: HashMap<&'static str, ObjectPool>,
     global_state: LockedAnyMap,
 }
 
@@ -29,6 +34,7 @@ impl Space {
             next_obj_id: 0,
             capacity,
             containers: AnyMap::new(),
+            pools: HashMap::new(),
             global_state: LockedAnyMap::new(),
         }
     }
@@ -88,6 +94,47 @@ impl Space {
         }
     }
 
+    /// Creates a pool (see ObjectPool) of `count` objects created from the given recipe.
+    /// Objects in the pool are disabled by default and can be enabled using `spawn_from_pool(key)`
+    pub fn create_pool(&mut self, key: &'static str, count: IdType, recipe: ObjectRecipe) {
+        let pool = {
+            let recipe = recipe.start_disabled();
+
+            let mut ids = Vec::with_capacity(count);
+            for _ in 0..count {
+                ids.push(
+                    recipe
+                        .try_apply(self)
+                        .expect("Could not create pool: Space was full"),
+                );
+            }
+
+            ObjectPool { ids }
+        };
+        self.pools.insert(key, pool);
+    }
+
+    /// Spawns an object from the pool with the given key and returns its id if successful.
+    /// # Panics
+    /// Panics if the given key is not associated with any pool
+    /// or if a game object inside the pool has been destroyed.
+    pub fn spawn_from_pool(&mut self, key: &'static str) -> Option<IdType> {
+        let pool = self
+            .pools
+            .get(key)
+            .expect(format!("No pool exists with the key {}", key).as_str());
+
+        if let Some(&id) = pool.ids.iter().find(|&&id| {
+            assert!(self.is_alive(id), "A pooled game object has been destroyed");
+            !self.is_enabled(id)
+        }) {
+            self.enable_object(id);
+            Some(id)
+        } else {
+            None // no unused objects in pool
+        }
+    }
+
     /// Create a component for an object. The component can be of any type,
     /// but there has to be a ComponentContainer for it in this Space.
     /// # Panics
@@ -135,15 +182,19 @@ impl Space {
         self.alive_objects.remove(id as u32);
     }
 
-    /// Destroys every object in the Space.
+    /// Destroys every object in the Space. Also destroys all object pools.
     pub fn destroy_all(&mut self) {
         self.alive_objects.clear();
+        self.pools.clear();
+        for gen in &mut self.generations {
+            *gen = 0;
+        }
     }
 
     /// Disable an object. This means it will not receive updates from most Systems.
     /// However, Systems still have access to it and may choose to do something with it.
     pub fn disable_object(&mut self, id: IdType) {
-        LifecycleEvent::Disable(id).handle(self);
+        LifecycleEvent::Disable(id).handle(self); // fire the event so event listeners can do things if they wish
     }
 
     pub(crate) fn actually_disable_object(&mut self, id: IdType) {
@@ -173,14 +224,10 @@ impl Space {
     }
 
     /// Execute a closure if the given object has the desired component. Otherwise returns None.
-    /// Can be used to extract information as an Option or just do  what you want to do within the closure.
+    /// Can be used to extract information as an Option or just do what you want to do within the closure.
     /// This should be used sparingly since it needs to get access to a ComponentContainer every time,
-    /// and is mainly used from EventListeners.
-    pub fn do_with_component<T: 'static, R>(
-        &self,
-        id: IdType,
-        f: impl FnOnce(&T) -> R,
-    ) -> Option<R> {
+    /// and is mainly used from EventListeners and for setting values on objects spawned from a pool.
+    pub fn read_component<T: 'static, R>(&self, id: IdType, f: impl FnOnce(&T) -> R) -> Option<R> {
         let cont = self.try_open_container::<T>()?;
         if cont.get_users().contains(id as u32)
             && self.alive_objects.contains(id as u32)
@@ -192,8 +239,8 @@ impl Space {
         }
     }
 
-    /// Like do_with_component, but gives you a mutable reference to the component.
-    pub fn do_with_component_mut<T: 'static, R>(
+    /// Like read_component, but gives you a mutable reference to the component.
+    pub fn write_component<T: 'static, R>(
         &self,
         id: IdType,
         f: impl FnOnce(&mut T) -> R,
@@ -272,7 +319,7 @@ impl Space {
     pub fn run_listener<E: SpaceEvent + 'static>(&mut self, id: IdType, evt: &E) {
         let mut queue = EventQueue::new();
 
-        self.do_with_component_mut(id, |l: &mut EventListenerComponent<E>| {
+        self.write_component(id, |l: &mut EventListenerComponent<E>| {
             l.run_listener(&evt, &self, &mut queue)
         });
 
@@ -295,10 +342,20 @@ impl Space {
         &self.alive_objects
     }
 
+    /// Returns whether or not the an object with the given id is currently alive.
+    pub fn is_alive(&self, id: IdType) -> bool {
+        self.alive_objects.contains(id as u32)
+    }
+
     /// Get a reference to the bitset of enabled objects in this space.
     /// Used by the ComponentFilter derive macro.
     pub fn get_enabled(&self) -> &BitSet {
         &self.enabled_objects
+    }
+
+    /// Returns whether or not an object with the given id is currently enabled.
+    pub fn is_enabled(&self, id: IdType) -> bool {
+        self.enabled_objects.contains(id as u32)
     }
 
     /// Get the generation value of a given object.
@@ -454,4 +511,16 @@ impl LockedAnyMap {
     pub fn write<T: 'static>(&self) -> Option<RwLockWriteGuard<T>> {
         Some(self.0.get::<RwLock<T>>()?.write())
     }
+}
+
+/// An object pool is a group of identical game objects
+/// that handles disabling and enabling said objects.
+/// Pools should be used for objects which would otherwise be created and destroyed a lot, such as bullets.
+/// When using a pool, disable your objects instead of destroying them so they can be respawned.
+/// Otherwise accessing the pool will panic.
+///
+/// Pools should not be created directly. They are tied to specific Spaces and operated through
+/// the Space's interface with `create_pool` and `spawn_from_pool`.
+pub struct ObjectPool {
+    pub(self) ids: Vec<IdType>,
 }

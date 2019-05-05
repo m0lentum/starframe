@@ -12,9 +12,12 @@ use moleengine::{
         gameloop::{GameLoop, LockstepLoop},
         inputcache::*,
         statemachine::{GameState, StateMachine, StateOp},
+        Transform,
     },
-    visuals_glium::shape::ShapeRenderer,
+    visuals_glium::shape::{Shape, ShapeRenderer},
 };
+
+use rand::{distributions as distr, distributions::Distribution};
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 const _CYAN_COLOR: [f32; 4] = [0.3, 0.7, 0.8, 1.0];
@@ -46,6 +49,21 @@ impl GameState<Resources> for StatePlaying {
 
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
             reload_space(&mut res.space, &mut res.recipes);
+        }
+
+        if res.input_cache.is_key_pressed(Key::S, Some(0)) {
+            if let Some(id) = res.space.spawn_from_pool("box") {
+                res.space
+                    .write_component(id, |tr: &mut Transform| {
+                        let mut rng = rand::thread_rng();
+                        tr.set_translation(nalgebra::Vector2::new(
+                            distr::Uniform::from(-300.0..300.0).sample(&mut rng),
+                            distr::Uniform::from(-200.0..200.0).sample(&mut rng),
+                        ));
+                        tr.set_rotation_deg(distr::Uniform::from(0.0..360.0).sample(&mut rng));
+                    })
+                    .expect("No transform on the thing");
+            }
         }
 
         update_space(res);
@@ -142,6 +160,12 @@ pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {
     space.destroy_all();
 
     let r = parse_into_space(mes.as_str(), space, recipes);
+
+    space.create_pool("box", 10, {
+        let mut rec = recipes.get("box").unwrap().clone();
+        rec.modify_variable(|sh: &mut Shape| sh.set_color([0.4, 0.8, 0.5, 1.0]));
+        rec
+    });
 
     match r {
         Ok(_) => (),

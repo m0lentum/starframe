@@ -30,7 +30,7 @@ pub struct TestCollisionListener;
 
 impl EventListener<Collision> for TestCollisionListener {
     fn run_listener(&mut self, evt: &Collision, space: &Space, _q: &mut EventQueue) {
-        space.do_with_component_mut(evt.source, |tr: &mut Transform| {
+        space.write_component(evt.source, |tr: &mut Transform| {
             tr.rotate_deg(2.0);
         });
     }

@@ -2,7 +2,8 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 
 **ECS**
 - more storage types (see specs)
-- automatic object pooling API
+- ~~automatic object pooling API~~
+    - added but with some usability concerns, will have to try it in practice
 - ~~optional components in ComponentFilters~~
     - ~~investigate using these instead of event listeners~~\
       probably not a good idea - event listeners should be called when no Systems are running
@@ -11,11 +12,11 @@ Everything I've thought of doing but haven't gotten around to yet is here.
       if I don't push them into queue at all if there's no listener to receive them
 - better error reporting for Systems
     - currently just fails and tells you it failed, could tell which component was missing etc.
+    - don't panic when using recipe with unset variable
 - ability to run Systems in parallel
     - this is already kind of possible but the API doesn't have good tools for it
     - investigate usefulness of Futures (maybe wait for async/await)
     - alternatively, a macro (something like `run_systems_par!(space, system1, system2, ...))`)
-- no panic on unset recipe var
 - reconsider Space builder syntax (use `cascade` instead?)
 - preset recipes for common objects (can use as template for more specific stuff)
 - ~~LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)~~

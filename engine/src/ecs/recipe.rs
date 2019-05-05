@@ -219,12 +219,24 @@ impl ObjectRecipe {
         self
     }
 
-    /// Get the default value of a variable in the recipe, or None if it does not have one.
-    pub fn get_default<T: Clone + 'static>(&self) -> Option<&T> {
-        self.default_vars
-            .get::<Option<T>>()
-            .expect("Attempted to get the default value of a recipe variable that does not exist")
-            .as_ref()
+    /// Modify the value of a variable that already exists in the System.
+    /// # Panics
+    /// Panics if this type of variable does not exist in this recipe or has been set to None.
+    pub fn modify_variable<T: Clone + 'static>(&mut self, f: impl FnOnce(&mut T)) {
+        let var = self
+            .vars
+            .get_mut::<Option<T>>()
+            .expect("Attempted to modify a variable that does not exist in the recipe");
+        let inner = var
+            .as_mut()
+            .expect("Attempted to modify a variable that was None");
+        // TODO: error handling instead of panic and probably disallow variables without default values
+        f(inner);
+    }
+
+    /// Returns whether or not a variable with the given type exists in this Recipe.
+    pub fn has_variable<T: Clone + 'static>(&self) -> bool {
+        self.vars.contains::<T>()
     }
 
     /// Reset all variables in the recipe to their default values.
