@@ -154,8 +154,8 @@ fn update_space(res: &mut Resources) {
 }
 
 pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {
-    let mes = std::fs::read_to_string("./examples/testgame/src/test_space.mes")
-        .expect("File read failed");
+    let mes =
+        std::fs::read_to_string("./examples/testgame/test_space.mes").expect("File read failed");
 
     space.destroy_all();
 
