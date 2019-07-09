@@ -1,11 +1,15 @@
-use super::{Collision, RigidBody};
-use crate::{ecs::system::*, util::Transform};
+use super::{Collider, Collision, RigidBody};
+use crate::{
+    ecs::{event::EventQueue, system::*, Space},
+    util::Transform,
+};
 use nalgebra::Vector2;
 
 #[derive(ComponentFilter)]
 pub struct RigidBodyFilter<'a> {
-    tr: &'a Transform,
-    body: &'a RigidBody,
+    tr: &'a mut Transform,
+    body: &'a mut RigidBody,
+    coll: Option<&'a Collider>,
 }
 
 // can I get all integrators to work with this signature?
@@ -38,7 +42,7 @@ pub trait ConstraintSolver {
 // idea: all implementations of one step of the physics process should be interchangeable
 // maybe also ability to add extra steps?
 // e.g. gravity, wind, other non-contact forces as custom extra steps
-pub struct RigidBodyPipeline<I, B, N, S>
+pub struct CollisionPipeline<I, B, N, S>
 where
     I: Integrator,
     B: BroadPhase,
@@ -50,4 +54,33 @@ where
     broad_phase: B,
     narrow_phase: N,
     solver: S,
+}
+
+impl<'a, I, B, N, S> System<'a> for CollisionPipeline<I, B, N, S>
+where
+    I: Integrator,
+    B: BroadPhase,
+    N: NarrowPhase,
+    S: ConstraintSolver,
+{
+    type Filter = RigidBodyFilter<'a>;
+
+    fn run_system(self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
+        // motion
+        // constant / spatially varying forces before / during motion?
+        // if the integrator is complex (e.g. RK4) the forces will need to be fed to it
+
+        // broad phase
+        // generating contacts does not require mutable access.
+        // maybe this should be done with an immutable filter so other things can run in parallel?
+        // transforms are used in a lot of places so this is potentially quite beneficial
+
+        // narrow phase
+
+        // constraint solve
+        // potentially also other constraints than collision
+        // how generic can this be?
+
+        // events
+    }
 }
