@@ -1,4 +1,4 @@
-use nalgebra::Vector2;
+use super::Velocity;
 
 #[derive(Clone, Copy)]
 pub struct RigidBody {
@@ -10,22 +10,23 @@ pub struct RigidBody {
     drag: f32,
     angular_drag: f32,
 
-    pub velocity: Vector2<f32>,
-    pub angular_vel: f32,
+    pub velocity: Velocity,
 }
 
-impl RigidBody {
-    pub fn new() -> Self {
+impl Default for RigidBody {
+    fn default() -> Self {
         RigidBody {
             body_type: BodyType::Dynamic,
             mass: Mass::mass(1.0),
             elasticity: 0.75,
             drag: 0.002,
             angular_drag: 0.001,
-            velocity: Vector2::zeros(),
-            angular_vel: 0.0,
+            velocity: Velocity::default(),
         }
     }
+}
+
+impl RigidBody {
 
     /// Kinematic rigid bodies are not affected by collision forces.
     pub fn make_kinematic(mut self) -> Self {

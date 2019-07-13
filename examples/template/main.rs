@@ -58,8 +58,8 @@ pub fn init_resources() -> Resources {
     let mut block = ObjectRecipe::new()
         .add_variable(Some(Transform::from_position([0.0, 0.0])))
         .add({
-            let mut rb = RigidBody::new();
-            rb.angular_vel = 0.03;
+            let mut rb = RigidBody::default();
+            rb.velocity.angular = 0.03;
             rb
         })
         .add(Shape::new_square(

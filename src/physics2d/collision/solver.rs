@@ -19,7 +19,7 @@ pub struct ColliderFilter<'a> {
 impl<'a> System<'a> for RigidBodySolver {
     type Filter = ColliderFilter<'a>;
 
-    fn run_system(self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
+    fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
         space.write_global_state(|colls| {
             let mut collisions = Vec::new();
             // ugly brute force for now

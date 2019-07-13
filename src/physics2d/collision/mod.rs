@@ -1,12 +1,29 @@
-use crate::physics2d::Collider;
+use super::{Collider, RigidBody};
 
-use crate::ecs::{event::SpaceEvent, space::Space, IdType};
-use crate::util::Transform;
+use crate::{
+    ecs::{event::SpaceEvent, space::Space, system::*, IdType},
+    util::Transform,
+};
 use nalgebra::{Point2, Unit, Vector2};
 
+pub mod broadphase;
+pub mod narrowphase;
+pub mod pipeline;
 mod queries;
 mod solver;
+
+pub use broadphase::BroadPhase;
+pub use narrowphase::NarrowPhase;
 pub use solver::RigidBodySolver;
+
+#[derive(ComponentFilter)]
+pub struct RigidBodyFilter<'a> {
+    tr: &'a mut Transform,
+    body: &'a mut RigidBody,
+    coll: Option<&'a Collider>,
+}
+
+pub struct BodyPair<'a>(RigidBodyFilter<'a>, RigidBodyFilter<'a>);
 
 /// Information about a collision relative to one of the objects involved.
 /// Two of these are generated for every colliding pair.

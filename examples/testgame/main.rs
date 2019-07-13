@@ -101,7 +101,7 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
             ShapeStyle::Outline([1.0; 4]),
         ))
         .add(coll_circle)
-        .add(RigidBody::new())
+        .add(RigidBody::default())
         .add_named_variable("T", None::<Transform>)
         //.add_listener(TestCollisionListener)
         .add_listener(ChainEventListener);
@@ -116,7 +116,7 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
             ShapeStyle::Outline([0.2, 0.8, 0.6, 0.7]),
         ))
         .add(coll_rect)
-        .add(RigidBody::new())
+        .add(RigidBody::default())
         .add(KeyboardControls)
         .add_listener(LifecycleListener);
     recipes.add("player", other_thingy);
@@ -129,7 +129,7 @@ fn make_recipes(display: &glium::Display) -> RecipeBook {
             ShapeStyle::Outline([1.0; 4]),
         )))
         .add(coll_rect)
-        .add(RigidBody::new());
+        .add(RigidBody::default());
     recipes.add("box", obj_box);
 
     recipes

@@ -132,7 +132,7 @@ fn draw_space(res: &mut Resources) {
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
-    res.space.run_system(ShapeRenderer {
+    res.space.run_system(&mut ShapeRenderer {
         target: &mut target,
         shaders: &res.shaders,
     });
@@ -145,12 +145,13 @@ fn draw_space(res: &mut Resources) {
 fn update_space(res: &mut Resources) {
     microprofile::flip();
     microprofile::scope!("update", "all");
-    res.space.run_system(KeyboardMover::new(&res.input_cache));
+    res.space
+        .run_system(&mut KeyboardMover::new(&res.input_cache));
     {
         microprofile::scope!("update", "rigid body solver");
-        res.space.run_system(RigidBodySolver);
+        res.space.run_system(&mut RigidBodySolver);
     }
-    res.space.run_system(Motion);
+    res.space.run_system(&mut Motion);
 }
 
 pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {

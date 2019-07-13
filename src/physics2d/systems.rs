@@ -1,4 +1,4 @@
-use super::rigidbody::{BodyType, RigidBody};
+use super::{Velocity, rigidbody::{BodyType, RigidBody}};
 use crate::ecs::system::*;
 use crate::util::Transform;
 use nalgebra::Vector2;
@@ -17,12 +17,12 @@ pub struct MotionFilter<'a> {
 impl<'a> SimpleSystem<'a> for Motion {
     type Filter = MotionFilter<'a>;
 
-    fn run_system(self, items: &mut [Self::Filter]) {
+    fn run_system(&mut self, items: &mut [Self::Filter]) {
         for item in items {
             match item.body.get_body_type() {
                 BodyType::Dynamic | BodyType::Kinematic => {
-                    item.tr.translate(item.body.velocity);
-                    item.tr.rotate_rad(item.body.angular_vel);
+                    item.tr.translate(item.body.velocity.linear);
+                    item.tr.rotate_rad(item.body.velocity.angular);
                 }
                 BodyType::Static => (),
             }
@@ -55,9 +55,9 @@ pub struct RigidBodyFilter<'a> {
 impl<'a> SimpleSystem<'a> for Gravity {
     type Filter = RigidBodyFilter<'a>;
 
-    fn run_system(self, items: &mut [Self::Filter]) {
+    fn run_system(&mut self, items: &mut [Self::Filter]) {
         for item in items {
-            item.body.velocity += self.force;
+            item.body.velocity.linear += self.force;
         }
     }
 }

@@ -24,7 +24,7 @@ impl<'a> KeyboardMover<'a> {
 }
 impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     type Filter = PosVel<'a>;
-    fn run_system(self, items: &mut [Self::Filter]) {
+    fn run_system(&mut self, items: &mut [Self::Filter]) {
         let mut t = Vector2::zeros();
         let mut r = 0.0;
         if self.input.is_key_pressed(Key::Left, None) {

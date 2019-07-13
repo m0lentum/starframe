@@ -87,7 +87,7 @@ fn draw_space(res: &mut Resources) {
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
-    res.space.run_system(ShapeRenderer {
+    res.space.run_system(&mut ShapeRenderer {
         target: &mut target,
         shaders: &res.shaders,
     });
@@ -96,7 +96,7 @@ fn draw_space(res: &mut Resources) {
 }
 
 fn update_space(space: &mut Space) {
-    space.run_system(Motion);
+    space.run_system(&mut Motion);
 }
 
 fn handle_events(

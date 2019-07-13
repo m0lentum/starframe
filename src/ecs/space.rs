@@ -272,14 +272,14 @@ impl Space {
     /// For more information see the moleengine_ecs_codegen crate.
     /// # Panics
     /// Panics if the System being run requires a component that doesn't have a container in this Space.
-    pub fn run_system<'a, S: System<'a>>(&mut self, system: S) {
+    pub fn run_system<'a, S: System<'a>>(&mut self, system: &mut S) {
         self.actually_run_system(system)
             .expect("Attempted to run a System without all Components present")
             .run_all(self);
     }
 
     /// Like run_system, but returns None instead of panicking if a required component is missing.
-    pub fn try_run_system<'a, S: System<'a>>(&mut self, system: S) -> Option<()> {
+    pub fn try_run_system<'a, S: System<'a>>(&mut self, system: &mut S) -> Option<()> {
         self.actually_run_system(system).map(|mut evts| {
             evts.run_all(self);
         })
@@ -288,12 +288,15 @@ impl Space {
     /// Like try_run_system, but instead of firing generated events immediately, returns them.
     /// This is useful because it allows us to run Systems through an immutable Space reference,
     /// which in turn lets us run them in parallel or chain them from within one another.
-    pub fn try_run_system_pass_events<'a, S: System<'a>>(&self, system: S) -> Option<EventQueue> {
+    pub fn try_run_system_pass_events<'a, S: System<'a>>(
+        &self,
+        system: &mut S,
+    ) -> Option<EventQueue> {
         self.actually_run_system(system)
     }
 
     /// Actually runs a system, giving it a queue to put events in if it wants to.
-    fn actually_run_system<'a, S: System<'a>>(&self, system: S) -> Option<EventQueue> {
+    fn actually_run_system<'a, S: System<'a>>(&self, system: &mut S) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
         let result = S::Filter::run_filter(self, |cs| system.run_system(cs, self, &mut queue));
         result.map(|()| queue)
