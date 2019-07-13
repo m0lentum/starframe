@@ -3,7 +3,6 @@ use glutin::VirtualKeyCode as Key;
 
 use moleengine::{
     ecs::space::Space,
-    physics2d::systems::Motion,
     util::{
         gameloop::{GameLoop, LockstepLoop},
         inputcache::InputCache,
@@ -96,7 +95,7 @@ fn draw_space(res: &mut Resources) {
 }
 
 fn update_space(space: &mut Space) {
-    space.run_system(&mut Motion);
+    // TODO: use new integrator/solver interface
 }
 
 fn handle_events(

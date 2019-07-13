@@ -8,16 +8,17 @@ use nalgebra::{Point2, Unit, Vector2};
 
 pub mod broadphase;
 pub mod narrowphase;
-pub mod pipeline;
 mod queries;
 mod solver;
 
 pub use broadphase::BroadPhase;
 pub use narrowphase::NarrowPhase;
-pub use solver::RigidBodySolver;
+pub use solver::CollisionSolver;
 
 #[derive(ComponentFilter)]
 pub struct RigidBodyFilter<'a> {
+    #[id]
+    id: IdType,
     tr: &'a mut Transform,
     body: &'a mut RigidBody,
     coll: Option<&'a Collider>,

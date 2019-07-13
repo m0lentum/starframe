@@ -27,7 +27,6 @@ impl Default for RigidBody {
 }
 
 impl RigidBody {
-
     /// Kinematic rigid bodies are not affected by collision forces.
     pub fn make_kinematic(mut self) -> Self {
         self.body_type = BodyType::Kinematic;

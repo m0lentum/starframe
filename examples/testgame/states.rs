@@ -7,7 +7,10 @@ use moleengine::{
         recipe::{parse_into_space, RecipeBook},
         space::Space,
     },
-    physics2d::{collision::RigidBodySolver, systems::Motion},
+    physics2d::{
+        collision::{broadphase::PlaceholderBroadPhase, CollisionSolver},
+        integrator::ExplicitEuler,
+    },
     util::{
         gameloop::{GameLoop, LockstepLoop},
         inputcache::*,
@@ -149,9 +152,11 @@ fn update_space(res: &mut Resources) {
         .run_system(&mut KeyboardMover::new(&res.input_cache));
     {
         microprofile::scope!("update", "rigid body solver");
-        res.space.run_system(&mut RigidBodySolver);
+        res.space.run_system(
+            // TODO: real timestep
+            &mut CollisionSolver::<ExplicitEuler, PlaceholderBroadPhase>::with_timestep(0.017),
+        );
     }
-    res.space.run_system(&mut Motion);
 }
 
 pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {
