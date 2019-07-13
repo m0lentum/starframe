@@ -9,7 +9,7 @@ use moleengine::{
     },
     physics2d::{
         collision::{broadphase::PlaceholderBroadPhase, CollisionSolver},
-        integrator::ExplicitEuler,
+        integrator,
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
@@ -154,7 +154,7 @@ fn update_space(res: &mut Resources) {
         microprofile::scope!("update", "rigid body solver");
         res.space.run_system(
             // TODO: real timestep
-            &mut CollisionSolver::<ExplicitEuler, PlaceholderBroadPhase>::with_timestep(0.017),
+            &mut CollisionSolver::<integrator::SemiImplicitEuler, PlaceholderBroadPhase>::with_timestep(0.017),
         );
     }
 }

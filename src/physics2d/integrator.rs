@@ -55,3 +55,38 @@ impl Integrator for ExplicitEuler {
         IntegratorState::NeedsDerivatives
     }
 }
+
+/// Semi-implicit Euler integrator.
+/// Solves velocity first, then applies it to position.
+/// Preserves energy and handles discontinuous constraints well.
+/// Generally used for rigid body systems.
+pub struct SemiImplicitEuler {
+    timestep: f32,
+    ready: bool,
+}
+
+impl Integrator for SemiImplicitEuler {
+    fn begin_step(timestep: f32) -> Self {
+        SemiImplicitEuler {
+            timestep,
+            ready: false,
+        }
+    }
+
+    fn substep<'a>(
+        &mut self,
+        variables: impl Iterator<Item = (&'a mut Transform, &'a mut Velocity)>,
+    ) -> IntegratorState {
+        if !self.ready {
+            self.ready = true;
+            return IntegratorState::NeedsDerivatives;
+        }
+
+        for (tr, vel) in variables {
+            tr.translate(self.timestep * vel.linear);
+            tr.rotate_rad(self.timestep * vel.angular);
+        }
+
+        IntegratorState::Done
+    }
+}
