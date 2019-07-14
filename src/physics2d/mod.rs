@@ -1,11 +1,9 @@
-pub mod collider;
 pub mod collision;
 pub mod constraint;
 pub mod integrator;
 pub mod rigidbody;
 
-pub use collider::Collider;
-pub use collision::Collision;
+pub use collision::{Collider, Collision};
 pub use constraint::ConstraintSolver;
 pub use integrator::Integrator;
 pub use rigidbody::RigidBody;

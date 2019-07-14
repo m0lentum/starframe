@@ -2,13 +2,13 @@ use super::Velocity;
 
 #[derive(Clone, Copy)]
 pub struct RigidBody {
-    body_type: BodyType,
-    mass: Mass,
+    pub body_type: BodyType,
+    pub mass: Mass,
     // TODO: moment of inertia (calculated from collider)
-    elasticity: f32,
+    pub elasticity: f32,
     // TODO: friction
-    drag: f32,
-    angular_drag: f32,
+    pub drag: f32,
+    pub angular_drag: f32,
 
     pub velocity: Velocity,
 }

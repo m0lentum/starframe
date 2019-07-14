@@ -1,6 +1,11 @@
 use super::{
-    super::integrator::{Integrator, IntegratorState},
-    intersection_check, BroadPhase, RigidBodyFilter,
+    super::{
+        integrator::{Integrator, IntegratorState},
+        Velocity,
+    },
+    broadphase::{BroadPhase, Collidable},
+    narrowphase::intersection_check,
+    RigidBodyFilter, Transform,
 };
 use crate::ecs::{event::EventQueue, system::*, Space};
 use std::marker::PhantomData;
@@ -48,32 +53,30 @@ where
                 .iter_mut()
                 .map(|rbf| (&mut *rbf.tr, &mut rbf.body.velocity)),
         ) {
-            // TODO: use the broad phase
-            space.write_global_state(|colls| {
-                let mut collisions = Vec::new();
-                // ugly brute force for now
-                let mut iter = items.iter();
-                while let Some(o1) = iter.next() {
-                    for o2 in iter.clone() {
-                        match (o1.coll, o2.coll) {
-                            (Some(coll1), Some(coll2)) => {
-                                if let Some(colls) =
-                                    intersection_check(o1.id, o1.tr, coll1, o2.id, o2.tr, coll2)
-                                {
-                                    // testing
-                                    collisions.push(colls[0]);
-                                    collisions.push(colls[1]);
+            let iter = items.iter().filter_map(|rbf| {
+                rbf.coll.map(|coll| Collidable {
+                    id: rbf.id,
+                    tr: rbf.tr,
+                    coll: coll,
+                })
+            });
 
-                                    queue.push(Box::new(colls[0]));
-                                    queue.push(Box::new(colls[1]));
-                                }
-                            }
+            let mut collisions = Vec::new();
 
-                            _ => (),
-                        }
-                    }
+            for (o1, o2) in B::pairs(iter) {
+                if let Some(colls) =
+                    intersection_check(o1.id, o1.tr, o1.coll, o2.id, o2.tr, o2.coll)
+                {
+                    // testing
+                    collisions.push(colls[0]);
+                    collisions.push(colls[1]);
+
+                    queue.push(Box::new(colls[0]));
+                    queue.push(Box::new(colls[1]));
                 }
+            }
 
+            space.write_global_state(|colls| {
                 std::mem::replace(colls, collisions);
             });
         }

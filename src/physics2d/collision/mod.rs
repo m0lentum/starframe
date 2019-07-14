@@ -1,19 +1,19 @@
-use super::{Collider, RigidBody};
+use super::RigidBody;
 
 use crate::{
     ecs::{event::SpaceEvent, space::Space, system::*, IdType},
-    util::Transform,
 };
 use nalgebra::{Point2, Unit, Vector2};
 
 pub mod broadphase;
+mod collider;
 pub mod narrowphase;
+pub use collider::Collider;
+pub use solver::CollisionSolver;
 mod queries;
 mod solver;
 
-pub use broadphase::BroadPhase;
-pub use narrowphase::NarrowPhase;
-pub use solver::CollisionSolver;
+pub use crate::util::Transform;
 
 #[derive(ComponentFilter)]
 pub struct RigidBodyFilter<'a> {
@@ -23,8 +23,6 @@ pub struct RigidBodyFilter<'a> {
     body: &'a mut RigidBody,
     coll: Option<&'a Collider>,
 }
-
-pub struct BodyPair<'a>(RigidBodyFilter<'a>, RigidBodyFilter<'a>);
 
 /// Information about a collision relative to one of the objects involved.
 /// Two of these are generated for every colliding pair.
@@ -67,29 +65,6 @@ impl Manifold {
         f(&self.0);
         if let Some(p) = self.1 {
             f(&p);
-        }
-    }
-}
-
-/// Checks two transformed colliders for intersection. If one is found,
-/// returns two Collisions, one relative to each of the participating objects.
-pub fn intersection_check(
-    obj1: IdType,
-    tr1: &Transform,
-    coll1: &Collider,
-    obj2: IdType,
-    tr2: &Transform,
-    coll2: &Collider,
-) -> Option<[Collision; 2]> {
-    use Collider::*;
-    match (coll1, coll2) {
-        (Circle { r: r1 }, Circle { r: r2 }) => {
-            queries::circle_circle(obj1, tr1, *r1, obj2, tr2, *r2)
-        }
-        (Circle { .. }, Rect { .. }) => None,
-        (Rect { .. }, Circle { .. }) => None,
-        (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
-            queries::rect_rect(obj1, tr1, *hw1, *hh1, obj2, tr2, *hw2, *hh2)
         }
     }
 }
