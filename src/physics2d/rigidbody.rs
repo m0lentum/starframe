@@ -1,13 +1,24 @@
 use super::Velocity;
 
+/// A rigid body can collide with other rigid bodies
+/// and respond to physical forces.
+/// Collisions only happen if a Collider and a RigidBody component are both present.
 #[derive(Clone, Copy)]
 pub struct RigidBody {
     pub body_type: BodyType,
+    /// The mass of a rigid body determines how much it is affected by impulses.
     pub mass: Mass,
     // TODO: moment of inertia (calculated from collider)
+    /// Elasticity determines how "bouncy" a rigid body is,
+    /// in other words, how much energy is preserved in collisions.
     pub elasticity: f32,
     // TODO: friction
+    /// Drag determines how much linear momentum is discarded between updates.
+    /// You can think of it as air resistance.
+    /// Avoid setting this to zero, as this can cause simulations to
+    /// become unstable due to energy gained from numerical errors.
     pub drag: f32,
+    /// Angular drag is like drag, but for angular momentum.
     pub angular_drag: f32,
 
     pub velocity: Velocity,

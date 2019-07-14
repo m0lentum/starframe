@@ -1,15 +1,18 @@
 use super::{
     super::{
         integrator::{Integrator, IntegratorState},
-        Velocity,
+        RigidBody,
     },
     broadphase::{BroadPhase, Collidable},
     narrowphase::intersection_check,
-    RigidBodyFilter, Transform,
+    Collider, Transform,
 };
-use crate::ecs::{event::EventQueue, system::*, Space};
+use crate::ecs::{event::EventQueue, system::*, IdType, Space};
 use std::marker::PhantomData;
 
+/// A System that calculates movement for rigid bodies
+/// while taking collisions into account.
+/// Integrators and broad phase algorithms are interchangeable.
 pub struct CollisionSolver<I, B>
 where
     I: Integrator,
@@ -25,6 +28,10 @@ where
     I: Integrator,
     B: BroadPhase,
 {
+    /// Create a CollisionSolver with the given timestep value.
+    /// When used with a constant timestep this can be called once and stored;
+    /// otherwise timestep should be updated every frame either by creating
+    /// a new solver with this function or using `set_timestep`.
     pub fn with_timestep(timestep: f32) -> Self {
         CollisionSolver {
             timestep,
@@ -33,6 +40,7 @@ where
         }
     }
 
+    /// Set the timestep on an exising CollisionSolver.
     pub fn set_timestep(&mut self, timestep: f32) {
         self.timestep = timestep;
     }
@@ -81,4 +89,13 @@ where
             });
         }
     }
+}
+
+#[derive(ComponentFilter)]
+pub struct RigidBodyFilter<'a> {
+    #[id]
+    id: IdType,
+    tr: &'a mut Transform,
+    body: &'a mut RigidBody,
+    coll: Option<&'a Collider>,
 }

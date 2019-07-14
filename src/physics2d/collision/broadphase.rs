@@ -1,19 +1,15 @@
 use super::Collider;
 use crate::{ecs::IdType, util::Transform};
 
-#[derive(Clone, Copy)]
-pub struct Collidable<'a> {
-    pub id: IdType,
-    pub tr: &'a Transform,
-    pub coll: &'a Collider,
-}
-
-pub type BodyPair<'a> = (Collidable<'a>, Collidable<'a>);
-
+/// A broad phase algorithm for collision detection,
+/// responsible for generating pairs of possibly intersecting objects.
 pub trait BroadPhase {
     fn pairs<'a>(items: impl Iterator<Item = Collidable<'a>> + Clone) -> Vec<BodyPair<'a>>;
 }
 
+/// The simplest possible broad phase algorithm,
+/// which pairs every object with every other object.
+/// Very inefficient, but can work for small systems.
 pub struct BruteForce;
 
 impl BroadPhase for BruteForce {
@@ -28,3 +24,12 @@ impl BroadPhase for BruteForce {
         pairs
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct Collidable<'a> {
+    pub id: IdType,
+    pub tr: &'a Transform,
+    pub coll: &'a Collider,
+}
+
+pub type BodyPair<'a> = (Collidable<'a>, Collidable<'a>);

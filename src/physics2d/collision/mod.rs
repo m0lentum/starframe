@@ -1,7 +1,6 @@
-use super::RigidBody;
 
 use crate::{
-    ecs::{event::SpaceEvent, space::Space, system::*, IdType},
+    ecs::{event::SpaceEvent, space::Space, IdType},
 };
 use nalgebra::{Point2, Unit, Vector2};
 
@@ -15,14 +14,6 @@ mod solver;
 
 pub use crate::util::Transform;
 
-#[derive(ComponentFilter)]
-pub struct RigidBodyFilter<'a> {
-    #[id]
-    id: IdType,
-    tr: &'a mut Transform,
-    body: &'a mut RigidBody,
-    coll: Option<&'a Collider>,
-}
 
 /// Information about a collision relative to one of the objects involved.
 /// Two of these are generated for every colliding pair.

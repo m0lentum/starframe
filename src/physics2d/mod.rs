@@ -4,7 +4,7 @@ pub mod integrator;
 pub mod rigidbody;
 
 pub use collision::{Collider, Collision};
-pub use constraint::ConstraintSolver;
+// pub use constraint::ConstraintSolver;
 pub use integrator::Integrator;
 pub use rigidbody::RigidBody;
 
