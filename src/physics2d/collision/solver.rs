@@ -1,7 +1,7 @@
 use super::{
     super::{
         integrator::{Integrator, IntegratorState},
-        RigidBody,
+        CollisionEvent, RigidBody,
     },
     broadphase::{BroadPhase, Collidable},
     narrowphase::intersection_check,
@@ -69,23 +69,44 @@ where
                 })
             });
 
-            let mut collisions = Vec::new();
+            let mut events = Vec::new();
 
             for (o1, o2) in B::pairs(iter) {
-                if let Some(colls) =
-                    intersection_check(o1.id, o1.tr, o1.coll, o2.id, o2.tr, o2.coll)
-                {
-                    // testing
-                    collisions.push(colls[0]);
-                    collisions.push(colls[1]);
+                // TODO: physics response
+                // how to relate contacts back to `items`?
+                // maybe the fact that ids are guaranteed to come in in numerical order is useful
+                // (this fact should probably be verified via unit test)
 
-                    queue.push(Box::new(colls[0]));
-                    queue.push(Box::new(colls[1]));
+                // TODO: only generate these events if listeners are present?
+                if let Some(contact) = intersection_check(o1, o2) {
+                    let evt1 = CollisionEvent {
+                        source: o1.id,
+                        other: o2.id,
+                        normal: -contact.normal,
+                        depth: contact.depth,
+                        manifold: contact.manifold,
+                    };
+                    let evt2 = CollisionEvent {
+                        source: o2.id,
+                        other: o1.id,
+                        normal: contact.normal,
+                        depth: contact.depth,
+                        manifold: contact
+                            .manifold
+                            .map(|p| p - contact.depth * *contact.normal),
+                    };
+
+                    events.push(evt1);
+                    events.push(evt2);
+
+                    queue.push(Box::new(evt1));
+                    queue.push(Box::new(evt2));
                 }
             }
 
+            // for visualization, TODO: remove when all collider types are done and shown to work
             space.write_global_state(|colls| {
-                std::mem::replace(colls, collisions);
+                std::mem::replace(colls, events);
             });
         }
     }

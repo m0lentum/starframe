@@ -1,35 +1,32 @@
-
-use crate::{
-    ecs::{event::SpaceEvent, space::Space, IdType},
-};
+use crate::ecs::{event::SpaceEvent, space::Space, IdType};
 use nalgebra::{Point2, Unit, Vector2};
 
 pub mod broadphase;
 mod collider;
-pub mod narrowphase;
 pub use collider::Collider;
 pub use solver::CollisionSolver;
-mod queries;
+mod narrowphase;
 mod solver;
 
 pub use crate::util::Transform;
 
-
-/// Information about a collision relative to one of the objects involved.
-/// Two of these are generated for every colliding pair.
-/// They also function as SpaceEvents and can be listened to.
-/// # Event behavior
+/// Event containing information about a collision relative to one of the objects involved.
+/// # Listener behavior
 /// Only the listener for the involved object is called.
 #[derive(Clone, Copy, Debug)]
-pub struct Collision {
-    pub source: IdType,
+pub struct CollisionEvent {
+    pub(crate) source: IdType,
+    /// The id of the object that was collided with.
     pub other: IdType,
+    /// The normal of the plane of collision, pointing towards this object.
     pub normal: Unit<Vector2<f32>>,
+    /// The depth of penetration.
     pub depth: f32,
+    /// The world-space coordinates of the exact point or points on the surface of this object where the collision occurred.
     pub manifold: Manifold,
 }
 
-impl SpaceEvent for Collision {
+impl SpaceEvent for CollisionEvent {
     fn handle(&self, space: &mut Space) {
         space.run_listener(self.source, self);
     }
@@ -57,5 +54,10 @@ impl Manifold {
         if let Some(p) = self.1 {
             f(&p);
         }
+    }
+
+    /// Transform a manifold with a closure.
+    pub fn map<F: FnMut(Point2<f32>) -> Point2<f32>>(self, mut f: F) -> Self {
+        Manifold(f(self.0), self.1.map(f))
     }
 }

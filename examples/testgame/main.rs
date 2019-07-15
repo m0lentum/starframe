@@ -15,7 +15,7 @@ use moleengine::{
         space::Space,
         storage::VecStorage,
     },
-    physics2d::{Collider, Collision, RigidBody},
+    physics2d::{Collider, CollisionEvent, RigidBody},
     util::{inputcache::InputCache, Transform},
     visuals_glium::{
         debug::IntersectionIndicator,
@@ -72,7 +72,7 @@ pub fn init_resources() -> Resources {
         .add_container::<Collider, VecStorage<_>>()
         .add_container::<RigidBody, VecStorage<_>>()
         .add_container::<KeyboardControls, VecStorage<_>>()
-        .init_global_state::<Vec<Collision>>(Vec::new());
+        .init_global_state::<Vec<CollisionEvent>>(Vec::new());
 
     let recipes = make_recipes(&display);
 

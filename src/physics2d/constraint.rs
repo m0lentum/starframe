@@ -1,4 +1,3 @@
-
 pub enum ConstraintType {
     Equal,
     LessThan,

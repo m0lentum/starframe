@@ -3,7 +3,7 @@ use moleengine::{
         event::{EventListener, EventQueue, SpaceEvent},
         space::{LifecycleEvent, Space},
     },
-    physics2d::Collision,
+    physics2d::CollisionEvent,
     util::Transform,
 };
 
@@ -28,8 +28,8 @@ impl EventListener<TestChainEvent> for ChainEventListener {
 #[derive(Clone, Copy)]
 pub struct TestCollisionListener;
 
-impl EventListener<Collision> for TestCollisionListener {
-    fn run_listener(&mut self, evt: &Collision, space: &Space, _q: &mut EventQueue) {
+impl EventListener<CollisionEvent> for TestCollisionListener {
+    fn run_listener(&mut self, evt: &CollisionEvent, space: &Space, _q: &mut EventQueue) {
         space.write_component(evt.source, |tr: &mut Transform| {
             tr.rotate_deg(2.0);
         });

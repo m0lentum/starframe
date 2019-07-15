@@ -1,6 +1,6 @@
 use crate::{
     ecs::space::Space,
-    physics2d::Collision,
+    physics2d::CollisionEvent,
     visuals_glium::{Color, Shaders, Vertex2D},
 };
 use glium::{backend::Facade, uniform};
@@ -34,7 +34,7 @@ impl IntersectionIndicator {
         color: Color,
         shaders: &Shaders,
     ) {
-        space.read_global_state(|colls: &Vec<Collision>| {
+        space.read_global_state(|colls: &Vec<CollisionEvent>| {
             // update vertex buffer
 
             for (coll, verts) in colls
@@ -58,7 +58,7 @@ impl IntersectionIndicator {
                     verts[3] = (p1 - normal_scaled + tangent_scaled).into();
                 }
                 verts[4] = center.into();
-                verts[5] = (center - (*coll.normal * coll.depth)).into();
+                verts[5] = (center + (*coll.normal * coll.depth)).into();
             }
 
             // draw
