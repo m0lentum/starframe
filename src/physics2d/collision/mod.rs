@@ -15,7 +15,7 @@ pub use crate::util::Transform;
 /// Only the listener for the involved object is called.
 #[derive(Clone, Copy, Debug)]
 pub struct CollisionEvent {
-    pub(crate) source: IdType,
+    pub source: IdType,
     /// The id of the object that was collided with.
     pub other: IdType,
     /// The normal of the plane of collision, pointing towards this object.
