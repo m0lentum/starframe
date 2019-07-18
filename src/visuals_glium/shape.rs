@@ -105,7 +105,7 @@ impl Shape {
 
 /// System that draws Shapes on the screen.
 /// A Transform must also be present for the Shape to be drawn.
-/// See the moleengine_ecs crate for more information on Systems.
+/// See the ecs module for more information on Systems.
 pub struct ShapeRenderer<'a, S: Surface> {
     pub target: &'a mut S,
     pub shaders: &'a Shaders,
