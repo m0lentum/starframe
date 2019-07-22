@@ -1,7 +1,8 @@
 use glium::glutin::VirtualKeyCode as Key;
 use moleengine::{
-    ecs::{space::Space, system::*},
-    util::{inputcache::*, Transform},
+    ecs::system::*,
+    physics2d::{RigidBody, Velocity},
+    util::inputcache::*,
 };
 use nalgebra::Vector2;
 
@@ -11,7 +12,7 @@ pub struct KeyboardControls;
 #[derive(ComponentFilter)]
 pub struct PosVel<'a> {
     _marker: &'a KeyboardControls,
-    tr: &'a mut Transform,
+    body: &'a mut RigidBody,
 }
 
 pub struct KeyboardMover<'a> {
@@ -25,27 +26,33 @@ impl<'a> KeyboardMover<'a> {
 impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     type Filter = PosVel<'a>;
     fn run_system(&mut self, items: &mut [Self::Filter]) {
-        let mut t = Vector2::zeros();
-        let mut r = 0.0;
-        if self.input.is_key_pressed(Key::Left, None) {
-            t[0] = -5.0;
-        } else if self.input.is_key_pressed(Key::Right, None) {
-            t[0] = 5.0;
-        }
-        if self.input.is_key_pressed(Key::Up, None) {
-            t[1] = 5.0;
-        } else if self.input.is_key_pressed(Key::Down, None) {
-            t[1] = -5.0;
-        }
-        if self.input.is_key_pressed(Key::PageDown, None) {
-            r = -0.03;
-        } else if self.input.is_key_pressed(Key::PageUp, None) {
-            r = 0.03;
-        }
+        if self.input.is_key_pressed(Key::LShift, None) {
+            for item in items {
+                item.body.velocity = Velocity::default();
+            }
+        } else {
+            let mut t = Vector2::zeros();
+            let mut r = 0.0;
+            if self.input.is_key_pressed(Key::Left, Some(1)) {
+                t[0] = -150.0;
+            } else if self.input.is_key_pressed(Key::Right, Some(1)) {
+                t[0] = 150.0;
+            }
+            if self.input.is_key_pressed(Key::Up, Some(1)) {
+                t[1] = 150.0;
+            } else if self.input.is_key_pressed(Key::Down, Some(1)) {
+                t[1] = -150.0;
+            }
+            if self.input.is_key_pressed(Key::PageDown, Some(1)) {
+                r = -3.0;
+            } else if self.input.is_key_pressed(Key::PageUp, Some(1)) {
+                r = 3.0;
+            }
 
-        for item in items {
-            item.tr.translate(t);
-            item.tr.rotate_rad(r);
+            for item in items {
+                item.body.velocity.linear += t;
+                item.body.velocity.angular += r;
+            }
         }
     }
 }

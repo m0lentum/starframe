@@ -6,9 +6,10 @@ use super::Velocity;
 #[derive(Clone, Copy)]
 pub struct RigidBody {
     pub body_type: BodyType,
-    /// The mass of a rigid body determines how much it is affected by impulses.
+    /// The mass of a rigid body determines how much its linear velocity is affected by impulses.
     pub mass: Mass,
-    // TODO: moment of inertia (calculated from collider)
+    /// Moment of inertia determines how much impulses affect the angular velocity of a rigid body.
+    pub moment_of_inertia: Mass,
     /// Elasticity determines how "bouncy" a rigid body is,
     /// in other words, how much energy is preserved in collisions.
     pub elasticity: f32,
@@ -29,6 +30,7 @@ impl Default for RigidBody {
         RigidBody {
             body_type: BodyType::Dynamic,
             mass: Mass::mass(1.0),
+            moment_of_inertia: Mass::mass(3000.0), // TODO: physically based value for this
             elasticity: 0.75,
             drag: 0.002,
             angular_drag: 0.001,

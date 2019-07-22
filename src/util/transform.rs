@@ -60,6 +60,10 @@ impl Transform {
         self.isometry.translation = nalgebra::Translation2::from(pos);
     }
 
+    pub fn get_translation(&self) -> Vector2<f32> {
+        self.isometry.translation.vector
+    }
+
     pub fn rotate_rad(&mut self, angle: f32) {
         self.isometry
             .append_rotation_wrt_center_mut(&UnitComplex::new(angle));
@@ -67,6 +71,14 @@ impl Transform {
 
     pub fn rotate_deg(&mut self, angle: f32) {
         self.rotate_rad(angle * PI / 180.0);
+    }
+
+    pub fn get_rotation_rad(&self) -> f32 {
+        self.isometry.rotation.angle()
+    }
+
+    pub fn get_rotation_deg(&self) -> f32 {
+        self.isometry.rotation.angle() * 180.0 / PI
     }
 
     pub fn set_rotation_rad(&mut self, angle: f32) {

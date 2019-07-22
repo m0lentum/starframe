@@ -61,7 +61,7 @@ pub fn init_resources() -> Resources {
     {
         use glutin::VirtualKeyCode::*;
         input_cache.track_keys(&[
-            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S,
+            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, LShift,
         ]);
     }
 
@@ -92,8 +92,8 @@ pub fn init_resources() -> Resources {
 fn make_recipes(display: &glium::Display) -> RecipeBook {
     let mut recipes = RecipeBook::new();
 
-    let coll_rect = Collider::new_rect(180.0, 100.0);
-    let coll_circle = Collider::new_circle(50.0);
+    let coll_rect = Collider::new_rect(80.0, 65.0);
+    let coll_circle = Collider::new_circle(30.0);
     let thingy = ObjectRecipe::new()
         .add(Shape::from_collider(
             display,

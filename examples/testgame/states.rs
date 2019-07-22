@@ -154,7 +154,7 @@ fn update_space(res: &mut Resources) {
         microprofile::scope!("update", "rigid body solver");
         res.space.run_system(
             // TODO: real timestep
-            &mut CollisionSolver::<integrator::SemiImplicitEuler, broadphase::BruteForce>::with_timestep(0.017),
+            &mut CollisionSolver::<integrator::SemiImplicitEuler, broadphase::BruteForce>::with_timestep(0.017, 4),
         );
     }
 }

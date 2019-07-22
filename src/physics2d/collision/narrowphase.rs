@@ -18,8 +18,7 @@ pub struct Contact {
     pub manifold: Manifold,
 }
 
-/// Checks two transformed colliders for intersection. If one is found,
-/// returns two Collisions, one relative to each of the participating objects.
+/// Checks two transformed colliders for intersection.
 pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Option<Contact> {
     use Collider::*;
     match (obj1.coll, obj2.coll) {

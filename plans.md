@@ -2,6 +2,8 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 
 **ECS**
 - more storage types (see specs)
+- component containers should probably use Option instead of mem::uninitialized
+  (at least try and see how much this affects performance)
 - ~~automatic object pooling API~~
     - added but with some usability concerns, will have to try it in practice
 - ~~optional components in ComponentFilters~~
