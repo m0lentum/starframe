@@ -5,11 +5,11 @@ use glutin::VirtualKeyCode as Key;
 use moleengine::{
     ecs::{
         recipe::{parse_into_space, RecipeBook},
-        space::Space,
+        space::{ObjectBuilder, Space},
     },
     physics2d::{
-        collision::{broadphase, CollisionSolver},
-        integrator,
+        collision::{broadphase, Collider, CollisionSolver},
+        integrator, RigidBody,
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
@@ -17,7 +17,7 @@ use moleengine::{
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
-    visuals_glium::shape::{Shape, ShapeRenderer},
+    visuals_glium::shape::{Shape, ShapeRenderer, ShapeStyle},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -51,7 +51,7 @@ impl GameState<Resources> for StatePlaying {
         }
 
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
-            reload_space(&mut res.space, &mut res.recipes);
+            reload_space(&mut res.space, &mut res.recipes, &res.display);
         }
 
         if res.input_cache.is_key_pressed(Key::S, Some(0)) {
@@ -159,7 +159,7 @@ fn update_space(res: &mut Resources) {
     }
 }
 
-pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {
+pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook, display: &glium::Display) {
     let mes =
         std::fs::read_to_string("./examples/testgame/test_space.mes").expect("File read failed");
 
@@ -173,8 +173,54 @@ pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook) {
         rec
     });
 
+    make_walls(space, display);
+
     match r {
         Ok(_) => (),
         Err(e) => eprintln!("Error parsing space: {}", e),
     }
+}
+
+// TODO: this is inefficient as hell, probably make it work differently
+fn make_walls(space: &mut Space, display: &glium::Display) {
+    ObjectBuilder::create(space)
+        .with(Collider::new_rect(20.0, 600.0))
+        .with(Shape::new_rect(
+            display,
+            20.0,
+            600.0,
+            ShapeStyle::Fill([0.5; 4]),
+        ))
+        .with(Transform::from_position([-400.0, 0.0]))
+        .with(RigidBody::default().make_static());
+    ObjectBuilder::create(space)
+        .with(Collider::new_rect(20.0, 600.0))
+        .with(Shape::new_rect(
+            display,
+            20.0,
+            600.0,
+            ShapeStyle::Fill([0.5; 4]),
+        ))
+        .with(Transform::from_position([400.0, 0.0]))
+        .with(RigidBody::default().make_static());
+    ObjectBuilder::create(space)
+        .with(Collider::new_rect(800.0, 20.0))
+        .with(Shape::new_rect(
+            display,
+            800.0,
+            20.0,
+            ShapeStyle::Fill([0.5; 4]),
+        ))
+        .with(Transform::from_position([0.0, -300.0]))
+        .with(RigidBody::default().make_static());
+    ObjectBuilder::create(space)
+        .with(Collider::new_rect(800.0, 20.0))
+        .with(Shape::new_rect(
+            display,
+            800.0,
+            20.0,
+            ShapeStyle::Fill([0.5; 4]),
+        ))
+        .with(Transform::from_position([0.0, 300.0]))
+        .with(RigidBody::default().make_static());
 }

@@ -1,7 +1,8 @@
 use super::{
     super::{
         integrator::{Integrator, IntegratorState},
-        CollisionEvent, RigidBody,
+        rigidbody::{BodyType, RigidBody},
+        CollisionEvent,
     },
     broadphase::{BroadPhase, Collidable},
     narrowphase::intersection_check,
@@ -101,6 +102,32 @@ where
                     };
 
                     contact.manifold.for_each(|p| {
+                        if let BodyType::Static | BodyType::Kinematic = o1.body.body_type {
+                            if let BodyType::Static | BodyType::Kinematic = o2.body.body_type {
+                                // TODO: do this check before solving contacts
+                                // TODO: make the whole RigidBody an enum so it doesn't have
+                                // unnecessary state like mass
+                                return;
+                            }
+                        }
+
+                        // TODO: this sucks
+                        let (inv_mass_1, inv_mom_inertia_1) =
+                            if let BodyType::Static | BodyType::Kinematic = o1.body.body_type {
+                                (0.0, 0.0)
+                            } else {
+                                (o1.body.mass.get_inv(), o1.body.moment_of_inertia.get_inv())
+                            };
+
+                        let (inv_mass_2, inv_mom_inertia_2) =
+                            if let BodyType::Static | BodyType::Kinematic = o2.body.body_type {
+                                (0.0, 0.0)
+                            } else {
+                                (o2.body.mass.get_inv(), o2.body.moment_of_inertia.get_inv())
+                            };
+
+                        // no more suck from here on out
+
                         let offset_1 = *p - o1.tr.get_translation();
                         let offset_2 = *p - o2.tr.get_translation();
 
@@ -122,25 +149,21 @@ where
                             return;
                         }
 
-                        let inv_mass_sum = o1.body.mass.get_inv()
-                            + o1.body.moment_of_inertia.get_inv()
-                            + o2.body.mass.get_inv()
-                            + o2.body.moment_of_inertia.get_inv();
+                        let inv_mass_sum = inv_mass_1
+                            + (inv_mom_inertia_1 * offset_cross_normal_1 * offset_cross_normal_1)
+                            + inv_mass_2
+                            + (inv_mom_inertia_2 * offset_cross_normal_2 * offset_cross_normal_2);
 
                         let impulse_magnitude = relative_normal_vel / inv_mass_sum; // TODO: restitution -> bounce
 
                         // apply the impulse
 
-                        o1.body.velocity.linear -=
-                            o1.body.mass.get_inv() * impulse_magnitude * *contact.normal;
-                        o1.body.velocity.angular -= o1.body.moment_of_inertia.get_inv()
-                            * impulse_magnitude
-                            * offset_cross_normal_1;
-                        o2.body.velocity.linear +=
-                            o2.body.mass.get_inv() * impulse_magnitude * *contact.normal;
-                        o2.body.velocity.angular += o2.body.moment_of_inertia.get_inv()
-                            * impulse_magnitude
-                            * offset_cross_normal_2;
+                        o1.body.velocity.linear -= inv_mass_1 * impulse_magnitude * *contact.normal;
+                        o1.body.velocity.angular -=
+                            inv_mom_inertia_1 * impulse_magnitude * offset_cross_normal_1;
+                        o2.body.velocity.linear += inv_mass_2 * impulse_magnitude * *contact.normal;
+                        o2.body.velocity.angular +=
+                            inv_mom_inertia_2 * impulse_magnitude * offset_cross_normal_2;
                     });
                 }
             }

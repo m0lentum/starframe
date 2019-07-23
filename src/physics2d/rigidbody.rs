@@ -53,8 +53,8 @@ impl RigidBody {
     }
 
     /// Mass determines how much collisions affect this body vs. the other one.
-    pub fn with_mass(mut self, mass: Mass) -> Self {
-        self.mass = mass;
+    pub fn with_mass(mut self, mass: f32) -> Self {
+        self.mass = Mass::mass(mass);
         self
     }
 
