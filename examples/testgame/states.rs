@@ -184,43 +184,39 @@ pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook, display: &glium
 // TODO: this is inefficient as hell, probably make it work differently
 fn make_walls(space: &mut Space, display: &glium::Display) {
     ObjectBuilder::create(space)
-        .with(Collider::new_rect(20.0, 600.0))
+        .with(RigidBody::new_static(Collider::new_rect(20.0, 600.0)))
         .with(Shape::new_rect(
             display,
             20.0,
             600.0,
             ShapeStyle::Fill([0.5; 4]),
         ))
-        .with(Transform::from_position([-400.0, 0.0]))
-        .with(RigidBody::default().make_static());
+        .with(Transform::from_position([-400.0, 0.0]));
     ObjectBuilder::create(space)
-        .with(Collider::new_rect(20.0, 600.0))
+        .with(RigidBody::new_static(Collider::new_rect(20.0, 600.0)))
         .with(Shape::new_rect(
             display,
             20.0,
             600.0,
             ShapeStyle::Fill([0.5; 4]),
         ))
-        .with(Transform::from_position([400.0, 0.0]))
-        .with(RigidBody::default().make_static());
+        .with(Transform::from_position([400.0, 0.0]));
     ObjectBuilder::create(space)
-        .with(Collider::new_rect(800.0, 20.0))
+        .with(RigidBody::new_static(Collider::new_rect(800.0, 20.0)))
         .with(Shape::new_rect(
             display,
             800.0,
             20.0,
             ShapeStyle::Fill([0.5; 4]),
         ))
-        .with(Transform::from_position([0.0, -300.0]))
-        .with(RigidBody::default().make_static());
+        .with(Transform::from_position([0.0, -300.0]));
     ObjectBuilder::create(space)
-        .with(Collider::new_rect(800.0, 20.0))
+        .with(RigidBody::new_static(Collider::new_rect(800.0, 20.0)))
         .with(Shape::new_rect(
             display,
             800.0,
             20.0,
             ShapeStyle::Fill([0.5; 4]),
         ))
-        .with(Transform::from_position([0.0, 300.0]))
-        .with(RigidBody::default().make_static());
+        .with(Transform::from_position([0.0, 300.0]));
 }

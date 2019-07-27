@@ -69,14 +69,15 @@ where
         while let IntegratorState::NeedsDerivatives = integrator.substep(
             items
                 .iter_mut()
-                .map(|rbf| (&mut *rbf.tr, &mut rbf.body.velocity)),
+                .filter_map(|rbf| match rbf.body.velocity_mut() {
+                    Some(vel) => Some((&mut *rbf.tr, vel)),
+                    None => None,
+                }),
         ) {
-            let iter = items.iter().filter_map(|rbf| {
-                rbf.coll.map(|coll| Collidable {
-                    id: rbf.id,
-                    tr: rbf.tr,
-                    coll: coll,
-                })
+            let iter = items.iter().map(|rbf| Collidable {
+                id: rbf.id,
+                tr: rbf.tr,
+                coll: &rbf.body.collider,
             });
 
             let mut events = Vec::new();
@@ -102,31 +103,15 @@ where
                     };
 
                     contact.manifold.for_each(|p| {
-                        if let BodyType::Static | BodyType::Kinematic = o1.body.body_type {
-                            if let BodyType::Static | BodyType::Kinematic = o2.body.body_type {
-                                // TODO: do this check before solving contacts
-                                // TODO: make the whole RigidBody an enum so it doesn't have
-                                // unnecessary state like mass
-                                return;
-                            }
+                        if !o1.body.responds_to_collisions() && !o2.body.responds_to_collisions() {
+                            // TODO: do this check before solving contacts
+                            return;
                         }
 
-                        // TODO: this sucks
-                        let (inv_mass_1, inv_mom_inertia_1) =
-                            if let BodyType::Static | BodyType::Kinematic = o1.body.body_type {
-                                (0.0, 0.0)
-                            } else {
-                                (o1.body.mass.get_inv(), o1.body.moment_of_inertia.get_inv())
-                            };
-
-                        let (inv_mass_2, inv_mom_inertia_2) =
-                            if let BodyType::Static | BodyType::Kinematic = o2.body.body_type {
-                                (0.0, 0.0)
-                            } else {
-                                (o2.body.mass.get_inv(), o2.body.moment_of_inertia.get_inv())
-                            };
-
-                        // no more suck from here on out
+                        let inv_mass_1 = o1.body.inverse_mass();
+                        let inv_mass_2 = o2.body.inverse_mass();
+                        let inv_mom_inertia_1 = o1.body.inverse_moment_of_inertia();
+                        let inv_mom_inertia_2 = o2.body.inverse_moment_of_inertia();
 
                         let offset_1 = *p - o1.tr.get_translation();
                         let offset_2 = *p - o2.tr.get_translation();
@@ -136,12 +121,14 @@ where
                         let offset_cross_normal_2 =
                             offset_2[0] * contact.normal[1] - contact.normal[0] * offset_2[1];
 
-                        let normal_vel_1 = o1.body.velocity.linear.dot(&contact.normal)
-                            + (offset_cross_normal_1 * o1.body.velocity.angular);
+                        let vel_1 = o1.body.velocity_or_zero();
+                        let vel_2 = o2.body.velocity_or_zero();
+                        let normal_vel_1 = vel_1.linear.dot(&contact.normal)
+                            + (offset_cross_normal_1 * vel_1.angular);
                         // normal is towards obj2 -> this one will be negative
                         // (if objects moving into each other)
-                        let normal_vel_2 = o2.body.velocity.linear.dot(&contact.normal)
-                            + (offset_cross_normal_2 * o2.body.velocity.angular);
+                        let normal_vel_2 = vel_2.linear.dot(&contact.normal)
+                            + (offset_cross_normal_2 * vel_2.angular);
 
                         let relative_normal_vel = normal_vel_1 - normal_vel_2;
                         if relative_normal_vel < 0.0 {
@@ -158,12 +145,16 @@ where
 
                         // apply the impulse
 
-                        o1.body.velocity.linear -= inv_mass_1 * impulse_magnitude * *contact.normal;
-                        o1.body.velocity.angular -=
-                            inv_mom_inertia_1 * impulse_magnitude * offset_cross_normal_1;
-                        o2.body.velocity.linear += inv_mass_2 * impulse_magnitude * *contact.normal;
-                        o2.body.velocity.angular +=
-                            inv_mom_inertia_2 * impulse_magnitude * offset_cross_normal_2;
+                        o1.body.velocity_mut().map(|vel| {
+                            vel.linear -= inv_mass_1 * impulse_magnitude * *contact.normal;
+                            vel.angular -=
+                                inv_mom_inertia_1 * impulse_magnitude * offset_cross_normal_1;
+                        });
+                        o2.body.velocity_mut().map(|vel| {
+                            vel.linear += inv_mass_2 * impulse_magnitude * *contact.normal;
+                            vel.angular +=
+                                inv_mom_inertia_2 * impulse_magnitude * offset_cross_normal_2;
+                        });
                     });
                 }
             }
@@ -209,5 +200,4 @@ pub struct RigidBodyFilter<'a> {
     id: IdType,
     tr: &'a mut Transform,
     body: &'a mut RigidBody,
-    coll: Option<&'a Collider>,
 }

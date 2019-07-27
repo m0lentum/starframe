@@ -1,18 +1,33 @@
-use super::Velocity;
+use super::{Collider, Velocity};
 
-/// A rigid body can collide with other rigid bodies
-/// and respond to physical forces.
-/// Collisions only happen if a Collider and a RigidBody component are both present.
+/// A rigid body can collide with other rigid bodies and respond to physical forces.
 #[derive(Clone, Copy)]
 pub struct RigidBody {
-    pub body_type: BodyType,
-    /// The mass of a rigid body determines how much its linear velocity is affected by impulses.
-    pub mass: Mass,
-    /// Moment of inertia determines how much impulses affect the angular velocity of a rigid body.
-    pub moment_of_inertia: Mass,
-    /// Elasticity determines how "bouncy" a rigid body is,
+    pub body: BodyType,
+    pub material: BodyMaterial,
+    pub(crate) collider: Collider,
+}
+
+/// The type of a rigid body determines how it is treated in physics updates.
+#[derive(Clone, Copy)]
+pub enum BodyType {
+    /// Does not respond to collision forces and cannot move.
+    Static,
+    /// Does not respond to collision forces but can move.
+    Kinematic { velocity: Velocity },
+    /// The default type of body; responds to collision forces.
+    Dynamic {
+        velocity: Velocity,
+        mass: Mass,
+        moment_of_inertia: Mass,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub struct BodyMaterial {
+    /// restitution determines how "bouncy" a rigid body is,
     /// in other words, how much energy is preserved in collisions.
-    pub elasticity: f32,
+    pub restitution: f32,
     // TODO: friction
     /// Drag determines how much linear momentum is discarded between updates.
     /// You can think of it as air resistance.
@@ -21,74 +36,140 @@ pub struct RigidBody {
     pub drag: f32,
     /// Angular drag is like drag, but for angular momentum.
     pub angular_drag: f32,
-
-    pub velocity: Velocity,
 }
 
-impl Default for RigidBody {
+impl Default for BodyMaterial {
     fn default() -> Self {
-        RigidBody {
-            body_type: BodyType::Dynamic,
-            mass: Mass::mass(1.0),
-            moment_of_inertia: Mass::mass(3000.0), // TODO: physically based value for this
-            elasticity: 0.75,
+        BodyMaterial {
+            // TODO: good defaults for these once they actually do something,
+            // also maybe several different presets
+            restitution: 0.75,
             drag: 0.002,
             angular_drag: 0.001,
-            velocity: Velocity::default(),
         }
     }
 }
 
+// factories
 impl RigidBody {
+    pub fn new_dynamic(collider: Collider, mass: f32) -> Self {
+        RigidBody {
+            body: BodyType::Dynamic {
+                velocity: Velocity::default(),
+                mass: Mass::mass(mass),
+                moment_of_inertia: Mass::mass(3000.0), // TODO: physically based value for this
+            },
+            material: BodyMaterial::default(),
+            collider: collider,
+        }
+    }
+
     /// Kinematic rigid bodies are not affected by collision forces.
-    pub fn make_kinematic(mut self) -> Self {
-        self.body_type = BodyType::Kinematic;
-        self
+    pub fn new_kinematic(collider: Collider) -> Self {
+        RigidBody {
+            body: BodyType::Kinematic {
+                velocity: Velocity::default(),
+            },
+            material: BodyMaterial::default(),
+            collider: collider,
+        }
     }
 
     /// Static rigid bodies do not move at all.
-    pub fn make_static(mut self) -> Self {
-        self.body_type = BodyType::Static;
-        self
+    pub fn new_static(collider: Collider) -> Self {
+        RigidBody {
+            body: BodyType::Static,
+            material: BodyMaterial::default(),
+            collider: collider,
+        }
     }
 
-    /// Mass determines how much collisions affect this body vs. the other one.
-    pub fn with_mass(mut self, mass: f32) -> Self {
-        self.mass = Mass::mass(mass);
-        self
-    }
-
-    /// Elasticity determines how much energy is preserved in collisions
-    /// (0 = none, 1 = all)
-    pub fn with_elasticity(mut self, e: f32) -> Self {
-        self.elasticity = e;
+    /// Restitution determines how much energy is preserved in collisions
+    /// (0 = none, 1 = all).
+    pub fn with_restitution(mut self, e: f32) -> Self {
+        self.material.restitution = e;
         self
     }
 
     pub fn with_drag(mut self, d: f32) -> Self {
-        self.drag = d;
+        self.material.drag = d;
         self
     }
 
     pub fn with_angular_drag(mut self, d: f32) -> Self {
-        self.angular_drag = d;
+        self.material.angular_drag = d;
         self
-    }
-
-    pub fn get_body_type(&self) -> BodyType {
-        self.body_type
     }
 }
 
-/// The type of a rigid body determines how it is treated in physics updates.
-#[derive(Clone, Copy)]
-pub enum BodyType {
-    /// The default type of body; responds to collision forces.
-    Dynamic,
-    /// Does not respond to collision forces but can move by having its velocity set.
-    Kinematic,
-    /// Does not respond to collision forces and cannot move.
-    Static,
+// getters
+impl RigidBody {
+    pub fn body(&self) -> &BodyType {
+        &self.body
+    }
+
+    pub fn material(&self) -> &BodyMaterial {
+        &self.material
+    }
+
+    pub fn collider(&self) -> &Collider {
+        &self.collider
+    }
+
+    pub fn responds_to_collisions(&self) -> bool {
+        match self.body {
+            BodyType::Dynamic {..} => true,
+            _ => false,
+        }
+    }
+
+    pub fn velocity(&self) -> Option<&Velocity> {
+        match self.body {
+            BodyType::Static => None,
+            BodyType::Kinematic { velocity: ref vel } => Some(vel),
+            BodyType::Dynamic {
+                velocity: ref vel, ..
+            } => Some(vel),
+        }
+    }
+
+    pub fn velocity_mut(&mut self) -> Option<&mut Velocity> {
+        match self.body {
+            BodyType::Static => None,
+            BodyType::Kinematic {
+                velocity: ref mut vel,
+            } => Some(vel),
+            BodyType::Dynamic {
+                velocity: ref mut vel,
+                ..
+            } => Some(vel),
+        }
+    }
+
+    pub fn velocity_or_zero(&self) -> Velocity {
+        match self.body {
+            BodyType::Static => Velocity::default(),
+            BodyType::Kinematic { velocity: vel } => vel,
+            BodyType::Dynamic { velocity: vel, .. } => vel,
+        }
+    }
+
+    pub fn inverse_mass(&self) -> f32 {
+        match self.body {
+            BodyType::Dynamic { mass: m, .. } => m.get_inv(),
+            _ => 0.0,
+        }
+    }
+
+    pub fn inverse_moment_of_inertia(&self) -> f32 {
+        match self.body {
+            BodyType::Dynamic {
+                moment_of_inertia: m,
+                ..
+            } => m.get_inv(),
+            _ => 0.0,
+        }
+    }
 }
 
 /// This stores both a mass value and its inverse, because calculating inverse mass

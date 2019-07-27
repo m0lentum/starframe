@@ -1,9 +1,5 @@
 use glium::glutin::VirtualKeyCode as Key;
-use moleengine::{
-    ecs::system::*,
-    physics2d::{RigidBody, Velocity},
-    util::inputcache::*,
-};
+use moleengine::{ecs::system::*, physics2d::RigidBody, util::inputcache::*};
 use nalgebra::Vector2;
 
 #[derive(Copy, Clone)]
@@ -28,7 +24,10 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     fn run_system(&mut self, items: &mut [Self::Filter]) {
         if self.input.is_key_pressed(Key::LShift, None) {
             for item in items {
-                item.body.velocity = Velocity::default();
+                item.body.velocity_mut().map(|vel| {
+                    vel.linear = Vector2::zeros();
+                    vel.angular = 0.0;
+                });
             }
         } else {
             let mut t = Vector2::zeros();
@@ -50,8 +49,10 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
             }
 
             for item in items {
-                item.body.velocity.linear += t;
-                item.body.velocity.angular += r;
+                item.body.velocity_mut().map(|vel| {
+                    vel.linear += t;
+                    vel.angular += r;
+                });
             }
         }
     }
