@@ -1,4 +1,4 @@
-use super::{broadphase::Collidable, Collider, Manifold};
+use super::{broadphase::Collidable, collider::ColliderShape, Manifold};
 use crate::util::Transform;
 
 use nalgebra::{Point2, Unit, Vector2};
@@ -20,8 +20,8 @@ pub struct Contact {
 
 /// Checks two transformed colliders for intersection.
 pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Option<Contact> {
-    use Collider::*;
-    match (obj1.coll, obj2.coll) {
+    use ColliderShape::*;
+    match (obj1.coll.shape(), obj2.coll.shape()) {
         (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(obj1.tr, *r1, obj2.tr, *r2),
         (Circle { .. }, Rect { .. }) => None,
         (Rect { .. }, Circle { .. }) => None,

@@ -2,9 +2,11 @@ use crate::ecs::{event::SpaceEvent, space::Space, IdType};
 use nalgebra::{Point2, Unit, Vector2};
 
 pub mod broadphase;
+
 mod collider;
-pub use collider::Collider;
+pub use collider::{Collider, ColliderShape};
 pub use solver::CollisionSolver;
+
 mod narrowphase;
 mod solver;
 

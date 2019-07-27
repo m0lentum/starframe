@@ -87,14 +87,14 @@ impl Shape {
         coll: &crate::physics2d::Collider,
         style: ShapeStyle,
     ) -> Self {
-        use crate::physics2d::Collider;
-        match coll {
-            Collider::Circle { r } => {
+        use crate::physics2d::ColliderShape;
+        match coll.shape() {
+            ColliderShape::Circle { r } => {
                 let pts: Vec<[f32; 2]> =
                     CIRCLE_VERTS.iter().map(|p| [r * p[0], r * p[1]]).collect();
                 Self::new(facade, pts.as_slice(), style)
             }
-            Collider::Rect { hw, hh } => Self::new(
+            ColliderShape::Rect { hw, hh } => Self::new(
                 facade,
                 &[[-hw, -hh], [*hw, -hh], [*hw, *hh], [-hw, *hh]],
                 style,

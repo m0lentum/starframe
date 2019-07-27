@@ -1,9 +1,14 @@
-pub const COLLIDER_MAX_VERTS: usize = 16;
-
 /// A component that allows a game object to collide with others.
 /// Note that a Transform component must also be present.
-#[derive(Clone, Copy)]
-pub enum Collider {
+#[derive(Clone, Copy, Debug)]
+pub struct Collider {
+    shape: ColliderShape,
+    bounds_info: ColliderBoundsInfo,
+}
+
+/// The physical shape of a collider.
+#[derive(Clone, Copy, Debug)]
+pub enum ColliderShape {
     Circle {
         r: f32,
     },
@@ -15,49 +20,49 @@ pub enum Collider {
     },
 }
 
+/// Extra information about the physical bounds of the collider,
+/// used primarily in collision and physics calculations.
+#[derive(Clone, Copy, Debug)]
+pub struct ColliderBoundsInfo {
+    pub area: f32,
+    pub bounding_sphere_r: f32,
+}
+
 impl Collider {
     /// Create a circle collider from a radius.
     pub fn new_circle(radius: f32) -> Self {
-        Collider::Circle { r: radius }
+        Collider {
+            shape: ColliderShape::Circle { r: radius },
+            bounds_info: ColliderBoundsInfo {
+                area: std::f32::consts::PI * radius * radius,
+                bounding_sphere_r: radius,
+            },
+        }
     }
 
     /// Create a rect collider with both sides set to the same length.
     pub fn new_square(side_length: f32) -> Self {
-        let hw = side_length * 0.5;
-        Collider::Rect { hw, hh: hw }
+        Collider::new_rect(side_length, side_length)
     }
 
     /// Create a rect collider with two different side lengths.
     pub fn new_rect(width: f32, height: f32) -> Self {
-        Collider::Rect {
-            hw: width * 0.5,
-            hh: height * 0.5,
+        let hw = width / 2.0;
+        let hh = height / 2.0;
+        Collider {
+            shape: ColliderShape::Rect { hw, hh },
+            bounds_info: ColliderBoundsInfo {
+                area: width * height,
+                bounding_sphere_r: (hw * hw + hh * hh).sqrt(),
+            },
         }
     }
 
-    /// Transform this collider into points that can be used to create a
-    /// moleengine_visuals::Shape.
-    pub fn as_points(&self) -> Vec<[f64; 2]> {
-        match self {
-            Collider::Circle { r } => {
-                let r = f64::from(*r);
-                // point count proportional to circle size
-                let num_points = f64::max((r * 0.5).floor(), 12.0);
-                let angle_interval = 2.0 * std::f64::consts::PI / num_points;
+    pub fn shape(&self) -> &ColliderShape {
+        &self.shape
+    }
 
-                let num_points = num_points as usize;
-                let mut points = Vec::with_capacity(num_points);
-                for i in 0..num_points {
-                    let angle = i as f64 * angle_interval;
-                    points.push([r * angle.cos(), r * angle.sin()]);
-                }
-                points
-            }
-            Collider::Rect { hw, hh } => {
-                let hw = f64::from(*hw);
-                let hh = f64::from(*hh);
-                vec![[-hw, hh], [hw, hh], [hw, -hh], [-hw, -hh]]
-            }
-        }
+    pub fn bounds_info(&self) -> &ColliderBoundsInfo {
+        &self.bounds_info
     }
 }
