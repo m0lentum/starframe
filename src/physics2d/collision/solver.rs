@@ -94,66 +94,70 @@ where
                     let i1 = *id_index_map.get(o1_id).unwrap();
                     let i2 = *id_index_map.get(o2_id).unwrap();
                     // ids guaranteed unequal -> we can do this trick to get mutable ref to both
-                    let (o1, o2) = if i1 < i2 {
+                    let objs = if i1 < i2 {
                         let (l, r) = items.split_at_mut(i2);
-                        (&mut l[i1], &mut r[0])
+                        [&mut l[i1], &mut r[0]]
                     } else {
                         let (l, r) = items.split_at_mut(i1);
-                        (&mut r[0], &mut l[i2])
+                        [&mut r[0], &mut l[i2]]
                     };
 
                     contact.manifold.for_each(|p| {
-                        if !o1.body.responds_to_collisions() && !o2.body.responds_to_collisions() {
+                        if !objs[0].body.responds_to_collisions()
+                            && !objs[1].body.responds_to_collisions()
+                        {
                             // TODO: do this check before solving contacts
                             return;
                         }
 
-                        let inv_mass_1 = o1.body.inverse_mass();
-                        let inv_mass_2 = o2.body.inverse_mass();
-                        let inv_mom_inertia_1 = o1.body.inverse_moment_of_inertia();
-                        let inv_mom_inertia_2 = o2.body.inverse_moment_of_inertia();
+                        let inv_mass = map_array_2(&objs, |o_| o_.body.inverse_mass());
+                        let inv_mom_inertia =
+                            map_array_2(&objs, |o_| o_.body.inverse_moment_of_inertia());
 
-                        let offset_1 = *p - o1.tr.get_translation();
-                        let offset_2 = *p - o2.tr.get_translation();
+                        let force_offset = map_array_2(&objs, |o_| *p - o_.tr.get_translation());
 
-                        let offset_cross_normal_1 =
-                            offset_1[0] * contact.normal[1] - contact.normal[0] * offset_1[1];
-                        let offset_cross_normal_2 =
-                            offset_2[0] * contact.normal[1] - contact.normal[0] * offset_2[1];
+                        let offset_cross_normal = map_array_2(&force_offset, |offset| {
+                            offset[0] * contact.normal[1] - contact.normal[0] * offset[1]
+                        });
 
-                        let vel_1 = o1.body.velocity_or_zero();
-                        let vel_2 = o2.body.velocity_or_zero();
-                        let normal_vel_1 = vel_1.linear.dot(&contact.normal)
-                            + (offset_cross_normal_1 * vel_1.angular);
-                        // normal is towards obj2 -> this one will be negative
-                        // (if objects moving into each other)
-                        let normal_vel_2 = vel_2.linear.dot(&contact.normal)
-                            + (offset_cross_normal_2 * vel_2.angular);
+                        let vel = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
+                        let normal_vel = [
+                            vel[0].linear.dot(&contact.normal)
+                                + (offset_cross_normal[0] * vel[0].angular),
+                            // normal is towards obj2 -> this one will be negative
+                            // (if objects moving into each other)
+                            vel[1].linear.dot(&contact.normal)
+                                + (offset_cross_normal[1] * vel[1].angular),
+                        ];
 
-                        let relative_normal_vel = normal_vel_1 - normal_vel_2;
+                        let relative_normal_vel = normal_vel[0] - normal_vel[1];
                         if relative_normal_vel < 0.0 {
                             // TODO: clamped per-contact impulse accumulators instead of early out
                             return;
                         }
 
-                        let inv_mass_sum = inv_mass_1
-                            + (inv_mom_inertia_1 * offset_cross_normal_1 * offset_cross_normal_1)
-                            + inv_mass_2
-                            + (inv_mom_inertia_2 * offset_cross_normal_2 * offset_cross_normal_2);
+                        let inv_mass_sum = inv_mass[0]
+                            + (inv_mom_inertia[0]
+                                * offset_cross_normal[0]
+                                * offset_cross_normal[0])
+                            + inv_mass[1]
+                            + (inv_mom_inertia[1]
+                                * offset_cross_normal[1]
+                                * offset_cross_normal[1]);
 
                         let impulse_magnitude = relative_normal_vel / inv_mass_sum; // TODO: restitution -> bounce
 
                         // apply the impulse
 
-                        o1.body.velocity_mut().map(|vel| {
-                            vel.linear -= inv_mass_1 * impulse_magnitude * *contact.normal;
+                        objs[0].body.velocity_mut().map(|vel| {
+                            vel.linear -= inv_mass[0] * impulse_magnitude * *contact.normal;
                             vel.angular -=
-                                inv_mom_inertia_1 * impulse_magnitude * offset_cross_normal_1;
+                                inv_mom_inertia[0] * impulse_magnitude * offset_cross_normal[0];
                         });
-                        o2.body.velocity_mut().map(|vel| {
-                            vel.linear += inv_mass_2 * impulse_magnitude * *contact.normal;
+                        objs[1].body.velocity_mut().map(|vel| {
+                            vel.linear += inv_mass[1] * impulse_magnitude * *contact.normal;
                             vel.angular +=
-                                inv_mom_inertia_2 * impulse_magnitude * offset_cross_normal_2;
+                                inv_mom_inertia[1] * impulse_magnitude * offset_cross_normal[1];
                         });
                     });
                 }
@@ -200,4 +204,8 @@ pub struct RigidBodyFilter<'a> {
     id: IdType,
     tr: &'a mut Transform,
     body: &'a mut RigidBody,
+}
+
+fn map_array_2<T, R>(arr: &[T; 2], mut f: impl FnMut(&T) -> R) -> [R; 2] {
+    [f(&arr[0]), f(&arr[1])]
 }
