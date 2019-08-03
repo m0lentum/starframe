@@ -1,15 +1,17 @@
 use super::{
     super::{
         integrator::{Integrator, IntegratorState},
-        rigidbody::{BodyType, RigidBody},
-        CollisionEvent,
+        rigidbody::RigidBody,
+        CollisionEvent, Velocity,
     },
     broadphase::{BroadPhase, Collidable},
     narrowphase::intersection_check,
-    Collider, Transform,
+    Transform,
 };
 use crate::ecs::{event::EventQueue, system::*, IdType, Space};
 use std::{collections::HashMap, marker::PhantomData};
+
+use nalgebra::Vector2;
 
 /// A System that calculates movement for rigid bodies
 /// while taking collisions into account.
@@ -85,11 +87,16 @@ where
             let pairs = B::pairs(iter);
             let contacts: Vec<_> = pairs
                 .iter()
-                .filter_map(|(o1, o2)| intersection_check(*o1, *o2).map(|c| (o1.id, o2.id, c)))
+                .map(|(o1, o2)| {
+                    intersection_check(*o1, *o2)
+                        .into_iter()
+                        .map(move |c| (o1.id, o2.id, c))
+                })
+                .flatten()
                 .collect();
 
             for _ in 0..self.iterations {
-                for (o1_id, o2_id, contact) in &contacts {
+                for (o1_id, o2_id, contact) in contacts.iter() {
                     // every id is in the map so this can't fail
                     let i1 = *id_index_map.get(o1_id).unwrap();
                     let i2 = *id_index_map.get(o2_id).unwrap();
@@ -102,63 +109,58 @@ where
                         [&mut r[0], &mut l[i2]]
                     };
 
-                    contact.manifold.for_each(|p| {
-                        if !objs[0].body.responds_to_collisions()
-                            && !objs[1].body.responds_to_collisions()
-                        {
-                            // TODO: do this check before solving contacts
-                            return;
-                        }
+                    if !objs[0].body.responds_to_collisions()
+                        && !objs[1].body.responds_to_collisions()
+                    {
+                        // TODO: do this check before solving contacts
+                        continue;
+                    }
 
-                        let inv_mass = map_array_2(&objs, |o_| o_.body.inverse_mass());
-                        let inv_mom_inertia =
-                            map_array_2(&objs, |o_| o_.body.inverse_moment_of_inertia());
+                    // begin actual collision process
+                    let inv_mass = map_array_2(&objs, |o_| o_.body.inverse_mass());
+                    let inv_mom_inertia =
+                        map_array_2(&objs, |o_| o_.body.inverse_moment_of_inertia());
 
-                        let force_offset = map_array_2(&objs, |o_| *p - o_.tr.get_translation());
+                    let force_offset =
+                        map_array_2(&objs, |o_| contact.point - o_.tr.get_translation());
 
-                        let offset_cross_normal = map_array_2(&force_offset, |offset| {
-                            offset[0] * contact.normal[1] - contact.normal[0] * offset[1]
-                        });
+                    let offset_cross_normal = map_array_2(&force_offset, |offset| {
+                        offset[0] * contact.normal[1] - contact.normal[0] * offset[1]
+                    });
 
-                        let vel = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
-                        let normal_vel = [
-                            vel[0].linear.dot(&contact.normal)
-                                + (offset_cross_normal[0] * vel[0].angular),
-                            // normal is towards obj2 -> this one will be negative
-                            // (if objects moving into each other)
-                            vel[1].linear.dot(&contact.normal)
-                                + (offset_cross_normal[1] * vel[1].angular),
-                        ];
+                    let vel = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
+                    let normal_vel = [
+                        vel[0].linear.dot(&contact.normal)
+                            + (offset_cross_normal[0] * vel[0].angular),
+                        // normal is towards obj2 -> this one will be negative
+                        // (if objects moving into each other)
+                        vel[1].linear.dot(&contact.normal)
+                            + (offset_cross_normal[1] * vel[1].angular),
+                    ];
 
-                        let relative_normal_vel = normal_vel[0] - normal_vel[1];
-                        if relative_normal_vel < 0.0 {
-                            // TODO: clamped per-contact impulse accumulators instead of early out
-                            return;
-                        }
+                    let relative_normal_vel = normal_vel[0] - normal_vel[1];
+                    if relative_normal_vel < 0.0 {
+                        continue;
+                    }
 
-                        let inv_mass_sum = inv_mass[0]
-                            + (inv_mom_inertia[0]
-                                * offset_cross_normal[0]
-                                * offset_cross_normal[0])
-                            + inv_mass[1]
-                            + (inv_mom_inertia[1]
-                                * offset_cross_normal[1]
-                                * offset_cross_normal[1]);
+                    let inv_mass_sum = inv_mass[0]
+                        + (inv_mom_inertia[0] * offset_cross_normal[0] * offset_cross_normal[0])
+                        + inv_mass[1]
+                        + (inv_mom_inertia[1] * offset_cross_normal[1] * offset_cross_normal[1]);
 
-                        let impulse_magnitude = relative_normal_vel / inv_mass_sum; // TODO: restitution -> bounce
+                    let impulse_magnitude = relative_normal_vel / inv_mass_sum; // TODO: restitution -> bounce
 
-                        // apply the impulse
+                    // apply the impulse
 
-                        objs[0].body.velocity_mut().map(|vel| {
-                            vel.linear -= inv_mass[0] * impulse_magnitude * *contact.normal;
-                            vel.angular -=
-                                inv_mom_inertia[0] * impulse_magnitude * offset_cross_normal[0];
-                        });
-                        objs[1].body.velocity_mut().map(|vel| {
-                            vel.linear += inv_mass[1] * impulse_magnitude * *contact.normal;
-                            vel.angular +=
-                                inv_mom_inertia[1] * impulse_magnitude * offset_cross_normal[1];
-                        });
+                    objs[0].body.velocity_mut().map(|vel| {
+                        vel.linear -= inv_mass[0] * impulse_magnitude * *contact.normal;
+                        vel.angular -=
+                            inv_mom_inertia[0] * impulse_magnitude * offset_cross_normal[0];
+                    });
+                    objs[1].body.velocity_mut().map(|vel| {
+                        vel.linear += inv_mass[1] * impulse_magnitude * *contact.normal;
+                        vel.angular +=
+                            inv_mom_inertia[1] * impulse_magnitude * offset_cross_normal[1];
                     });
                 }
             }
@@ -171,16 +173,14 @@ where
                     other: *o2,
                     normal: -contact.normal,
                     depth: contact.depth,
-                    manifold: contact.manifold,
+                    point: contact.point,
                 };
                 let evt2 = CollisionEvent {
                     source: *o2,
                     other: *o1,
                     normal: contact.normal,
                     depth: contact.depth,
-                    manifold: contact
-                        .manifold
-                        .map(|p| p - contact.depth * *contact.normal),
+                    point: contact.point - contact.depth * *contact.normal,
                 };
 
                 events.push(evt1);

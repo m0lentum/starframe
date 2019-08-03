@@ -41,24 +41,15 @@ impl IntersectionIndicator {
                 .iter()
                 .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
             {
-                let center = coll.manifold.center();
                 let normal_scaled = *coll.normal * COLL_INDICATOR_SIZE;
-                let p1 = &coll.manifold.0;
-                if let Some(p2) = coll.manifold.1 {
-                    verts[0] = (p1 + normal_scaled).into();
-                    verts[1] = (p1 - normal_scaled).into();
-                    verts[2] = (p2 + normal_scaled).into();
-                    verts[3] = (p2 - normal_scaled).into();
-                } else {
-                    let tangent_scaled =
-                        nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
-                    verts[0] = (p1 + normal_scaled + tangent_scaled).into();
-                    verts[1] = (p1 - normal_scaled - tangent_scaled).into();
-                    verts[2] = (p1 + normal_scaled - tangent_scaled).into();
-                    verts[3] = (p1 - normal_scaled + tangent_scaled).into();
-                }
-                verts[4] = center.into();
-                verts[5] = (center + (*coll.normal * coll.depth)).into();
+                let tangent_scaled =
+                    nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
+                verts[0] = (coll.point + normal_scaled + tangent_scaled).into();
+                verts[1] = (coll.point - normal_scaled - tangent_scaled).into();
+                verts[2] = (coll.point + normal_scaled - tangent_scaled).into();
+                verts[3] = (coll.point - normal_scaled + tangent_scaled).into();
+                verts[4] = coll.point.into();
+                verts[5] = (coll.point + (*coll.normal * coll.depth)).into();
             }
 
             // draw

@@ -1,4 +1,4 @@
-use super::{broadphase::Collidable, collider::ColliderShape, Manifold};
+use super::{broadphase::Collidable, collider::ColliderShape};
 use crate::util::Transform;
 
 use nalgebra::{Point2, Unit, Vector2};
@@ -14,24 +14,24 @@ pub struct Contact {
     pub normal: Unit<Vector2<f32>>,
     /// Penetration depth
     pub depth: f32,
-    /// Points of contact on the surface of obj1
-    pub manifold: Manifold,
+    /// Point of contact on the surface of obj1
+    pub point: Point2<f32>,
 }
 
 /// Checks two transformed colliders for intersection.
-pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Option<Contact> {
+pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec<Contact> {
     use ColliderShape::*;
     match (obj1.coll.shape(), obj2.coll.shape()) {
         (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(obj1.tr, *r1, obj2.tr, *r2),
-        (Circle { .. }, Rect { .. }) => None,
-        (Rect { .. }, Circle { .. }) => None,
+        (Circle { .. }, Rect { .. }) => vec![],
+        (Rect { .. }, Circle { .. }) => vec![],
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
             rect_rect(obj1.tr, *hw1, *hh1, obj2.tr, *hw2, *hh2)
         }
     }
 }
 
-fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Option<Contact> {
+fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Contact> {
     let pos1 = tr1.0 * Point2::origin();
     let pos2 = tr2.0 * Point2::origin();
 
@@ -52,14 +52,14 @@ fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Option<C
         depth = (r1_s + r2_s) - dist.norm();
         normal = Unit::new_normalize(dist);
     } else {
-        return None;
+        return vec![];
     }
 
-    Some(Contact {
+    vec![Contact {
         normal,
         depth,
-        manifold: Manifold(pos1 + (normal.as_ref() * r1_s), None),
-    })
+        point: pos1 + (normal.as_ref() * r1_s),
+    }]
 }
 
 fn rect_rect(
@@ -69,7 +69,7 @@ fn rect_rect(
     tr2: &Transform,
     hw2: f32,
     hh2: f32,
-) -> Option<Contact> {
+) -> Vec<Contact> {
     let tr2_wrt_tr1 = tr1.inverse() * tr2.0;
 
     // obj1 is axis-aligned at origin, these are obj2's values
@@ -86,12 +86,16 @@ fn rect_rect(
         || (rot_ang.abs() - PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
     {
         return aabb_aabb(dist.coords, hw1, hh1, hw2, hh2)
-            .map(|cont| transform_contact(&tr1, cont));
+            .into_iter()
+            .map(|cont| transform_contact(&tr1, cont))
+            .collect();
     } else if (rot_ang - 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
         || (rot_ang + 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
     {
         return aabb_aabb(dist.coords, hw1, hh1, hh2, hw2)
-            .map(|cont| transform_contact(&tr1, cont));
+            .into_iter()
+            .map(|cont| transform_contact(&tr1, cont))
+            .collect();
     }
 
     // unaligned general case with one collision point
@@ -107,22 +111,22 @@ fn rect_rect(
     // penetration
     let x1_pen = hw1 + hw2_v[0].abs() + hh2_v[0].abs() - dist.coords[0].abs();
     if x1_pen <= 0.0 {
-        return None;
+        return vec![];
     }
     let y1_pen = hh1 + hw2_v[1].abs() + hh2_v[1].abs() - dist.coords[1].abs();
     if y1_pen <= 0.0 {
-        return None;
+        return vec![];
     }
 
     let x2_pen =
         hw2 + x2_axis[0].abs() * hw1 + x2_axis[1].abs() * hh1 - (dist.coords.dot(&x2_axis)).abs();
     if x2_pen <= 0.0 {
-        return None;
+        return vec![];
     }
     let y2_pen =
         hh2 + y2_axis[0].abs() * hw1 + y2_axis[1].abs() * hh1 - (dist.coords.dot(&y2_axis)).abs();
     if y2_pen <= 0.0 {
-        return None;
+        return vec![];
     }
 
     let depths = [x1_pen, y1_pen, x2_pen, y2_pen];
@@ -147,19 +151,19 @@ fn rect_rect(
         let point = Point2::from(
             dist.coords - (axis.dot(&hw2_v).signum() * hw2_v) - (axis.dot(&hh2_v).signum() * hh2_v),
         );
-        Some(Contact {
+        vec![Contact {
             normal,
             depth: depth_s,
-            manifold: Manifold(tr1.0 * (point + (*depth) * (*axis)), None),
-        })
+            point: tr1.0 * (point + (*depth) * (*axis)),
+        }]
     } else {
         // axis is on obj2, penetrating point is on obj1
         let point = Point2::new(axis[0].signum() * hw1, axis[1].signum() * hh1);
-        Some(Contact {
+        vec![Contact {
             normal,
             depth: depth_s,
-            manifold: Manifold(tr1.0 * point, None),
-        })
+            point: tr1.0 * point,
+        }]
     }
 }
 
@@ -167,18 +171,18 @@ fn transform_contact(tr: &Transform, cont: Contact) -> Contact {
     Contact {
         normal: tr.isometry.rotation * cont.normal,
         depth: cont.depth * tr.scaling(),
-        manifold: cont.manifold.map(|p| tr.0 * p),
+        point: tr.0 * cont.point,
     }
 }
 
-fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Option<Contact> {
+fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<Contact> {
     let x_pen = hw1 + hw2 - dist[0].abs();
     if x_pen <= 0.0 {
-        return None;
+        return vec![];
     }
     let y_pen = hh1 + hh2 - dist[1].abs();
     if y_pen <= 0.0 {
-        return None;
+        return vec![];
     }
 
     let x_dir = dist[0].signum();
@@ -189,24 +193,34 @@ fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Opti
         let y1 = (-hh1).max(dist[1] - hh2);
         let y2 = hh1.min(dist[1] + hh2);
 
-        let m1 = Manifold(Point2::new(x1, y1), Some(Point2::new(x1, y2)));
-
-        Some(Contact {
-            normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
-            depth: x_pen,
-            manifold: m1,
-        })
+        vec![
+            Contact {
+                normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
+                depth: x_pen,
+                point: Point2::new(x1, y1),
+            },
+            Contact {
+                normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
+                depth: x_pen,
+                point: Point2::new(x1, y2),
+            },
+        ]
     } else {
         let y1 = y_dir * hh1;
         let x1 = (-hw1).max(dist[0] - hw2);
         let x2 = hw1.min(dist[0] + hw2);
 
-        let m1 = Manifold(Point2::new(x1, y1), Some(Point2::new(x2, y1)));
-
-        Some(Contact {
-            normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
-            depth: y_pen,
-            manifold: m1,
-        })
+        vec![
+            Contact {
+                normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
+                depth: y_pen,
+                point: Point2::new(x1, y1),
+            },
+            Contact {
+                normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
+                depth: y_pen,
+                point: Point2::new(x2, y1),
+            },
+        ]
     }
 }

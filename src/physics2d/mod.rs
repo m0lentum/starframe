@@ -10,7 +10,7 @@ pub use rigidbody::RigidBody;
 
 use nalgebra::Vector2;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Velocity {
     /// Linear velocity in metres per second.
     pub linear: Vector2<f32>,
