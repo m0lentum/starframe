@@ -2,7 +2,7 @@ use super::{
     super::{
         integrator::{Integrator, IntegratorState},
         rigidbody::RigidBody,
-        CollisionEvent, Velocity,
+        CollisionEvent,
     },
     broadphase::{BroadPhase, Collidable},
     narrowphase::{intersection_check, Contact},
@@ -78,12 +78,6 @@ where
             .map(|(index, item)| (item.id, index))
             .collect();
 
-        // store accumulated velocity separately from objects themselves so that it can be reverted
-        let mut vel_acc_map: HashMap<IdType, Velocity> = items
-            .iter()
-            .map(|item| (item.id, item.body.velocity_or_zero()))
-            .collect();
-
         let mut integrator = I::begin_step(self.timestep);
 
         while let IntegratorState::NeedsDerivatives = integrator.substep(
@@ -156,7 +150,16 @@ where
             // iterative impulse accumulation (projected Gauss-Seidel)
             for _ in 0..self.iterations {
                 for acc in contacts.iter_mut() {
-                    let vels = map_array_2(&acc.ids, |i| vel_acc_map.get(i).unwrap());
+                    let i = acc.indices;
+                    let objs = if i[0] < i[1] {
+                        let (l, r) = items.split_at_mut(i[1]);
+                        [&mut l[i[0]], &mut r[0]]
+                    } else {
+                        let (l, r) = items.split_at_mut(i[0]);
+                        [&mut r[0], &mut l[i[1]]]
+                    };
+
+                    let vels = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
                     let normal_vels = [
                         vels[0].linear.dot(&acc.contact.normal)
                             + (acc.offsets_cross_normals[0] * vels[0].angular),
@@ -174,20 +177,24 @@ where
 
                     acc.total_impulse += impulse_magnitude;
 
-                    let vel_acc_0 = vel_acc_map.get_mut(&acc.ids[0]).unwrap();
-                    vel_acc_0.linear -= acc.inv_masses[0] * impulse_magnitude * *acc.contact.normal;
-                    vel_acc_0.angular -=
-                        acc.inv_mom_inertias[0] * impulse_magnitude * acc.offsets_cross_normals[0];
-                    let vel_acc_1 = vel_acc_map.get_mut(&acc.ids[1]).unwrap();
-                    vel_acc_1.linear += acc.inv_masses[1] * impulse_magnitude * *acc.contact.normal;
-                    vel_acc_1.angular +=
-                        acc.inv_mom_inertias[1] * impulse_magnitude * acc.offsets_cross_normals[1];
+                    objs[0].body.velocity_mut().map(|vel| {
+                        vel.linear -= acc.inv_masses[0] * impulse_magnitude * *acc.contact.normal;
+                        vel.angular -= acc.inv_mom_inertias[0]
+                            * impulse_magnitude
+                            * acc.offsets_cross_normals[0];
+                    });
+                    objs[1].body.velocity_mut().map(|vel| {
+                        vel.linear += acc.inv_masses[1] * impulse_magnitude * *acc.contact.normal;
+                        vel.angular += acc.inv_mom_inertias[1]
+                            * impulse_magnitude
+                            * acc.offsets_cross_normals[1];
+                    });
                 }
             }
 
-            // apply impulses for real, drop negative ones
+            // revert negative impulses
             for acc in contacts.iter() {
-                if acc.total_impulse <= 0.0 {
+                if acc.total_impulse >= 0.0 {
                     continue;
                 }
 
@@ -201,14 +208,14 @@ where
                 };
 
                 objs[0].body.velocity_mut().map(|vel| {
-                    vel.linear -= acc.inv_masses[0] * acc.total_impulse * *acc.contact.normal;
+                    vel.linear -= acc.inv_masses[0] * -acc.total_impulse * *acc.contact.normal;
                     vel.angular -=
-                        acc.inv_mom_inertias[0] * acc.total_impulse * acc.offsets_cross_normals[0];
+                        acc.inv_mom_inertias[0] * -acc.total_impulse * acc.offsets_cross_normals[0];
                 });
                 objs[1].body.velocity_mut().map(|vel| {
-                    vel.linear += acc.inv_masses[1] * acc.total_impulse * *acc.contact.normal;
+                    vel.linear += acc.inv_masses[1] * -acc.total_impulse * *acc.contact.normal;
                     vel.angular +=
-                        acc.inv_mom_inertias[1] * acc.total_impulse * acc.offsets_cross_normals[1];
+                        acc.inv_mom_inertias[1] * -acc.total_impulse * acc.offsets_cross_normals[1];
                 });
             }
 
