@@ -61,7 +61,7 @@ impl GameState<Resources> for StatePlaying {
                         let mut rng = rand::thread_rng();
                         tr.set_translation(nalgebra::Vector2::new(
                             distr::Uniform::from(-300.0..300.0).sample(&mut rng),
-                            distr::Uniform::from(-200.0..200.0).sample(&mut rng),
+                            distr::Uniform::from(0.0..200.0).sample(&mut rng),
                         ));
                         tr.set_rotation_deg(distr::Uniform::from(0.0..360.0).sample(&mut rng));
                     })
@@ -139,8 +139,8 @@ fn draw_space(res: &mut Resources) {
         target: &mut target,
         shaders: &res.shaders,
     });
-    res.intersection_vis
-        .draw_space(&mut target, &res.space, [0.8, 0.1, 0.2, 1.0], &res.shaders);
+    //res.intersection_vis
+    //    .draw_space(&mut target, &res.space, [0.8, 0.1, 0.2, 1.0], &res.shaders);
 
     target.finish().unwrap();
 }
@@ -167,7 +167,7 @@ pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook, display: &glium
 
     let r = parse_into_space(mes.as_str(), space, recipes);
 
-    space.create_pool("box", 10, {
+    space.create_pool("box", 20, {
         let mut rec = recipes.get("box").unwrap().clone();
         rec.modify_variable(|sh: &mut Shape| sh.set_color([0.4, 0.8, 0.5, 1.0]));
         rec
@@ -181,8 +181,8 @@ pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook, display: &glium
     }
 }
 
-// TODO: this is inefficient as hell, probably make it work differently
 fn make_walls(space: &mut Space, display: &glium::Display) {
+    // TODO: figure out how to make Shape and RigidBody from the same Collider
     ObjectBuilder::create(space)
         .with(RigidBody::new_static(Collider::new_rect(20.0, 600.0)))
         .with(Shape::new_rect(
@@ -219,4 +219,18 @@ fn make_walls(space: &mut Space, display: &glium::Display) {
             ShapeStyle::Fill([0.5; 4]),
         ))
         .with(Transform::from_position([0.0, 300.0]));
+    // ramp
+    ObjectBuilder::create(space)
+        .with(RigidBody::new_static(Collider::new_rect(800.0, 20.0)))
+        .with(Shape::new_rect(
+            display,
+            800.0,
+            20.0,
+            ShapeStyle::Fill([0.5; 4]),
+        ))
+        .with(Transform::new(
+            [200.0, -200.0],
+            std::f32::consts::PI / 8.0,
+            1.0,
+        ));
 }

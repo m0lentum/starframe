@@ -71,6 +71,13 @@ where
     type Filter = RigidBodyFilter<'a>;
 
     fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
+        // apply environment forces before solving collisions
+        for item in items.iter_mut() {
+            item.body
+                .velocity_mut()
+                .map(|vel| vel.linear[1] -= 250.0 * self.timestep); // TODO: unhack this
+        }
+
         // easy way to relate immutable collision pairs back to mutable items
         let id_index_map: HashMap<IdType, usize> = items
             .iter()

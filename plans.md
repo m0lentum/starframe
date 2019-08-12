@@ -1,6 +1,7 @@
 Everything I've thought of doing but haven't gotten around to yet is here.
 
 **ECS**
+- try replacing custom MES format with RON using serde
 - more storage types (see specs)
 - component containers should probably use Option instead of mem::uninitialized
   (at least try and see how much this affects performance)
@@ -28,6 +29,8 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 **physics**
 - collider types: ~~circle~~, ~~rect~~, polygon
 - rigid body constraint solver
+- calculate masses from collider shape
+- surface properties: restitution, friction
 - use temporal coherence as heuristic to optimize collision detection
 - spatial partitioning (probably hierarchical grid)
 - joints
