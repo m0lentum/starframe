@@ -11,6 +11,8 @@ use super::{
 use crate::ecs::{event::EventQueue, system::*, IdType, Space};
 use std::{collections::HashMap, marker::PhantomData};
 
+const PROJECTION_AMOUNT: f32 = 0.4;
+
 /// An intermediate structure that caches some information
 /// during impulse resolution and allows undoing negative impulses at the end.
 #[derive(Debug)]
@@ -199,12 +201,8 @@ where
                 }
             }
 
-            // revert negative impulses
+            // final cleaning up
             for acc in contacts.iter() {
-                if acc.total_impulse >= 0.0 {
-                    continue;
-                }
-
                 let i = acc.indices;
                 let objs = if i[0] < i[1] {
                     let (l, r) = items.split_at_mut(i[1]);
@@ -214,6 +212,22 @@ where
                     [&mut r[0], &mut l[i[1]]]
                 };
 
+                // position projection
+                let proj = acc.contact.depth * PROJECTION_AMOUNT * *acc.contact.normal;
+                match map_array_2(&objs, |o_| o_.body.responds_to_collisions()) {
+                    [true, true] => {
+                        objs[0].tr.translate(-0.5 * proj);
+                        objs[1].tr.translate(0.5 * proj);
+                    }
+                    [true, false] => objs[0].tr.translate(-proj),
+                    [false, true] => objs[1].tr.translate(proj),
+                    [false, false] => (),
+                }
+
+                // revert negative impulses
+                if acc.total_impulse >= 0.0 {
+                    continue;
+                }
                 objs[0].body.velocity_mut().map(|vel| {
                     vel.linear -= acc.inv_masses[0] * -acc.total_impulse * *acc.contact.normal;
                     vel.angular -=
