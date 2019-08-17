@@ -9,6 +9,7 @@ use moleengine::{
     },
     physics2d::{
         collision::{broadphase, Collider, CollisionSolver},
+        forcefield::ForceField,
         integrator, RigidBody,
     },
     util::{
@@ -20,6 +21,7 @@ use moleengine::{
     visuals_glium::shape::{Shape, ShapeRenderer, ShapeStyle},
 };
 
+use nalgebra::Vector2;
 use rand::{distributions as distr, distributions::Distribution};
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
@@ -152,9 +154,16 @@ fn update_space(res: &mut Resources) {
         .run_system(&mut KeyboardMover::new(&res.input_cache));
     {
         microprofile::scope!("update", "rigid body solver");
+
+        use broadphase::BruteForce;
+        use integrator::SemiImplicitEuler;
+        let fields = vec![
+            ForceField::gravity(Vector2::new(0.0, -250.0)),
+            ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
+        ];
         res.space.run_system(
             // TODO: real timestep
-            &mut CollisionSolver::<integrator::SemiImplicitEuler, broadphase::BruteForce>::with_timestep(0.017, 4),
+            &mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(0.017, 4, Some(fields)),
         );
     }
 }

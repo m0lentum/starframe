@@ -1,10 +1,11 @@
 pub mod collision;
 pub mod constraint;
+pub mod forcefield;
 pub mod integrator;
 pub mod rigidbody;
 
 pub use collision::{Collider, ColliderShape, CollisionEvent};
-// pub use constraint::ConstraintSolver;
+pub use forcefield::ForceField;
 pub use integrator::Integrator;
 pub use rigidbody::RigidBody;
 

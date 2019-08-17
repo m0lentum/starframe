@@ -1,5 +1,6 @@
 use super::{
     super::{
+        forcefield::ForceField,
         integrator::{Integrator, IntegratorState},
         rigidbody::RigidBody,
         CollisionEvent,
@@ -37,6 +38,7 @@ where
 {
     timestep: f32,
     iterations: usize,
+    forcefield: Option<ForceField>,
     integrator_marker: PhantomData<I>,
     broad_phase_marker: PhantomData<B>,
 }
@@ -50,10 +52,11 @@ where
     /// When used with a constant timestep this can be called once and stored;
     /// otherwise timestep should be updated every frame either by creating
     /// a new solver with this function or using `set_timestep`.
-    pub fn with_timestep(timestep: f32, iterations: usize) -> Self {
+    pub fn new<F: Into<ForceField>>(timestep: f32, iterations: usize, ff: Option<F>) -> Self {
         CollisionSolver {
             timestep,
             iterations,
+            forcefield: ff.map(|f| f.into()),
             integrator_marker: PhantomData,
             broad_phase_marker: PhantomData,
         }
@@ -62,6 +65,15 @@ where
     /// Set the timestep on an exising CollisionSolver.
     pub fn set_timestep(&mut self, timestep: f32) {
         self.timestep = timestep;
+    }
+
+    /// Set the force field on an existing CollisionSolver.
+    pub fn set_forcefield<F: Into<ForceField>>(&mut self, ff: F) {
+        self.forcefield = Some(ff.into());
+    }
+
+    pub fn remove_forcefield(&mut self) {
+        self.forcefield = None;
     }
 }
 
@@ -74,8 +86,12 @@ where
 
     fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
-        for vel in items.iter_mut().filter_map(|item| item.body.velocity_mut()) {
-            vel.linear[1] -= 250.0 * self.timestep; // TODO: unhack this
+        if let Some(ff) = &self.forcefield {
+            for item in items.iter_mut() {
+                if let Some(vel) = item.body.velocity_mut() {
+                    vel.linear += ff.value_at(item.tr.position()) * self.timestep;
+                }
+            }
         }
 
         // easy way to relate immutable collision pairs back to mutable items
@@ -125,7 +141,7 @@ where
                 for contact in intersection_check(objs[0].as_collidable(), objs[1].as_collidable())
                 {
                     let force_offsets =
-                        map_array_2(&objs, |o_| contact.point - o_.tr.get_translation());
+                        map_array_2(&objs, |o_| contact.point - o_.tr.translation());
                     let offsets_cross_normals = map_array_2(&force_offsets, |offset| {
                         offset[0] * contact.normal[1] - contact.normal[0] * offset[1]
                     });

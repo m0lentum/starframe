@@ -1,5 +1,5 @@
 use nalgebra::geometry::UnitComplex;
-use nalgebra::{Similarity2, Translation2, Vector2};
+use nalgebra::{Point2, Similarity2, Translation2, Vector2};
 use std::f32::consts::PI;
 
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
@@ -60,8 +60,14 @@ impl Transform {
         self.isometry.translation = nalgebra::Translation2::from(pos);
     }
 
-    pub fn get_translation(&self) -> Vector2<f32> {
+    /// Position as a Vector2.
+    pub fn translation(&self) -> Vector2<f32> {
         self.isometry.translation.vector
+    }
+
+    /// Position as a Point2.
+    pub fn position(&self) -> Point2<f32> {
+        Point2::from(self.translation())
     }
 
     pub fn rotate_rad(&mut self, angle: f32) {
@@ -73,11 +79,11 @@ impl Transform {
         self.rotate_rad(angle * PI / 180.0);
     }
 
-    pub fn get_rotation_rad(&self) -> f32 {
+    pub fn rotation_rad(&self) -> f32 {
         self.isometry.rotation.angle()
     }
 
-    pub fn get_rotation_deg(&self) -> f32 {
+    pub fn rotation_deg(&self) -> f32 {
         self.isometry.rotation.angle() * 180.0 / PI
     }
 
