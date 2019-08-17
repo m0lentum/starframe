@@ -5,13 +5,13 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-glutin = "0.20.0"
+glutin = "0.21.0"
 nalgebra = "0.18.0"
-hibitset = "0.5.4"
+hibitset = "0.6.2"
 anymap = "0.12.1"
-pest = "2.1.0"
+pest = "2.1.1"
 pest_derive = "2.1.0"
-parking_lot = "0.7.1"
+parking_lot = "0.9.0"
 lazy_static = "1.3.0"
 shrinkwraprs = "0.2.1"
 
@@ -20,12 +20,12 @@ path = "./ecs_codegen"
 optional = true
 
 [dependencies.glium]
-version = "0.24.0"
+version = "0.25.1"
 optional = true
 
 [dev-dependencies]
-microprofile = "0.1.0"
-rand = "0.6.5"
+microprofile = "0.2.1"
+rand = "0.7.0"
 
 [features]
 ecs = ["moleengine_ecs_codegen"]
