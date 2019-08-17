@@ -3,8 +3,8 @@ use super::{Collider, Velocity};
 /// A rigid body can collide with other rigid bodies and respond to physical forces.
 #[derive(Clone, Copy)]
 pub struct RigidBody {
-    pub body: BodyType,
-    pub material: BodyMaterial,
+    body: BodyType,
+    pub(crate) material: BodyMaterial,
     pub(crate) collider: Collider,
 }
 
@@ -31,8 +31,7 @@ pub struct BodyMaterial {
     // TODO: friction
     /// Drag determines how much linear momentum is discarded between updates.
     /// You can think of it as air resistance.
-    /// Avoid setting this to zero, as this can cause simulations to
-    /// become unstable due to energy gained from numerical errors.
+    /// This should generally be non-zero to ensure numerical stability.
     pub drag: f32,
     /// Angular drag is like drag, but for angular momentum.
     pub angular_drag: f32,
@@ -50,14 +49,21 @@ impl Default for BodyMaterial {
     }
 }
 
-// factories
 impl RigidBody {
-    pub fn new_dynamic(collider: Collider, mass: f32) -> Self {
+    /// Dynamic rigid bodies respond to collisions and environment forces.
+    /// This constructor calculates mass and moment of inertia from the given density.
+    pub fn new_dynamic(collider: Collider, density: f32) -> Self {
+        Self::new_dynamic_const_mass(collider, collider.area() * density)
+    }
+
+    /// Create a dynamic rigid body with the given mass instead of using density.
+    /// Moment of inertia is still calculated from the collider.
+    pub fn new_dynamic_const_mass(collider: Collider, mass: f32) -> Self {
         RigidBody {
             body: BodyType::Dynamic {
                 velocity: Velocity::default(),
                 mass: Mass::mass(mass),
-                moment_of_inertia: Mass::mass(3000.0), // TODO: physically based value for this
+                moment_of_inertia: Mass::mass(collider.moment_of_inertia_coef() * mass),
             },
             material: BodyMaterial::default(),
             collider: collider,
@@ -102,7 +108,7 @@ impl RigidBody {
     }
 }
 
-// getters
+// accessors
 impl RigidBody {
     pub fn body(&self) -> &BodyType {
         &self.body
@@ -118,7 +124,7 @@ impl RigidBody {
 
     pub fn responds_to_collisions(&self) -> bool {
         match self.body {
-            BodyType::Dynamic {..} => true,
+            BodyType::Dynamic { .. } => true,
             _ => false,
         }
     }

@@ -3,7 +3,6 @@
 #[derive(Clone, Copy, Debug)]
 pub struct Collider {
     shape: ColliderShape,
-    bounds_info: ColliderBoundsInfo,
 }
 
 /// The physical shape of a collider.
@@ -20,23 +19,11 @@ pub enum ColliderShape {
     },
 }
 
-/// Extra information about the physical bounds of the collider,
-/// used primarily in collision and physics calculations.
-#[derive(Clone, Copy, Debug)]
-pub struct ColliderBoundsInfo {
-    pub area: f32,
-    pub bounding_sphere_r: f32,
-}
-
 impl Collider {
     /// Create a circle collider from a radius.
     pub fn new_circle(radius: f32) -> Self {
         Collider {
             shape: ColliderShape::Circle { r: radius },
-            bounds_info: ColliderBoundsInfo {
-                area: std::f32::consts::PI * radius * radius,
-                bounding_sphere_r: radius,
-            },
         }
     }
 
@@ -51,10 +38,6 @@ impl Collider {
         let hh = height / 2.0;
         Collider {
             shape: ColliderShape::Rect { hw, hh },
-            bounds_info: ColliderBoundsInfo {
-                area: width * height,
-                bounding_sphere_r: (hw * hw + hh * hh).sqrt(),
-            },
         }
     }
 
@@ -62,7 +45,17 @@ impl Collider {
         &self.shape
     }
 
-    pub fn bounds_info(&self) -> &ColliderBoundsInfo {
-        &self.bounds_info
+    pub fn area(&self) -> f32 {
+        match self.shape {
+            ColliderShape::Circle { r } => std::f32::consts::PI * r * r,
+            ColliderShape::Rect { hw, hh } => 4.0 * hw * hh,
+        }
+    }
+
+    pub fn moment_of_inertia_coef(&self) -> f32 {
+        match self.shape {
+            ColliderShape::Circle { r } => r * r / 2.0,
+            ColliderShape::Rect { hw, hh } => (4.0 * hw * hw + 4.0 * hh * hh) / 3.0,
+        }
     }
 }

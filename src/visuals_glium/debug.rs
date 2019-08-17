@@ -42,8 +42,7 @@ impl IntersectionIndicator {
                 .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
             {
                 let normal_scaled = *coll.normal * COLL_INDICATOR_SIZE;
-                let tangent_scaled =
-                    nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
+                let tangent_scaled = nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
                 verts[0] = (coll.point + normal_scaled + tangent_scaled).into();
                 verts[1] = (coll.point - normal_scaled - tangent_scaled).into();
                 verts[2] = (coll.point + normal_scaled - tangent_scaled).into();

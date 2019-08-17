@@ -33,4 +33,3 @@ impl SpaceEvent for CollisionEvent {
         space.run_listener(self.source, self);
     }
 }
-

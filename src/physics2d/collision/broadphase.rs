@@ -34,4 +34,3 @@ pub struct Collidable<'a> {
     pub tr: &'a Transform,
     pub coll: &'a Collider,
 }
-
