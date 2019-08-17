@@ -30,7 +30,7 @@ pub struct LockstepLoop {
 impl LockstepLoop {
     pub fn from_fps(fps: u32) -> Self {
         LockstepLoop {
-            nanos_per_frame: 1_000_000_000 / (fps as u128),
+            nanos_per_frame: 1_000_000_000 / u128::from(fps),
         }
     }
 }

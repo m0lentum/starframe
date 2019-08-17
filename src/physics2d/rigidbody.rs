@@ -66,7 +66,7 @@ impl RigidBody {
                 moment_of_inertia: Mass::mass(collider.moment_of_inertia_coef() * mass),
             },
             material: BodyMaterial::default(),
-            collider: collider,
+            collider,
         }
     }
 
@@ -77,7 +77,7 @@ impl RigidBody {
                 velocity: Velocity::default(),
             },
             material: BodyMaterial::default(),
-            collider: collider,
+            collider,
         }
     }
 
@@ -86,7 +86,7 @@ impl RigidBody {
         RigidBody {
             body: BodyType::Static,
             material: BodyMaterial::default(),
-            collider: collider,
+            collider,
         }
     }
 
@@ -201,11 +201,11 @@ impl Mass {
         }
     }
 
-    pub fn get(&self) -> f32 {
+    pub fn get(self) -> f32 {
         self.mass
     }
 
-    pub fn get_inv(&self) -> f32 {
+    pub fn get_inv(self) -> f32 {
         self.inverse
     }
 }

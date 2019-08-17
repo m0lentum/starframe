@@ -74,10 +74,8 @@ where
 
     fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
-        for item in items.iter_mut() {
-            item.body
-                .velocity_mut()
-                .map(|vel| vel.linear[1] -= 250.0 * self.timestep); // TODO: unhack this
+        for vel in items.iter_mut().filter_map(|item| item.body.velocity_mut()) {
+            vel.linear[1] -= 250.0 * self.timestep; // TODO: unhack this
         }
 
         // easy way to relate immutable collision pairs back to mutable items
@@ -97,7 +95,7 @@ where
                     None => None,
                 }),
         ) {
-            let iter = items.iter().map(|rbf| rbf.into_collidable());
+            let iter = items.iter().map(|rbf| rbf.as_collidable());
 
             let mut events = Vec::new();
 
@@ -124,8 +122,7 @@ where
                 }
 
                 // initialize accumulators, cache some calculations we don't need to repeat per iteration
-                for contact in
-                    intersection_check(objs[0].into_collidable(), objs[1].into_collidable())
+                for contact in intersection_check(objs[0].as_collidable(), objs[1].as_collidable())
                 {
                     let force_offsets =
                         map_array_2(&objs, |o_| contact.point - o_.tr.get_translation());
@@ -186,18 +183,18 @@ where
 
                     acc.total_impulse += impulse_magnitude;
 
-                    objs[0].body.velocity_mut().map(|vel| {
+                    if let Some(vel) = objs[0].body.velocity_mut() {
                         vel.linear -= acc.inv_masses[0] * impulse_magnitude * *acc.contact.normal;
                         vel.angular -= acc.inv_mom_inertias[0]
                             * impulse_magnitude
                             * acc.offsets_cross_normals[0];
-                    });
-                    objs[1].body.velocity_mut().map(|vel| {
+                    }
+                    if let Some(vel) = objs[1].body.velocity_mut() {
                         vel.linear += acc.inv_masses[1] * impulse_magnitude * *acc.contact.normal;
                         vel.angular += acc.inv_mom_inertias[1]
                             * impulse_magnitude
                             * acc.offsets_cross_normals[1];
-                    });
+                    }
                 }
             }
 
@@ -228,16 +225,16 @@ where
                 if acc.total_impulse >= 0.0 {
                     continue;
                 }
-                objs[0].body.velocity_mut().map(|vel| {
+                if let Some(vel) = objs[0].body.velocity_mut() {
                     vel.linear -= acc.inv_masses[0] * -acc.total_impulse * *acc.contact.normal;
                     vel.angular -=
                         acc.inv_mom_inertias[0] * -acc.total_impulse * acc.offsets_cross_normals[0];
-                });
-                objs[1].body.velocity_mut().map(|vel| {
+                }
+                if let Some(vel) = objs[1].body.velocity_mut() {
                     vel.linear += acc.inv_masses[1] * -acc.total_impulse * *acc.contact.normal;
                     vel.angular +=
                         acc.inv_mom_inertias[1] * -acc.total_impulse * acc.offsets_cross_normals[1];
-                });
+                }
             }
 
             // events
@@ -282,7 +279,7 @@ pub struct RigidBodyFilter<'a> {
 }
 
 impl<'a> RigidBodyFilter<'a> {
-    pub(self) fn into_collidable(&'a self) -> Collidable<'a> {
+    pub(self) fn as_collidable(&'a self) -> Collidable<'a> {
         Collidable {
             id: self.id,
             tr: self.tr,

@@ -33,7 +33,7 @@ pub struct ObjectRecipe {
 
 type ParseFn = fn(&str, &mut VarMap) -> Result<(), ()>;
 
-type VarMap = anymap::Map<anymap::any::CloneAny>;
+type VarMap = anymap::Map<dyn anymap::any::CloneAny>;
 
 /// Wrapper trait for a Fn(&mut Space, IdType, &VarMap) + Clone + 'static
 /// that can be used as a trait object.
@@ -67,6 +67,12 @@ impl Clone for ObjectRecipe {
             default_vars: self.default_vars.clone(),
             parsers: self.parsers.clone(),
         }
+    }
+}
+
+impl Default for ObjectRecipe {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -298,6 +304,12 @@ impl RecipeBook {
     /// Get a mutable reference to a recipe in the book.
     pub fn get_mut(&mut self, key: &str) -> Option<&mut ObjectRecipe> {
         self.recipes.get_mut(key)
+    }
+}
+
+impl Default for RecipeBook {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -17,7 +17,7 @@ impl InputCache {
 
     /// Updates the ages of tracked keys. Call this every update loop.
     pub fn update_ages(&mut self) {
-        for (_key, (_state, age)) in &mut self.keyboard {
+        for (_state, age) in self.keyboard.values_mut() {
             *age += 1;
         }
     }
@@ -43,7 +43,8 @@ impl InputCache {
         let (state, age) = self
             .keyboard
             .get(&key)
-            .expect(format!("Untracked key: {:?}", key).as_str());
+            .unwrap_or_else(|| panic!("Untracked key: {:?}", key));
+
         if let KeyState::Pressed = state {
             if let Some(al) = age_limit {
                 *age <= al
@@ -75,6 +76,12 @@ impl InputCache {
                 }
             }
         }
+    }
+}
+
+impl Default for InputCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

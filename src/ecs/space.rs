@@ -58,10 +58,9 @@ impl Space {
         self
     }
 
-    /// Store some globally accessible state behind a RwLock in this space. This is mostly used by
-    /// Systems which need to persist data between frames or share it between multiple Systems,
+    /// Store some globally accessible state behind a RwLock in this space.
     /// This method can be chained like a builder together with add_container.
-    pub fn init_global_state<'a, S: 'static>(&mut self, state: S) -> &mut Self {
+    pub fn init_global_state<S: 'static>(&mut self, state: S) -> &mut Self {
         self.global_state.insert(state);
 
         self
@@ -122,7 +121,7 @@ impl Space {
         let pool = self
             .pools
             .get(key)
-            .expect(format!("No pool exists with the key {}", key).as_str());
+            .unwrap_or_else(|| panic!("No pool exists with the key {}", key));
 
         if let Some(&id) = pool.ids.iter().find(|&&id| {
             assert!(self.is_alive(id), "A pooled game object has been destroyed");

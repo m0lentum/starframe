@@ -7,19 +7,19 @@ pub trait GameState<D> {
 
 pub enum StateOp<D> {
     Stay,
-    Push(Box<GameState<D>>),
-    Swap(Box<GameState<D>>),
+    Push(Box<dyn GameState<D>>),
+    Swap(Box<dyn GameState<D>>),
     Pop,
     Destroy,
 }
 
 pub struct StateMachine<D> {
     shared_data: D,
-    state_stack: Vec<Box<GameState<D>>>,
+    state_stack: Vec<Box<dyn GameState<D>>>,
 }
 
 impl<D> StateMachine<D> {
-    pub fn new(shared_data: D, initial_state: Box<GameState<D>>) -> Self {
+    pub fn new(shared_data: D, initial_state: Box<dyn GameState<D>>) -> Self {
         StateMachine {
             shared_data,
             state_stack: vec![initial_state],
@@ -40,7 +40,6 @@ impl<D> StateMachine<D> {
             }
             StateOp::Pop => {
                 self.state_stack.pop();
-                ()
             }
             StateOp::Destroy => return LoopState::End,
         }
