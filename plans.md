@@ -1,8 +1,8 @@
-Everything I've thought of doing but haven't gotten around to yet is here.
-
 **ECS**
-- try replacing custom MES format with RON using serde
 - more storage types (see specs)
+- macro to create recipes with less verbosity
+    - this may also be able to remove a lot of complexity from the ObjectRecipe type:
+      a recipe can (maybe) be a single generated function
 - component containers should probably use Option instead of mem::uninitialized
   (at least try and see how much this affects performance)
 - figure out a way to generate a Shape from a Collider in a recipe
@@ -29,12 +29,18 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 **physics**
 - collider types: ~~circle~~, ~~rect~~, polygon
 - rigid body constraint solver
-- calculate masses from collider shape
+- ~~calculate masses from collider shape~~
 - surface properties: restitution, friction
-- use temporal coherence as heuristic to optimize collision detection
-- spatial partitioning (probably hierarchical grid)
+- use temporal coherence as heuristic to optimize collision detection narrow phase
+    - i.e. start the SAT test from last frame's separating axis if any
+- spatial partitioning
+    - possible algorithms (probably try many; they can be easily swapped):
+    - flat grid
+    - hierarchical grid
+    - quadtree
+    - AABB tree
+    - k-d tree
 - joints
-- some form of fluid simulation (SPH, PBF, something mesh-based??)
 
 **graphics**
 - camera
@@ -47,9 +53,10 @@ Everything I've thought of doing but haven't gotten around to yet is here.
 - try making an actual game with multiple levels, see how the
   design scales (level loading from MES? game state management
   between loading, playing and paused? etc etc)
+- ability to 1. set and 2. dynamically reload settings (screen size, keybinds etc.)
 
 **open questions**
-- additions to MES format?
+- additions to MES format? maybe replace entirely with e.g. RON if I come up with something more robust?
 - some UI framework (conrod / imgui?) or write my own?
 - ~~graphics library? Piston feels too limited~~
     - glium implemented; possibly investigate vulkano in future
