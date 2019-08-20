@@ -25,12 +25,14 @@ pub trait GameLoop {
 
 pub struct LockstepLoop {
     nanos_per_frame: u128,
+    dt: f32,
 }
 
 impl LockstepLoop {
     pub fn from_fps(fps: u32) -> Self {
         LockstepLoop {
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
+            dt: 1.0 / fps as f32,
         }
     }
 }
@@ -61,7 +63,7 @@ impl GameLoop for LockstepLoop {
             }
 
             while acc >= self.nanos_per_frame {
-                match state_machine.update() {
+                match state_machine.update(self.dt) {
                     LoopState::Continue => (),
                     LoopState::End => break 'main,
                 }

@@ -41,7 +41,7 @@ pub fn begin(res: Resources) {
 pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
-    fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
+    fn update(&mut self, res: &mut Resources, dt: f32) -> StateOp<Resources> {
         if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
             return op;
         }
@@ -71,7 +71,7 @@ impl GameState<Resources> for StatePlaying {
             }
         }
 
-        update_space(res);
+        update_space(res, dt);
 
         res.input_cache.update_ages();
         StateOp::Stay
@@ -87,7 +87,7 @@ impl GameState<Resources> for StatePlaying {
 pub struct StatePaused;
 
 impl GameState<Resources> for StatePaused {
-    fn update(&mut self, res: &mut Resources) -> StateOp<Resources> {
+    fn update(&mut self, res: &mut Resources, _dt: f32) -> StateOp<Resources> {
         if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
             return op;
         }
@@ -147,7 +147,7 @@ fn draw_space(res: &mut Resources) {
     target.finish().unwrap();
 }
 
-fn update_space(res: &mut Resources) {
+fn update_space(res: &mut Resources, dt: f32) {
     microprofile::flip();
     microprofile::scope!("update", "all");
     res.space
@@ -162,8 +162,7 @@ fn update_space(res: &mut Resources) {
             ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
         ];
         res.space.run_system(
-            // TODO: real timestep
-            &mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(0.017, 4, Some(fields)),
+            &mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(dt, 4, Some(fields)),
         );
     }
 }

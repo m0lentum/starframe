@@ -1,7 +1,7 @@
 use super::gameloop::LoopState;
 
 pub trait GameState<D> {
-    fn update(&mut self, data: &mut D) -> StateOp<D>;
+    fn update(&mut self, data: &mut D, dt: f32) -> StateOp<D>;
     fn render(&mut self, data: &mut D);
 }
 
@@ -26,12 +26,12 @@ impl<D> StateMachine<D> {
         }
     }
 
-    pub fn update(&mut self) -> LoopState {
+    pub fn update(&mut self, dt: f32) -> LoopState {
         let state = match self.state_stack.last_mut() {
             Some(s) => s,
             None => return LoopState::End,
         };
-        match state.update(&mut self.shared_data) {
+        match state.update(&mut self.shared_data, dt) {
             StateOp::Stay => (),
             StateOp::Push(next_state) => self.state_stack.push(next_state),
             StateOp::Swap(next_state) => {
