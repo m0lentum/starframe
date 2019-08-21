@@ -1,19 +1,11 @@
 **ECS**
+- serialize and deserialize levels using Serde
 - more storage types (see specs)
 - macro to create recipes with less verbosity
     - this may also be able to remove a lot of complexity from the ObjectRecipe type:
       a recipe can (maybe) be a single generated function
 - component containers should probably use Option instead of mem::uninitialized
   (at least try and see how much this affects performance)
-- figure out a way to generate a Shape from a Collider in a recipe
-- ~~automatic object pooling API~~
-    - added but with some usability concerns, will have to try it in practice
-- ~~optional components in ComponentFilters~~
-    - ~~investigate using these instead of event listeners~~\
-      probably not a good idea - event listeners should be called when no Systems are running
-      so that they can have effects on any component of their choosing and be guaranteed not to block\
-      **however**, this might gain a few microseconds e.g. with collision events
-      if I don't push them into queue at all if there's no listener to receive them
 - better error reporting for Systems
     - currently just fails and tells you it failed, could tell which component was missing etc.
     - don't panic when using recipe with unset variable
@@ -23,8 +15,19 @@
     - alternatively, a macro (something like `run_systems_par!(space, system1, system2, ...))`)
 - reconsider Space builder syntax (use `cascade` instead?)
 - preset recipes for common objects (can use as template for more specific stuff)
+---
 - ~~LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)~~
     - Consider using RwLock::try_read instead of read for non-blocking failure on untimely access
+- ~~figure out a way to generate a Shape from a Collider in a recipe~~
+    - probably not necessary now that recipes are good
+- ~~automatic object pooling API~~
+    - added but with some usability concerns, will have to try it in practice
+- ~~optional components in ComponentFilters~~
+    - ~~investigate using these instead of event listeners~~\
+      probably not a good idea - event listeners should be called when no Systems are running
+      so that they can have effects on any component of their choosing and be guaranteed not to block\
+      **however**, this might gain a few microseconds e.g. with collision events
+      if I don't push them into queue at all if there's no listener to receive them
 
 **physics**
 - collider types: ~~circle~~, ~~rect~~, polygon
@@ -56,7 +59,4 @@
 - ability to 1. set and 2. dynamically reload settings (screen size, keybinds etc.)
 
 **open questions**
-- additions to MES format? maybe replace entirely with e.g. RON if I come up with something more robust?
 - some UI framework (conrod / imgui?) or write my own?
-- ~~graphics library? Piston feels too limited~~
-    - glium implemented; possibly investigate vulkano in future

@@ -1,13 +1,11 @@
 pub mod space;
-pub use space::Space;
+pub use space::{Space, ObjectHandle, ObjectRecipe};
 
 pub mod componentcontainer;
 
 pub mod storage;
 
 pub mod event;
-
-pub mod recipe;
 
 pub mod system;
 

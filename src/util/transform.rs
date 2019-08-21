@@ -5,11 +5,6 @@ use std::f32::consts::PI;
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
 /// All Similarity2 methods and members can be accessed from a Transform reference thanks to shrinkwraprs.
 /// See https://www.nalgebra.org/rustdoc/nalgebra/geometry/struct.Similarity.html
-/// # MoleEngineSpace format
-/// `Px,y&Rr&Ss` where T, R and S are character literals (standing for Position, Rotation
-/// and Scale respectively) and x, y, r, and s are f32-parseable strings.
-/// Rotation is expressed in degrees.
-/// Any of these can be omitted, which will leave them at the default value (no transformation).
 #[derive(Clone, Copy, shrinkwraprs::Shrinkwrap)]
 #[shrinkwrap(mutable)]
 pub struct Transform(pub Similarity2<f32>);
@@ -21,24 +16,28 @@ impl Transform {
     }
 
     /// Create a new Transform with an initial position, rotation and scale.
-    /// This is simply a slightly more concise syntax for Similarity2::new (with [f32;2] instead of Vector2<f32>).
-    pub fn new(position: [f32; 2], rotation: f32, scale: f32) -> Self {
-        Transform(Similarity2::new(Vector2::from(position), rotation, scale))
+    pub fn new(translation: Vector2<f32>, rotation: f32, scale: f32) -> Self {
+        Transform(Similarity2::new(translation, rotation, scale))
     }
 
     /// Create a transform with just a position.
-    pub fn from_position(pos: [f32; 2]) -> Self {
-        Self::new(pos, 0.0, 1.0)
+    pub fn from_position(pos: Point2<f32>) -> Self {
+        Self::new(pos.coords, 0.0, 1.0)
     }
 
     /// Like `from_position`, but with the position expressed as a Vector2.
     pub fn from_translation(vec: Vector2<f32>) -> Self {
-        Transform(Similarity2::new(vec, 0.0, 1.0))
+        Self::new(vec, 0.0, 1.0)
+    }
+
+    /// Like `from_position`, bbut with the position expressed as two floats.
+    pub fn from_coords(x: f32, y: f32) -> Self {
+        Self::new(Vector2::new(x, y), 0.0, 1.0)
     }
 
     /// Create a transform with just a rotation, expressed in radians.
     pub fn from_rotation_rad(angle: f32) -> Self {
-        Self::new([0.0, 0.0], angle, 1.0)
+        Self::new(Vector2::zeros(), angle, 1.0)
     }
 
     /// Create a transform with just a rotation, expressed in degrees.
@@ -104,31 +103,8 @@ impl Transform {
     }
 }
 
-impl std::str::FromStr for Transform {
-    type Err = ();
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut pos = [0.0, 0.0];
-        let mut rot = 0.0;
-        let mut scale = 1.0;
-        for part in s.split('&') {
-            let (sym, val) = part.split_at(1);
-            match sym {
-                "P" => pos = parse_point(val)?,
-                "R" => rot = val.parse().map_err(|_| ())?,
-                "S" => scale = val.parse().map_err(|_| ())?,
-                _ => return Err(()),
-            }
-        }
-
-        Ok(Transform::new(pos, rot * PI / 180.0, scale))
-    }
-}
-
-/// Parses a string representing two comma-separated float values into a [f32;2]
-fn parse_point(s: &str) -> Result<[f32; 2], ()> {
-    let mut parts = s.split(',').map(|p| p.parse::<f32>());
-    match (parts.next(), parts.next()) {
-        (Some(Ok(x)), Some(Ok(y))) => Ok([x, y]),
-        _ => Err(()),
+impl Default for Transform {
+    fn default() -> Self {
+        Self::identity()
     }
 }

@@ -1,16 +1,13 @@
-use crate::{controls::*, Resources};
+use crate::{controls::*, recipes, Resources};
 
 use glium::{glutin, Surface};
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
-    ecs::{
-        recipe::{parse_into_space, RecipeBook},
-        space::{ObjectBuilder, Space},
-    },
+    ecs::space::Space,
     physics2d::{
-        collision::{broadphase, Collider, CollisionSolver},
+        collision::{broadphase, CollisionSolver},
         forcefield::ForceField,
-        integrator, RigidBody,
+        integrator,
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
@@ -18,7 +15,7 @@ use moleengine::{
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
-    visuals_glium::shape::{Shape, ShapeRenderer, ShapeStyle},
+    visuals_glium::shape::ShapeRenderer,
 };
 
 use nalgebra::Vector2;
@@ -53,7 +50,7 @@ impl GameState<Resources> for StatePlaying {
         }
 
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
-            reload_space(&mut res.space, &mut res.recipes, &res.display);
+            reload_space(&mut res.space, &res.display);
         }
 
         if res.input_cache.is_key_pressed(Key::S, Some(0)) {
@@ -161,84 +158,54 @@ fn update_space(res: &mut Resources, dt: f32) {
             ForceField::gravity(Vector2::new(0.0, -250.0)),
             ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
         ];
-        res.space.run_system(
-            &mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(dt, 4, Some(fields)),
-        );
+        res.space
+            .run_system(&mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
+                dt,
+                4,
+                Some(fields),
+            ));
     }
 }
 
-pub fn reload_space(space: &mut Space, recipes: &mut RecipeBook, display: &glium::Display) {
-    let mes =
-        std::fs::read_to_string("./examples/testgame/test_space.mes").expect("File read failed");
-
+pub fn reload_space(space: &mut Space, display: &glium::Display) {
     space.destroy_all();
 
-    let r = parse_into_space(mes.as_str(), space, recipes);
-
-    space.create_pool("box", 20, {
-        let mut rec = recipes.get("box").unwrap().clone();
-        rec.modify_variable(|sh: &mut Shape| sh.set_color([0.4, 0.8, 0.5, 1.0]));
-        rec
+    space.spawn(recipes::Player {
+        transform: Transform::identity(),
+        display,
     });
 
-    make_walls(space, display);
+    //space.create_pool("box", 20, {
+    //    let mut rec = recipes.get("box").unwrap().clone();
+    //    rec.modify_variable(|sh: &mut Shape| sh.set_color([0.4, 0.8, 0.5, 1.0]));
+    //    rec
+    //});
 
-    match r {
-        Ok(_) => (),
-        Err(e) => eprintln!("Error parsing space: {}", e),
-    }
+    make_walls(space, display);
 }
 
 fn make_walls(space: &mut Space, display: &glium::Display) {
-    // TODO: figure out how to make Shape and RigidBody from the same Collider
-    ObjectBuilder::create(space)
-        .with(RigidBody::new_static(Collider::new_rect(20.0, 600.0)))
-        .with(Shape::new_rect(
-            display,
-            20.0,
-            600.0,
-            ShapeStyle::Fill([0.5; 4]),
-        ))
-        .with(Transform::from_position([-400.0, 0.0]));
-    ObjectBuilder::create(space)
-        .with(RigidBody::new_static(Collider::new_rect(20.0, 600.0)))
-        .with(Shape::new_rect(
-            display,
-            20.0,
-            600.0,
-            ShapeStyle::Fill([0.5; 4]),
-        ))
-        .with(Transform::from_position([400.0, 0.0]));
-    ObjectBuilder::create(space)
-        .with(RigidBody::new_static(Collider::new_rect(800.0, 20.0)))
-        .with(Shape::new_rect(
-            display,
-            800.0,
-            20.0,
-            ShapeStyle::Fill([0.5; 4]),
-        ))
-        .with(Transform::from_position([0.0, -300.0]));
-    ObjectBuilder::create(space)
-        .with(RigidBody::new_static(Collider::new_rect(800.0, 20.0)))
-        .with(Shape::new_rect(
-            display,
-            800.0,
-            20.0,
-            ShapeStyle::Fill([0.5; 4]),
-        ))
-        .with(Transform::from_position([0.0, 300.0]));
+    let mut wall = recipes::StaticBlock {
+        width: 20.0,
+        height: 600.0,
+        transform: Transform::from_coords(-400.0, 0.0),
+        display,
+    };
+    space.spawn(wall.clone());
+
+    wall.transform.set_translation(Vector2::new(400.0, 0.0));
+    space.spawn(wall.clone());
+
+    wall.height = 800.0;
+    wall.transform.rotate_deg(90.0);
+    wall.transform.set_translation(Vector2::new(0.0, 300.0));
+    space.spawn(wall.clone());
+
+    wall.transform.set_translation(Vector2::new(0.0, -300.0));
+    space.spawn(wall.clone());
+
     // ramp
-    ObjectBuilder::create(space)
-        .with(RigidBody::new_static(Collider::new_rect(800.0, 20.0)))
-        .with(Shape::new_rect(
-            display,
-            800.0,
-            20.0,
-            ShapeStyle::Fill([0.5; 4]),
-        ))
-        .with(Transform::new(
-            [200.0, -200.0],
-            std::f32::consts::PI / 8.0,
-            1.0,
-        ));
+    wall.transform.set_translation(Vector2::new(200.0, -200.0));
+    wall.transform.rotate_rad(std::f32::consts::PI / 8.0);
+    space.spawn(wall);
 }

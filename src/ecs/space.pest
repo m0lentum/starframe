@@ -1,7 +1,0 @@
-everything = { (object ~ (NEWLINE | EOI))* }
-object = { ident ~ var* }
-ident = { sym+ }
-var = { "|" ~ ident ~ "=" ~ val }
-val = { sym+ }
-sym = { !("|" | "=" | NEWLINE) ~ ANY }
-WHITESPACE = _{ " " }

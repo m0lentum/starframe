@@ -1,4 +1,5 @@
 pub mod shape;
+pub use shape::{Shape, ShapeStyle};
 
 pub mod shaders;
 pub use shaders::Shaders;

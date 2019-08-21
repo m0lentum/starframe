@@ -2,26 +2,19 @@
 extern crate microprofile;
 
 mod controls;
+mod recipes;
 mod states;
 mod test_events;
 
 //
 
-use self::{controls::KeyboardControls, test_events::*};
+use self::controls::KeyboardControls;
 use glium::glutin;
 use moleengine::{
-    ecs::{
-        recipe::{ObjectRecipe, RecipeBook},
-        space::Space,
-        storage::VecStorage,
-    },
+    ecs::{space::Space, storage::VecStorage},
     physics2d::{Collider, CollisionEvent, RigidBody},
     util::{inputcache::InputCache, Transform},
-    visuals_glium::{
-        debug::IntersectionIndicator,
-        shaders::Shaders,
-        shape::{Shape, ShapeStyle},
-    },
+    visuals_glium::{debug::IntersectionIndicator, shaders::Shaders, shape::Shape},
 };
 
 //
@@ -31,7 +24,6 @@ pub struct Resources {
     pub events: glutin::EventsLoop,
     pub shaders: Shaders,
     pub input_cache: InputCache,
-    pub recipes: RecipeBook,
     pub space: Space,
     pub intersection_vis: IntersectionIndicator,
 }
@@ -74,8 +66,6 @@ pub fn init_resources() -> Resources {
         .add_container::<KeyboardControls, VecStorage<_>>()
         .init_global_state::<Vec<CollisionEvent>>(Vec::new());
 
-    let recipes = make_recipes(&display);
-
     let intersection_vis = IntersectionIndicator::new(&display, 50);
 
     Resources {
@@ -83,50 +73,7 @@ pub fn init_resources() -> Resources {
         events,
         shaders,
         input_cache,
-        recipes,
         space,
         intersection_vis,
     }
-}
-
-fn make_recipes(display: &glium::Display) -> RecipeBook {
-    let mut recipes = RecipeBook::new();
-
-    let coll_circle = Collider::new_circle(30.0);
-    let ball = ObjectRecipe::new()
-        .add(Shape::from_collider(
-            display,
-            &coll_circle,
-            ShapeStyle::Outline([1.0; 4]),
-        ))
-        .add(RigidBody::new_dynamic(coll_circle.clone(), 1.0))
-        .add_named_variable("T", None::<Transform>)
-        //.add_listener(TestCollisionListener)
-        .add_listener(ChainEventListener);
-    recipes.add("ball", ball.clone());
-
-    let coll_rect = Collider::new_rect(90.0, 55.0);
-    let player = ObjectRecipe::new()
-        .add(Transform::identity())
-        .add(Shape::from_collider(
-            display,
-            &coll_rect,
-            ShapeStyle::Outline([0.2, 0.8, 0.6, 0.7]),
-        ))
-        .add(RigidBody::new_dynamic(coll_rect.clone(), 1.5))
-        .add(KeyboardControls);
-    recipes.add("player", player);
-
-    let coll_rect = Collider::new_rect(80.0, 65.0);
-    let obj_box = ObjectRecipe::new()
-        .add_named_variable("T", Some(Transform::identity()))
-        .add_variable(Some(Shape::from_collider(
-            display,
-            &coll_rect,
-            ShapeStyle::Outline([1.0; 4]),
-        )))
-        .add(RigidBody::new_dynamic(coll_rect.clone(), 0.8));
-    recipes.add("box", obj_box);
-
-    recipes
 }
