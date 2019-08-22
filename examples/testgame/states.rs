@@ -15,7 +15,7 @@ use moleengine::{
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
-    visuals_glium::shape::ShapeRenderer,
+    visuals_glium::{self as vis, shape::ShapeRenderer},
 };
 
 use nalgebra::Vector2;
@@ -50,7 +50,7 @@ impl GameState<Resources> for StatePlaying {
         }
 
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
-            reload_space(&mut res.space, &res.display);
+            reload_space(&mut res.space);
         }
 
         if res.input_cache.is_key_pressed(Key::S, Some(0)) {
@@ -130,13 +130,15 @@ fn handle_events(
 fn draw_space(res: &mut Resources) {
     microprofile::scope!("render", "all");
 
-    let mut target = res.display.draw();
+    let ctx = vis::Context::get();
+
+    let mut target = ctx.display.draw();
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
     res.space.run_system(&mut ShapeRenderer {
         target: &mut target,
-        shaders: &res.shaders,
+        shaders: &ctx.shaders,
     });
     //res.intersection_vis
     //    .draw_space(&mut target, &res.space, [0.8, 0.1, 0.2, 1.0], &res.shaders);
@@ -167,12 +169,11 @@ fn update_space(res: &mut Resources, dt: f32) {
     }
 }
 
-pub fn reload_space(space: &mut Space, display: &glium::Display) {
+pub fn reload_space(space: &mut Space) {
     space.destroy_all();
 
     space.spawn(recipes::Player {
         transform: Transform::identity(),
-        display,
     });
 
     //space.create_pool("box", 20, {
@@ -181,15 +182,14 @@ pub fn reload_space(space: &mut Space, display: &glium::Display) {
     //    rec
     //});
 
-    make_walls(space, display);
+    make_walls(space);
 }
 
-fn make_walls(space: &mut Space, display: &glium::Display) {
+fn make_walls(space: &mut Space) {
     let mut wall = recipes::StaticBlock {
         width: 20.0,
         height: 600.0,
         transform: Transform::from_coords(-400.0, 0.0),
-        display,
     };
     space.spawn(wall.clone());
 

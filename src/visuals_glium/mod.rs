@@ -4,6 +4,9 @@ pub use shape::{Shape, ShapeStyle};
 pub mod shaders;
 pub use shaders::Shaders;
 
+mod context;
+pub use context::Context;
+
 #[cfg(feature = "debug_visuals")]
 pub mod debug;
 
@@ -39,3 +42,4 @@ impl From<nalgebra::Point2<f32>> for Vertex2D {
 }
 
 glium::implement_vertex!(Vertex2D, v_position);
+

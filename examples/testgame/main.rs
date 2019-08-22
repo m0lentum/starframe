@@ -14,18 +14,16 @@ use moleengine::{
     ecs::{space::Space, storage::VecStorage},
     physics2d::{Collider, CollisionEvent, RigidBody},
     util::{inputcache::InputCache, Transform},
-    visuals_glium::{debug::IntersectionIndicator, shaders::Shaders, shape::Shape},
+    visuals_glium as vis,
 };
 
 //
 
 pub struct Resources {
-    pub display: glium::Display,
     pub events: glutin::EventsLoop,
-    pub shaders: Shaders,
     pub input_cache: InputCache,
     pub space: Space,
-    pub intersection_vis: IntersectionIndicator,
+    pub intersection_vis: vis::debug::IntersectionIndicator,
 }
 
 fn main() {
@@ -40,14 +38,7 @@ fn main() {
 }
 
 pub fn init_resources() -> Resources {
-    let events = glutin::EventsLoop::new();
-    let window = glutin::WindowBuilder::new()
-        .with_title("MoleEngine test")
-        .with_dimensions(glutin::dpi::LogicalSize::new(800.0, 600.0));
-    let context = glutin::ContextBuilder::new();
-    let display = glium::Display::new(window, context, &events).expect("Failed to create display");
-
-    let shaders = Shaders::compile(&display).expect("Failed to compile shader");
+    let events = unsafe { vis::Context::init() };
 
     let mut input_cache = InputCache::new();
     {
@@ -59,19 +50,17 @@ pub fn init_resources() -> Resources {
 
     let mut space = Space::with_capacity(100);
     space
-        .add_container::<Shape, VecStorage<_>>()
+        .add_container::<vis::Shape, VecStorage<_>>()
         .add_container::<Transform, VecStorage<_>>()
         .add_container::<Collider, VecStorage<_>>()
         .add_container::<RigidBody, VecStorage<_>>()
         .add_container::<KeyboardControls, VecStorage<_>>()
         .init_global_state::<Vec<CollisionEvent>>(Vec::new());
 
-    let intersection_vis = IntersectionIndicator::new(&display, 50);
+    let intersection_vis = vis::debug::IntersectionIndicator::new(&vis::Context::get().display, 50);
 
     Resources {
-        display,
         events,
-        shaders,
         input_cache,
         space,
         intersection_vis,
