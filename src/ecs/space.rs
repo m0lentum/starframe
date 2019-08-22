@@ -95,6 +95,7 @@ impl Space {
         }
     }
 
+    /// Spawn an object using an ObjectRecipe.
     pub fn spawn(&mut self, recipe: impl ObjectRecipe) {
         recipe.spawn(self.create_object());
     }

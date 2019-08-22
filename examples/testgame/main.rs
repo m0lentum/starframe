@@ -30,6 +30,9 @@ fn main() {
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
 
+    recipes::test_ser();
+    recipes::test_deser();
+
     let res = init_resources();
     states::begin(res);
 

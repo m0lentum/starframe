@@ -1,5 +1,7 @@
 pub mod space;
-pub use space::{Space, ObjectHandle, ObjectRecipe};
+pub use space::{ObjectHandle, ObjectRecipe, Space};
+
+mod deserialize;
 
 pub mod componentcontainer;
 

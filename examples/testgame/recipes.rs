@@ -1,7 +1,36 @@
 use crate::controls::KeyboardControls;
 use moleengine::{ecs, physics2d as phys, util::Transform, visuals_glium as vis};
 
-#[derive(Clone, Copy)]
+pub fn test_ser() {
+    let blok = StaticBlock {
+        width: 100.0,
+        height: 50.0,
+        transform: Transform::from_coords(-50.0, -250.0),
+    };
+
+    println!(
+        "{}",
+        ron::ser::to_string_pretty(&blok, Default::default()).unwrap()
+    );
+}
+
+pub fn test_deser() {
+    let blok: StaticBlock = ron::de::from_str(
+        "StaticBlock(
+            width: 100.0,
+            height: 50.0,
+            transform: (
+                position: (-50, -250),
+                rotation: 45,
+            ),
+        )",
+    )
+    .unwrap();
+
+    println!("{:?}", blok);
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct StaticBlock {
     pub width: f32,
     pub height: f32,

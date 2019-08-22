@@ -12,27 +12,24 @@ anymap = "0.12.1"
 parking_lot = "0.9.0"
 lazy_static = "1.3.0"
 shrinkwraprs = "0.2.1"
-
-[dependencies.moleengine_ecs_codegen]
-path = "./ecs_codegen"
-optional = true
-
-[dependencies.glium]
-version = "0.25.1"
-optional = true
+moleengine_ecs_codegen = { optional = true, path = "./ecs_codegen" }
+glium = { optional = true, version = "0.25.1" }
+serde = { optional = true, features = ["derive"], version = "1.0.99" }
+ron = { optional = true, version = "0.5.1" }
 
 [dev-dependencies]
 microprofile = "0.2.1"
 rand = "0.7.0"
 
 [features]
-ecs = ["moleengine_ecs_codegen"]
+ecs = ["moleengine_ecs_codegen", "serde"]
+ron-recipes = ["ecs", "nalgebra/serde-serialize", "serde", "ron"]
 physics2d = []
 visuals_glium = ["glium"]
 debug_visuals = []
 
-default = ["ecs", "physics2d", "visuals_glium"]
-all = ["ecs", "physics2d", "visuals_glium", "debug_visuals"]
+default = ["ecs", "ron-recipes", "physics2d", "visuals_glium"]
+all = ["ecs", "ron-recipes", "physics2d", "visuals_glium", "debug_visuals"]
 
 [[example]]
 name = "testgame"

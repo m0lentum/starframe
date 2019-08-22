@@ -5,8 +5,11 @@ use std::f32::consts::PI;
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
 /// All Similarity2 methods and members can be accessed from a Transform reference thanks to shrinkwraprs.
 /// See https://www.nalgebra.org/rustdoc/nalgebra/geometry/struct.Similarity.html
-#[derive(Clone, Copy, shrinkwraprs::Shrinkwrap)]
+#[derive(Clone, Copy, Debug, shrinkwraprs::Shrinkwrap)]
 #[shrinkwrap(mutable)]
+#[cfg_attr(feature = "ron-recipes", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "ron-recipes", serde(from = "SerializeIntermediary"))]
+#[cfg_attr(feature = "ron-recipes", serde(into = "SerializeIntermediary"))]
 pub struct Transform(pub Similarity2<f32>);
 
 impl Transform {
@@ -106,5 +109,40 @@ impl Transform {
 impl Default for Transform {
     fn default() -> Self {
         Self::identity()
+    }
+}
+
+#[cfg(feature = "ron-recipes")]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct SerializeIntermediary {
+    position: [f32; 2],
+    rotation: f32,
+    scaling: f32,
+}
+
+impl Default for SerializeIntermediary {
+    fn default() -> Self {
+        Transform::default().into()
+    }
+}
+
+impl From<Transform> for SerializeIntermediary {
+    fn from(tr: Transform) -> Self {
+        SerializeIntermediary {
+            position: tr.position().coords.into(),
+            rotation: tr.rotation_deg(),
+            scaling: tr.scaling(),
+        }
+    }
+}
+
+impl From<SerializeIntermediary> for Transform {
+    fn from(s: SerializeIntermediary) -> Self {
+        Transform::new(
+            Vector2::from(s.position),
+            s.rotation * PI / 180.0,
+            s.scaling,
+        )
     }
 }
