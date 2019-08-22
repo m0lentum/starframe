@@ -11,9 +11,9 @@ mod test_events;
 use self::controls::KeyboardControls;
 use glium::glutin;
 use moleengine::{
-    ecs::{space::Space, storage::VecStorage},
-    physics2d::{Collider, CollisionEvent, RigidBody},
-    util::{inputcache::InputCache, Transform},
+    ecs::{self, storage::VecStorage},
+    physics2d as phys,
+    util::{InputCache, Transform},
     visuals_glium as vis,
 };
 
@@ -22,7 +22,7 @@ use moleengine::{
 pub struct Resources {
     pub events: glutin::EventsLoop,
     pub input_cache: InputCache,
-    pub space: Space,
+    pub space: ecs::Space,
     pub intersection_vis: vis::debug::IntersectionIndicator,
 }
 
@@ -48,14 +48,14 @@ pub fn init_resources() -> Resources {
         ]);
     }
 
-    let mut space = Space::with_capacity(100);
+    let mut space = ecs::Space::with_capacity(100);
     space
         .add_container::<vis::Shape, VecStorage<_>>()
         .add_container::<Transform, VecStorage<_>>()
-        .add_container::<Collider, VecStorage<_>>()
-        .add_container::<RigidBody, VecStorage<_>>()
+        .add_container::<phys::Collider, VecStorage<_>>()
+        .add_container::<phys::RigidBody, VecStorage<_>>()
         .add_container::<KeyboardControls, VecStorage<_>>()
-        .init_global_state::<Vec<CollisionEvent>>(Vec::new());
+        .init_global_state::<Vec<phys::CollisionEvent>>(Vec::new());
 
     let intersection_vis = vis::debug::IntersectionIndicator::new(&vis::Context::get().display, 50);
 

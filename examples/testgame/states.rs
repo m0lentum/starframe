@@ -3,19 +3,19 @@ use crate::{controls::*, recipes, Resources};
 use glium::{glutin, Surface};
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
-    ecs::space::Space,
+    ecs,
     physics2d::{
+        self as phys,
         collision::{broadphase, CollisionSolver},
-        forcefield::ForceField,
         integrator,
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
-        inputcache::*,
+        InputCache,
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
-    visuals_glium::{self as vis, shape::ShapeRenderer},
+    visuals_glium as vis,
 };
 
 use nalgebra::Vector2;
@@ -136,7 +136,7 @@ fn draw_space(res: &mut Resources) {
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
-    res.space.run_system(&mut ShapeRenderer {
+    res.space.run_system(&mut vis::ShapeRenderer {
         target: &mut target,
         shaders: &ctx.shaders,
     });
@@ -157,8 +157,8 @@ fn update_space(res: &mut Resources, dt: f32) {
         use broadphase::BruteForce;
         use integrator::SemiImplicitEuler;
         let fields = vec![
-            ForceField::gravity(Vector2::new(0.0, -250.0)),
-            ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
+            phys::ForceField::gravity(Vector2::new(0.0, -250.0)),
+            phys::ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
         ];
         res.space
             .run_system(&mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
@@ -169,7 +169,7 @@ fn update_space(res: &mut Resources, dt: f32) {
     }
 }
 
-pub fn reload_space(space: &mut Space) {
+pub fn reload_space(space: &mut ecs::Space) {
     space.destroy_all();
 
     space.spawn(recipes::Player {
@@ -185,7 +185,7 @@ pub fn reload_space(space: &mut Space) {
     make_walls(space);
 }
 
-fn make_walls(space: &mut Space) {
+fn make_walls(space: &mut ecs::Space) {
     let mut wall = recipes::StaticBlock {
         width: 20.0,
         height: 600.0,

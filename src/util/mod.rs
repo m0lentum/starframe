@@ -4,3 +4,4 @@ pub mod statemachine;
 mod transform;
 
 pub use transform::Transform;
+pub use inputcache::InputCache;
