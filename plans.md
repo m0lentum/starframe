@@ -14,6 +14,10 @@
 - preset recipes for common objects (can use as template for more specific stuff)
 - figure out a better way to add a lot of components at once when loading level
   (currently does a hashmap lookup and a RwLock write access for every single component)
+- additions to the RON level format:
+    - pools
+    - size
+    - component storage types
 ---
 - ~~LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)~~
     - Consider using RwLock::try_read instead of read for non-blocking failure on untimely access
@@ -51,9 +55,10 @@
     - attach to game objects (as a separate thing linked to the object somehow or component of the object itself?)
 
 **misc**
-- add loading level from file to the project template
 - try making an actual game with multiple levels, see how the
   design scales (level loading from RON? game state management
   between loading, playing and paused? etc etc)
-- ability to 1. set and 2. dynamically reload settings (screen size, keybinds etc.)
+- after this ^ write some more thorough documentation and examples
+- remake the project template
+- ability to set and dynamically reload settings (screen size, keybinds etc.)
 - some UI framework (conrod / imgui?) or write my own?
