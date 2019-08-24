@@ -493,6 +493,8 @@ pub trait ObjectRecipe {
     fn spawn(&self, handle: ObjectHandle);
 }
 
+/// Objects that can read recipes from RON and apply them to a Space.
+/// Implementations are auto-generated with the `ecs::recipes!` macro.
 #[cfg(feature = "ron-recipes")]
 pub trait DeserializeRecipes {
     fn deserialize_into_space<'a, 'de, D>(
