@@ -30,9 +30,6 @@ fn main() {
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
 
-    recipes::test_ser();
-    recipes::test_deser();
-
     let res = init_resources();
     states::begin(res);
 
@@ -51,7 +48,7 @@ pub fn init_resources() -> Resources {
         ]);
     }
 
-    let mut space = ecs::Space::with_capacity(100);
+    let mut space = ecs::Space::with_capacity(1000);
     space
         .add_container::<vis::Shape, VecStorage<_>>()
         .add_container::<Transform, VecStorage<_>>()

@@ -1,9 +1,6 @@
 **ECS**
 - serialize and deserialize levels using Serde
 - more storage types (see specs)
-- macro to create recipes with less verbosity
-    - this may also be able to remove a lot of complexity from the ObjectRecipe type:
-      a recipe can (maybe) be a single generated function
 - component containers should probably use Option instead of mem::uninitialized
   (at least try and see how much this affects performance)
 - better error reporting for Systems
@@ -15,6 +12,8 @@
     - alternatively, a macro (something like `run_systems_par!(space, system1, system2, ...))`)
 - reconsider Space builder syntax (use `cascade` instead?)
 - preset recipes for common objects (can use as template for more specific stuff)
+- figure out a better way to add a lot of components at once when loading level
+  (currently does a hashmap lookup and a RwLock write access for every single component)
 ---
 - ~~LockedAnyMap wrapper type to tidy up the syntax for Space-global state (AnyMap with everything RwLocked)~~
     - Consider using RwLock::try_read instead of read for non-blocking failure on untimely access
@@ -54,9 +53,7 @@
 **misc**
 - add loading level from file to the project template
 - try making an actual game with multiple levels, see how the
-  design scales (level loading from MES? game state management
+  design scales (level loading from RON? game state management
   between loading, playing and paused? etc etc)
 - ability to 1. set and 2. dynamically reload settings (screen size, keybinds etc.)
-
-**open questions**
 - some UI framework (conrod / imgui?) or write my own?

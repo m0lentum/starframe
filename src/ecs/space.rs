@@ -100,6 +100,21 @@ impl Space {
         recipe.spawn(self.create_object());
     }
 
+    /// Spawn objects described in a RON file into this Space.
+    #[cfg(feature = "ron-recipes")]
+    pub fn read_ron_file<R>(&mut self, file: std::fs::File) -> Result<(), ron::de::Error>
+    where
+        R: DeserializeRecipes,
+    {
+        let mut reader = std::io::BufReader::new(file);
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        reader.read_to_end(&mut bytes)?;
+
+        let mut deser = ron::de::Deserializer::from_bytes(bytes.as_slice())?;
+        R::deserialize_into_space(&mut deser, self)
+    }
+
     /// Creates a pool (see ObjectPool) of `count` objects created from the given recipe.
     /// Objects in the pool are disabled by default and can be enabled using `spawn_from_pool(key)`
 
@@ -476,6 +491,16 @@ impl<'a> ObjectHandle<'a> {
 /// An object recipe produces a specific kind of game object.
 pub trait ObjectRecipe {
     fn spawn(&self, handle: ObjectHandle);
+}
+
+#[cfg(feature = "ron-recipes")]
+pub trait DeserializeRecipes {
+    fn deserialize_into_space<'a, 'de, D>(
+        deserializer: D,
+        space: &'a mut Space,
+    ) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>;
 }
 
 /// An AnyMap but with everything under a RwLock for concurrent interior mutable access.

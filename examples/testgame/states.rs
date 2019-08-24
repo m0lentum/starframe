@@ -11,9 +11,8 @@ use moleengine::{
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
-        InputCache,
         statemachine::{GameState, StateMachine, StateOp},
-        Transform,
+        InputCache, Transform,
     },
     visuals_glium as vis,
 };
@@ -172,40 +171,16 @@ fn update_space(res: &mut Resources, dt: f32) {
 pub fn reload_space(space: &mut ecs::Space) {
     space.destroy_all();
 
-    space.spawn(recipes::Player {
-        transform: Transform::identity(),
-    });
+    let dir = "./examples/testgame/scenes";
+
+    let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
+    space
+        .read_ron_file::<recipes::Recipes>(file)
+        .expect("Failed to load scene");
 
     //space.create_pool("box", 20, {
     //    let mut rec = recipes.get("box").unwrap().clone();
     //    rec.modify_variable(|sh: &mut Shape| sh.set_color([0.4, 0.8, 0.5, 1.0]));
     //    rec
     //});
-
-    make_walls(space);
-}
-
-fn make_walls(space: &mut ecs::Space) {
-    let mut wall = recipes::StaticBlock {
-        width: 20.0,
-        height: 600.0,
-        transform: Transform::from_coords(-400.0, 0.0),
-    };
-    space.spawn(wall.clone());
-
-    wall.transform.set_translation(Vector2::new(400.0, 0.0));
-    space.spawn(wall.clone());
-
-    wall.height = 800.0;
-    wall.transform.rotate_deg(90.0);
-    wall.transform.set_translation(Vector2::new(0.0, 300.0));
-    space.spawn(wall.clone());
-
-    wall.transform.set_translation(Vector2::new(0.0, -300.0));
-    space.spawn(wall.clone());
-
-    // ramp
-    wall.transform.set_translation(Vector2::new(200.0, -200.0));
-    wall.transform.rotate_rad(std::f32::consts::PI / 8.0);
-    space.spawn(wall);
 }

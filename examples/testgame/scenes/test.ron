@@ -1,0 +1,30 @@
+[
+    Player ((
+        transform: ( position: (0, 0) ),
+    )),
+    DynamicBlock ((
+        width: 100, height: 80, transform: ( position: (100, -150) ),
+    )),
+    DynamicBlock ((
+        width: 130, height: 50, transform: ( position: (-200, 50), rotation: 30 ),
+    )),
+    DynamicBlock ((
+        width: 60, height: 100, transform: ( position: (0, 200), rotation: 60 ),
+    )),
+    // walls
+    StaticBlock (( 
+        width: 800, height: 20, transform: ( position: (0, 300) ),
+    )),
+    StaticBlock ((
+        width: 800, height: 20, transform: ( position: (0, -300) ),
+    )),
+    StaticBlock ((
+        width: 20, height: 600, transform: ( position: (400, 0) ),
+    )),
+    StaticBlock ((
+        width: 20, height: 600, transform: ( position: (-400, 0) ),
+    )),
+    StaticBlock ((
+        width: 600, height: 20, transform: ( position: (200, -200), rotation: 22.5 ),
+    ))
+]
