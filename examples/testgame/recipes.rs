@@ -73,7 +73,7 @@ impl ecs::ObjectRecipe for DynamicBlock {
             &vis::Context::get().display,
             self.width,
             self.height,
-            vis::ShapeStyle::Fill([0.5; 4]),
+            vis::ShapeStyle::Outline([1.0; 4]),
         ));
     }
 }
