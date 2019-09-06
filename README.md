@@ -13,7 +13,7 @@ Its primary focuses are cool physics tools and a simple interface that allows fo
 * Graphics
     * Simple 2D mesh rendering with [glium](https://github.com/glium/glium); heavily WIP
 
-See [plans.md](./plans.md) for notes on future developments.
+See the [issues](https://github.com/MoleTrooper/moleengine/issues) for notes on future developments.
 
 # Blog
 
