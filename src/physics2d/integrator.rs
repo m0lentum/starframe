@@ -1,5 +1,5 @@
 use super::Velocity;
-use crate::util::Transform;
+use crate::util::{Angle, Transform};
 
 pub enum IntegratorState {
     NeedsDerivatives,
@@ -48,7 +48,7 @@ impl Integrator for ExplicitEuler {
 
         for (tr, vel) in variables {
             tr.translate(self.timestep * vel.linear);
-            tr.rotate_rad(self.timestep * vel.angular);
+            tr.rotate(Angle::Radians(self.timestep * vel.angular));
         }
 
         self.done = true;
@@ -84,7 +84,7 @@ impl Integrator for SemiImplicitEuler {
 
         for (tr, vel) in variables {
             tr.translate(self.timestep * vel.linear);
-            tr.rotate_rad(self.timestep * vel.angular);
+            tr.rotate(Angle::Radians(self.timestep * vel.angular));
         }
 
         IntegratorState::Done

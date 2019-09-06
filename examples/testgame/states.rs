@@ -57,11 +57,11 @@ impl GameState<Resources> for StatePlaying {
                 res.space
                     .write_component(id, |tr: &mut Transform| {
                         let mut rng = rand::thread_rng();
-                        tr.set_translation(nalgebra::Vector2::new(
+                        tr.set_position(nalgebra::Vector2::new(
                             distr::Uniform::from(-300.0..300.0).sample(&mut rng),
                             distr::Uniform::from(0.0..200.0).sample(&mut rng),
                         ));
-                        tr.set_rotation_deg(distr::Uniform::from(0.0..360.0).sample(&mut rng));
+                        tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
                     })
                     .expect("No transform on the thing");
             }

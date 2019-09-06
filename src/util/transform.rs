@@ -2,6 +2,49 @@ use nalgebra::geometry::UnitComplex;
 use nalgebra::{Point2, Similarity2, Translation2, Vector2};
 use std::f32::consts::PI;
 
+/// An angle in either degrees or radians.
+/// Default conversion from f32 is in degrees.
+pub enum Angle {
+    Radians(f32),
+    Degrees(f32),
+}
+
+impl Angle {
+    /// Get the angle as degrees.
+    pub fn deg(&self) -> f32 {
+        match self {
+            Angle::Radians(rad) => rad * 180.0 / PI,
+            Angle::Degrees(deg) => *deg,
+        }
+    }
+
+    /// Get the angle as radians.
+    pub fn rad(&self) -> f32 {
+        match self {
+            Angle::Radians(rad) => *rad,
+            Angle::Degrees(deg) => deg * PI / 180.0,
+        }
+    }
+}
+
+impl From<f32> for Angle {
+    fn from(n: f32) -> Self {
+        Angle::Degrees(n)
+    }
+}
+
+impl From<UnitComplex<f32>> for Angle {
+    fn from(uc: UnitComplex<f32>) -> Self {
+        Angle::Radians(uc.angle())
+    }
+}
+
+impl Default for Angle {
+    fn default() -> Self {
+        Angle::Radians(0.0)
+    }
+}
+
 /// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
 /// All Similarity2 methods and members can be accessed from a Transform reference thanks to shrinkwraprs.
 /// See https://www.nalgebra.org/rustdoc/nalgebra/geometry/struct.Similarity.html
@@ -19,33 +62,22 @@ impl Transform {
     }
 
     /// Create a new Transform with an initial position, rotation and scale.
-    pub fn new(translation: Vector2<f32>, rotation: f32, scale: f32) -> Self {
-        Transform(Similarity2::new(translation, rotation, scale))
+    pub fn new(position: impl Into<Vector2<f32>>, rotation: impl Into<Angle>, scale: f32) -> Self {
+        Transform(Similarity2::new(
+            position.into(),
+            rotation.into().rad(),
+            scale,
+        ))
     }
 
     /// Create a transform with just a position.
-    pub fn from_position(pos: Point2<f32>) -> Self {
-        Self::new(pos.coords, 0.0, 1.0)
+    pub fn from_position(pos: impl Into<Vector2<f32>>) -> Self {
+        Self::new(pos.into(), Angle::default(), 1.0)
     }
 
-    /// Like `from_position`, but with the position expressed as a Vector2.
-    pub fn from_translation(vec: Vector2<f32>) -> Self {
-        Self::new(vec, 0.0, 1.0)
-    }
-
-    /// Like `from_position`, bbut with the position expressed as two floats.
-    pub fn from_coords(x: f32, y: f32) -> Self {
-        Self::new(Vector2::new(x, y), 0.0, 1.0)
-    }
-
-    /// Create a transform with just a rotation, expressed in radians.
-    pub fn from_rotation_rad(angle: f32) -> Self {
+    /// Create a transform with just a rotation.
+    pub fn from_rotation(angle: impl Into<Angle>) -> Self {
         Self::new(Vector2::zeros(), angle, 1.0)
-    }
-
-    /// Create a transform with just a rotation, expressed in degrees.
-    pub fn from_rotation_deg(angle: f32) -> Self {
-        Self::from_rotation_rad(angle * PI / 180.0)
     }
 
     /// Create a transform with just a scaling.
@@ -53,13 +85,13 @@ impl Transform {
         Transform(Similarity2::from_scaling(s))
     }
 
-    pub fn translate(&mut self, amount: Vector2<f32>) {
+    pub fn translate(&mut self, amount: impl Into<Vector2<f32>>) {
         self.isometry
-            .append_translation_mut(&Translation2::from(amount));
+            .append_translation_mut(&Translation2::from(amount.into()));
     }
 
-    pub fn set_translation(&mut self, pos: Vector2<f32>) {
-        self.isometry.translation = nalgebra::Translation2::from(pos);
+    pub fn set_position(&mut self, pos: impl Into<Vector2<f32>>) {
+        self.isometry.translation = nalgebra::Translation2::from(pos.into());
     }
 
     /// Position as a Vector2.
@@ -72,29 +104,17 @@ impl Transform {
         Point2::from(self.translation())
     }
 
-    pub fn rotate_rad(&mut self, angle: f32) {
+    pub fn rotate(&mut self, angle: impl Into<Angle>) {
         self.isometry
-            .append_rotation_wrt_center_mut(&UnitComplex::new(angle));
+            .append_rotation_wrt_center_mut(&UnitComplex::new(angle.into().rad()));
     }
 
-    pub fn rotate_deg(&mut self, angle: f32) {
-        self.rotate_rad(angle * PI / 180.0);
+    pub fn rotation(&self) -> Angle {
+        Angle::Radians(self.isometry.rotation.angle())
     }
 
-    pub fn rotation_rad(&self) -> f32 {
-        self.isometry.rotation.angle()
-    }
-
-    pub fn rotation_deg(&self) -> f32 {
-        self.isometry.rotation.angle() * 180.0 / PI
-    }
-
-    pub fn set_rotation_rad(&mut self, angle: f32) {
-        self.isometry.rotation = UnitComplex::new(angle);
-    }
-
-    pub fn set_rotation_deg(&mut self, angle: f32) {
-        self.set_rotation_rad(angle * PI / 180.0);
+    pub fn set_rotation(&mut self, angle: impl Into<Angle>) {
+        self.isometry.rotation = UnitComplex::new(angle.into().rad());
     }
 
     pub fn scale(&mut self, factor: f32) {
@@ -131,7 +151,7 @@ impl From<Transform> for SerializeIntermediary {
     fn from(tr: Transform) -> Self {
         SerializeIntermediary {
             position: tr.position().coords.into(),
-            rotation: tr.rotation_deg(),
+            rotation: tr.rotation().deg(),
             scaling: tr.scaling(),
         }
     }
@@ -141,7 +161,7 @@ impl From<SerializeIntermediary> for Transform {
     fn from(s: SerializeIntermediary) -> Self {
         Transform::new(
             Vector2::from(s.position),
-            s.rotation * PI / 180.0,
+            Angle::Degrees(s.rotation),
             s.scaling,
         )
     }
