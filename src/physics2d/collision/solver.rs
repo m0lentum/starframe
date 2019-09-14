@@ -118,12 +118,16 @@ where
             let pairs = B::pairs(iter);
             let mut contacts = Vec::new();
             for ids in pairs {
+                assert!(
+                    ids[0] != ids[1],
+                    "Broad phase bug: paired an object with itself"
+                );
                 // every id is in the map so this can't fail
                 let i = [
                     *id_index_map.get(&ids[0]).unwrap(),
                     *id_index_map.get(&ids[1]).unwrap(),
                 ];
-                // ids guaranteed unequal -> we can do this trick to get mutable ref to both
+                // ids unequal -> we can do this trick to get mutable ref to both
                 let objs = if i[0] < i[1] {
                     let (l, r) = items.split_at_mut(i[1]);
                     [&mut l[i[0]], &mut r[0]]
@@ -169,7 +173,7 @@ where
                 }
             }
 
-            // iterative impulse accumulation (projected Gauss-Seidel)
+            // iterative impulse accumulation
             for _ in 0..self.iterations {
                 for acc in contacts.iter_mut() {
                     let i = acc.indices;
@@ -195,26 +199,33 @@ where
 
                     let impulse_magnitude = relative_normal_vel / acc.inv_masses_sum;
 
+                    // clamp total accumulated to 0 (individual impulse can be negative)
+                    let new_total = acc.total_impulse + impulse_magnitude;
+                    let clamped_impulse = if new_total < 0.0 {
+                        acc.total_impulse = 0.0;
+                        impulse_magnitude - new_total
+                    } else {
+                        acc.total_impulse = new_total;
+                        impulse_magnitude
+                    };
+
                     // apply the impulse
-
-                    acc.total_impulse += impulse_magnitude;
-
                     if let Some(vel) = objs[0].body.velocity_mut() {
-                        vel.linear -= acc.inv_masses[0] * impulse_magnitude * *acc.contact.normal;
+                        vel.linear -= acc.inv_masses[0] * clamped_impulse * *acc.contact.normal;
                         vel.angular -= acc.inv_mom_inertias[0]
-                            * impulse_magnitude
+                            * clamped_impulse
                             * acc.offsets_cross_normals[0];
                     }
                     if let Some(vel) = objs[1].body.velocity_mut() {
-                        vel.linear += acc.inv_masses[1] * impulse_magnitude * *acc.contact.normal;
+                        vel.linear += acc.inv_masses[1] * clamped_impulse * *acc.contact.normal;
                         vel.angular += acc.inv_mom_inertias[1]
-                            * impulse_magnitude
+                            * clamped_impulse
                             * acc.offsets_cross_normals[1];
                     }
                 }
             }
 
-            // final cleaning up
+            // position projection
             for acc in contacts.iter() {
                 let i = acc.indices;
                 let objs = if i[0] < i[1] {
@@ -225,7 +236,6 @@ where
                     [&mut r[0], &mut l[i[1]]]
                 };
 
-                // position projection
                 let proj = acc.contact.depth * PROJECTION_AMOUNT * *acc.contact.normal;
                 match map_array_2(&objs, |o_| o_.body.responds_to_collisions()) {
                     [true, true] => {
@@ -235,21 +245,6 @@ where
                     [true, false] => objs[0].tr.translate(-proj),
                     [false, true] => objs[1].tr.translate(proj),
                     [false, false] => (),
-                }
-
-                // revert negative impulses
-                if acc.total_impulse >= 0.0 {
-                    continue;
-                }
-                if let Some(vel) = objs[0].body.velocity_mut() {
-                    vel.linear -= acc.inv_masses[0] * -acc.total_impulse * *acc.contact.normal;
-                    vel.angular -=
-                        acc.inv_mom_inertias[0] * -acc.total_impulse * acc.offsets_cross_normals[0];
-                }
-                if let Some(vel) = objs[1].body.velocity_mut() {
-                    vel.linear += acc.inv_masses[1] * -acc.total_impulse * *acc.contact.normal;
-                    vel.angular +=
-                        acc.inv_mom_inertias[1] * -acc.total_impulse * acc.offsets_cross_normals[1];
                 }
             }
 
