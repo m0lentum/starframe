@@ -82,7 +82,7 @@ pub(crate) struct EventPropagator<'a, E: SpaceEvent + 'static>(pub &'a E);
 
 impl<'a, E: SpaceEvent> EventPropagator<'a, E> {
     pub fn propagate(&self, space: &Space, queue: &mut EventQueue) {
-        space.run_filter(|items: &mut [EventListenerFilter<E>]| {
+        space.run_query(|items: &mut [EventListenerQuery<E>]| {
             for item in items {
                 item.l.run_listener(self.0, space, queue);
             }
@@ -90,7 +90,7 @@ impl<'a, E: SpaceEvent> EventPropagator<'a, E> {
     }
 }
 
-#[derive(ComponentFilter)]
-struct EventListenerFilter<'a, E: SpaceEvent + 'static> {
+#[derive(ComponentQuery)]
+struct EventListenerQuery<'a, E: SpaceEvent + 'static> {
     l: &'a mut EventListenerComponent<E>,
 }

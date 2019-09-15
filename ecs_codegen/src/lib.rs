@@ -21,10 +21,10 @@ use quote::quote;
 /// an IdType field with the #[id] attribute to identify objects,
 /// and a bool field with the #[enabled] attribute to identify the enabled/disabled state of an object.
 /// If an #[enabled] field is not provided, disabled objects will be filtered out.
-/// #Example
+/// # Example
 /// ```
-///#[derive(ComponentFilter)]
-///pub struct Filter<'a> {
+///#[derive(ComponentQuery)]
+///pub struct Query<'a> {
 ///    #[id] id: IdType,
 ///    #[enabled] is_enabled: bool,
 ///    mutable_thing: &'a mut Thing,
@@ -32,7 +32,7 @@ use quote::quote;
 ///    optional_thing: Option<&'a Something>,
 ///}
 ///```
-#[proc_macro_derive(ComponentFilter, attributes(id, enabled))]
+#[proc_macro_derive(ComponentQuery, attributes(id, enabled))]
 pub fn system_item(item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::ItemStruct);
     let ident = &input.ident;
@@ -45,16 +45,16 @@ pub fn system_item(item: TokenStream) -> TokenStream {
     for param in generics {
         match param {
             syn::GenericParam::Lifetime(def) => match lifetime {
-                Some(_) => panic!("Filter must have exactly one lifetime parameter"),
+                Some(_) => panic!("Query must have exactly one lifetime parameter"),
                 None => lifetime = Some(def),
             },
             syn::GenericParam::Type(t) => generics_idents.push(&t.ident),
             syn::GenericParam::Const(_) => {
-                panic!("Const type parameters aren't supported (yet?) on ComponentFilters")
+                panic!("Const type parameters aren't supported (yet?) on ComponentQueries")
             }
         }
     }
-    let lifetime = lifetime.expect("Filter must have exactly one lifetime parameter");
+    let lifetime = lifetime.expect("Query must have exactly one lifetime parameter");
     let lifetime_ident = &lifetime.lifetime;
 
     let mut container_vars = Vec::new();
@@ -88,10 +88,10 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                                 _ => panic!("Option must have angle bracketed arguments"),
                             }
                         } else {
-                            panic!("Filter must only contain reference and Option types (maybe you're missing a #[id] attribute?)")
+                            panic!("Query must only contain reference and Option types (maybe you're missing a #[id] attribute?)")
                         }
                     }
-                    _ => panic!("Filter must only contain reference and Option types (maybe you're missing a #[id] attribute?)"),
+                    _ => panic!("Query must only contain reference and Option types (maybe you're missing a #[id] attribute?)"),
                 };
                 let ty = &field_type_ref.elem;
 
@@ -162,7 +162,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
         }
     });
 
-    let disabled_filter = match enabled_field {
+    let disabled_query = match enabled_field {
         Some(_) => None,
         None => Some(quote! {
             let and_set = hibitset::BitSetAnd(and_set, space.get_enabled());
@@ -170,16 +170,16 @@ pub fn system_item(item: TokenStream) -> TokenStream {
     };
 
     let result = quote! {
-        impl<#generics> ComponentFilter<#lifetime> for #ident<#lifetime_ident, #(#generics_idents,)*>
+        impl<#generics> ComponentQuery<#lifetime> for #ident<#lifetime_ident, #(#generics_idents,)*>
         #where_clause
         {
-            fn run_filter(space: &moleengine::ecs::Space, mut f: impl FnOnce(&mut [Self])) -> Option<()> {
+            fn run_query(space: &moleengine::ecs::Space, mut f: impl FnOnce(&mut [Self])) -> Option<()> {
                 #(#accesses)*
 
                 let and_set = space.get_alive();
                 #(let and_set = hibitset::BitSetAnd(and_set, #users_idents);)*
 
-                #disabled_filter
+                #disabled_query
 
                 use hibitset::BitSetLike;
                 let iter = and_set.iter();

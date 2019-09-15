@@ -82,9 +82,9 @@ where
     I: Integrator,
     B: BroadPhase,
 {
-    type Filter = RigidBodyFilter<'a>;
+    type Query = RigidBodyQuery<'a>;
 
-    fn run_system(&mut self, items: &mut [Self::Filter], space: &Space, queue: &mut EventQueue) {
+    fn run_system(&mut self, items: &mut [Self::Query], space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
         if let Some(ff) = &self.forcefield {
             for item in items.iter_mut() {
@@ -281,15 +281,15 @@ where
     }
 }
 
-#[derive(ComponentFilter)]
-pub struct RigidBodyFilter<'a> {
+#[derive(ComponentQuery)]
+pub struct RigidBodyQuery<'a> {
     #[id]
     id: IdType,
     tr: &'a mut Transform,
     body: &'a mut RigidBody,
 }
 
-impl<'a> RigidBodyFilter<'a> {
+impl<'a> RigidBodyQuery<'a> {
     pub(self) fn as_collidable(&'a self) -> Collidable<'a> {
         Collidable {
             id: self.id,

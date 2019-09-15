@@ -111,17 +111,17 @@ pub struct ShapeRenderer<'a, S: Surface> {
     pub shaders: &'a Shaders,
 }
 
-/// The component filter for ShapeRenderer.
-#[derive(ComponentFilter)]
-pub struct ShapeFilter<'a> {
+/// The component query for ShapeRenderer.
+#[derive(ComponentQuery)]
+pub struct ShapeQuery<'a> {
     transform: &'a Transform,
     shape: &'a Shape,
 }
 
 impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
-    type Filter = ShapeFilter<'a>;
+    type Query = ShapeQuery<'a>;
 
-    fn run_system(&mut self, items: &mut [Self::Filter]) {
+    fn run_system(&mut self, items: &mut [Self::Query]) {
         // TODO dynamic view (must also adapt to changing window size)
         let view =
             nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0);

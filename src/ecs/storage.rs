@@ -18,7 +18,7 @@ pub trait ComponentStorage<T> {
     unsafe fn get_mut(&mut self, id: IdType) -> &mut T;
 
     /// Get an immutable raw pointer to a component.
-    /// This is used to allow ComponentFilters to circumvent some borrowing rules
+    /// This is used to allow ComponentQueries to circumvent some borrowing rules
     /// and create a slice of references.
     /// # Safety
     /// This is unsafe for the same reason as get and get_mut.

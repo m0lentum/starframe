@@ -2,7 +2,7 @@ use super::{
     componentcontainer::ComponentContainer,
     event::*,
     storage::{ComponentStorage, CreateWithCapacity, VecStorage},
-    system::{ComponentFilter, System},
+    system::{ComponentQuery, System},
     IdType,
 };
 
@@ -322,13 +322,13 @@ impl Space {
     /// Actually runs a system, giving it a queue to put events in if it wants to.
     fn actually_run_system<'a, S: System<'a>>(&self, system: &mut S) -> Option<EventQueue> {
         let mut queue = EventQueue::new();
-        let result = S::Filter::run_filter(self, |cs| system.run_system(cs, self, &mut queue));
+        let result = S::Query::run_query(self, |cs| system.run_system(cs, self, &mut queue));
         result.map(|()| queue)
     }
 
-    /// Helper function to make running stuff through a ComponentFilter more intuitive.
-    pub fn run_filter<'a, F: ComponentFilter<'a>>(&self, f: impl FnOnce(&mut [F])) -> Option<()> {
-        F::run_filter(self, f)
+    /// Helper function to make running stuff through a ComponentQuery more intuitive.
+    pub fn run_query<'a, F: ComponentQuery<'a>>(&self, f: impl FnOnce(&mut [F])) -> Option<()> {
+        F::run_query(self, f)
     }
 
     /// Convenience method to make running new events from within events more intuitive.
@@ -364,7 +364,7 @@ impl Space {
     }
 
     /// Get a reference to the bitset of alive objects in this space.
-    /// Used by the ComponentFilter derive macro.
+    /// Used by the ComponentQuery derive macro.
     pub fn get_alive(&self) -> &BitSet {
         &self.alive_objects
     }
@@ -375,7 +375,7 @@ impl Space {
     }
 
     /// Get a reference to the bitset of enabled objects in this space.
-    /// Used by the ComponentFilter derive macro.
+    /// Used by the ComponentQuery derive macro.
     pub fn get_enabled(&self) -> &BitSet {
         &self.enabled_objects
     }
@@ -386,13 +386,13 @@ impl Space {
     }
 
     /// Get the generation value of a given object.
-    /// Used by the ComponentFilter derive macro.
+    /// Used by the ComponentQuery derive macro.
     pub fn get_gen(&self, id: IdType) -> u8 {
         self.generations[id]
     }
 
     /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
-    /// Used by the ComponentFilter derive macro.
+    /// Used by the ComponentQuery derive macro.
     pub fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
         self.containers.get::<ComponentContainer<T>>()
     }

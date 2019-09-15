@@ -5,7 +5,7 @@ use nalgebra::Vector2;
 #[derive(Copy, Clone)]
 pub struct KeyboardControls;
 
-#[derive(ComponentFilter)]
+#[derive(ComponentQuery)]
 pub struct PosVel<'a> {
     _marker: &'a KeyboardControls,
     body: &'a mut RigidBody,
@@ -20,8 +20,8 @@ impl<'a> KeyboardMover<'a> {
     }
 }
 impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
-    type Filter = PosVel<'a>;
-    fn run_system(&mut self, items: &mut [Self::Filter]) {
+    type Query = PosVel<'a>;
+    fn run_system(&mut self, items: &mut [Self::Query]) {
         if self.input.is_key_pressed(Key::LShift, None) {
             for item in items {
                 item.body.velocity_mut().map(|vel| {

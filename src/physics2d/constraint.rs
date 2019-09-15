@@ -12,5 +12,5 @@ pub enum ConstraintType {
 // potentially many implementations for this: Gauss-Seidel, Jacobi etc.
 // will need to study more to make a call on this one
 // pub trait ConstraintSolver {
-//     fn solve<'a>(items: &'a mut [RigidBodyFilter<'a>], contacts: &'a Collision);
+//     fn solve<'a>(items: &'a mut [RigidBodyQuery<'a>], contacts: &'a Collision);
 // }
