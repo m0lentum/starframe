@@ -3,6 +3,7 @@ use super::{
     event::*,
     storage::{ComponentStorage, CreateWithCapacity, VecStorage},
     system::{ComponentQuery, System},
+    ObjectRecipe,
     IdType,
 };
 
@@ -97,7 +98,7 @@ impl Space {
 
     /// Spawn an object using an ObjectRecipe.
     pub fn spawn(&mut self, recipe: impl ObjectRecipe) {
-        recipe.spawn(self.create_object());
+        recipe.spawn(&mut self.create_object());
     }
 
     /// Spawn objects described in a RON file into this Space.
@@ -463,7 +464,7 @@ impl<'a> ObjectHandle<'a> {
 
     /// Have the object initially disabled. You'll probably want some mechanism that
     /// enables it later (an object pool, usually).
-    pub fn start_disabled(&mut self) -> &mut Self {
+    pub fn disable(&mut self) -> &mut Self {
         self.space.actually_disable_object(self.id);
 
         self
@@ -486,11 +487,6 @@ impl<'a> ObjectHandle<'a> {
     pub fn id(&self) -> IdType {
         self.id
     }
-}
-
-/// An object recipe produces a specific kind of game object.
-pub trait ObjectRecipe {
-    fn spawn(&self, handle: ObjectHandle);
 }
 
 /// Objects that can read recipes from RON and apply them to a Space.

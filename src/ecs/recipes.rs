@@ -1,3 +1,9 @@
+/// An object recipe produces a specific kind of game object.
+pub trait ObjectRecipe {
+    fn spawn(&self, handle: &mut super::ObjectHandle);
+}
+
+
 #[macro_export]
 macro_rules! recipes {
     ($( $type_name:ident, )+) => {

@@ -14,7 +14,7 @@ pub struct Player {
 }
 
 impl ecs::ObjectRecipe for Player {
-    fn spawn(&self, mut obj: ecs::ObjectHandle) {
+    fn spawn(&self, obj: &mut ecs::ObjectHandle) {
         let width = 90.0;
         let height = 55.0;
         obj.add(self.transform);
@@ -40,7 +40,7 @@ pub struct StaticBlock {
 }
 
 impl ecs::ObjectRecipe for StaticBlock {
-    fn spawn(&self, mut obj: ecs::ObjectHandle) {
+    fn spawn(&self, obj: &mut ecs::ObjectHandle) {
         obj.add(self.transform);
         obj.add(phys::RigidBody::new_static(phys::Collider::new_rect(
             self.width,
@@ -63,7 +63,7 @@ pub struct DynamicBlock {
 }
 
 impl ecs::ObjectRecipe for DynamicBlock {
-    fn spawn(&self, mut obj: ecs::ObjectHandle) {
+    fn spawn(&self, obj: &mut ecs::ObjectHandle) {
         obj.add(self.transform);
         obj.add(phys::RigidBody::new_dynamic(
             phys::Collider::new_rect(self.width, self.height),

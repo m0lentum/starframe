@@ -1,9 +1,10 @@
 pub mod space;
-pub use space::{ObjectHandle, ObjectRecipe, Space};
+pub use space::{ObjectHandle, Space};
 
 #[cfg(feature = "ron-recipes")]
 mod recipes;
 pub use crate::recipes;
+pub use recipes::ObjectRecipe;
 
 pub mod componentcontainer;
 
