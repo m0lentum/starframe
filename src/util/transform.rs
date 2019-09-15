@@ -132,6 +132,10 @@ impl Default for Transform {
     }
 }
 
+impl crate::ecs::DefaultStorage for Transform {
+    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
+}
+
 #[cfg(feature = "ron-recipes")]
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

@@ -1,7 +1,7 @@
 use super::{
     componentcontainer::ComponentContainer,
     event::*,
-    storage::{ComponentStorage, CreateWithCapacity, VecStorage},
+    storage::{ComponentStorage, CreateWithCapacity, DefaultStorage},
     system::{ComponentQuery, System},
     DeserializeRecipes, IdType, ObjectRecipe,
 };
@@ -128,7 +128,7 @@ impl Space {
     /// # Panics
     /// Panics if the given key is not associated with any pool
     /// or if a game object inside the pool has been destroyed.
-    pub fn spawn_from_pool(&mut self, key: &'static str) -> Option<IdType> {
+    pub fn spawn_from_pool(&mut self, key: &'static str) -> Option<ObjectHandle> {
         let pool = self
             .pools
             .get(key)
@@ -139,7 +139,7 @@ impl Space {
             !self.is_enabled(id)
         }) {
             self.enable_object(id);
-            Some(id)
+            Some(ObjectHandle { id, space: self })
         } else {
             None // no unused objects in pool
         }
@@ -149,7 +149,7 @@ impl Space {
     /// but there has to be a ComponentContainer for it in this Space.
     /// # Panics
     /// Panics if there is no ComponentContainer for this type in this Space.
-    pub(crate) fn create_component<T: 'static>(&mut self, id: IdType, comp: T) {
+    pub(self) fn create_component_unchecked<T: 'static>(&mut self, id: IdType, comp: T) {
         let gen = self.generations[id];
         let container = self
             .try_open_container_mut::<T>()
@@ -158,7 +158,7 @@ impl Space {
     }
 
     /// Create a component for an object. If there is no container for it, create one of type S.
-    pub(crate) fn create_component_safe<T, S>(&mut self, id: IdType, comp: T)
+    pub(self) fn create_component<T, S>(&mut self, id: IdType, comp: T)
     where
         T: 'static,
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
@@ -267,20 +267,19 @@ impl Space {
     }
 
     /// Run a single System on all objects with containers that match the System's types.
+    /// Returns None if a required component is missing.
     /// For more information see the moleengine_ecs_codegen crate.
-    /// # Panics
-    /// Panics if the System being run requires a component that doesn't have a container in this Space.
-    pub fn run_system<'a, S: System<'a>>(&mut self, system: &mut S) {
-        self.actually_run_system(system)
-            .expect("Attempted to run a System without all Components present")
-            .run_all(self);
-    }
-
-    /// Like run_system, but returns None instead of panicking if a required component is missing.
-    pub fn try_run_system<'a, S: System<'a>>(&mut self, system: &mut S) -> Option<()> {
+    pub fn run_system<'a, S: System<'a>>(&mut self, system: &mut S) -> Option<()> {
         self.actually_run_system(system).map(|mut evts| {
             evts.run_all(self);
         })
+    }
+
+    /// Like `run_system`, but panics if a required component is missing.
+    pub fn run_system_unchecked<'a, S: System<'a>>(&mut self, system: &mut S) {
+        self.actually_run_system(system)
+            .expect("Attempted to run a System without all Components present")
+            .run_all(self);
     }
 
     /// Like try_run_system, but instead of firing generated events immediately, returns them.
@@ -418,42 +417,36 @@ pub struct ObjectHandle<'a> {
 }
 
 impl<'a> ObjectHandle<'a> {
-    /// Add the given component to the Space and associate it with the object.
-    /// See Space::create_object for a usage example.
-    pub fn add<T: 'static>(&mut self, component: T) -> &mut Self {
-        self.space.create_component(self.id, component);
-
-        self
+    /// Add the given component to this object.
+    /// If there is no container for the component type in this space, one is added.
+    /// This requires the DefaultStorage type to be implemented for the type.
+    pub fn add<T>(&mut self, component: T)
+    where
+        T: DefaultStorage,
+    {
+        self.space
+            .create_component::<T, T::DefaultStorage>(self.id, component);
     }
 
-    /// Add the given EventListener to the Space and associate it with the object.
+    /// Add the given component to this object without checking for container existence.
+    /// This can be used without implementing DefaultStorage but requires
+    /// adding the container manually.
+    /// # Panics
+    /// Panics if a container for this type does not exist in the Space.
+    pub fn add_unchecked<T: 'static>(&mut self, component: T) {
+        self.space.create_component_unchecked(self.id, component);
+    }
+
+    /// Add the given EventListener to this object.
     /// Internally these are stored as components.
-    pub fn add_listener<E: SpaceEvent + 'static>(
-        &mut self,
-        listener: Box<dyn EventListener<E>>,
-    ) -> &mut Self {
-        self.add_safe::<_, VecStorage<_>>(EventListenerComponent(listener))
+    pub fn add_listener<E: SpaceEvent + 'static>(&mut self, listener: Box<dyn EventListener<E>>) {
+        self.add(EventListenerComponent(listener))
     }
 
     /// Have the object initially disabled. You'll probably want some mechanism that
     /// enables it later (an object pool, usually).
-    pub fn disable(&mut self) -> &mut Self {
+    pub fn disable(&mut self) {
         self.space.actually_disable_object(self.id);
-
-        self
-    }
-
-    /// Like `add`, but adds a storage to the Space first if one doesn't exist yet.
-    /// Creating the containers explicitly before adding objects is strongly encouraged
-    /// (i.e. don't use this unless you have a good reason!).
-    pub fn add_safe<T, S>(&mut self, component: T) -> &mut Self
-    where
-        T: 'static,
-        S: ComponentStorage<T> + CreateWithCapacity + 'static,
-    {
-        self.space.create_component_safe::<T, S>(self.id, component);
-
-        self
     }
 
     /// Get the id given to this object by the Space. This is rarely useful.

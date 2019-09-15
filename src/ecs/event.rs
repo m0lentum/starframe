@@ -78,6 +78,11 @@ impl EventQueue {
 #[shrinkwrap(mutable)]
 pub struct EventListenerComponent<E: SpaceEvent>(pub Box<dyn EventListener<E>>);
 
+impl<E: SpaceEvent + 'static> crate::ecs::DefaultStorage for EventListenerComponent<E> {
+    // TODO: change this to HashMapStorage once implemented
+    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
+}
+
 pub(crate) struct EventPropagator<'a, E: SpaceEvent + 'static>(pub &'a E);
 
 impl<'a, E: SpaceEvent> EventPropagator<'a, E> {

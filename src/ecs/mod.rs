@@ -9,6 +9,7 @@ pub use recipes::{DeserializeRecipes, ObjectRecipe};
 pub mod componentcontainer;
 
 pub mod storage;
+pub use storage::DefaultStorage;
 
 pub mod event;
 

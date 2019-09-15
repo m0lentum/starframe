@@ -5,6 +5,11 @@ use nalgebra::Vector2;
 #[derive(Copy, Clone)]
 pub struct KeyboardControls;
 
+impl moleengine::ecs::DefaultStorage for KeyboardControls {
+    // TODO: change this to NullStorage once implemented
+    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
+}
+
 #[derive(ComponentQuery)]
 pub struct PosVel<'a> {
     _marker: &'a KeyboardControls,

@@ -103,6 +103,11 @@ impl Shape {
     }
 }
 
+impl crate::ecs::DefaultStorage for Shape {
+    // TODO: change this to DenseVecStorage once implemented
+    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
+}
+
 /// System that draws Shapes on the screen.
 /// A Transform must also be present for the Shape to be drawn.
 /// See the ecs module for more information on Systems.

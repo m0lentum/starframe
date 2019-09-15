@@ -8,14 +8,8 @@ mod test_events;
 
 //
 
-use self::controls::KeyboardControls;
 use glium::glutin;
-use moleengine::{
-    ecs::{self, storage::VecStorage},
-    physics2d as phys,
-    util::{InputCache, Transform},
-    visuals_glium as vis,
-};
+use moleengine::{ecs, util::InputCache, visuals_glium as vis};
 
 //
 
@@ -47,11 +41,7 @@ pub fn init_resources() -> Resources {
         ]);
     }
 
-    let mut space = ecs::Space::with_capacity(1000);
-    space.add_container::<vis::Shape, VecStorage<_>>();
-    space.add_container::<Transform, VecStorage<_>>();
-    space.add_container::<phys::RigidBody, VecStorage<_>>();
-    space.add_container::<KeyboardControls, VecStorage<_>>();
+    let space = ecs::Space::with_capacity(1000);
 
     Resources {
         events,

@@ -53,18 +53,20 @@ impl GameState<Resources> for StatePlaying {
         }
 
         if res.input_cache.is_key_pressed(Key::S, Some(0)) {
-            if let Some(id) = res.space.spawn_from_pool("box") {
-                res.space
-                    .write_component(id, |tr: &mut Transform| {
-                        let mut rng = rand::thread_rng();
-                        tr.set_position(nalgebra::Vector2::new(
-                            distr::Uniform::from(-300.0..300.0).sample(&mut rng),
-                            distr::Uniform::from(0.0..200.0).sample(&mut rng),
-                        ));
-                        tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
-                    })
-                    .expect("No transform on the thing");
-            }
+            // TODO: rethink this when reimplementing pools
+
+            // if let Some(id) = res.space.spawn_from_pool("box") {
+            //     res.space
+            //         .write_component(id, |tr: &mut Transform| {
+            //             let mut rng = rand::thread_rng();
+            //             tr.set_position(nalgebra::Vector2::new(
+            //                 distr::Uniform::from(-300.0..300.0).sample(&mut rng),
+            //                 distr::Uniform::from(0.0..200.0).sample(&mut rng),
+            //             ));
+            //             tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
+            //         })
+            //         .expect("No transform on the thing");
+            // }
         }
 
         update_space(res, dt);
@@ -175,10 +177,4 @@ pub fn reload_space(space: &mut ecs::Space) {
     space
         .read_ron_file::<recipes::Recipes>(file)
         .expect("Failed to load scene");
-
-    //space.create_pool("box", 20, {
-    //    let mut rec = recipes.get("box").unwrap().clone();
-    //    rec.modify_variable(|sh: &mut Shape| sh.set_color([0.4, 0.8, 0.5, 1.0]));
-    //    rec
-    //});
 }

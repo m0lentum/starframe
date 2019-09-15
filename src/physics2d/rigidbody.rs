@@ -106,10 +106,9 @@ impl RigidBody {
         self.material.angular_drag = d;
         self
     }
-}
 
-// accessors
-impl RigidBody {
+    // accessors
+
     pub fn body(&self) -> &BodyType {
         &self.body
     }
@@ -176,6 +175,11 @@ impl RigidBody {
             _ => 0.0,
         }
     }
+}
+
+impl crate::ecs::DefaultStorage for RigidBody {
+    // TODO: change this to DenseVecStorage once implemented
+    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
 }
 
 /// This stores both a mass value and its inverse, because calculating inverse mass

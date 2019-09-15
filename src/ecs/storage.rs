@@ -46,6 +46,11 @@ pub trait CreateWithCapacity {
     fn with_capacity(cap: IdType) -> Self;
 }
 
+/// Trait describing the default storage type for a type when used as a component.
+pub trait DefaultStorage: Sized + 'static {
+    type DefaultStorage: ComponentStorage<Self> + CreateWithCapacity + 'static;
+}
+
 /// A sparse vector container. Components are stored in a single Vec
 /// indexed by their id. Unused positions in the vector are left uninitialized.
 pub struct VecStorage<T> {
