@@ -84,7 +84,7 @@ where
 {
     type Query = RigidBodyQuery<'a>;
 
-    fn run_system(&mut self, items: &mut [Self::Query], space: &Space, queue: &mut EventQueue) {
+    fn run_system(&mut self, items: &mut [Self::Query], _space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
         if let Some(ff) = &self.forcefield {
             for item in items.iter_mut() {
@@ -272,11 +272,6 @@ where
                 queue.push(Box::new(evt1));
                 queue.push(Box::new(evt2));
             }
-
-            // for visualization, TODO: remove when all collider types are done and shown to work
-            space.write_global_state(|colls| {
-                std::mem::replace(colls, events);
-            });
         }
     }
 }

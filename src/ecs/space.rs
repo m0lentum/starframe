@@ -3,13 +3,11 @@ use super::{
     event::*,
     storage::{ComponentStorage, CreateWithCapacity, VecStorage},
     system::{ComponentQuery, System},
-    ObjectRecipe,
-    IdType,
+    DeserializeRecipes, IdType, ObjectRecipe,
 };
 
 use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};
-use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::collections::HashMap;
 
 /// An Entity-Component-System environment.
@@ -21,7 +19,6 @@ pub struct Space {
     capacity: IdType,
     containers: AnyMap,
     pools: HashMap<&'static str, ObjectPool>,
-    global_state: LockedAnyMap,
 }
 
 impl Space {
@@ -35,35 +32,23 @@ impl Space {
             capacity,
             containers: AnyMap::new(),
             pools: HashMap::new(),
-            global_state: LockedAnyMap::new(),
         }
     }
 
     /// Add a component container to a space. The first type parameter determines the
     /// type of the component and the second the type of storage to hold it.
-    /// This returns &mut Self, so it can be chained like a builder.
     /// # Example
     /// ```
     /// let mut space = Space::with_capacity(100);
     /// space.add_container::<Position, VecStorage<_>>();
     /// ```
-    pub fn add_container<T, S>(&mut self) -> &mut Self
+    pub fn add_container<T, S>(&mut self)
     where
         T: 'static,
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
     {
         self.containers
             .insert(ComponentContainer::new::<S>(self.capacity));
-
-        self
-    }
-
-    /// Store some globally accessible state behind a RwLock in this space.
-    /// This method can be chained like a builder together with add_container.
-    pub fn init_global_state<S: 'static>(&mut self, state: S) -> &mut Self {
-        self.global_state.insert(state);
-
-        self
     }
 
     /// Reserves an object id for use and marks it as alive.
@@ -281,18 +266,6 @@ impl Space {
         }
     }
 
-    /// Execute a closure if this Space has the desired type of global state data.
-    pub fn read_global_state<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
-        let access = self.global_state.read::<T>()?;
-        Some(f(&access))
-    }
-
-    /// Like read_global_state, but with a mutable reference.
-    pub fn write_global_state<T: 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
-        let mut access = self.global_state.write::<T>()?;
-        Some(f(&mut access))
-    }
-
     /// Run a single System on all objects with containers that match the System's types.
     /// For more information see the moleengine_ecs_codegen crate.
     /// # Panics
@@ -486,39 +459,6 @@ impl<'a> ObjectHandle<'a> {
     /// Get the id given to this object by the Space. This is rarely useful.
     pub fn id(&self) -> IdType {
         self.id
-    }
-}
-
-/// Objects that can read recipes from RON and apply them to a Space.
-/// Implementations are auto-generated with the `ecs::recipes!` macro.
-#[cfg(feature = "ron-recipes")]
-pub trait DeserializeRecipes {
-    fn deserialize_into_space<'a, 'de, D>(
-        deserializer: D,
-        space: &'a mut Space,
-    ) -> Result<(), D::Error>
-    where
-        D: serde::Deserializer<'de>;
-}
-
-/// An AnyMap but with everything under a RwLock for concurrent interior mutable access.
-struct LockedAnyMap(AnyMap);
-
-impl LockedAnyMap {
-    pub fn new() -> Self {
-        LockedAnyMap(AnyMap::new())
-    }
-
-    pub fn insert<T: 'static>(&mut self, thing: T) {
-        self.0.insert(RwLock::new(thing));
-    }
-
-    pub fn read<T: 'static>(&self) -> Option<RwLockReadGuard<T>> {
-        Some(self.0.get::<RwLock<T>>()?.read())
-    }
-
-    pub fn write<T: 'static>(&self) -> Option<RwLockWriteGuard<T>> {
-        Some(self.0.get::<RwLock<T>>()?.write())
     }
 }
 

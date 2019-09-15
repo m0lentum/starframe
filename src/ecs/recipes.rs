@@ -3,6 +3,17 @@ pub trait ObjectRecipe {
     fn spawn(&self, handle: &mut super::ObjectHandle);
 }
 
+/// Objects that can read recipes from RON and apply them to a Space.
+/// Implementations are auto-generated with the `ecs::recipes!` macro.
+#[cfg(feature = "ron-recipes")]
+pub trait DeserializeRecipes {
+    fn deserialize_into_space<'a, 'de, D>(
+        deserializer: D,
+        space: &'a mut super::Space,
+    ) -> Result<(), D::Error>
+    where
+        D: serde::Deserializer<'de>;
+}
 
 #[macro_export]
 macro_rules! recipes {
@@ -12,7 +23,7 @@ macro_rules! recipes {
             $($type_name($type_name),)*
         }
 
-        impl moleengine::ecs::space::DeserializeRecipes for Recipes {
+        impl moleengine::ecs::DeserializeRecipes for Recipes {
             fn deserialize_into_space<'a, 'de, D>(
                 deserializer: D,
                 space: &'a mut ecs::Space,

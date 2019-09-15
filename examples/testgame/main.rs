@@ -23,7 +23,6 @@ pub struct Resources {
     pub events: glutin::EventsLoop,
     pub input_cache: InputCache,
     pub space: ecs::Space,
-    pub intersection_vis: vis::debug::IntersectionIndicator,
 }
 
 fn main() {
@@ -49,20 +48,14 @@ pub fn init_resources() -> Resources {
     }
 
     let mut space = ecs::Space::with_capacity(1000);
-    space
-        .add_container::<vis::Shape, VecStorage<_>>()
-        .add_container::<Transform, VecStorage<_>>()
-        .add_container::<phys::Collider, VecStorage<_>>()
-        .add_container::<phys::RigidBody, VecStorage<_>>()
-        .add_container::<KeyboardControls, VecStorage<_>>()
-        .init_global_state::<Vec<phys::CollisionEvent>>(Vec::new());
-
-    let intersection_vis = vis::debug::IntersectionIndicator::new(&vis::Context::get().display, 50);
+    space.add_container::<vis::Shape, VecStorage<_>>();
+    space.add_container::<Transform, VecStorage<_>>();
+    space.add_container::<phys::RigidBody, VecStorage<_>>();
+    space.add_container::<KeyboardControls, VecStorage<_>>();
 
     Resources {
         events,
         input_cache,
         space,
-        intersection_vis,
     }
 }

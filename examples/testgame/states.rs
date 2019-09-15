@@ -139,8 +139,6 @@ fn draw_space(res: &mut Resources) {
         target: &mut target,
         shaders: &ctx.shaders,
     });
-    //res.intersection_vis
-    //    .draw_space(&mut target, &res.space, [0.8, 0.1, 0.2, 1.0], &res.shaders);
 
     target.finish().unwrap();
 }

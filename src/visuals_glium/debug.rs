@@ -1,5 +1,4 @@
 use crate::{
-    ecs::space::Space,
     physics2d::CollisionEvent,
     visuals_glium::{Color, Shaders, Vertex2D},
 };
@@ -25,55 +24,51 @@ impl IntersectionIndicator {
         }
     }
 
-    /// Draws an indicator on all intersections reported by the Space.
-    /// This requires the Space to have data of the type `Vec<Collision>`.
-    pub fn draw_space<S: glium::Surface>(
+    /// Draws an indicator on all given collisions, used for debugging purposes.
+    pub fn draw<S: glium::Surface>(
         &mut self,
         target: &mut S,
-        space: &Space,
+        colls: &Vec<CollisionEvent>,
         color: Color,
         shaders: &Shaders,
     ) {
-        space.read_global_state(|colls: &Vec<CollisionEvent>| {
-            // update vertex buffer
+        // update vertex buffer
 
-            for (coll, verts) in colls
-                .iter()
-                .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
-            {
-                let normal_scaled = *coll.normal * COLL_INDICATOR_SIZE;
-                let tangent_scaled = nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
-                verts[0] = (coll.point + normal_scaled + tangent_scaled).into();
-                verts[1] = (coll.point - normal_scaled - tangent_scaled).into();
-                verts[2] = (coll.point + normal_scaled - tangent_scaled).into();
-                verts[3] = (coll.point - normal_scaled + tangent_scaled).into();
-                verts[4] = coll.point.into();
-                verts[5] = (coll.point + (*coll.normal * coll.depth)).into();
-            }
+        for (coll, verts) in colls
+            .iter()
+            .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
+        {
+            let normal_scaled = *coll.normal * COLL_INDICATOR_SIZE;
+            let tangent_scaled = nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
+            verts[0] = (coll.point + normal_scaled + tangent_scaled).into();
+            verts[1] = (coll.point - normal_scaled - tangent_scaled).into();
+            verts[2] = (coll.point + normal_scaled - tangent_scaled).into();
+            verts[3] = (coll.point - normal_scaled + tangent_scaled).into();
+            verts[4] = coll.point.into();
+            verts[5] = (coll.point + (*coll.normal * coll.depth)).into();
+        }
 
-            // draw
+        // draw
 
-            // TODO: view should be saved in a Space probably, also consider a vertex buffer storage thingy that also goes in a Space and is shared by all batched drawing systems???
-            // also scale being less than 1 looks to be fucking up my penetration depth calculation
-            let view: [[f32; 3]; 3] =
-                nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0)
-                    .into();
-            let uniforms = glium::uniform! {
-                model_view: view,
-                color: color,
-            };
+        // TODO: view should be saved in a Space probably, also consider a vertex buffer storage thingy that also goes in a Space and is shared by all batched drawing systems???
+        let view: [[f32; 3]; 3] =
+            nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0)
+                .into();
+        let uniforms = glium::uniform! {
+            model_view: view,
+            color: color,
+        };
 
-            target
-                .draw(
-                    self.vb
-                        .slice(..(colls.len() * VERTS_PER_INDICATOR).min(self.vb.len()))
-                        .expect("Range error on IntersectionIndicator vertex buffer"),
-                    glium::index::NoIndices(glium::index::PrimitiveType::LinesList),
-                    &shaders.ortho_2d,
-                    &uniforms,
-                    &Default::default(),
-                )
-                .expect("IntersectionIndicator drawing failed");
-        });
+        target
+            .draw(
+                self.vb
+                    .slice(..(colls.len() * VERTS_PER_INDICATOR).min(self.vb.len()))
+                    .expect("Range error on IntersectionIndicator vertex buffer"),
+                glium::index::NoIndices(glium::index::PrimitiveType::LinesList),
+                &shaders.ortho_2d,
+                &uniforms,
+                &Default::default(),
+            )
+            .expect("IntersectionIndicator drawing failed");
     }
 }
