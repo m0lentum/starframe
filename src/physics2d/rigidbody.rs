@@ -161,7 +161,7 @@ impl RigidBody {
 
     pub fn inverse_mass(&self) -> f32 {
         match self.body {
-            BodyType::Dynamic { mass: m, .. } => m.get_inv(),
+            BodyType::Dynamic { mass: m, .. } => m.inv(),
             _ => 0.0,
         }
     }
@@ -171,7 +171,7 @@ impl RigidBody {
             BodyType::Dynamic {
                 moment_of_inertia: m,
                 ..
-            } => m.get_inv(),
+            } => m.inv(),
             _ => 0.0,
         }
     }
@@ -209,7 +209,7 @@ impl Mass {
         self.mass
     }
 
-    pub fn get_inv(self) -> f32 {
+    pub fn inv(self) -> f32 {
         self.inverse
     }
 }

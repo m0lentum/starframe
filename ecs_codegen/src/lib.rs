@@ -100,7 +100,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                         let access = quote! {
                             let #ident = space.try_open_container::<#ty>()?;
                             let mut #access_ident = #ident.write();
-                            let #users_ident = #ident.get_users();
+                            let #users_ident = #ident.users();
                         };
                         accesses.push(access);
 
@@ -123,7 +123,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                         let access = quote! {
                             let #ident = space.try_open_container::<#ty>()?;
                             let #access_ident = #ident.read();
-                            let #users_ident = #ident.get_users();
+                            let #users_ident = #ident.users();
                         };
                         accesses.push(access);
 
@@ -158,14 +158,14 @@ pub fn system_item(item: TokenStream) -> TokenStream {
 
     let enabled_setter = enabled_field.map(|ident| {
         quote! {
-            #ident: space.get_enabled().contains(id as u32),
+            #ident: space.enabled().contains(id as u32),
         }
     });
 
     let disabled_query = match enabled_field {
         Some(_) => None,
         None => Some(quote! {
-            let and_set = hibitset::BitSetAnd(and_set, space.get_enabled());
+            let and_set = hibitset::BitSetAnd(and_set, space.enabled());
         }),
     };
 
@@ -176,7 +176,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
             fn run_query(space: &moleengine::ecs::Space, mut f: impl FnOnce(&mut [Self])) -> Option<()> {
                 #(#accesses)*
 
-                let and_set = space.get_alive();
+                let and_set = space.alive();
                 #(let and_set = hibitset::BitSetAnd(and_set, #users_idents);)*
 
                 #disabled_query

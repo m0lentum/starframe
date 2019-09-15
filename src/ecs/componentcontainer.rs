@@ -32,7 +32,7 @@ impl<T> ComponentContainer<T> {
         self.write().insert(id, comp);
     }
 
-    pub fn get_users(&self) -> &BitSet {
+    pub fn users(&self) -> &BitSet {
         &self.users
     }
 

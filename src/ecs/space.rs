@@ -188,7 +188,7 @@ impl Space {
     }
 
     /// Actually destroy an object. This is used internally by LifecycleEvent::Destroy.
-    pub(crate) fn actually_destroy_object(&mut self, id: IdType) {
+    pub(self) fn actually_destroy_object(&mut self, id: IdType) {
         self.alive_objects.remove(id as u32);
     }
 
@@ -207,7 +207,7 @@ impl Space {
         LifecycleEvent::Disable(id).handle(self); // fire the event so event listeners can do things if they wish
     }
 
-    pub(crate) fn actually_disable_object(&mut self, id: IdType) {
+    pub(self) fn actually_disable_object(&mut self, id: IdType) {
         self.enabled_objects.remove(id as u32);
     }
 
@@ -226,7 +226,7 @@ impl Space {
         match self.try_open_container::<T>() {
             Some(cont) => {
                 self.alive_objects.contains(id as u32)
-                    && cont.get_users().contains(id as u32)
+                    && cont.users().contains(id as u32)
                     && self.generations[id] == cont.get_gen(id)
             }
             None => false,
@@ -239,7 +239,7 @@ impl Space {
     /// and is mainly used from EventListeners and for setting values on objects spawned from a pool.
     pub fn read_component<T: 'static, R>(&self, id: IdType, f: impl FnOnce(&T) -> R) -> Option<R> {
         let cont = self.try_open_container::<T>()?;
-        if cont.get_users().contains(id as u32)
+        if cont.users().contains(id as u32)
             && self.alive_objects.contains(id as u32)
             && self.generations[id] == cont.get_gen(id)
         {
@@ -256,7 +256,7 @@ impl Space {
         f: impl FnOnce(&mut T) -> R,
     ) -> Option<R> {
         let cont = self.try_open_container::<T>()?;
-        if cont.get_users().contains(id as u32)
+        if cont.users().contains(id as u32)
             && self.alive_objects.contains(id as u32)
             && self.generations[id] == cont.get_gen(id)
         {
@@ -335,7 +335,7 @@ impl Space {
 
     /// Get a reference to the bitset of alive objects in this space.
     /// Used by the ComponentQuery derive macro.
-    pub fn get_alive(&self) -> &BitSet {
+    pub fn alive(&self) -> &BitSet {
         &self.alive_objects
     }
 
@@ -346,7 +346,7 @@ impl Space {
 
     /// Get a reference to the bitset of enabled objects in this space.
     /// Used by the ComponentQuery derive macro.
-    pub fn get_enabled(&self) -> &BitSet {
+    pub fn enabled(&self) -> &BitSet {
         &self.enabled_objects
     }
 
@@ -392,13 +392,13 @@ impl SpaceEvent for LifecycleEvent {
                 space.actually_destroy_object(*id);
             }
             Disable(id) => {
-                if space.get_enabled().contains(*id as u32) {
+                if space.enabled().contains(*id as u32) {
                     space.run_listener(*id, self);
                     space.actually_disable_object(*id);
                 }
             }
             Enable(id) => {
-                if !space.get_enabled().contains(*id as u32) {
+                if !space.enabled().contains(*id as u32) {
                     space.actually_enable_object(*id);
                     space.run_listener(*id, self);
                 }
