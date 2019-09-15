@@ -137,7 +137,7 @@ fn draw_space(res: &mut Resources) {
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
-    res.space.run_system(&mut vis::ShapeRenderer {
+    res.space.run_system(vis::ShapeRenderer {
         target: &mut target,
         shaders: &ctx.shaders,
     });
@@ -149,7 +149,7 @@ fn update_space(res: &mut Resources, dt: f32) {
     microprofile::flip();
     microprofile::scope!("update", "all");
     res.space
-        .run_system(&mut KeyboardMover::new(&res.input_cache));
+        .run_system(KeyboardMover::new(&res.input_cache));
     {
         microprofile::scope!("update", "rigid body solver");
 
@@ -160,7 +160,7 @@ fn update_space(res: &mut Resources, dt: f32) {
             phys::ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
         ];
         res.space
-            .run_system(&mut CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
+            .run_system(CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
                 dt,
                 4,
                 Some(fields),

@@ -126,7 +126,7 @@ pub struct ShapeQuery<'a> {
 impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
     type Query = ShapeQuery<'a>;
 
-    fn run_system(&mut self, items: &mut [Self::Query]) {
+    fn run_system(self, items: &mut [Self::Query]) {
         // TODO dynamic view (must also adapt to changing window size)
         let view =
             nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0);

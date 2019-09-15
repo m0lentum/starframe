@@ -26,7 +26,7 @@ impl<'a> KeyboardMover<'a> {
 }
 impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
     type Query = PosVel<'a>;
-    fn run_system(&mut self, items: &mut [Self::Query]) {
+    fn run_system(self, items: &mut [Self::Query]) {
         if self.input.is_key_pressed(Key::LShift, None) {
             for item in items {
                 item.body.velocity_mut().map(|vel| {

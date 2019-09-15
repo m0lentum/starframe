@@ -10,19 +10,19 @@ pub use moleengine_ecs_codegen::*;
 /// Systems are executed within a Space with Space::(try_)run_system::<Type>().
 pub trait System<'a> {
     type Query: ComponentQuery<'a>;
-    fn run_system(&mut self, items: &mut [Self::Query], space: &Space, queue: &mut EventQueue);
+    fn run_system(self, items: &mut [Self::Query], space: &Space, queue: &mut EventQueue);
 }
 
 /// A simpler System interface useful to reduce boilerplate
 /// when implementing Systems which only use one query and don't produce events.
 pub trait SimpleSystem<'a> {
     type Query: ComponentQuery<'a>;
-    fn run_system(&mut self, items: &mut [Self::Query]);
+    fn run_system(self, items: &mut [Self::Query]);
 }
 
 impl<'a, S: SimpleSystem<'a>> System<'a> for S {
     type Query = S::Query;
-    fn run_system(&mut self, items: &mut [Self::Query], _s: &Space, _q: &mut EventQueue) {
+    fn run_system(self, items: &mut [Self::Query], _s: &Space, _q: &mut EventQueue) {
         <Self as SimpleSystem>::run_system(self, items);
     }
 }

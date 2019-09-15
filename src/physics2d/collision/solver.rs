@@ -84,7 +84,7 @@ where
 {
     type Query = RigidBodyQuery<'a>;
 
-    fn run_system(&mut self, items: &mut [Self::Query], _space: &Space, queue: &mut EventQueue) {
+    fn run_system(self, items: &mut [Self::Query], _space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
         if let Some(ff) = &self.forcefield {
             for item in items.iter_mut() {
