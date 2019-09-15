@@ -46,7 +46,7 @@ macro_rules! recipes {
                     {
                         while let Some(value) = seq.next_element()? {
                             match value {
-                                $(Recipes::$type_name(r) => self.0.spawn(r),)*
+                                $(Recipes::$type_name(r) => { self.0.spawn(r); },)*
                             }
                         }
 

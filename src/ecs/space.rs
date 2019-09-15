@@ -8,7 +8,7 @@ use super::{
 
 use anymap::AnyMap;
 use hibitset::{BitSet, BitSetLike};
-use std::collections::HashMap;
+use std::marker::PhantomData;
 
 /// An Entity-Component-System environment.
 pub struct Space {
@@ -18,7 +18,7 @@ pub struct Space {
     next_obj_id: IdType,
     capacity: IdType,
     containers: AnyMap,
-    pools: HashMap<&'static str, ObjectPool>,
+    pools: AnyMap,
 }
 
 impl Space {
@@ -31,7 +31,7 @@ impl Space {
             next_obj_id: 0,
             capacity,
             containers: AnyMap::new(),
-            pools: HashMap::new(),
+            pools: AnyMap::new(),
         }
     }
 
@@ -82,8 +82,10 @@ impl Space {
     }
 
     /// Spawn an object using an ObjectRecipe.
-    pub fn spawn(&mut self, recipe: impl ObjectRecipe) {
-        recipe.spawn(&mut self.create_object());
+    pub fn spawn(&mut self, recipe: impl ObjectRecipe) -> ObjectHandle {
+        let mut handle = self.create_object();
+        recipe.spawn(&mut handle);
+        handle
     }
 
     /// Spawn objects described in a RON file into this Space.
@@ -101,38 +103,40 @@ impl Space {
         R::deserialize_into_space(&mut deser, self)
     }
 
-    /// Creates a pool (see ObjectPool) of `count` objects created from the given recipe.
-    /// Objects in the pool are disabled by default and can be enabled using `spawn_from_pool(key)`
+    /// Creates a pool of `count` objects created from the given recipe.
+    /// An pool is a group of identical game objects that handles disabling and enabling said objects.
+    /// Pools should be used for objects which would otherwise be created and destroyed a lot, such as bullets.
+    /// When using a pool, disable your objects instead of destroying them so they can be respawned.
+    /// Otherwise accessing the pool will panic.
+    pub fn create_pool<R>(&mut self, count: IdType, recipe: R)
+    where
+        R: ObjectRecipe + Clone + 'static,
+    {
+        let pool = {
+            let mut ids = Vec::with_capacity(count);
+            for _ in 0..count {
+                let mut obj = self.spawn(recipe.clone());
+                obj.disable();
+                ids.push(obj.id());
+            }
 
-    // TODO: redo pools with the new recipe
+            ObjectPool {
+                ids,
+                _marker: PhantomData::<R>,
+            }
+        };
+        self.pools.insert(pool);
+    }
 
-    //pub fn create_pool(&mut self, key: &'static str, count: IdType, recipe: ObjectRecipe) {
-    //    let pool = {
-    //        let recipe = recipe.start_disabled();
-    //
-    //            let mut ids = Vec::with_capacity(count);
-    //            for _ in 0..count {
-    //                ids.push(
-    //                    recipe
-    //                        .try_apply(self)
-    //                        .expect("Could not create pool: Space was full"),
-    //                );
-    //            }
-    //
-    //            ObjectPool { ids }
-    //        };
-    //        self.pools.insert(key, pool);
-    //    }
-
-    /// Spawns an object from the pool with the given key and returns its id if successful.
+    /// Enables an object from the pool of the given type and returns a handle to it
+    /// or None if either the pool doesn't exist or all object from the pool are already active.
     /// # Panics
-    /// Panics if the given key is not associated with any pool
-    /// or if a game object inside the pool has been destroyed.
-    pub fn spawn_from_pool(&mut self, key: &'static str) -> Option<ObjectHandle> {
-        let pool = self
-            .pools
-            .get(key)
-            .unwrap_or_else(|| panic!("No pool exists with the key {}", key));
+    /// Panics if a game object inside the pool has been destroyed.
+    pub fn spawn_from_pool<R>(&mut self) -> Option<ObjectHandle>
+    where
+        R: ObjectRecipe + Clone + 'static,
+    {
+        let pool: &ObjectPool<R> = self.pools.get()?;
 
         if let Some(&id) = pool.ids.iter().find(|&&id| {
             assert!(self.is_alive(id), "A pooled game object has been destroyed");
@@ -452,14 +456,8 @@ impl<'a> ObjectHandle<'a> {
     }
 }
 
-/// An object pool is a group of identical game objects
-/// that handles disabling and enabling said objects.
-/// Pools should be used for objects which would otherwise be created and destroyed a lot, such as bullets.
-/// When using a pool, disable your objects instead of destroying them so they can be respawned.
-/// Otherwise accessing the pool will panic.
-///
-/// Pools should not be created directly. They are tied to specific Spaces and operated through
-/// the Space's interface with `create_pool` and `spawn_from_pool`.
-pub struct ObjectPool {
+// parameterized type to easily store in an AnyMap
+struct ObjectPool<R: ObjectRecipe> {
     pub(self) ids: Vec<IdType>,
+    pub(self) _marker: PhantomData<R>,
 }

@@ -53,20 +53,17 @@ impl GameState<Resources> for StatePlaying {
         }
 
         if res.input_cache.is_key_pressed(Key::S, Some(0)) {
-            // TODO: rethink this when reimplementing pools
-
-            // if let Some(id) = res.space.spawn_from_pool("box") {
-            //     res.space
-            //         .write_component(id, |tr: &mut Transform| {
-            //             let mut rng = rand::thread_rng();
-            //             tr.set_position(nalgebra::Vector2::new(
-            //                 distr::Uniform::from(-300.0..300.0).sample(&mut rng),
-            //                 distr::Uniform::from(0.0..200.0).sample(&mut rng),
-            //             ));
-            //             tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
-            //         })
-            //         .expect("No transform on the thing");
-            // }
+            if let Some(mut obj) = res.space.spawn_from_pool::<recipes::DynamicBlock>() {
+                let mut rng = rand::thread_rng();
+                obj.add(Transform::new(
+                    [
+                        distr::Uniform::from(-300.0..300.0).sample(&mut rng),
+                        distr::Uniform::from(0.0..200.0).sample(&mut rng),
+                    ],
+                    distr::Uniform::from(0.0..360.0).sample(&mut rng),
+                    1.0,
+                ));
+            }
         }
 
         update_space(res, dt);
@@ -148,8 +145,7 @@ fn draw_space(res: &mut Resources) {
 fn update_space(res: &mut Resources, dt: f32) {
     microprofile::flip();
     microprofile::scope!("update", "all");
-    res.space
-        .run_system(KeyboardMover::new(&res.input_cache));
+    res.space.run_system(KeyboardMover::new(&res.input_cache));
     {
         microprofile::scope!("update", "rigid body solver");
 
@@ -177,4 +173,13 @@ pub fn reload_space(space: &mut ecs::Space) {
     space
         .read_ron_file::<recipes::Recipes>(file)
         .expect("Failed to load scene");
+
+    space.create_pool(
+        50,
+        recipes::DynamicBlock {
+            width: 80.0,
+            height: 60.0,
+            transform: Default::default(),
+        },
+    );
 }
