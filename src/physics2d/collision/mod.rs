@@ -5,10 +5,10 @@ pub mod broadphase;
 
 mod collider;
 pub use collider::{Collider, ColliderShape};
-pub use solver::CollisionSolver;
 
 mod narrowphase;
 mod solver;
+pub use solver::{CollisionSolver, SolverLoopCondition};
 
 pub use crate::util::Transform;
 

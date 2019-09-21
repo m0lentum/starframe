@@ -6,7 +6,7 @@ use moleengine::{
     ecs,
     physics2d::{
         self as phys,
-        collision::{broadphase, CollisionSolver},
+        collision::{broadphase, CollisionSolver, SolverLoopCondition},
         integrator,
     },
     util::{
@@ -158,7 +158,10 @@ fn update_space(res: &mut Resources, dt: f32) {
         res.space
             .run_system(CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
                 dt,
-                4,
+                SolverLoopCondition::Convergence {
+                    threshold: 0.1,
+                    max_loops: 50,
+                },
                 Some(fields),
             ));
     }

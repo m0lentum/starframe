@@ -28,16 +28,30 @@ struct ContactAccumulator {
     total_impulse: f32,
 }
 
+/// Condition to stop iterating on the collision solver.
+/// Typically a fixed IterCount is used because it takes constant time.
+#[derive(Clone, Copy)]
+pub enum SolverLoopCondition {
+    IterCount(usize),
+    Convergence { threshold: f32, max_loops: usize },
+}
+
+impl From<usize> for SolverLoopCondition {
+    fn from(num: usize) -> Self {
+        SolverLoopCondition::IterCount(num)
+    }
+}
+
 /// A System that calculates movement for rigid bodies
 /// while taking collisions into account.
-/// Integrators and broad phase algorithms are interchangeable.
+/// Integrators and broad phase algorithms can be selected using type parameters.
 pub struct CollisionSolver<I, B>
 where
     I: Integrator,
     B: BroadPhase,
 {
     timestep: f32,
-    iterations: usize,
+    loop_condition: SolverLoopCondition,
     forcefield: Option<ForceField>,
     integrator_marker: PhantomData<I>,
     broad_phase_marker: PhantomData<B>,
@@ -48,14 +62,14 @@ where
     I: Integrator,
     B: BroadPhase,
 {
-    /// Create a CollisionSolver with the given timestep value.
-    /// When used with a constant timestep this can be called once and stored;
-    /// otherwise timestep should be updated every frame either by creating
-    /// a new solver with this function or using `set_timestep`.
-    pub fn new<F: Into<ForceField>>(timestep: f32, iterations: usize, ff: Option<F>) -> Self {
+    pub fn new<F: Into<ForceField>>(
+        timestep: f32,
+        cond: impl Into<SolverLoopCondition>,
+        ff: Option<F>,
+    ) -> Self {
         CollisionSolver {
             timestep,
-            iterations,
+            loop_condition: cond.into(),
             forcefield: ff.map(|f| f.into()),
             integrator_marker: PhantomData,
             broad_phase_marker: PhantomData,
@@ -174,7 +188,19 @@ where
             }
 
             // iterative impulse accumulation
-            for _ in 0..self.iterations {
+            let mut biggest_change = std::f32::MAX;
+            let mut loop_count = 0;
+            use SolverLoopCondition::*;
+            while match self.loop_condition {
+                IterCount(count) => loop_count < count,
+                Convergence {
+                    threshold,
+                    max_loops,
+                } => biggest_change > threshold && loop_count < max_loops,
+            } {
+                loop_count += 1;
+                biggest_change = 0.0;
+
                 for acc in contacts.iter_mut() {
                     let i = acc.indices;
                     let objs = if i[0] < i[1] {
@@ -198,6 +224,7 @@ where
                     let relative_normal_vel = normal_vels[0] - normal_vels[1];
 
                     let impulse_magnitude = relative_normal_vel / acc.inv_masses_sum;
+                    biggest_change = biggest_change.max(impulse_magnitude.abs());
 
                     // clamp total accumulated to 0 (individual impulse can be negative)
                     let new_total = acc.total_impulse + impulse_magnitude;
