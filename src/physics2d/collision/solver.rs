@@ -29,16 +29,22 @@ struct ContactAccumulator {
 }
 
 /// Condition to stop iterating on the collision solver.
-/// Typically a fixed IterCount is used because it takes constant time.
+/// Ends either when converging close enough to the actual solution (`convergence_threshold`)
+/// or after the given maximum number of loops, whichever comes first.
 #[derive(Clone, Copy)]
-pub enum SolverLoopCondition {
-    IterCount(usize),
-    Convergence { threshold: f32, max_loops: usize },
+pub struct SolverLoopCondition {
+    pub convergence_threshold: f32,
+    pub max_loops: usize,
 }
 
-impl From<usize> for SolverLoopCondition {
-    fn from(num: usize) -> Self {
-        SolverLoopCondition::IterCount(num)
+impl SolverLoopCondition {
+    /// Create a loop condition and set the converge threshold to zero.
+    /// Effectively means `max_loops` number of loops every update.
+    pub fn from_max_loops(max_loops: usize) -> Self {
+        SolverLoopCondition {
+            convergence_threshold: 0.0,
+            max_loops,
+        }
     }
 }
 
@@ -64,7 +70,7 @@ where
 {
     pub fn new<F: Into<ForceField>>(
         timestep: f32,
-        cond: impl Into<SolverLoopCondition>,
+        cond: SolverLoopCondition,
         ff: Option<F>,
     ) -> Self {
         CollisionSolver {
@@ -74,20 +80,6 @@ where
             integrator_marker: PhantomData,
             broad_phase_marker: PhantomData,
         }
-    }
-
-    /// Set the timestep on an exising CollisionSolver.
-    pub fn set_timestep(&mut self, timestep: f32) {
-        self.timestep = timestep;
-    }
-
-    /// Set the force field on an existing CollisionSolver.
-    pub fn set_forcefield<F: Into<ForceField>>(&mut self, ff: F) {
-        self.forcefield = Some(ff.into());
-    }
-
-    pub fn remove_forcefield(&mut self) {
-        self.forcefield = None;
     }
 }
 
@@ -190,14 +182,9 @@ where
             // iterative impulse accumulation
             let mut biggest_change = std::f32::MAX;
             let mut loop_count = 0;
-            use SolverLoopCondition::*;
-            while match self.loop_condition {
-                IterCount(count) => loop_count < count,
-                Convergence {
-                    threshold,
-                    max_loops,
-                } => biggest_change > threshold && loop_count < max_loops,
-            } {
+            while biggest_change > self.loop_condition.convergence_threshold
+                && loop_count < self.loop_condition.max_loops
+            {
                 loop_count += 1;
                 biggest_change = 0.0;
 
