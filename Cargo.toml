@@ -34,3 +34,6 @@ all = ["ecs", "ron-recipes", "physics2d", "visuals_glium", "debug_visuals"]
 [[example]]
 name = "testgame"
 required-features = ["all"]
+
+[profile.dev]
+opt-level = 1
