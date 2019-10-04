@@ -158,9 +158,10 @@ fn update_space(res: &mut Resources, dt: f32) {
         res.space
             .run_system(CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
                 dt,
+                &mut res.impulse_cache,
                 SolverLoopCondition {
-                    convergence_threshold: 0.5,
-                    max_loops: 30,
+                    convergence_threshold: 0.2,
+                    max_loops: 6,
                 },
                 Some(phys::ForceField::gravity(Vector2::new(0.0, -250.0))),
             ));

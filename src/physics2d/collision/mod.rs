@@ -8,7 +8,7 @@ pub use collider::{Collider, ColliderShape};
 
 mod narrowphase;
 mod solver;
-pub use solver::{CollisionSolver, SolverLoopCondition};
+pub use solver::{CollisionSolver, ImpulseCache, SolverLoopCondition};
 
 pub use crate::util::Transform;
 

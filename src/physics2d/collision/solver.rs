@@ -48,42 +48,83 @@ impl SolverLoopCondition {
     }
 }
 
+/// A container to store impulses across updates,
+/// used for warm starting the solver algorithm.
+pub struct ImpulseCache(HashMap<[IdType; 2], f32>);
+
+impl ImpulseCache {
+    pub fn new() -> Self {
+        ImpulseCache(HashMap::new())
+    }
+
+    pub(self) fn get(&self, ids: [IdType; 2]) -> Option<&f32> {
+        if ids[0] < ids[1] {
+            self.0.get(&ids)
+        } else {
+            self.0.get(&[ids[1], ids[0]])
+        }
+    }
+
+    pub(self) fn replace<'a>(&mut self, items: impl IntoIterator<Item = &'a ContactAccumulator>) {
+        self.0 = items
+            .into_iter()
+            .map(|acc| {
+                let ids = if acc.ids[0] < acc.ids[1] {
+                    acc.ids
+                } else {
+                    [acc.ids[1], acc.ids[0]]
+                };
+                (ids, acc.total_impulse)
+            })
+            .collect();
+    }
+}
+
+impl Default for ImpulseCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A System that calculates movement for rigid bodies
 /// while taking collisions into account.
 /// Integrators and broad phase algorithms can be selected using type parameters.
-pub struct CollisionSolver<I, B>
+pub struct CollisionSolver<'a, I, B>
 where
     I: Integrator,
     B: BroadPhase,
 {
     timestep: f32,
+    cache: &'a mut ImpulseCache,
     loop_condition: SolverLoopCondition,
     forcefield: Option<ForceField>,
-    integrator_marker: PhantomData<I>,
-    broad_phase_marker: PhantomData<B>,
+    _integrator_marker: PhantomData<I>,
+    _broad_phase_marker: PhantomData<B>,
 }
 
-impl<I, B> CollisionSolver<I, B>
+impl<'a, I, B> CollisionSolver<'a, I, B>
 where
     I: Integrator,
     B: BroadPhase,
 {
     pub fn new<F: Into<ForceField>>(
         timestep: f32,
+        cache: &'a mut ImpulseCache,
         cond: SolverLoopCondition,
         ff: Option<F>,
     ) -> Self {
         CollisionSolver {
             timestep,
+            cache,
             loop_condition: cond.into(),
             forcefield: ff.map(|f| f.into()),
-            integrator_marker: PhantomData,
-            broad_phase_marker: PhantomData,
+            _integrator_marker: PhantomData,
+            _broad_phase_marker: PhantomData,
         }
     }
 }
 
-impl<'a, I, B> System<'a> for CollisionSolver<I, B>
+impl<'a, I, B> System<'a> for CollisionSolver<'a, I, B>
 where
     I: Integrator,
     B: BroadPhase,
@@ -129,17 +170,21 @@ where
                     "Broad phase bug: paired an object with itself"
                 );
                 // every id is in the map so this can't fail
-                let i = [
+                let indices = [
                     *id_index_map.get(&ids[0]).unwrap(),
                     *id_index_map.get(&ids[1]).unwrap(),
                 ];
-                // ids unequal -> we can do this trick to get mutable ref to both
-                let objs = if i[0] < i[1] {
-                    let (l, r) = items.split_at_mut(i[1]);
-                    [&mut l[i[0]], &mut r[0]]
+
+                // sort by index so the following doesn't need comparison
+                let (ids, indices) = if indices[0] < indices[1] {
+                    (ids, indices)
                 } else {
-                    let (l, r) = items.split_at_mut(i[0]);
-                    [&mut r[0], &mut l[i[1]]]
+                    ([ids[1], ids[0]], [indices[1], indices[0]])
+                };
+                // ids guaranteed unequal -> we can do this trick to get mutable ref to both
+                let objs = {
+                    let (l, r) = items.split_at_mut(indices[1]);
+                    [&mut l[indices[0]], &mut r[0]]
                 };
 
                 if !objs[0].body.responds_to_collisions() && !objs[1].body.responds_to_collisions()
@@ -166,15 +211,33 @@ where
                         + (inv_mom_inertias[1]
                             * offsets_cross_normals[1]
                             * offsets_cross_normals[1]);
+
+                    // warm start
+                    let initial_impulse = if let Some(prev_impulse) = self.cache.get(ids) {
+                        if let Some(vel) = objs[0].body.velocity_mut() {
+                            vel.linear -= inv_masses[0] * prev_impulse * *contact.normal;
+                            vel.angular -=
+                                inv_mom_inertias[0] * prev_impulse * offsets_cross_normals[0];
+                        }
+                        if let Some(vel) = objs[1].body.velocity_mut() {
+                            vel.linear += inv_masses[1] * prev_impulse * *contact.normal;
+                            vel.angular +=
+                                inv_mom_inertias[1] * prev_impulse * offsets_cross_normals[1];
+                        }
+                        *prev_impulse
+                    } else {
+                        0.0
+                    };
+
                     contacts.push(ContactAccumulator {
                         ids,
-                        indices: i,
+                        indices,
                         contact,
                         inv_masses,
                         inv_mom_inertias,
                         inv_masses_sum,
                         offsets_cross_normals,
-                        total_impulse: 0.0,
+                        total_impulse: initial_impulse,
                     });
                 }
             }
@@ -189,13 +252,9 @@ where
                 biggest_change = 0.0;
 
                 for acc in contacts.iter_mut() {
-                    let i = acc.indices;
-                    let objs = if i[0] < i[1] {
-                        let (l, r) = items.split_at_mut(i[1]);
-                        [&mut l[i[0]], &mut r[0]]
-                    } else {
-                        let (l, r) = items.split_at_mut(i[0]);
-                        [&mut r[0], &mut l[i[1]]]
+                    let objs = {
+                        let (l, r) = items.split_at_mut(acc.indices[1]);
+                        [&mut l[acc.indices[0]], &mut r[0]]
                     };
 
                     let vels = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
@@ -241,13 +300,9 @@ where
 
             // position projection
             for acc in contacts.iter() {
-                let i = acc.indices;
-                let objs = if i[0] < i[1] {
-                    let (l, r) = items.split_at_mut(i[1]);
-                    [&mut l[i[0]], &mut r[0]]
-                } else {
-                    let (l, r) = items.split_at_mut(i[0]);
-                    [&mut r[0], &mut l[i[1]]]
+                let objs = {
+                    let (l, r) = items.split_at_mut(acc.indices[1]);
+                    [&mut l[acc.indices[0]], &mut r[0]]
                 };
 
                 let proj = acc.contact.depth * PROJECTION_AMOUNT * *acc.contact.normal;
@@ -261,6 +316,9 @@ where
                     [false, false] => (),
                 }
             }
+
+            // store impulses for next frame's warm start
+            self.cache.replace(&contacts);
 
             // events
             // TODO: only generate these if listeners are present?

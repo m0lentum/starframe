@@ -9,14 +9,15 @@ mod test_events;
 //
 
 use glium::glutin;
-use moleengine::{ecs, util::InputCache, visuals_glium as vis};
+use moleengine::{ecs, physics2d as phys, util::InputCache, visuals_glium as vis};
 
 //
 
 pub struct Resources {
     pub events: glutin::EventsLoop,
-    pub input_cache: InputCache,
     pub space: ecs::Space,
+    pub input_cache: InputCache,
+    pub impulse_cache: phys::collision::ImpulseCache,
 }
 
 fn main() {
@@ -43,9 +44,12 @@ pub fn init_resources() -> Resources {
 
     let space = ecs::Space::with_capacity(1000);
 
+    let impulse_cache = phys::collision::ImpulseCache::new();
+
     Resources {
         events,
-        input_cache,
         space,
+        input_cache,
+        impulse_cache,
     }
 }
