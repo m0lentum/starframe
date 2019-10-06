@@ -158,8 +158,6 @@ where
         ) {
             let iter = items.iter().map(|rbf| rbf.as_collidable());
 
-            let mut events = Vec::new();
-
             let pairs = B::pairs(iter);
             let mut contacts = Vec::new();
             for ids in pairs {
@@ -335,9 +333,6 @@ where
                     depth: contact.depth,
                     point: contact.point - contact.depth * *contact.normal,
                 };
-
-                events.push(evt1);
-                events.push(evt2);
 
                 queue.push(Box::new(evt1));
                 queue.push(Box::new(evt2));
