@@ -139,6 +139,13 @@ fn draw_space(res: &mut Resources) {
         shaders: &ctx.shaders,
     });
 
+    res.debug_vis.contact_indicator.draw(
+        &mut target,
+        &res.debug_vis.contact_cache,
+        [1.0, 0.0, 0.0, 1.0],
+        &ctx.shaders,
+    );
+
     target.finish().unwrap();
 }
 
@@ -151,8 +158,8 @@ fn update_space(res: &mut Resources, dt: f32) {
 
         use broadphase::BruteForce;
         use integrator::SemiImplicitEuler;
-        res.space
-            .run_system(CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
+        res.space.run_system(
+            CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
                 dt,
                 &mut res.impulse_cache,
                 SolverLoopCondition {
@@ -160,7 +167,9 @@ fn update_space(res: &mut Resources, dt: f32) {
                     max_loops: 6,
                 },
                 phys::ForceField::gravity(Vector2::new(0.0, -250.0)),
-            ));
+            )
+            .output_contacts(&mut res.debug_vis.contact_cache),
+        );
     }
 }
 

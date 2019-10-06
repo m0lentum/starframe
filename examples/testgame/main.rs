@@ -13,11 +13,17 @@ use moleengine::{ecs, physics2d as phys, util::InputCache, visuals_glium as vis}
 
 //
 
+pub struct DebugVisuals {
+    pub contact_cache: phys::collision::ContactOutput,
+    pub contact_indicator: vis::debug::ContactIndicator,
+}
+
 pub struct Resources {
     pub events: glutin::EventsLoop,
     pub space: ecs::Space,
     pub input_cache: InputCache,
     pub impulse_cache: phys::collision::ImpulseCache,
+    pub debug_vis: DebugVisuals,
 }
 
 fn main() {
@@ -46,10 +52,19 @@ pub fn init_resources() -> Resources {
 
     let impulse_cache = phys::collision::ImpulseCache::new();
 
+    //
+
+    let contact_cache = phys::collision::ContactOutput::new();
+    let contact_indicator = vis::debug::ContactIndicator::new(&vis::Context::get().display, 50);
+
     Resources {
         events,
         space,
         input_cache,
         impulse_cache,
+        debug_vis: DebugVisuals {
+            contact_cache,
+            contact_indicator,
+        },
     }
 }

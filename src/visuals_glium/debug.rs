@@ -1,5 +1,5 @@
 use crate::{
-    physics2d::CollisionEvent,
+    physics2d::collision::ContactOutput,
     visuals_glium::{Color, Shaders, Vertex2D},
 };
 use glium::{backend::Facade, uniform};
@@ -10,15 +10,15 @@ const VERTS_PER_INDICATOR: usize = 6;
 /// A System that draws indicators showing the location and depth of collisions.
 /// Should be run after collision detection.
 /// This needs persistent state because it holds a vertex buffer for rendering.
-pub struct IntersectionIndicator {
+pub struct ContactIndicator {
     vb: glium::VertexBuffer<Vertex2D>,
 }
 
-impl IntersectionIndicator {
+impl ContactIndicator {
     /// Reserves a vertex buffer with room for `capacity` indicators
-    /// and returns a new IntersectionIndicator containing it.
+    /// and returns a new ContactIndicator containing it.
     pub fn new<F: Facade + ?Sized>(facade: &F, capacity: usize) -> Self {
-        IntersectionIndicator {
+        ContactIndicator {
             vb: glium::VertexBuffer::empty_dynamic(facade, capacity * VERTS_PER_INDICATOR)
                 .expect("Failed to create vertex buffer"),
         }
@@ -28,13 +28,14 @@ impl IntersectionIndicator {
     pub fn draw<S: glium::Surface>(
         &mut self,
         target: &mut S,
-        colls: &Vec<CollisionEvent>,
+        contacts: &ContactOutput,
         color: Color,
         shaders: &Shaders,
     ) {
         // update vertex buffer
 
-        for (coll, verts) in colls
+        for (coll, verts) in contacts
+            .0
             .iter()
             .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
         {
@@ -50,7 +51,7 @@ impl IntersectionIndicator {
 
         // draw
 
-        // TODO: view should be saved in a Space probably, also consider a vertex buffer storage thingy that also goes in a Space and is shared by all batched drawing systems???
+        // TODO: un-hardcode the view matrix
         let view: [[f32; 3]; 3] =
             nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0)
                 .into();
@@ -62,13 +63,13 @@ impl IntersectionIndicator {
         target
             .draw(
                 self.vb
-                    .slice(..(colls.len() * VERTS_PER_INDICATOR).min(self.vb.len()))
-                    .expect("Range error on IntersectionIndicator vertex buffer"),
+                    .slice(..(contacts.0.len() * VERTS_PER_INDICATOR).min(self.vb.len()))
+                    .expect("Range error on ContactIndicator vertex buffer"),
                 glium::index::NoIndices(glium::index::PrimitiveType::LinesList),
                 &shaders.ortho_2d,
                 &uniforms,
                 &Default::default(),
             )
-            .expect("IntersectionIndicator drawing failed");
+            .expect("ContactIndicator drawing failed");
     }
 }

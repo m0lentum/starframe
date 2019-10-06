@@ -16,8 +16,8 @@ const PROJECTION_AMOUNT: f32 = 0.4;
 
 /// An intermediate structure that caches some information
 /// during impulse resolution and allows undoing negative impulses at the end.
-#[derive(Debug)]
-struct ContactAccumulator {
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ContactAccumulator {
     ids: [IdType; 2],
     indices: [usize; 2],
     contact: Contact,
@@ -80,9 +80,12 @@ impl ImpulseCache {
     }
 }
 
-impl Default for ImpulseCache {
-    fn default() -> Self {
-        Self::new()
+/// A CollisionSolver can optionally output detected contacts for e.g. debug visualization.
+pub struct ContactOutput(pub Vec<Contact>);
+
+impl ContactOutput {
+    pub fn new() -> Self {
+        ContactOutput(Vec::new())
     }
 }
 
@@ -95,9 +98,10 @@ where
     B: BroadPhase,
 {
     timestep: f32,
-    cache: &'a mut ImpulseCache,
+    impulse_cache: &'a mut ImpulseCache,
     loop_condition: SolverLoopCondition,
     forcefield: ForceField,
+    contact_out: Option<&'a mut ContactOutput>,
     _integrator_marker: PhantomData<I>,
     _broad_phase_marker: PhantomData<B>,
 }
@@ -109,18 +113,26 @@ where
 {
     pub fn new(
         timestep: f32,
-        cache: &'a mut ImpulseCache,
+        impulse_cache: &'a mut ImpulseCache,
         loop_condition: SolverLoopCondition,
         ff: impl Into<ForceField>,
     ) -> Self {
         CollisionSolver {
             timestep,
-            cache,
+            impulse_cache,
             loop_condition,
             forcefield: ff.into(),
+            contact_out: None,
             _integrator_marker: PhantomData,
             _broad_phase_marker: PhantomData,
         }
+    }
+
+    /// Give the solver a ContactOutput to write contacts to.
+    pub fn output_contacts(mut self, contact_out: &'a mut ContactOutput) -> Self {
+        contact_out.0.clear();
+        self.contact_out = Some(contact_out);
+        self
     }
 }
 
@@ -131,7 +143,7 @@ where
 {
     type Query = RigidBodyQuery<'a>;
 
-    fn run_system(self, items: &mut [Self::Query], _space: &Space, queue: &mut EventQueue) {
+    fn run_system(mut self, items: &mut [Self::Query], _space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
         for item in items.iter_mut() {
             if let Some(vel) = item.body.velocity_mut() {
@@ -188,7 +200,7 @@ where
                     continue;
                 }
 
-                // initialize accumulators, cache some calculations we don't need to repeat per iteration
+                // initialize accumulators, impulse_cache some calculations we don't need to repeat per iteration
                 for contact in intersection_check(objs[0].as_collidable(), objs[1].as_collidable())
                 {
                     let force_offsets =
@@ -209,7 +221,7 @@ where
                             * offsets_cross_normals[1]);
 
                     // warm start
-                    let initial_impulse = if let Some(prev_impulse) = self.cache.get(ids) {
+                    let initial_impulse = if let Some(prev_impulse) = self.impulse_cache.get(ids) {
                         if let Some(vel) = objs[0].body.velocity_mut() {
                             vel.linear -= inv_masses[0] * prev_impulse * *contact.normal;
                             vel.angular -=
@@ -235,6 +247,10 @@ where
                         offsets_cross_normals,
                         total_impulse: initial_impulse,
                     });
+
+                    if let Some(ref mut out) = self.contact_out {
+                        out.0.push(contact);
+                    }
                 }
             }
 
@@ -314,7 +330,7 @@ where
             }
 
             // store impulses for next frame's warm start
-            self.cache.replace(&contacts);
+            self.impulse_cache.replace(&contacts);
 
             // events
             // TODO: only generate these if listeners are present?
