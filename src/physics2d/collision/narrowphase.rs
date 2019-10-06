@@ -5,7 +5,7 @@ use nalgebra::{Point2, Unit, Vector2};
 use std::f32::consts::PI;
 
 /// determines how close to parallel two surfaces need to be to generate two contacts
-const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.02;
+const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
 
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
