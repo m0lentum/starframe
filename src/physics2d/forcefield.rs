@@ -25,6 +25,13 @@ impl ForceField {
             force: Box::new(move |_| f),
         }
     }
+
+    /// No force anywhere in space.
+    pub fn none() -> Self {
+        ForceField {
+            force: Box::new(|_| Vector2::zeros()),
+        }
+    }
 }
 
 impl From<Vec<ForceField>> for ForceField {

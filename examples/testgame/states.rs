@@ -151,10 +151,6 @@ fn update_space(res: &mut Resources, dt: f32) {
 
         use broadphase::BruteForce;
         use integrator::SemiImplicitEuler;
-        // let fields = vec![
-        //     phys::ForceField::gravity(Vector2::new(0.0, -250.0)),
-        //     phys::ForceField::from_fn(|p| Vector2::new(-p[0] / 2.0, 0.0)),
-        // ];
         res.space
             .run_system(CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
                 dt,
@@ -163,7 +159,7 @@ fn update_space(res: &mut Resources, dt: f32) {
                     convergence_threshold: 0.2,
                     max_loops: 6,
                 },
-                Some(phys::ForceField::gravity(Vector2::new(0.0, -250.0))),
+                phys::ForceField::gravity(Vector2::new(0.0, -250.0)),
             ));
     }
 }

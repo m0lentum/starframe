@@ -97,7 +97,7 @@ where
     timestep: f32,
     cache: &'a mut ImpulseCache,
     loop_condition: SolverLoopCondition,
-    forcefield: Option<ForceField>,
+    forcefield: ForceField,
     _integrator_marker: PhantomData<I>,
     _broad_phase_marker: PhantomData<B>,
 }
@@ -107,17 +107,17 @@ where
     I: Integrator,
     B: BroadPhase,
 {
-    pub fn new<F: Into<ForceField>>(
+    pub fn new(
         timestep: f32,
         cache: &'a mut ImpulseCache,
-        cond: SolverLoopCondition,
-        ff: Option<F>,
+        loop_condition: SolverLoopCondition,
+        ff: impl Into<ForceField>,
     ) -> Self {
         CollisionSolver {
             timestep,
             cache,
-            loop_condition: cond.into(),
-            forcefield: ff.map(|f| f.into()),
+            loop_condition,
+            forcefield: ff.into(),
             _integrator_marker: PhantomData,
             _broad_phase_marker: PhantomData,
         }
@@ -133,11 +133,9 @@ where
 
     fn run_system(self, items: &mut [Self::Query], _space: &Space, queue: &mut EventQueue) {
         // apply environment forces before solving collisions
-        if let Some(ff) = &self.forcefield {
-            for item in items.iter_mut() {
-                if let Some(vel) = item.body.velocity_mut() {
-                    vel.linear += ff.value_at(item.tr.position()) * self.timestep;
-                }
+        for item in items.iter_mut() {
+            if let Some(vel) = item.body.velocity_mut() {
+                vel.linear += self.forcefield.value_at(item.tr.position()) * self.timestep;
             }
         }
 
