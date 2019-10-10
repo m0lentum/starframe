@@ -23,12 +23,22 @@ pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec
     use ColliderShape::*;
     match (obj1.coll.shape(), obj2.coll.shape()) {
         (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(obj1.tr, *r1, obj2.tr, *r2),
-        (Circle { .. }, Rect { .. }) => vec![],
-        (Rect { .. }, Circle { .. }) => vec![],
+        (Rect { hw, hh }, Circle { r }) => rect_circle(obj1.tr, *hw, *hh, obj2.tr, *r),
+        (Circle { r }, Rect { hw, hh }) => {
+            flip_contacts(rect_circle(obj2.tr, *hw, *hh, obj1.tr, *r))
+        }
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
             rect_rect(obj1.tr, *hw1, *hh1, obj2.tr, *hw2, *hh2)
         }
     }
+}
+
+fn flip_contacts(mut contacts: Vec<Contact>) -> Vec<Contact> {
+    for c in &mut contacts {
+        c.point += c.depth * *c.normal;
+        c.normal = -c.normal;
+    }
+    contacts
 }
 
 fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Contact> {
@@ -60,6 +70,72 @@ fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Cont
         depth,
         point: pos1 + (normal.as_ref() * r1_s),
     }]
+}
+
+fn rect_circle(
+    tr_rect: &Transform,
+    hw: f32,
+    hh: f32,
+    tr_circle: &Transform,
+    r: f32,
+) -> Vec<Contact> {
+    let tr_c_wrt_rect = tr_rect.inverse() * tr_circle.0;
+    let dist = tr_c_wrt_rect * Point2::origin();
+    let dist_abs = Point2::new(dist.x.abs(), dist.y.abs());
+    let dist_signums = Point2::new(dist.x.signum(), dist.y.signum());
+    let r = tr_c_wrt_rect.scaling() * r;
+
+    let c_to_corner = Vector2::new(hw - dist_abs.x, hh - dist_abs.y);
+    if c_to_corner.x < -r || c_to_corner.y < -r {
+        // too far to possibly intersect
+        return vec![];
+    }
+    let point_abs: Point2<f32>;
+    let depth: f32;
+    let normal_abs: Unit<Vector2<f32>>;
+    if c_to_corner.x > 0.0 && c_to_corner.y > 0.0 {
+        // circle center is inside the rect
+        if c_to_corner.x < c_to_corner.y {
+            point_abs = Point2::new(hw, dist_abs.y);
+            depth = c_to_corner.x + r;
+            normal_abs = Vector2::x_axis();
+        } else {
+            point_abs = Point2::new(dist_abs.x, hh);
+            depth = c_to_corner.y + r;
+            normal_abs = Vector2::y_axis();
+        };
+    } else if c_to_corner.x > 0.0 {
+        // inside in the x direction but not y
+        point_abs = Point2::new(dist_abs.x, hh);
+        depth = c_to_corner.y + r; // c_to_corner.y is negative
+        normal_abs = Vector2::y_axis();
+    } else if c_to_corner.y > 0.0 {
+        // inside in the y direction but not x
+        point_abs = Point2::new(hw, dist_abs.y);
+        depth = c_to_corner.x + r;
+        normal_abs = Vector2::x_axis();
+    } else {
+        // outside both edges, possible intersection with the corner point
+        depth = r - c_to_corner.norm();
+        if depth > 0.0 {
+            point_abs = Point2::new(hw, hh);
+            normal_abs = Unit::new_normalize(-c_to_corner);
+        } else {
+            return vec![];
+        }
+    }
+
+    let contact = Contact {
+        normal: tr_rect.isometry.rotation
+            * Unit::new_unchecked(Vector2::new(
+                dist_signums.x * normal_abs.x,
+                dist_signums.y * normal_abs.y,
+            )),
+        depth: tr_rect.scaling() * depth,
+        point: tr_rect.0 * Point2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
+    };
+
+    vec![contact]
 }
 
 fn rect_rect(

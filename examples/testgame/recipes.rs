@@ -5,6 +5,7 @@ ecs::recipes! {
     Player,
     StaticBlock,
     DynamicBlock,
+    Ball,
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
@@ -73,6 +74,28 @@ impl ecs::ObjectRecipe for DynamicBlock {
             &vis::Context::get().display,
             self.width,
             self.height,
+            vis::ShapeStyle::Outline([1.0; 4]),
+        ));
+    }
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+pub struct Ball {
+    pub radius: f32,
+    pub position: [f32; 2],
+}
+
+impl ecs::ObjectRecipe for Ball {
+    fn spawn(&self, obj: &mut ecs::ObjectHandle) {
+        obj.add(Transform::from_position(self.position));
+        obj.add(phys::RigidBody::new_dynamic(
+            phys::Collider::new_circle(self.radius),
+            1.0,
+        ));
+        obj.add(vis::Shape::new_circle(
+            &vis::Context::get().display,
+            self.radius,
+            24,
             vis::ShapeStyle::Outline([1.0; 4]),
         ));
     }

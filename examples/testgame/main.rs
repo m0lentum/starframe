@@ -44,7 +44,7 @@ pub fn init_resources() -> Resources {
     {
         use glutin::VirtualKeyCode::*;
         input_cache.track_keys(&[
-            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, LShift,
+            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, T, LShift,
         ]);
     }
 

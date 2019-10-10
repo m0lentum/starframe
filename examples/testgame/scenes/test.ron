@@ -11,6 +11,12 @@
     DynamicBlock ((
         width: 60, height: 100, transform: ( position: (0, 200), rotation: 60 ),
     )),
+    Ball ((
+        radius: 40.0, position: (200, 100),
+    )),
+    Ball ((
+        radius: 50.0, position: (-100, 150),
+    )),
     // walls
     StaticBlock (( 
         width: 800, height: 20, transform: ( position: (0, 300) ),

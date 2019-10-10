@@ -52,8 +52,13 @@ impl GameState<Resources> for StatePlaying {
             reload_space(&mut res.space);
         }
 
-        if res.input_cache.is_key_pressed(Key::S, Some(0)) {
-            if let Some(mut obj) = res.space.spawn_from_pool::<recipes::DynamicBlock>() {
+        // pool spawning
+
+        fn spawn_random_pos<T>(space: &mut ecs::Space)
+        where
+            T: ecs::ObjectRecipe + Clone + 'static,
+        {
+            if let Some(mut obj) = space.spawn_from_pool::<T>() {
                 let mut rng = rand::thread_rng();
                 obj.add(Transform::new(
                     [
@@ -65,6 +70,14 @@ impl GameState<Resources> for StatePlaying {
                 ));
             }
         }
+        if res.input_cache.is_key_pressed(Key::S, Some(0)) {
+            spawn_random_pos::<recipes::DynamicBlock>(&mut res.space);
+        }
+        if res.input_cache.is_key_pressed(Key::T, Some(0)) {
+            spawn_random_pos::<recipes::Ball>(&mut res.space);
+        }
+
+        //
 
         update_space(res, dt);
 
@@ -139,12 +152,12 @@ fn draw_space(res: &mut Resources) {
         shaders: &ctx.shaders,
     });
 
-    res.debug_vis.contact_indicator.draw(
-        &mut target,
-        &res.debug_vis.contact_cache,
-        [1.0, 0.0, 0.0, 1.0],
-        &ctx.shaders,
-    );
+    // res.debug_vis.contact_indicator.draw(
+    //     &mut target,
+    //     &res.debug_vis.contact_cache,
+    //     [1.0, 0.0, 0.0, 1.0],
+    //     &ctx.shaders,
+    // );
 
     target.finish().unwrap();
 }
@@ -189,6 +202,13 @@ pub fn reload_space(space: &mut ecs::Space) {
             width: 80.0,
             height: 60.0,
             transform: Default::default(),
+        },
+    );
+    space.create_pool(
+        50,
+        recipes::Ball {
+            radius: 20.0,
+            position: [0.0; 2],
         },
     );
 }
