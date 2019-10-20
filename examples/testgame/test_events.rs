@@ -1,10 +1,6 @@
-use moleengine::{
-    ecs::{
-        event::{EventListener, EventQueue, SpaceEvent},
-        space::{LifecycleEvent, Space},
-    },
-    physics2d::CollisionEvent,
-    util::Transform,
+use moleengine::ecs::{
+    event::{EventListener, EventQueue, SpaceEvent},
+    space::{LifecycleEvent, Space},
 };
 
 #[derive(Clone, Copy)]
@@ -22,17 +18,6 @@ pub struct ChainEventListener;
 impl EventListener<TestChainEvent> for ChainEventListener {
     fn run_listener(&mut self, _evt: &TestChainEvent, _space: &Space, _queue: &mut EventQueue) {
         println!("Chain event");
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct TestCollisionListener;
-
-impl EventListener<CollisionEvent> for TestCollisionListener {
-    fn run_listener(&mut self, evt: &CollisionEvent, space: &Space, _q: &mut EventQueue) {
-        space.write_component(evt.source, |tr: &mut Transform| {
-            tr.rotate(2.0);
-        });
     }
 }
 

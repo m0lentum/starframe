@@ -54,24 +54,24 @@ impl Space {
     /// Reserves an object id for use and marks it as alive.
     /// # Panics
     /// Panics if the Space is full.
-    pub fn create_object(&mut self) -> ObjectHandle {
+    pub fn create_object(&mut self) -> MasterObjectHandle {
         self.try_create_object()
             .expect("Tried to add an object to a full space")
     }
 
     /// Like create_object, but returns None instead of panicking if the Space is full.
-    pub fn try_create_object(&mut self) -> Option<ObjectHandle> {
+    pub fn try_create_object(&mut self) -> Option<MasterObjectHandle> {
         if self.next_obj_id < self.capacity {
             let id = self.next_obj_id;
             self.next_obj_id += 1;
             self.create_object_at(id);
-            Some(ObjectHandle { id, space: self })
+            Some(MasterObjectHandle { id, space: self })
         } else {
             // find a dead object
             match (!&self.alive_objects).iter().nth(0) {
                 Some(id) if id < self.capacity as u32 => {
                     self.create_object_at(id as IdType);
-                    Some(ObjectHandle {
+                    Some(MasterObjectHandle {
                         id: id as IdType,
                         space: self,
                     })
@@ -81,11 +81,38 @@ impl Space {
         }
     }
 
+    fn create_object_at(&mut self, id: IdType) {
+        self.alive_objects.add(id as u32);
+        self.enabled_objects.add(id as u32);
+        self.generations[id] += 1;
+    }
+
     /// Spawn an object using an ObjectRecipe.
-    pub fn spawn(&mut self, recipe: impl ObjectRecipe) -> ObjectHandle {
+    pub fn spawn(&mut self, recipe: impl ObjectRecipe) -> MasterObjectHandle {
         let mut handle = self.create_object();
         recipe.spawn(&mut handle);
         handle
+    }
+
+    /// Get a handle to an existing object.
+    /// A regular ObjectHandle does not allow creating new components,
+    /// only modifying existing ones.
+    pub fn get_handle(&self, id: IdType) -> Option<ObjectHandle> {
+        if self.alive_objects.contains(id as u32) {
+            Some(ObjectHandle { id, space: self })
+        } else {
+            None
+        }
+    }
+
+    /// Get a master handle to an existing object.
+    /// A master handle allows creating new components.
+    pub fn get_master_handle(&mut self, id: IdType) -> Option<MasterObjectHandle> {
+        if self.alive_objects.contains(id as u32) {
+            Some(MasterObjectHandle { id, space: self })
+        } else {
+            None
+        }
     }
 
     /// Spawn objects described in a RON file into this Space.
@@ -149,53 +176,8 @@ impl Space {
         }
     }
 
-    /// Create a component for an object. The component can be of any type,
-    /// but there has to be a ComponentContainer for it in this Space.
-    /// # Panics
-    /// Panics if there is no ComponentContainer for this type in this Space.
-    pub(self) fn create_component_unchecked<T: 'static>(&mut self, id: IdType, comp: T) {
-        let gen = self.generations[id];
-        let container = self
-            .get_container_mut::<T>()
-            .expect("Attempted to create a component that doesn't have a container");
-        container.insert(id, gen, comp);
-    }
-
-    /// Create a component for an object. If there is no container for it, create one of type S.
-    pub(self) fn create_component<T, S>(&mut self, id: IdType, comp: T)
-    where
-        T: 'static,
-        S: ComponentStorage<T> + CreateWithCapacity + 'static,
-    {
-        let gen = self.generations[id];
-        match self.get_container_mut::<T>() {
-            Some(cont) => cont.insert(id, gen, comp),
-            None => {
-                self.add_container::<T, S>();
-                self.get_container_mut::<T>().unwrap().insert(id, gen, comp);
-            }
-        }
-    }
-
-    fn create_object_at(&mut self, id: IdType) {
-        self.alive_objects.add(id as u32);
-        self.enabled_objects.add(id as u32);
-        self.generations[id] += 1;
-    }
-
-    /// Send a LifecycleEvent::Destroy to mark an object as dead. Does not actually destroy it, but
-    /// none of its components will receive updates anymore and they can be replaced with something new.
-    pub fn destroy_object(&mut self, id: IdType) {
-        LifecycleEvent::Destroy(id).handle(self);
-    }
-
-    /// Actually destroy an object. This is used internally by LifecycleEvent::Destroy.
-    pub(self) fn actually_destroy_object(&mut self, id: IdType) {
-        self.alive_objects.remove(id as u32);
-    }
-
-    /// Destroys every object in the Space. Also destroys all object pools.
-    pub fn destroy_all(&mut self) {
+    /// Destroys every object and object pool in the Space.
+    pub fn clear(&mut self) {
         self.alive_objects.clear();
         self.pools.clear();
         for gen in &mut self.generations {
@@ -203,70 +185,11 @@ impl Space {
         }
     }
 
-    /// Disable an object. This means it will not receive updates from most Systems.
-    /// However, Systems still have access to it and may choose to do something with it.
-    pub fn disable_object(&mut self, id: IdType) {
-        LifecycleEvent::Disable(id).handle(self); // fire the event so event listeners can do things if they wish
-    }
-
-    pub(self) fn actually_disable_object(&mut self, id: IdType) {
-        self.enabled_objects.remove(id as u32);
-    }
-
-    /// Re-enable a disabled object. It will receive updates from all Systems again.
-    pub fn enable_object(&mut self, id: IdType) {
-        LifecycleEvent::Enable(id).handle(self);
-    }
-
-    pub(self) fn actually_enable_object(&mut self, id: IdType) {
-        self.enabled_objects.add(id as u32);
-    }
-
-    /// Checks whether an object has a specific type of component.
-    /// Mainly used by EventListeners, since Systems have their own way of doing this.
-    pub fn has_component<T: 'static>(&self, id: IdType) -> bool {
-        match self.get_container::<T>() {
-            Some(cont) => {
-                self.alive_objects.contains(id as u32)
-                    && cont.users().contains(id as u32)
-                    && self.generations[id] == cont.get_gen(id)
-            }
-            None => false,
-        }
-    }
-
-    /// Execute a closure if the given object has the desired component. Otherwise returns None.
-    /// Can be used to extract information as an Option or just do what you want to do within the closure.
-    /// This should be used sparingly since it needs to get access to a ComponentContainer every time,
-    /// and is mainly used from EventListeners and for setting values on objects spawned from a pool.
-    pub fn read_component<T: 'static, R>(&self, id: IdType, f: impl FnOnce(&T) -> R) -> Option<R> {
-        let cont = self.get_container::<T>()?;
-        if cont.users().contains(id as u32)
-            && self.alive_objects.contains(id as u32)
-            && self.generations[id] == cont.get_gen(id)
-        {
-            unsafe { Some(f(cont.read().get(id))) }
-        } else {
-            None
-        }
-    }
-
-    /// Like read_component, but gives you a mutable reference to the component.
-    pub fn write_component<T: 'static, R>(
-        &self,
-        id: IdType,
-        f: impl FnOnce(&mut T) -> R,
-    ) -> Option<R> {
-        let cont = self.get_container::<T>()?;
-        if cont.users().contains(id as u32)
-            && self.alive_objects.contains(id as u32)
-            && self.generations[id] == cont.get_gen(id)
-        {
-            unsafe { Some(f(cont.write().get_mut(id))) }
-        } else {
-            None
-        }
-    }
+    //
+    //
+    // Systems, queries & events
+    //
+    //
 
     /// Run a single System on all objects with containers that match the System's types.
     /// Returns None if a required component is missing.
@@ -335,26 +258,145 @@ impl Space {
         queue.run_all(self);
     }
 
+    //
+    //
+    // ObjectHandle functions
+    //
+    //
+
+    /// Create a component for an object. The component can be of any type,
+    /// but there has to be a ComponentContainer for it in this Space.
+    /// # Panics
+    /// Panics if there is no ComponentContainer for this type in this Space.
+    pub(self) fn create_component_unchecked<T: 'static>(&mut self, id: IdType, comp: T) {
+        let gen = self.generations[id];
+        let container = self
+            .get_container_mut::<T>()
+            .expect("Attempted to create a component that doesn't have a container");
+        container.insert(id, gen, comp);
+    }
+
+    /// Create a component for an object. If there is no container for it, create one of type S.
+    pub(self) fn create_component<T, S>(&mut self, id: IdType, comp: T)
+    where
+        T: 'static,
+        S: ComponentStorage<T> + CreateWithCapacity + 'static,
+    {
+        let gen = self.generations[id];
+        match self.get_container_mut::<T>() {
+            Some(cont) => cont.insert(id, gen, comp),
+            None => {
+                self.add_container::<T, S>();
+                self.get_container_mut::<T>().unwrap().insert(id, gen, comp);
+            }
+        }
+    }
+
+    /// Send a LifecycleEvent::Destroy to mark an object as dead. Does not actually destroy it, but
+    /// none of its components will receive updates anymore and they can be replaced with something new.
+    pub(self) fn destroy_object(&mut self, id: IdType) {
+        LifecycleEvent::Destroy(id).handle(self);
+    }
+
+    /// Actually destroy an object. This is used internally by LifecycleEvent::Destroy.
+    pub(self) fn actually_destroy_object(&mut self, id: IdType) {
+        self.alive_objects.remove(id as u32);
+    }
+
+    /// Disable an object. This means it will not receive updates from most Systems.
+    /// However, Systems still have access to it and may choose to do something with it.
+    pub(self) fn disable_object(&mut self, id: IdType) {
+        LifecycleEvent::Disable(id).handle(self); // fire the event so event listeners can do things if they wish
+    }
+
+    pub(self) fn actually_disable_object(&mut self, id: IdType) {
+        self.enabled_objects.remove(id as u32);
+    }
+
+    /// Re-enable a disabled object. It will receive updates from all Systems again.
+    pub(self) fn enable_object(&mut self, id: IdType) {
+        LifecycleEvent::Enable(id).handle(self);
+    }
+
+    pub(self) fn actually_enable_object(&mut self, id: IdType) {
+        self.enabled_objects.add(id as u32);
+    }
+
+    /// Checks whether an object has a specific type of component.
+    /// Mainly used by EventListeners, since Systems have their own way of doing this.
+    pub(self) fn has_component<T: 'static>(&self, id: IdType) -> bool {
+        match self.get_container::<T>() {
+            Some(cont) => {
+                self.alive_objects.contains(id as u32)
+                    && cont.users().contains(id as u32)
+                    && self.generations[id] == cont.get_gen(id)
+            }
+            None => false,
+        }
+    }
+
+    /// Execute a closure if the given object has the desired component. Otherwise returns None.
+    /// Can be used to extract information as an Option or just do what you want to do within the closure.
+    /// This should be used sparingly since it needs to get access to a ComponentContainer every time.
+    pub(self) fn read_component<T: 'static, R>(
+        &self,
+        id: IdType,
+        f: impl FnOnce(&T) -> R,
+    ) -> Option<R> {
+        let cont = self.get_container::<T>()?;
+        if cont.users().contains(id as u32)
+            && self.alive_objects.contains(id as u32)
+            && self.generations[id] == cont.get_gen(id)
+        {
+            unsafe { Some(f(cont.read().get(id))) }
+        } else {
+            None
+        }
+    }
+
+    /// Like read_component, but gives you a mutable reference to the component.
+    pub(self) fn write_component<T: 'static, R>(
+        &self,
+        id: IdType,
+        f: impl FnOnce(&mut T) -> R,
+    ) -> Option<R> {
+        let cont = self.get_container::<T>()?;
+        if cont.users().contains(id as u32)
+            && self.alive_objects.contains(id as u32)
+            && self.generations[id] == cont.get_gen(id)
+        {
+            unsafe { Some(f(cont.write().get_mut(id))) }
+        } else {
+            None
+        }
+    }
+
+    /// Returns whether or not the an object with the given id is currently alive.
+    pub(self) fn is_alive(&self, id: IdType) -> bool {
+        self.alive_objects.contains(id as u32)
+    }
+
+    /// Returns whether or not an object with the given id is currently enabled.
+    pub(self) fn is_enabled(&self, id: IdType) -> bool {
+        self.enabled_objects.contains(id as u32)
+    }
+
+    //
+    //
+    // /////// Misc getters
+    //
+    //
+
     /// Get a reference to the bitset of alive objects in this space.
     /// Used by the ComponentQuery derive macro.
     pub fn alive(&self) -> &BitSet {
         &self.alive_objects
     }
 
-    /// Returns whether or not the an object with the given id is currently alive.
-    pub fn is_alive(&self, id: IdType) -> bool {
-        self.alive_objects.contains(id as u32)
-    }
-
     /// Get a reference to the bitset of enabled objects in this space.
     /// Used by the ComponentQuery derive macro.
     pub fn enabled(&self) -> &BitSet {
         &self.enabled_objects
-    }
-
-    /// Returns whether or not an object with the given id is currently enabled.
-    pub fn is_enabled(&self, id: IdType) -> bool {
-        self.enabled_objects.contains(id as u32)
     }
 
     /// Get the generation value of a given object.
@@ -409,13 +451,13 @@ impl SpaceEvent for LifecycleEvent {
     }
 }
 
-/// An interface that allows you to add components to an object after creating it.
-pub struct ObjectHandle<'a> {
+/// A handle to an object that allows you to add and remove components.
+pub struct MasterObjectHandle<'a> {
     id: IdType,
     space: &'a mut Space,
 }
 
-impl<'a> ObjectHandle<'a> {
+impl<'a> MasterObjectHandle<'a> {
     /// Add the given component to this object.
     /// If there is no container for the component type in this space, one is added.
     /// This requires the DefaultStorage type to be implemented for the type.
@@ -442,10 +484,86 @@ impl<'a> ObjectHandle<'a> {
         self.add(EventListenerComponent(listener))
     }
 
+    /// Execute a closure on the component of type T if it exists, otherwise return None.
+    pub fn read_component<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        self.space.read_component(self.id, f)
+    }
+
+    /// Like `read_component`, but gives you a mutable reference to the component.
+    pub fn write_component<T: 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+        self.space.write_component(self.id, f)
+    }
+
+    /// Destroy this object and consume the handle.
+    pub fn destroy(self) {
+        self.space.destroy_object(self.id);
+    }
+
     /// Have the object initially disabled. You'll probably want some mechanism that
     /// enables it later (an object pool, usually).
     pub fn disable(&mut self) {
-        self.space.actually_disable_object(self.id);
+        self.space.disable_object(self.id);
+    }
+
+    /// Check if the object is alive.
+    pub fn is_alive(&self) -> bool {
+        self.space.is_alive(self.id)
+    }
+
+    /// Check if the object is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.space.is_enabled(self.id)
+    }
+
+    /// Check if the object has a given type of component.
+    pub fn has_component<T: 'static>(&self) -> bool {
+        self.space.has_component::<T>(self.id)
+    }
+
+    /// Get the id given to this object by the Space. This is rarely useful.
+    pub fn id(&self) -> IdType {
+        self.id
+    }
+
+    /// Turn this handle to a less powerful ObjectHandle.
+    pub fn downgrade(self) -> ObjectHandle<'a> {
+        ObjectHandle {
+            id: self.id,
+            space: self.space,
+        }
+    }
+}
+
+/// A handle to an object that only allows reading and writing existing components.
+pub struct ObjectHandle<'a> {
+    id: IdType,
+    space: &'a Space,
+}
+
+impl<'a> ObjectHandle<'a> {
+    /// Execute a closure on the component of type T if it exists, otherwise return None.
+    pub fn read_component<T: 'static, R>(&self, f: impl FnOnce(&T) -> R) -> Option<R> {
+        self.space.read_component(self.id, f)
+    }
+
+    /// Like `read_component`, but gives you a mutable reference to the component.
+    pub fn write_component<T: 'static, R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
+        self.space.write_component(self.id, f)
+    }
+
+    /// Check if the object is alive.
+    pub fn is_alive(&self) -> bool {
+        self.space.is_alive(self.id)
+    }
+
+    /// Check if the object is enabled.
+    pub fn is_enabled(&self) -> bool {
+        self.space.is_enabled(self.id)
+    }
+
+    /// Check if the object has a given type of component.
+    pub fn has_component<T: 'static>(&self) -> bool {
+        self.space.has_component::<T>(self.id)
     }
 
     /// Get the id given to this object by the Space. This is rarely useful.

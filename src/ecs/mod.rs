@@ -1,5 +1,5 @@
 pub mod space;
-pub use space::{ObjectHandle, Space};
+pub use space::{MasterObjectHandle, ObjectHandle, Space};
 
 #[cfg(feature = "ron-recipes")]
 mod recipes;

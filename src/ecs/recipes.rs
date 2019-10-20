@@ -1,6 +1,6 @@
 /// An object recipe produces a specific kind of game object.
 pub trait ObjectRecipe {
-    fn spawn(&self, handle: &mut super::ObjectHandle);
+    fn spawn(&self, handle: &mut super::MasterObjectHandle);
 }
 
 /// Objects that can read recipes from RON and apply them to a Space.

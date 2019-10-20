@@ -58,16 +58,15 @@ impl GameState<Resources> for StatePlaying {
         where
             T: ecs::ObjectRecipe + Clone + 'static,
         {
-            if let Some(mut obj) = space.spawn_from_pool::<T>() {
+            if let Some(obj) = space.spawn_from_pool::<T>() {
                 let mut rng = rand::thread_rng();
-                obj.add(Transform::new(
-                    [
+                obj.write_component(|tr: &mut Transform| {
+                    tr.set_position([
                         distr::Uniform::from(-300.0..300.0).sample(&mut rng),
                         distr::Uniform::from(0.0..200.0).sample(&mut rng),
-                    ],
-                    distr::Uniform::from(0.0..360.0).sample(&mut rng),
-                    1.0,
-                ));
+                    ]);
+                    tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
+                });
             }
         }
         if res.input_cache.is_key_pressed(Key::S, Some(0)) {
@@ -187,7 +186,7 @@ fn update_space(res: &mut Resources, dt: f32) {
 }
 
 pub fn reload_space(space: &mut ecs::Space) {
-    space.destroy_all();
+    space.clear();
 
     let dir = "./examples/testgame/scenes";
 
