@@ -98,7 +98,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                 match field_type_ref.mutability {
                     Some(_) => {
                         let access = quote! {
-                            let #ident = space.try_open_container::<#ty>()?;
+                            let #ident = space.get_container::<#ty>()?;
                             let mut #access_ident = #ident.write();
                             let #users_ident = #ident.users();
                         };
@@ -121,7 +121,7 @@ pub fn system_item(item: TokenStream) -> TokenStream {
                     }
                     None => {
                         let access = quote! {
-                            let #ident = space.try_open_container::<#ty>()?;
+                            let #ident = space.get_container::<#ty>()?;
                             let #access_ident = #ident.read();
                             let #users_ident = #ident.users();
                         };

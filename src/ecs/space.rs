@@ -156,7 +156,7 @@ impl Space {
     pub(self) fn create_component_unchecked<T: 'static>(&mut self, id: IdType, comp: T) {
         let gen = self.generations[id];
         let container = self
-            .try_open_container_mut::<T>()
+            .get_container_mut::<T>()
             .expect("Attempted to create a component that doesn't have a container");
         container.insert(id, gen, comp);
     }
@@ -168,13 +168,11 @@ impl Space {
         S: ComponentStorage<T> + CreateWithCapacity + 'static,
     {
         let gen = self.generations[id];
-        match self.try_open_container_mut::<T>() {
+        match self.get_container_mut::<T>() {
             Some(cont) => cont.insert(id, gen, comp),
             None => {
                 self.add_container::<T, S>();
-                self.try_open_container_mut::<T>()
-                    .unwrap()
-                    .insert(id, gen, comp);
+                self.get_container_mut::<T>().unwrap().insert(id, gen, comp);
             }
         }
     }
@@ -227,7 +225,7 @@ impl Space {
     /// Checks whether an object has a specific type of component.
     /// Mainly used by EventListeners, since Systems have their own way of doing this.
     pub fn has_component<T: 'static>(&self, id: IdType) -> bool {
-        match self.try_open_container::<T>() {
+        match self.get_container::<T>() {
             Some(cont) => {
                 self.alive_objects.contains(id as u32)
                     && cont.users().contains(id as u32)
@@ -242,7 +240,7 @@ impl Space {
     /// This should be used sparingly since it needs to get access to a ComponentContainer every time,
     /// and is mainly used from EventListeners and for setting values on objects spawned from a pool.
     pub fn read_component<T: 'static, R>(&self, id: IdType, f: impl FnOnce(&T) -> R) -> Option<R> {
-        let cont = self.try_open_container::<T>()?;
+        let cont = self.get_container::<T>()?;
         if cont.users().contains(id as u32)
             && self.alive_objects.contains(id as u32)
             && self.generations[id] == cont.get_gen(id)
@@ -259,7 +257,7 @@ impl Space {
         id: IdType,
         f: impl FnOnce(&mut T) -> R,
     ) -> Option<R> {
-        let cont = self.try_open_container::<T>()?;
+        let cont = self.get_container::<T>()?;
         if cont.users().contains(id as u32)
             && self.alive_objects.contains(id as u32)
             && self.generations[id] == cont.get_gen(id)
@@ -367,12 +365,12 @@ impl Space {
 
     /// Get access to a single ComponentContainer if it exists in this Space, otherwise return None.
     /// Used by the ComponentQuery derive macro.
-    pub fn try_open_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
+    pub fn get_container<T: 'static>(&self) -> Option<&ComponentContainer<T>> {
         self.containers.get::<ComponentContainer<T>>()
     }
 
     /// Get mutable access to a single ComponentContainer if it exists in this Space, otherwise return None.
-    fn try_open_container_mut<T: 'static>(&mut self) -> Option<&mut ComponentContainer<T>> {
+    fn get_container_mut<T: 'static>(&mut self) -> Option<&mut ComponentContainer<T>> {
         self.containers.get_mut::<ComponentContainer<T>>()
     }
 }
