@@ -16,8 +16,8 @@ pub struct Player {
 
 impl ecs::ObjectRecipe for Player {
     fn spawn(&self, obj: &mut ecs::MasterObjectHandle) {
-        let width = 90.0;
-        let height = 55.0;
+        let width = 0.9;
+        let height = 0.55;
         obj.add(self.transform);
         obj.add(phys::RigidBody::new_dynamic(
             phys::Collider::new_rect(width, height),

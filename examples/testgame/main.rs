@@ -56,10 +56,10 @@ pub fn init_resources() -> Resources {
     let space = ecs::Space::with_capacity(1000);
 
     let camera = vis::camera::SimpleCamera2D {
-        transform: Transform::new([-60.0, -100.0], 15.0, 1.5),
+        transform: Transform::identity(),
         strategy: vis::camera::ScalingStrategy::ConstantDisplayArea {
-            width: 800.0,
-            height: 600.0,
+            width: 8.0,
+            height: 6.0,
         },
     };
 

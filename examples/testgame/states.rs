@@ -62,8 +62,8 @@ impl GameState<Resources> for StatePlaying {
                 let mut rng = rand::thread_rng();
                 obj.write_component(|tr: &mut Transform| {
                     tr.set_position([
-                        distr::Uniform::from(-300.0..300.0).sample(&mut rng),
-                        distr::Uniform::from(0.0..200.0).sample(&mut rng),
+                        distr::Uniform::from(-3.0..3.0).sample(&mut rng),
+                        distr::Uniform::from(0.0..2.0).sample(&mut rng),
                     ]);
                     tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
                 });
@@ -180,7 +180,7 @@ fn update_space(res: &mut Resources, dt: f32) {
                     convergence_threshold: 0.2,
                     max_loops: 6,
                 },
-                phys::ForceField::gravity(Vector2::new(0.0, -250.0)),
+                phys::ForceField::gravity(Vector2::new(0.0, -9.81)),
             )
             .output_contacts(&mut res.debug_vis.contact_cache),
         );
@@ -200,15 +200,15 @@ pub fn reload_space(space: &mut ecs::Space) {
     space.create_pool(
         50,
         recipes::DynamicBlock {
-            width: 80.0,
-            height: 60.0,
+            width: 0.8,
+            height: 0.6,
             transform: Default::default(),
         },
     );
     space.create_pool(
         50,
         recipes::Ball {
-            radius: 20.0,
+            radius: 0.2,
             position: [0.0; 2],
         },
     );

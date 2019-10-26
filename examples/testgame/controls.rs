@@ -38,14 +38,14 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
             let mut t = Vector2::zeros();
             let mut r = 0.0;
             if self.input.is_key_pressed(Key::Left, Some(0)) {
-                t[0] = -300.0
+                t[0] = -3.0
             } else if self.input.is_key_pressed(Key::Right, Some(0)) {
-                t[0] = 300.0
+                t[0] = 3.0
             }
             if self.input.is_key_pressed(Key::Up, Some(0)) {
-                t[1] = 300.0
+                t[1] = 3.0
             } else if self.input.is_key_pressed(Key::Down, Some(0)) {
-                t[1] = -300.0
+                t[1] = -3.0
             }
             if self.input.is_key_pressed(Key::PageDown, Some(0)) {
                 r = -6.0;
