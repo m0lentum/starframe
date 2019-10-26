@@ -9,7 +9,11 @@ mod test_events;
 //
 
 use glium::glutin;
-use moleengine::{ecs, physics2d as phys, util::InputCache, visuals_glium as vis};
+use moleengine::{
+    ecs, physics2d as phys,
+    util::{InputCache, Transform},
+    visuals_glium as vis,
+};
 
 //
 
@@ -21,6 +25,7 @@ pub struct DebugVisuals {
 pub struct Resources {
     pub events: glutin::EventsLoop,
     pub space: ecs::Space,
+    pub camera: vis::camera::SimpleCamera2D,
     pub input_cache: InputCache,
     pub impulse_cache: phys::collision::ImpulseCache,
     pub debug_vis: DebugVisuals,
@@ -50,6 +55,14 @@ pub fn init_resources() -> Resources {
 
     let space = ecs::Space::with_capacity(1000);
 
+    let camera = vis::camera::SimpleCamera2D {
+        transform: Transform::new([-60.0, -100.0], 15.0, 1.5),
+        strategy: vis::camera::ScalingStrategy::ConstantDisplayArea {
+            width: 800.0,
+            height: 600.0,
+        },
+    };
+
     let impulse_cache = phys::collision::ImpulseCache::new();
 
     //
@@ -60,6 +73,7 @@ pub fn init_resources() -> Resources {
     Resources {
         events,
         space,
+        camera,
         input_cache,
         impulse_cache,
         debug_vis: DebugVisuals {

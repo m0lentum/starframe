@@ -1,5 +1,7 @@
+pub mod camera;
+
 pub mod shape;
-pub use shape::{Shape, ShapeStyle, ShapeRenderer};
+pub use shape::{Shape, ShapeRenderer, ShapeStyle};
 
 pub mod shaders;
 pub use shaders::Shaders;
@@ -42,4 +44,3 @@ impl From<nalgebra::Point2<f32>> for Vertex2D {
 }
 
 glium::implement_vertex!(Vertex2D, v_position);
-

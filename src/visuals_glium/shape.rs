@@ -1,8 +1,8 @@
-use super::{shaders::Shaders, Color, Vertex2D};
+use super::{camera::Camera2D, shaders::Shaders, Color, Vertex2D};
 use crate::ecs::system::*;
 use crate::util::Transform;
 
-use glium::{backend::Facade, index::PrimitiveType, uniform, Surface};
+use glium::{backend::Facade, index::PrimitiveType, uniform};
 use std::sync::Arc;
 
 #[derive(Clone, Copy)]
@@ -111,7 +111,8 @@ impl crate::ecs::DefaultStorage for Shape {
 /// System that draws Shapes on the screen.
 /// A Transform must also be present for the Shape to be drawn.
 /// See the ecs module for more information on Systems.
-pub struct ShapeRenderer<'a, S: Surface> {
+pub struct ShapeRenderer<'a, C: Camera2D, S: glium::Surface> {
+    pub camera: &'a C,
     pub target: &'a mut S,
     pub shaders: &'a Shaders,
 }
@@ -123,13 +124,11 @@ pub struct ShapeQuery<'a> {
     shape: &'a Shape,
 }
 
-impl<'a, S: Surface> SimpleSystem<'a> for ShapeRenderer<'a, S> {
+impl<'a, C: Camera2D, S: glium::Surface> SimpleSystem<'a> for ShapeRenderer<'a, C, S> {
     type Query = ShapeQuery<'a>;
 
     fn run_system(self, items: &mut [Self::Query]) {
-        // TODO dynamic view (must also adapt to changing window size)
-        let view =
-            nalgebra::Matrix3::new(2.0 / 800.0, 0.0, 0.0, 0.0, 2.0 / 600.0, 0.0, 0.0, 0.0, 1.0);
+        let view = self.camera.view_matrix(self.target.get_dimensions());
 
         for item in items {
             let model = item.transform.to_homogeneous();

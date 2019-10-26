@@ -147,11 +147,13 @@ fn draw_space(res: &mut Resources) {
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
     res.space.run_system(vis::ShapeRenderer {
+        camera: &res.camera,
         target: &mut target,
         shaders: &ctx.shaders,
     });
 
     // res.debug_vis.contact_indicator.draw(
+    //     &res.camera,
     //     &mut target,
     //     &res.debug_vis.contact_cache,
     //     [1.0, 0.0, 0.0, 1.0],
