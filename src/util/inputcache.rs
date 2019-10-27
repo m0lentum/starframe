@@ -11,6 +11,7 @@ pub struct InputCache {
     mouse_buttons: MouseButtonState,
     cursor_pos: CursorPosition,
     scroll_delta: f32,
+    drag_state: Option<DragState>,
 }
 
 impl InputCache {
@@ -20,6 +21,7 @@ impl InputCache {
             mouse_buttons: Default::default(),
             cursor_pos: CursorPosition::OutOfWindow(LogicalPosition::new(0.0, 0.0)),
             scroll_delta: 0.0,
+            drag_state: None,
         }
     }
 
@@ -35,6 +37,14 @@ impl InputCache {
         self.mouse_buttons.right.age += 1;
 
         self.scroll_delta = 0.0;
+
+        match self.drag_state {
+            Some(DragState::InProgress {
+                ref mut duration, ..
+            }) => *duration += 1,
+            Some(DragState::Completed { .. }) => self.drag_state = None,
+            None => (),
+        }
     }
 
     /// Add keys for tracking. Only keys added with this method will have their state stored.
@@ -112,6 +122,10 @@ impl InputCache {
         self.scroll_delta
     }
 
+    pub fn drag_state(&self) -> &Option<DragState> {
+        &self.drag_state
+    }
+
     //
     // Trackers
     //
@@ -151,10 +165,17 @@ impl InputCache {
     }
 
     /// Track a mouse button event.
-    pub fn track_mouse_button(&mut self, button: glutin::MouseButton, state: ElementState) {
+    pub fn track_mouse_button(&mut self, button: glutin::MouseButton, new_state: ElementState) {
         self.mouse_buttons
             .get_mut(button)
-            .map(|s| *s = AgedState::new(state));
+            .map(|s| *s = AgedState::new(new_state));
+
+        // drag, at least for now hardcoded to only work with left click
+        match (button, new_state, self.drag_state) {
+            (glutin::MouseButton::Left, ElementState::Pressed, None) => self.begin_drag(),
+            (glutin::MouseButton::Left, ElementState::Released, _) => self.finish_drag(),
+            _ => (),
+        }
     }
 
     /// Track the screen position of the mouse cursor.
@@ -181,6 +202,23 @@ impl InputCache {
         match delta {
             LineDelta(_, y) => self.scroll_delta += PIXELS_PER_LINE * y,
             PixelDelta(LogicalPosition { y, .. }) => self.scroll_delta += y as f32,
+        }
+    }
+
+    fn begin_drag(&mut self) {
+        self.drag_state = Some(DragState::InProgress {
+            start: *self.cursor_pos.get(),
+            duration: 0,
+        });
+    }
+
+    fn finish_drag(&mut self) {
+        if let Some(DragState::InProgress { start, duration }) = self.drag_state {
+            self.drag_state = Some(DragState::Completed {
+                start,
+                duration,
+                end: *self.cursor_pos.get(),
+            });
         }
     }
 }
@@ -275,4 +313,17 @@ impl MouseButtonState {
             MB::Other(_) => None,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub enum DragState {
+    InProgress {
+        start: LogicalPosition,
+        duration: u32,
+    },
+    Completed {
+        start: LogicalPosition,
+        end: LogicalPosition,
+        duration: u32,
+    },
 }
