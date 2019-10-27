@@ -11,7 +11,7 @@ use moleengine::{
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
-        inputcache::{CursorPosition, InputCache},
+        inputcache::InputCache,
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
@@ -79,47 +79,16 @@ impl GameState<Resources> for StatePlaying {
 
         // mouse camera
 
-        if let CursorPosition::InWindow(mouse_pos) = res.input_cache.cursor_position() {
-            const MOUSE_CONTROL_ZONE: f64 = 200.0;
-            const CAMERA_SPEED: f32 = 0.1;
-            const ZOOM_SPEED: f32 = 0.01;
-            const MIN_ZOOM: f32 = 0.1;
-            const MAX_ZOOM: f32 = 10.0;
+        res.camera.update(
+            &res.input_cache,
+            vis::Context::get().display.get_framebuffer_dimensions(),
+        );
 
-            let window_size = &vis::Context::get()
-                .window_inner_size()
-                .expect("Window closed???");
-            let camera_dir = Vector2::new(
-                if mouse_pos.x < MOUSE_CONTROL_ZONE {
-                    -1.0
-                } else if window_size.width - mouse_pos.x < MOUSE_CONTROL_ZONE {
-                    1.0
-                } else {
-                    0.0
-                },
-                if mouse_pos.y < MOUSE_CONTROL_ZONE {
-                    1.0
-                } else if window_size.height - mouse_pos.y < MOUSE_CONTROL_ZONE {
-                    -1.0
-                } else {
-                    0.0
-                },
-            );
-            res.camera.transform.translate(CAMERA_SPEED * camera_dir);
-
-            if res
-                .input_cache
-                .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
-            {
-                res.camera.transform = Transform::identity();
-            }
-
-            let scroll = res.input_cache.scroll_delta();
-            if scroll != 0.0 {
-                let new_scaling = (1.0 + scroll * -ZOOM_SPEED) * res.camera.transform.scaling();
-                let new_scaling = new_scaling.max(MIN_ZOOM).min(MAX_ZOOM);
-                res.camera.transform.set_scaling(new_scaling);
-            }
+        if res
+            .input_cache
+            .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
+        {
+            res.camera.camera.transform = Transform::identity();
         }
 
         //

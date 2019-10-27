@@ -25,7 +25,7 @@ pub struct DebugVisuals {
 pub struct Resources {
     pub events: glutin::EventsLoop,
     pub space: ecs::Space,
-    pub camera: vis::camera::SimpleCamera2D,
+    pub camera: vis::camera::MouseDragCamera2D,
     pub input_cache: InputCache,
     pub impulse_cache: phys::collision::ImpulseCache,
     pub debug_vis: DebugVisuals,
@@ -55,13 +55,13 @@ pub fn init_resources() -> Resources {
 
     let space = ecs::Space::with_capacity(1000);
 
-    let camera = vis::camera::SimpleCamera2D {
-        transform: Transform::identity(),
-        strategy: vis::camera::ScalingStrategy::ConstantDisplayArea {
+    let camera = vis::camera::MouseDragCamera2D::new(
+        Transform::identity(),
+        vis::camera::ScalingStrategy::ConstantDisplayArea {
             width: 8.0,
             height: 6.0,
         },
-    };
+    );
 
     let impulse_cache = phys::collision::ImpulseCache::new();
 
