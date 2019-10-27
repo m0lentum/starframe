@@ -11,8 +11,9 @@ use moleengine::{
     },
     util::{
         gameloop::{GameLoop, LockstepLoop},
+        inputcache::{CursorPosition, InputCache},
         statemachine::{GameState, StateMachine, StateOp},
-        InputCache, Transform,
+        Transform,
     },
     visuals_glium as vis,
 };
@@ -76,11 +77,56 @@ impl GameState<Resources> for StatePlaying {
             spawn_random_pos::<recipes::Ball>(&mut res.space);
         }
 
+        // mouse camera
+
+        if let CursorPosition::InWindow(mouse_pos) = res.input_cache.cursor_position() {
+            const MOUSE_CONTROL_ZONE: f64 = 200.0;
+            const CAMERA_SPEED: f32 = 0.1;
+            const ZOOM_SPEED: f32 = 0.01;
+            const MIN_ZOOM: f32 = 0.1;
+            const MAX_ZOOM: f32 = 10.0;
+
+            let window_size = &vis::Context::get()
+                .window_inner_size()
+                .expect("Window closed???");
+            let camera_dir = Vector2::new(
+                if mouse_pos.x < MOUSE_CONTROL_ZONE {
+                    -1.0
+                } else if window_size.width - mouse_pos.x < MOUSE_CONTROL_ZONE {
+                    1.0
+                } else {
+                    0.0
+                },
+                if mouse_pos.y < MOUSE_CONTROL_ZONE {
+                    1.0
+                } else if window_size.height - mouse_pos.y < MOUSE_CONTROL_ZONE {
+                    -1.0
+                } else {
+                    0.0
+                },
+            );
+            res.camera.transform.translate(CAMERA_SPEED * camera_dir);
+
+            if res
+                .input_cache
+                .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
+            {
+                res.camera.transform = Transform::identity();
+            }
+
+            let scroll = res.input_cache.scroll_delta();
+            if scroll != 0.0 {
+                let new_scaling = (1.0 + scroll * -ZOOM_SPEED) * res.camera.transform.scaling();
+                let new_scaling = new_scaling.max(MIN_ZOOM).min(MAX_ZOOM);
+                res.camera.transform.set_scaling(new_scaling);
+            }
+        }
+
         //
 
         update_space(res, dt);
 
-        res.input_cache.update_ages();
+        res.input_cache.tick();
         StateOp::Stay
     }
 
@@ -105,7 +151,7 @@ impl GameState<Resources> for StatePaused {
             return StateOp::Pop;
         }
 
-        res.input_cache.update_ages();
+        res.input_cache.tick();
         StateOp::Stay
     }
 
@@ -121,12 +167,15 @@ fn handle_events(
     input_cache: &mut InputCache,
 ) -> Option<StateOp<Resources>> {
     let mut should_close = false;
+    use glutin::WindowEvent::*;
     events.poll_events(|evt| match evt {
-        glutin::Event::WindowEvent { event, .. } => match event {
-            glutin::WindowEvent::CloseRequested => should_close = true,
-            glutin::WindowEvent::KeyboardInput { input, .. } => input_cache.handle_keyboard(input),
-            _ => (),
-        },
+        glutin::Event::WindowEvent { event, .. } => {
+            input_cache.track_window_event(&event);
+            match event {
+                CloseRequested => should_close = true,
+                _ => (),
+            }
+        }
         _ => (),
     });
 

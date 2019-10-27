@@ -46,4 +46,9 @@ impl<'a> Context {
             }
         }
     }
+
+    /// Convenience function to get the logical size of the window of this Context.
+    pub fn window_inner_size(&self) -> Option<glutin::dpi::LogicalSize> {
+        self.display.gl_window().window().get_inner_size()
+    }
 }

@@ -117,12 +117,16 @@ impl Transform {
         self.isometry.rotation = UnitComplex::new(angle.into().rad());
     }
 
-    pub fn scale(&mut self, factor: f32) {
+    pub fn scaling(&self) -> f32 {
+        self.0.scaling()
+    }
+
+    pub fn multiply_scaling(&mut self, factor: f32) {
         self.append_scaling(factor);
     }
 
-    pub fn set_scale(&mut self, s: f32) {
-        self.set_scaling(s);
+    pub fn set_scaling(&mut self, s: f32) {
+        self.0.set_scaling(s);
     }
 }
 
