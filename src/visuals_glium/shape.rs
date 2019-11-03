@@ -1,4 +1,8 @@
-use super::{camera::Camera2D, shaders::Shaders, Color, Vertex2D};
+use super::{
+    camera::{Camera2D, CameraController},
+    shaders::Shaders,
+    Color, Vertex2D,
+};
 use crate::ecs::system::*;
 use crate::util::Transform;
 
@@ -111,8 +115,8 @@ impl crate::ecs::DefaultStorage for Shape {
 /// System that draws Shapes on the screen.
 /// A Transform must also be present for the Shape to be drawn.
 /// See the ecs module for more information on Systems.
-pub struct ShapeRenderer<'a, C: Camera2D, S: glium::Surface> {
-    pub camera: &'a C,
+pub struct ShapeRenderer<'a, C: CameraController, S: glium::Surface> {
+    pub camera: &'a Camera2D<C>,
     pub target: &'a mut S,
     pub shaders: &'a Shaders,
 }
@@ -124,7 +128,7 @@ pub struct ShapeQuery<'a> {
     shape: &'a Shape,
 }
 
-impl<'a, C: Camera2D, S: glium::Surface> SimpleSystem<'a> for ShapeRenderer<'a, C, S> {
+impl<'a, C: CameraController, S: glium::Surface> SimpleSystem<'a> for ShapeRenderer<'a, C, S> {
     type Query = ShapeQuery<'a>;
 
     fn run_system(self, items: &mut [Self::Query]) {

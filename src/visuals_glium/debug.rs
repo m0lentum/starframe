@@ -1,6 +1,9 @@
 use crate::{
     physics2d::collision::ContactOutput,
-    visuals_glium::{camera::Camera2D, Color, Shaders, Vertex2D},
+    visuals_glium::{
+        camera::{Camera2D, CameraController},
+        Color, Shaders, Vertex2D,
+    },
 };
 use glium::{backend::Facade, uniform};
 
@@ -25,9 +28,9 @@ impl ContactIndicator {
     }
 
     /// Draws an indicator on all given collisions, used for debugging purposes.
-    pub fn draw<C: Camera2D, S: glium::Surface>(
+    pub fn draw<C: CameraController, S: glium::Surface>(
         &mut self,
-        camera: &C,
+        camera: &Camera2D<C>,
         target: &mut S,
         contacts: &ContactOutput,
         color: Color,
