@@ -128,7 +128,7 @@ impl<'a, C: Camera2D, S: glium::Surface> SimpleSystem<'a> for ShapeRenderer<'a, 
     type Query = ShapeQuery<'a>;
 
     fn run_system(self, items: &mut [Self::Query]) {
-        let view = self.camera.view_matrix(self.target.get_dimensions());
+        let view = self.camera.view_matrix();
 
         for item in items {
             let model = item.transform.to_homogeneous();

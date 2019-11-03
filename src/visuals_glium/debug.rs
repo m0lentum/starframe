@@ -52,7 +52,7 @@ impl ContactIndicator {
 
         // draw
 
-        let view: [[f32; 3]; 3] = camera.view_matrix(target.get_dimensions()).into();
+        let view: [[f32; 3]; 3] = camera.view_matrix().into();
         let uniforms = glium::uniform! {
             model_view: view,
             color: color,

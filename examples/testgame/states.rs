@@ -39,7 +39,11 @@ pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
     fn update(&mut self, res: &mut Resources, dt: f32) -> StateOp<Resources> {
-        if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
+        if let Some(op) = handle_events(
+            &mut res.events,
+            &mut res.input_cache,
+            &mut res.camera.camera,
+        ) {
             return op;
         }
         if res.input_cache.is_key_pressed(Key::Escape, None) {
@@ -79,10 +83,7 @@ impl GameState<Resources> for StatePlaying {
 
         // mouse camera
 
-        res.camera.update(
-            &res.input_cache,
-            vis::Context::get().display.get_framebuffer_dimensions(),
-        );
+        res.camera.update_position(&res.input_cache);
 
         if res
             .input_cache
@@ -110,7 +111,11 @@ pub struct StatePaused;
 
 impl GameState<Resources> for StatePaused {
     fn update(&mut self, res: &mut Resources, _dt: f32) -> StateOp<Resources> {
-        if let Some(op) = handle_events(&mut res.events, &mut res.input_cache) {
+        if let Some(op) = handle_events(
+            &mut res.events,
+            &mut res.input_cache,
+            &mut res.camera.camera,
+        ) {
             return op;
         }
         if res.input_cache.is_key_pressed(Key::Escape, None) {
@@ -134,6 +139,7 @@ impl GameState<Resources> for StatePaused {
 fn handle_events(
     events: &mut glutin::EventsLoop,
     input_cache: &mut InputCache,
+    camera: &mut vis::camera::SimpleCamera2D,
 ) -> Option<StateOp<Resources>> {
     let mut should_close = false;
     use glutin::WindowEvent::*;
@@ -142,6 +148,7 @@ fn handle_events(
             input_cache.track_window_event(&event);
             match event {
                 CloseRequested => should_close = true,
+                Resized(_) => camera.update_scaling(),
                 _ => (),
             }
         }
