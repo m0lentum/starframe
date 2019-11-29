@@ -1,5 +1,5 @@
 use super::{broadphase::Collidable, collider::ColliderShape};
-use crate::util::Transform;
+use crate::{ecs, util::Transform};
 
 use nalgebra::{Point2, Unit, Vector2};
 use std::f32::consts::PI;
@@ -10,38 +10,64 @@ const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
+    pub ids: [ecs::IdType; 2],
     /// The normal, facing away from obj1
     pub normal: Unit<Vector2<f32>>,
     /// Penetration depth
     pub depth: f32,
-    /// Point of contact on the surface of obj1
+    /// Point of contact on the surface of obj1, in world space
     pub point: Point2<f32>,
+    /// Offsets from each object's position to the point of contact, in object-local space
+    pub offsets_objspace: [Vector2<f32>; 2],
+}
+
+// Intermediate structure so we don't have to carry everything around through the worker functions
+struct Contact_ {
+    normal: Unit<Vector2<f32>>,
+    depth: f32,
+    point: Point2<f32>,
 }
 
 /// Checks two transformed colliders for intersection.
 pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec<Contact> {
+    let complete = |cs: Vec<Contact_>| {
+        cs.iter()
+            .map(|c| Contact {
+                ids: [obj1.id, obj2.id],
+                normal: c.normal,
+                depth: c.depth,
+                point: c.point,
+                offsets_objspace: [
+                    (obj1.tr.inverse() * c.point).coords,
+                    (obj2.tr.inverse() * c.point).coords,
+                ],
+            })
+            .collect()
+    };
+
     use ColliderShape::*;
     match (obj1.coll.shape(), obj2.coll.shape()) {
-        (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(obj1.tr, *r1, obj2.tr, *r2),
-        (Rect { hw, hh }, Circle { r }) => rect_circle(obj1.tr, *hw, *hh, obj2.tr, *r),
+        (Circle { r: r1 }, Circle { r: r2 }) => complete(circle_circle(obj1.tr, *r1, obj2.tr, *r2)),
+        (Rect { hw, hh }, Circle { r }) => complete(rect_circle(obj1.tr, *hw, *hh, obj2.tr, *r)),
         (Circle { r }, Rect { hw, hh }) => {
-            flip_contacts(rect_circle(obj2.tr, *hw, *hh, obj1.tr, *r))
+            flip_contacts(complete(rect_circle(obj2.tr, *hw, *hh, obj1.tr, *r)))
         }
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
-            rect_rect(obj1.tr, *hw1, *hh1, obj2.tr, *hw2, *hh2)
+            complete(rect_rect(obj1.tr, *hw1, *hh1, obj2.tr, *hw2, *hh2))
         }
     }
 }
 
 fn flip_contacts(mut contacts: Vec<Contact>) -> Vec<Contact> {
     for c in &mut contacts {
+        c.ids = [c.ids[1], c.ids[0]];
         c.point += c.depth * *c.normal;
         c.normal = -c.normal;
     }
     contacts
 }
 
-fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Contact> {
+fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Contact_> {
     let pos1 = tr1.0 * Point2::origin();
     let pos2 = tr2.0 * Point2::origin();
 
@@ -65,7 +91,7 @@ fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Cont
         return vec![];
     }
 
-    vec![Contact {
+    vec![Contact_ {
         normal,
         depth,
         point: pos1 + (normal.as_ref() * r1_s),
@@ -78,7 +104,7 @@ fn rect_circle(
     hh: f32,
     tr_circle: &Transform,
     r: f32,
-) -> Vec<Contact> {
+) -> Vec<Contact_> {
     let tr_c_wrt_rect = tr_rect.inverse() * tr_circle.0;
     let dist = tr_c_wrt_rect * Point2::origin();
     let dist_abs = Point2::new(dist.x.abs(), dist.y.abs());
@@ -125,7 +151,7 @@ fn rect_circle(
         }
     }
 
-    let contact = Contact {
+    let contact = Contact_ {
         normal: tr_rect.isometry.rotation
             * Unit::new_unchecked(Vector2::new(
                 dist_signums.x * normal_abs.x,
@@ -145,7 +171,7 @@ fn rect_rect(
     tr2: &Transform,
     hw2: f32,
     hh2: f32,
-) -> Vec<Contact> {
+) -> Vec<Contact_> {
     let tr2_wrt_tr1 = tr1.inverse() * tr2.0;
 
     // obj1 is axis-aligned at origin, these are obj2's values
@@ -227,7 +253,7 @@ fn rect_rect(
         let point = Point2::from(
             dist.coords - (axis.dot(&hw2_v).signum() * hw2_v) - (axis.dot(&hh2_v).signum() * hh2_v),
         );
-        vec![Contact {
+        vec![Contact_ {
             normal,
             depth: depth_s,
             point: tr1.0 * (point + (*depth) * (*axis)),
@@ -235,7 +261,7 @@ fn rect_rect(
     } else {
         // axis is on obj2, penetrating point is on obj1
         let point = Point2::new(axis[0].signum() * hw1, axis[1].signum() * hh1);
-        vec![Contact {
+        vec![Contact_ {
             normal,
             depth: depth_s,
             point: tr1.0 * point,
@@ -243,15 +269,15 @@ fn rect_rect(
     }
 }
 
-fn transform_contact(tr: &Transform, cont: Contact) -> Contact {
-    Contact {
+fn transform_contact(tr: &Transform, cont: Contact_) -> Contact_ {
+    Contact_ {
         normal: tr.isometry.rotation * cont.normal,
         depth: cont.depth * tr.scaling(),
         point: tr.0 * cont.point,
     }
 }
 
-fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<Contact> {
+fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<Contact_> {
     let x_pen = hw1 + hw2 - dist[0].abs();
     if x_pen <= 0.0 {
         return vec![];
@@ -270,12 +296,12 @@ fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<
         let y2 = hh1.min(dist[1] + hh2);
 
         vec![
-            Contact {
+            Contact_ {
                 normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
                 depth: x_pen,
                 point: Point2::new(x1, y1),
             },
-            Contact {
+            Contact_ {
                 normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
                 depth: x_pen,
                 point: Point2::new(x1, y2),
@@ -287,12 +313,12 @@ fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<
         let x2 = hw1.min(dist[0] + hw2);
 
         vec![
-            Contact {
+            Contact_ {
                 normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
                 depth: y_pen,
                 point: Point2::new(x1, y1),
             },
-            Contact {
+            Contact_ {
                 normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
                 depth: y_pen,
                 point: Point2::new(x2, y1),

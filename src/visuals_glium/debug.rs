@@ -7,7 +7,7 @@ use crate::{
 };
 use glium::{backend::Facade, uniform};
 
-const COLL_INDICATOR_SIZE: f32 = 5.0;
+const COLL_INDICATOR_SIZE: f32 = 0.05;
 const VERTS_PER_INDICATOR: usize = 6;
 
 /// A System that draws indicators showing the location and depth of collisions.

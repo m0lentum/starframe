@@ -4,10 +4,22 @@ use crate::{ecs::IdType, util::Transform};
 /// A broad phase algorithm for collision detection,
 /// responsible for generating pairs of possibly intersecting objects.
 pub trait BroadPhase {
-    /// Returns pairs of ids of potentially intersecting objects.
-    /// Only returns ids and not Collidables because lookup by id is necessary
-    /// in the narrow phase anyway; this way borrows aren't held for longer than needed.
-    fn pairs<'a>(items: impl Iterator<Item = Collidable<'a>> + Clone) -> Vec<[IdType; 2]>;
+    /// Run collision checks on pairs produced by this broad phase.
+    fn run<'a>(
+        items: impl Iterator<Item = Collidable<'a>> + Clone,
+    ) -> Vec<super::narrowphase::Contact> {
+        let mut contacts = Vec::new();
+        for pair in Self::pairs(items) {
+            contacts.append(&mut super::narrowphase::intersection_check(
+                pair[0], pair[1],
+            ));
+        }
+        contacts
+    }
+
+    /// Returns pairs of potentially intersecting objects.
+    /// This is the part that differs in different broad phase implementations.
+    fn pairs<'a>(items: impl Iterator<Item = Collidable<'a>> + Clone) -> Vec<[Collidable<'a>; 2]>;
 }
 
 /// The simplest possible broad phase algorithm,
@@ -16,11 +28,13 @@ pub trait BroadPhase {
 pub struct BruteForce;
 
 impl BroadPhase for BruteForce {
-    fn pairs<'a>(mut items: impl Iterator<Item = Collidable<'a>> + Clone) -> Vec<[IdType; 2]> {
+    fn pairs<'a>(
+        mut items: impl Iterator<Item = Collidable<'a>> + Clone,
+    ) -> Vec<[Collidable<'a>; 2]> {
         let mut pairs = Vec::new();
         while let Some(item) = items.next() {
             for other in items.clone() {
-                pairs.push([item.id, other.id]);
+                pairs.push([item, other]);
             }
         }
 
@@ -33,4 +47,5 @@ pub struct Collidable<'a> {
     pub id: IdType,
     pub tr: &'a Transform,
     pub coll: &'a Collider,
+    pub responds_to_collisions: bool,
 }

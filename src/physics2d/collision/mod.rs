@@ -2,6 +2,7 @@ use crate::ecs::{event::SpaceEvent, space::Space, IdType};
 use nalgebra::{Point2, Unit, Vector2};
 
 pub mod broadphase;
+pub use broadphase::BroadPhase;
 
 mod collider;
 pub use collider::{Collider, ColliderShape};
@@ -9,7 +10,7 @@ pub use collider::{Collider, ColliderShape};
 mod narrowphase;
 pub use narrowphase::Contact;
 mod solver;
-pub use solver::{CollisionSolver, ContactOutput, ImpulseCache, SolverLoopCondition};
+pub use solver::{ContactOutput, ContactSolver};
 
 pub use crate::util::Transform;
 

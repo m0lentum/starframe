@@ -29,7 +29,7 @@ pub struct Resources {
     pub space: ecs::Space,
     pub camera: Camera,
     pub input_cache: InputCache,
-    pub impulse_cache: phys::collision::ImpulseCache,
+    pub impulse_cache: phys::constraint::ImpulseCache,
     pub debug_vis: DebugVisuals,
 }
 
@@ -65,7 +65,7 @@ pub fn init_resources() -> Resources {
         },
     );
 
-    let impulse_cache = phys::collision::ImpulseCache::new();
+    let impulse_cache = phys::constraint::ImpulseCache::new();
 
     //
 

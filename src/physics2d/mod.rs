@@ -1,12 +1,16 @@
 pub mod collision;
-pub mod constraint;
-pub mod forcefield;
-pub mod integrator;
-pub mod rigidbody;
+pub use collision::{Collider, ColliderShape, CollisionEvent, ContactSolver};
 
-pub use collision::{Collider, ColliderShape, CollisionEvent, CollisionSolver};
+pub mod constraint;
+pub use constraint::Constraint;
+
+pub mod forcefield;
 pub use forcefield::ForceField;
+
+pub mod integrator;
 pub use integrator::Integrator;
+
+pub mod rigidbody;
 pub use rigidbody::RigidBody;
 
 use nalgebra::Vector2;

@@ -4,11 +4,7 @@ use glium::{glutin, Surface};
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
     ecs,
-    physics2d::{
-        self as phys,
-        collision::{broadphase, CollisionSolver, SolverLoopCondition},
-        integrator,
-    },
+    physics2d::{self as phys, collision as coll, integrator},
     util::{
         gameloop::{GameLoop, LockstepLoop},
         inputcache::InputCache,
@@ -189,19 +185,23 @@ fn update_space(res: &mut Resources, dt: f32) {
     {
         microprofile::scope!("update", "rigid body solver");
 
-        use broadphase::BruteForce;
+        use coll::broadphase::BruteForce;
+        let contact_constraints = coll::ContactSolver::<BruteForce>::new()
+            .output_raw_contacts(&mut res.debug_vis.contact_cache)
+            .gather_contact_constraints(&mut res.space);
+
         use integrator::SemiImplicitEuler;
         res.space.run_system(
-            CollisionSolver::<SemiImplicitEuler, BruteForce>::new(
+            phys::constraint::ConstraintSolver::<SemiImplicitEuler>::new(
                 dt,
+                &contact_constraints,
                 &mut res.impulse_cache,
-                SolverLoopCondition {
-                    convergence_threshold: 0.2,
-                    max_loops: 6,
+                phys::constraint::SolverLoopCondition {
+                    convergence_threshold: 0.05,
+                    max_loops: 10,
                 },
                 phys::ForceField::gravity(Vector2::new(0.0, -9.81)),
-            )
-            .output_contacts(&mut res.debug_vis.contact_cache),
+            ),
         );
     }
 }
