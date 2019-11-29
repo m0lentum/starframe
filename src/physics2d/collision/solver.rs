@@ -7,13 +7,15 @@ use crate::{
 use std::marker::PhantomData;
 
 pub struct ContactSolver<'a, B: coll::BroadPhase> {
+    stabilisation_coef: f32,
     contact_out: Option<&'a mut ContactOutput>,
     _broad_phase_marker: PhantomData<B>,
 }
 
 impl<'a, B: coll::BroadPhase> ContactSolver<'a, B> {
-    pub fn new() -> Self {
+    pub fn new(stabilisation_coef: f32) -> Self {
         ContactSolver {
+            stabilisation_coef,
             contact_out: None,
             _broad_phase_marker: PhantomData,
         }
@@ -41,7 +43,7 @@ impl<'a, B: coll::BroadPhase> ContactSolver<'a, B> {
                     normal: cont.normal,
                     offsets_objspace: cont.offsets_objspace,
                     impulse_bounds: (Some(0.0), None),
-                    bias: 0.0, // TODO implement bias on the solver
+                    bias: cont.depth * self.stabilisation_coef,
                 })
                 .collect();
 

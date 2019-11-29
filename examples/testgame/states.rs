@@ -186,7 +186,7 @@ fn update_space(res: &mut Resources, dt: f32) {
         microprofile::scope!("update", "rigid body solver");
 
         use coll::broadphase::BruteForce;
-        let contact_constraints = coll::ContactSolver::<BruteForce>::new()
+        let contact_constraints = coll::ContactSolver::<BruteForce>::new((1.0 / dt) * 0.1)
             .output_raw_contacts(&mut res.debug_vis.contact_cache)
             .gather_contact_constraints(&mut res.space);
 

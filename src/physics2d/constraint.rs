@@ -245,6 +245,7 @@ where
                     };
 
                     let vels = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
+                    // TODO: this part is the actual constraint function and should be generalized
                     let normal_vels = [
                         vels[0].linear.dot(&acc.constraint.normal)
                             + (acc.offsets_cross_normals[0] * vels[0].angular),
@@ -254,7 +255,7 @@ where
                             + (acc.offsets_cross_normals[1] * vels[1].angular),
                     ];
 
-                    let relative_normal_vel = normal_vels[0] - normal_vels[1];
+                    let relative_normal_vel = normal_vels[0] - normal_vels[1] + acc.constraint.bias;
 
                     let impulse_magnitude = relative_normal_vel / acc.inv_masses_sum;
                     biggest_change = biggest_change.max(impulse_magnitude.abs());
