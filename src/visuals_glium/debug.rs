@@ -50,7 +50,7 @@ impl ContactIndicator {
             verts[2] = (coll.point + normal_scaled - tangent_scaled).into();
             verts[3] = (coll.point - normal_scaled + tangent_scaled).into();
             verts[4] = coll.point.into();
-            verts[5] = (coll.point + (*coll.normal * coll.depth)).into();
+            verts[5] = (coll.point - (*coll.normal * coll.depth)).into();
         }
 
         // draw
