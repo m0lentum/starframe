@@ -87,7 +87,7 @@ pub struct Ball {
 
 impl ecs::ObjectRecipe for Ball {
     fn spawn(&self, obj: &mut ecs::MasterObjectHandle) {
-        obj.add(Transform::from_position(self.position));
+        obj.add(Transform::from_position(self.position.into()));
         obj.add(phys::RigidBody::new_dynamic(
             phys::Collider::new_circle(self.radius),
             1.0,

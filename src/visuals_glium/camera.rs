@@ -3,7 +3,7 @@ use crate::util::{
     Transform,
 };
 
-use nalgebra::{Matrix3, Vector2};
+use ultraviolet as uv;
 
 /// Camera controllers are rules for transforming a camera.
 pub trait CameraController {
@@ -24,7 +24,7 @@ pub struct Camera2D<C: CameraController> {
     pub controller: C,
     pub strategy: ScalingStrategy,
     scaling_factor: f32,
-    viewport_scaling: Vector2<f32>,
+    viewport_scaling: uv::Vec2,
 }
 
 impl<C: CameraController> Camera2D<C> {
@@ -33,7 +33,7 @@ impl<C: CameraController> Camera2D<C> {
             controller,
             strategy,
             scaling_factor: 0.0,
-            viewport_scaling: Vector2::zeros(),
+            viewport_scaling: uv::Vec2::zero(),
         };
         him.update_scaling();
         him
@@ -48,7 +48,7 @@ impl<C: CameraController> Camera2D<C> {
             controller,
             strategy,
             scaling_factor: 0.0,
-            viewport_scaling: Vector2::zeros(),
+            viewport_scaling: uv::Vec2::zero(),
         };
         him.update_scaling_for_viewport(framebuffer_size);
         him
@@ -64,7 +64,7 @@ impl<C: CameraController> Camera2D<C> {
     /// Update the camera's scaling factor based on an arbitrary framebuffer size.
     pub fn update_scaling_for_viewport(&mut self, framebuffer_size: (u32, u32)) {
         let (fb_width, fb_height) = framebuffer_size;
-        self.viewport_scaling = Vector2::new(2.0 / fb_width as f32, 2.0 / fb_height as f32);
+        self.viewport_scaling = uv::Vec2::new(2.0 / fb_width as f32, 2.0 / fb_height as f32);
 
         use self::ScalingStrategy::*;
         self.scaling_factor = match self.strategy {
@@ -81,11 +81,19 @@ impl<C: CameraController> Camera2D<C> {
     }
 
     /// Get the 3x3 view transformation matrix for this camera.
-    pub fn view_matrix(&self) -> Matrix3<f32> {
+    pub fn view_matrix(&self) -> uv::Mat3 {
         let full_scaling = self.viewport_scaling * self.scaling_factor;
 
-        Matrix3::new_nonuniform_scaling(&full_scaling)
-            * self.controller.transform().inverse().to_homogeneous()
+        uv::Mat3::from_nonuniform_scale_homogeneous(uv::Vec3::new(
+            full_scaling.x,
+            full_scaling.y,
+            1.0,
+        )) * self
+            .controller
+            .transform()
+            .0
+            .inversed()
+            .into_homogeneous_matrix()
     }
 }
 
@@ -116,20 +124,21 @@ impl MouseDragController {
             (Some(DragState::InProgress { .. }), None) => self.drag_start = Some(self.transform),
             (Some(DragState::InProgress { start, .. }), Some(tr_at_start)) => {
                 let cursor_pos = input_cache.cursor_position().get();
-                let offset = Vector2::new(
+                let offset = uv::Vec2::new(
                     (cursor_pos.x - start.x) as f32,
                     -(cursor_pos.y - start.y) as f32,
                 );
-                // TODO: add stuff to the Transform interface to streamline this
                 self.transform = tr_at_start;
                 self.transform
-                    .translate(-offset * self.transform.scaling() / scaling_factor);
+                    .0
+                    .append_translation(-offset * self.transform.0.scale / scaling_factor);
             }
             (Some(DragState::Completed { start, end, .. }), Some(tr_at_start)) => {
-                let offset = Vector2::new((end.x - start.x) as f32, -(end.y - start.y) as f32);
+                let offset = uv::Vec2::new((end.x - start.x) as f32, -(end.y - start.y) as f32);
                 self.transform = tr_at_start;
                 self.transform
-                    .translate(-offset * self.transform.scaling() / scaling_factor);
+                    .0
+                    .append_translation(-offset * self.transform.0.scale / scaling_factor);
                 self.drag_start = None;
             }
             _ => (),
@@ -138,9 +147,9 @@ impl MouseDragController {
         let scroll = input_cache.scroll_delta();
         if scroll != 0.0 {
             // TODO: zoom towards mouse cursor
-            let new_scaling = (1.0 + scroll * -self.zoom_speed) * self.transform.scaling();
+            let new_scaling = (1.0 + scroll * -self.zoom_speed) * self.transform.0.scale;
             let new_scaling = new_scaling.max(self.min_zoom_out).min(self.max_zoom_out);
-            self.transform.set_scaling(new_scaling);
+            self.transform.0.scale = new_scaling;
         }
     }
 }

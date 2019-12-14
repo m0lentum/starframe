@@ -1,6 +1,5 @@
-use nalgebra::geometry::UnitComplex;
-use nalgebra::{Point2, Similarity2, Translation2, Vector2};
 use std::f32::consts::PI;
+use ultraviolet as uv;
 
 /// An angle in either degrees or radians.
 /// Default conversion from f32 is in degrees.
@@ -33,9 +32,9 @@ impl From<f32> for Angle {
     }
 }
 
-impl From<UnitComplex<f32>> for Angle {
-    fn from(uc: UnitComplex<f32>) -> Self {
-        Angle::Radians(uc.angle())
+impl Into<uv::Rotor2> for Angle {
+    fn into(self) -> uv::Rotor2 {
+        uv::Rotor2::from_angle(self.rad())
     }
 }
 
@@ -45,99 +44,48 @@ impl Default for Angle {
     }
 }
 
-/// A wrapper on top of a nalgebra::Similarity2<f32> that adds some useful methods.
-/// All Similarity2 methods and members can be accessed from a Transform reference thanks to shrinkwraprs.
-/// See https://www.nalgebra.org/rustdoc/nalgebra/geometry/struct.Similarity.html
-#[derive(Clone, Copy, Debug, shrinkwraprs::Shrinkwrap)]
-#[shrinkwrap(mutable)]
+#[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(feature = "ron-recipes", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "ron-recipes", serde(from = "SerializeIntermediary"))]
 #[cfg_attr(feature = "ron-recipes", serde(into = "SerializeIntermediary"))]
-pub struct Transform(pub Similarity2<f32>);
-
-impl Transform {
-    /// The identity transform, i.e. no translation, rotation or scaling.
-    pub fn identity() -> Self {
-        Transform(Similarity2::identity())
-    }
-
-    /// Create a new Transform with an initial position, rotation and scale.
-    pub fn new(position: impl Into<Vector2<f32>>, rotation: impl Into<Angle>, scale: f32) -> Self {
-        Transform(Similarity2::new(
-            position.into(),
-            rotation.into().rad(),
-            scale,
-        ))
-    }
-
-    /// Create a transform with just a position.
-    pub fn from_position(pos: impl Into<Vector2<f32>>) -> Self {
-        Self::new(pos.into(), Angle::default(), 1.0)
-    }
-
-    /// Create a transform with just a rotation.
-    pub fn from_rotation(angle: impl Into<Angle>) -> Self {
-        Self::new(Vector2::zeros(), angle, 1.0)
-    }
-
-    /// Create a transform with just a scaling.
-    pub fn from_scaling(s: f32) -> Self {
-        Transform(Similarity2::from_scaling(s))
-    }
-
-    pub fn translate(&mut self, amount: impl Into<Vector2<f32>>) {
-        self.isometry
-            .append_translation_mut(&Translation2::from(amount.into()));
-    }
-
-    pub fn set_position(&mut self, pos: impl Into<Vector2<f32>>) {
-        self.isometry.translation = nalgebra::Translation2::from(pos.into());
-    }
-
-    /// Position as a Vector2.
-    pub fn translation(&self) -> Vector2<f32> {
-        self.isometry.translation.vector
-    }
-
-    /// Position as a Point2.
-    pub fn position(&self) -> Point2<f32> {
-        Point2::from(self.translation())
-    }
-
-    pub fn rotate(&mut self, angle: impl Into<Angle>) {
-        self.isometry
-            .append_rotation_wrt_center_mut(&UnitComplex::new(angle.into().rad()));
-    }
-
-    pub fn rotation(&self) -> Angle {
-        Angle::Radians(self.isometry.rotation.angle())
-    }
-
-    pub fn set_rotation(&mut self, angle: impl Into<Angle>) {
-        self.isometry.rotation = UnitComplex::new(angle.into().rad());
-    }
-
-    pub fn scaling(&self) -> f32 {
-        self.0.scaling()
-    }
-
-    pub fn multiply_scaling(&mut self, factor: f32) {
-        self.append_scaling(factor);
-    }
-
-    pub fn set_scaling(&mut self, s: f32) {
-        self.0.set_scaling(s);
-    }
-}
-
-impl Default for Transform {
-    fn default() -> Self {
-        Self::identity()
-    }
-}
+pub struct Transform(pub uv::Similarity2);
 
 impl crate::ecs::DefaultStorage for Transform {
     type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
+}
+
+impl Transform {
+    pub fn identity() -> Self {
+        Transform(uv::Similarity2::identity())
+    }
+
+    pub fn new(pos: uv::Vec2, angle: Angle, scaling: f32) -> Self {
+        Transform(uv::Similarity2::new(pos, angle.into(), scaling))
+    }
+
+    pub fn from_position(pos: uv::Vec2) -> Self {
+        Transform(uv::Similarity2::new(pos, uv::Rotor2::default(), 1.0))
+    }
+
+    pub fn from_angle(angle: Angle) -> Self {
+        Transform(uv::Similarity2::new(
+            uv::Vec2::new(0.0, 0.0),
+            angle.into(),
+            1.0,
+        ))
+    }
+
+    pub fn from_scaling(scaling: f32) -> Self {
+        Transform(uv::Similarity2::new(
+            uv::Vec2::new(0.0, 0.0),
+            uv::Rotor2::default(),
+            scaling,
+        ))
+    }
+
+    pub fn angle(&self) -> Angle {
+        Angle::Radians((self.0.rotation * uv::Vec2::unit_x()).x.acos())
+    }
 }
 
 #[cfg(feature = "ron-recipes")]
@@ -151,26 +99,30 @@ struct SerializeIntermediary {
 
 impl Default for SerializeIntermediary {
     fn default() -> Self {
-        Transform::default().into()
+        SerializeIntermediary {
+            position: [0.0; 2],
+            rotation: 0.0,
+            scaling: 1.0,
+        }
     }
 }
 
 impl From<Transform> for SerializeIntermediary {
     fn from(tr: Transform) -> Self {
         SerializeIntermediary {
-            position: tr.position().coords.into(),
-            rotation: tr.rotation().deg(),
-            scaling: tr.scaling(),
+            position: [tr.0.translation.x, tr.0.translation.y],
+            rotation: tr.angle().deg(),
+            scaling: tr.0.scale,
         }
     }
 }
 
 impl From<SerializeIntermediary> for Transform {
     fn from(s: SerializeIntermediary) -> Self {
-        Transform::new(
-            Vector2::from(s.position),
-            Angle::Degrees(s.rotation),
+        Transform(uv::Similarity2::new(
+            s.position.into(),
+            Angle::Degrees(s.rotation).into(),
             s.scaling,
-        )
+        ))
     }
 }

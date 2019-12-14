@@ -14,8 +14,8 @@ use moleengine::{
     visuals_glium as vis,
 };
 
-use nalgebra::Vector2;
 use rand::{distributions as distr, distributions::Distribution};
+use ultraviolet as uv;
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 const _CYAN_COLOR: [f32; 4] = [0.3, 0.7, 0.8, 1.0];
@@ -58,11 +58,13 @@ impl GameState<Resources> for StatePlaying {
             if let Some(obj) = space.spawn_from_pool::<T>() {
                 let mut rng = rand::thread_rng();
                 obj.write_component(|tr: &mut Transform| {
-                    tr.set_position([
+                    tr.0.translation = uv::Vec2::new(
                         distr::Uniform::from(-3.0..3.0).sample(&mut rng),
                         distr::Uniform::from(0.0..2.0).sample(&mut rng),
-                    ]);
-                    tr.set_rotation(distr::Uniform::from(0.0..360.0).sample(&mut rng));
+                    );
+                    tr.0.rotation = uv::Rotor2::from_angle(
+                        distr::Uniform::from(0.0..2.0 * std::f32::consts::PI).sample(&mut rng),
+                    );
                 });
             }
         }
@@ -83,7 +85,7 @@ impl GameState<Resources> for StatePlaying {
             .input_cache
             .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
         {
-            res.camera.controller.transform = Transform::identity();
+            res.camera.controller.transform.0 = uv::Similarity2::identity();
         }
 
         //
@@ -200,7 +202,7 @@ fn update_space(res: &mut Resources, dt: f32) {
                     convergence_threshold: 0.05,
                     max_loops: 10,
                 },
-                phys::ForceField::gravity(Vector2::new(0.0, -9.81)),
+                phys::ForceField::gravity(uv::Vec2::new(0.0, -9.81)),
             ),
         );
     }

@@ -1,26 +1,28 @@
-use nalgebra::{Point2, Vector2};
+use ultraviolet as uv;
+
+// TODO: this whole thing would be better expressed as a trait probably
 
 /// Force fields are defined as functions from positions to force vectors
 /// and applied during physics updates.
 /// Many force fields can be combined by putting them in a Vec
 /// and calling `from` or `into`.
 pub struct ForceField {
-    force: Box<dyn Fn(Point2<f32>) -> Vector2<f32>>,
+    force: Box<dyn Fn(uv::Vec2) -> uv::Vec2>,
 }
 
 impl ForceField {
     /// Evaluate the force field at a given point in space.
-    pub fn value_at(&self, point: Point2<f32>) -> Vector2<f32> {
+    pub fn value_at(&self, point: uv::Vec2) -> uv::Vec2 {
         (self.force)(point)
     }
 
     /// Transform any function from a point to a vector to a force field.
-    pub fn from_fn<F: Fn(Point2<f32>) -> Vector2<f32> + 'static>(f: F) -> Self {
+    pub fn from_fn<F: Fn(uv::Vec2) -> uv::Vec2 + 'static>(f: F) -> Self {
         ForceField { force: Box::new(f) }
     }
 
     /// A constant force over all of space.
-    pub fn gravity(f: Vector2<f32>) -> Self {
+    pub fn gravity(f: uv::Vec2) -> Self {
         ForceField {
             force: Box::new(move |_| f),
         }
@@ -29,7 +31,7 @@ impl ForceField {
     /// No force anywhere in space.
     pub fn none() -> Self {
         ForceField {
-            force: Box::new(|_| Vector2::zeros()),
+            force: Box::new(|_| uv::Vec2::zero()),
         }
     }
 }
@@ -38,7 +40,7 @@ impl From<Vec<ForceField>> for ForceField {
     fn from(ff: Vec<ForceField>) -> Self {
         ForceField {
             force: Box::new(move |p| {
-                let mut total = Vector2::zeros();
+                let mut total = uv::Vec2::zero();
                 for f in &ff {
                     total += (f.force)(p);
                 }

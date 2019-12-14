@@ -135,11 +135,17 @@ impl<'a, C: CameraController, S: glium::Surface> SimpleSystem<'a> for ShapeRende
         let view = self.camera.view_matrix();
 
         for item in items {
-            let model = item.transform.to_homogeneous();
-            let mv: [[f32; 3]; 3] = (view * model).into();
+            let model = item.transform.0.into_homogeneous_matrix();
+            let mv = view * model;
+            // TODO: this is really ugly, make some conversion function or something
+            let mv_uniform = [
+                [mv.cols[0].x, mv.cols[0].y, mv.cols[0].z],
+                [mv.cols[1].x, mv.cols[1].y, mv.cols[1].z],
+                [mv.cols[2].x, mv.cols[2].y, mv.cols[2].z],
+            ];
 
             let uniforms = glium::uniform! {
-                model_view: mv,
+                model_view: mv_uniform,
                 color: item.shape.color,
             };
             self.target

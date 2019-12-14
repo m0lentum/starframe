@@ -14,6 +14,8 @@ pub mod debug;
 
 //
 
+use ultraviolet as uv;
+
 pub type Color = [f32; 4];
 
 #[derive(Copy, Clone, Default)]
@@ -27,18 +29,10 @@ impl From<[f32; 2]> for Vertex2D {
     }
 }
 
-impl From<nalgebra::Vector2<f32>> for Vertex2D {
-    fn from(pos: nalgebra::Vector2<f32>) -> Self {
+impl From<uv::Vec2> for Vertex2D {
+    fn from(pos: uv::Vec2) -> Self {
         Vertex2D {
-            v_position: [pos[0], pos[1]],
-        }
-    }
-}
-
-impl From<nalgebra::Point2<f32>> for Vertex2D {
-    fn from(pos: nalgebra::Point2<f32>) -> Self {
-        Vertex2D {
-            v_position: [pos[0], pos[1]],
+            v_position: [pos.x, pos.y],
         }
     }
 }

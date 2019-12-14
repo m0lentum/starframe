@@ -1,6 +1,7 @@
-use glium::glutin::VirtualKeyCode as Key;
 use moleengine::{ecs::system::*, physics2d::RigidBody, util::inputcache::*};
-use nalgebra::Vector2;
+
+use glium::glutin::VirtualKeyCode as Key;
+use ultraviolet as uv;
 
 #[derive(Copy, Clone)]
 pub struct KeyboardControls;
@@ -30,22 +31,22 @@ impl<'a> SimpleSystem<'a> for KeyboardMover<'a> {
         if self.input.is_key_pressed(Key::LShift, None) {
             for item in items {
                 item.body.velocity_mut().map(|vel| {
-                    vel.linear = Vector2::zeros();
+                    vel.linear = uv::Vec2::zero();
                     vel.angular = 0.0;
                 });
             }
         } else {
-            let mut t = Vector2::zeros();
+            let mut t = uv::Vec2::zero();
             let mut r = 0.0;
             if self.input.is_key_pressed(Key::Left, Some(0)) {
-                t[0] = -3.0
+                t.x = -3.0
             } else if self.input.is_key_pressed(Key::Right, Some(0)) {
-                t[0] = 3.0
+                t.x = 3.0
             }
             if self.input.is_key_pressed(Key::Up, Some(0)) {
-                t[1] = 3.0
+                t.y = 3.0
             } else if self.input.is_key_pressed(Key::Down, Some(0)) {
-                t[1] = -3.0
+                t.y = -3.0
             }
             if self.input.is_key_pressed(Key::PageDown, Some(0)) {
                 r = -6.0;

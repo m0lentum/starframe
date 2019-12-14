@@ -6,6 +6,7 @@ use crate::{
     },
 };
 use glium::{backend::Facade, uniform};
+use ultraviolet as uv;
 
 const COLL_INDICATOR_SIZE: f32 = 0.05;
 const VERTS_PER_INDICATOR: usize = 6;
@@ -43,21 +44,26 @@ impl ContactIndicator {
             .iter()
             .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
         {
-            let normal_scaled = *coll.normal * COLL_INDICATOR_SIZE;
-            let tangent_scaled = nalgebra::Vector2::new(normal_scaled[1], -normal_scaled[0]);
+            let normal_scaled = coll.normal * COLL_INDICATOR_SIZE;
+            let tangent_scaled = uv::Vec2::new(normal_scaled[1], -normal_scaled[0]);
             verts[0] = (coll.point + normal_scaled + tangent_scaled).into();
             verts[1] = (coll.point - normal_scaled - tangent_scaled).into();
             verts[2] = (coll.point + normal_scaled - tangent_scaled).into();
             verts[3] = (coll.point - normal_scaled + tangent_scaled).into();
             verts[4] = coll.point.into();
-            verts[5] = (coll.point - (*coll.normal * coll.depth)).into();
+            verts[5] = (coll.point - (coll.normal * coll.depth)).into();
         }
 
         // draw
 
-        let view: [[f32; 3]; 3] = camera.view_matrix().into();
+        let view = camera.view_matrix();
+        let view_u = [
+            [view.cols[0].x, view.cols[0].y, view.cols[0].z],
+            [view.cols[1].x, view.cols[1].y, view.cols[1].z],
+            [view.cols[2].x, view.cols[2].y, view.cols[2].z],
+        ];
         let uniforms = glium::uniform! {
-            model_view: view,
+            model_view: view_u,
             color: color,
         };
 

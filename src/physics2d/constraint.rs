@@ -3,14 +3,14 @@ use crate::{
     physics2d as phys, util,
 };
 
-use nalgebra as na;
 use std::{collections::HashMap, marker::PhantomData};
+use ultraviolet as uv;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
     pub(crate) ids: [ecs::IdType; 2],
-    pub(crate) normal: na::Unit<na::Vector2<f32>>,
-    pub(crate) offsets_objspace: [na::Vector2<f32>; 2],
+    pub(crate) normal: uv::Vec2,
+    pub(crate) offsets: [uv::Vec2; 2],
     pub(crate) impulse_bounds: (Option<f32>, Option<f32>),
     pub(crate) bias: f32,
 }
@@ -132,7 +132,7 @@ where
         // apply environment forces (gravity, usually)
         for item in items.iter_mut() {
             if let Some(vel) = item.body.velocity_mut() {
-                vel.linear += self.forcefield.value_at(item.tr.position()) * self.timestep;
+                vel.linear += self.forcefield.value_at(item.tr.0.translation) * self.timestep;
             }
         }
 
@@ -186,11 +186,7 @@ where
                 };
 
                 // begin accumulator construction
-                let offsets_worldspace = [
-                    objs[0].tr.0 * constraint.offsets_objspace[0],
-                    objs[1].tr.0 * constraint.offsets_objspace[1],
-                ];
-                let offsets_cross_normals = map_array_2(&offsets_worldspace, |offset| {
+                let offsets_cross_normals = map_array_2(&constraint.offsets, |offset| {
                     offset[0] * constraint.normal[1] - constraint.normal[0] * offset[1]
                 });
                 let inv_masses = map_array_2(&objs, |o_| o_.body.inverse_mass());
@@ -203,12 +199,12 @@ where
                 // warm start
                 let initial_impulse = if let Some(prev_impulse) = self.impulse_cache.get(ids) {
                     if let Some(vel) = objs[0].body.velocity_mut() {
-                        vel.linear -= inv_masses[0] * prev_impulse * *constraint.normal;
+                        vel.linear -= inv_masses[0] * prev_impulse * constraint.normal;
                         vel.angular -=
                             inv_mom_inertias[0] * prev_impulse * offsets_cross_normals[0];
                     }
                     if let Some(vel) = objs[1].body.velocity_mut() {
-                        vel.linear += inv_masses[1] * prev_impulse * *constraint.normal;
+                        vel.linear += inv_masses[1] * prev_impulse * constraint.normal;
                         vel.angular +=
                             inv_mom_inertias[1] * prev_impulse * offsets_cross_normals[1];
                     }
@@ -247,11 +243,9 @@ where
                     let vels = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
                     // TODO: this part is the actual constraint function and should be generalized
                     let normal_vels = [
-                        vels[0].linear.dot(&acc.constraint.normal)
+                        vels[0].linear.dot(acc.constraint.normal)
                             + (acc.offsets_cross_normals[0] * vels[0].angular),
-                        // normal is towards obj2 -> this one will be negative
-                        // (if objects moving into each other)
-                        vels[1].linear.dot(&acc.constraint.normal)
+                        vels[1].linear.dot(acc.constraint.normal)
                             + (acc.offsets_cross_normals[1] * vels[1].angular),
                     ];
 
@@ -279,13 +273,13 @@ where
 
                     // apply the impulse
                     if let Some(vel) = objs[0].body.velocity_mut() {
-                        vel.linear -= acc.inv_masses[0] * clamped_impulse * *acc.constraint.normal;
+                        vel.linear -= acc.inv_masses[0] * clamped_impulse * acc.constraint.normal;
                         vel.angular -= acc.inv_mom_inertias[0]
                             * clamped_impulse
                             * acc.offsets_cross_normals[0];
                     }
                     if let Some(vel) = objs[1].body.velocity_mut() {
-                        vel.linear += acc.inv_masses[1] * clamped_impulse * *acc.constraint.normal;
+                        vel.linear += acc.inv_masses[1] * clamped_impulse * acc.constraint.normal;
                         vel.angular += acc.inv_mom_inertias[1]
                             * clamped_impulse
                             * acc.offsets_cross_normals[1];

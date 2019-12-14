@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 glutin = "0.21.1"
-nalgebra = "0.18.1"
+ultraviolet = "0.4.4"
 hibitset = "0.6.2"
 anymap = "0.12.1"
 parking_lot = "0.9.0"
@@ -23,7 +23,7 @@ rand = "0.7.2"
 
 [features]
 ecs = ["moleengine_ecs_codegen", "serde"]
-ron-recipes = ["ecs", "nalgebra/serde-serialize", "serde", "ron"]
+ron-recipes = ["ecs", "serde", "ron"]
 physics2d = []
 visuals_glium = ["glium"]
 debug_visuals = []

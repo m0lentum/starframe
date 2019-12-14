@@ -30,18 +30,18 @@ impl<'a, B: coll::BroadPhase> ContactSolver<'a, B> {
 
     /// Check for collisions in a Space and output inequality constraints for use in the constraint solver.
     pub fn gather_contact_constraints(mut self, space: &mut ecs::Space) -> Vec<phys::Constraint> {
+        // TODO allow queries to return stuff so this variable isn't necessary
         let mut contact_constraints = Vec::new();
 
         space.run_query(|items: &mut [RigidBodyQuery]| {
             let contacts = B::run(items.iter().map(|rbq| rbq.as_collidable()));
 
-            // TODO allow queries to return stuff
             contact_constraints = contacts
                 .iter()
                 .map(|cont| phys::Constraint {
                     ids: cont.ids,
                     normal: cont.normal,
-                    offsets_objspace: cont.offsets_objspace,
+                    offsets: cont.offsets,
                     impulse_bounds: (Some(0.0), None),
                     bias: cont.depth * self.stabilisation_coef,
                 })
@@ -51,6 +51,10 @@ impl<'a, B: coll::BroadPhase> ContactSolver<'a, B> {
                 out.0 = contacts;
             }
         });
+
+        // if contact_constraints.len() > 0 {
+        //     dbg!(&contact_constraints);
+        // }
 
         contact_constraints
     }

@@ -1,8 +1,8 @@
 use super::{broadphase::Collidable, collider::ColliderShape};
 use crate::{ecs, util::Transform};
 
-use nalgebra::{Point2, Unit, Vector2};
 use std::f32::consts::PI;
+use ultraviolet as uv;
 
 /// determines how close to parallel two surfaces need to be to generate two contacts
 const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
@@ -12,20 +12,20 @@ const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
 pub struct Contact {
     pub ids: [ecs::IdType; 2],
     /// The normal, facing away from obj1
-    pub normal: Unit<Vector2<f32>>,
+    pub normal: uv::Vec2,
     /// Penetration depth
     pub depth: f32,
     /// Point of contact on the surface of obj1, in world space
-    pub point: Point2<f32>,
+    pub point: uv::Vec2,
     /// Offsets from each object's position to the point of contact, in object-local space
-    pub offsets_objspace: [Vector2<f32>; 2],
+    pub offsets: [uv::Vec2; 2],
 }
 
 // Intermediate structure so we don't have to carry everything around through the worker functions
 struct Contact_ {
-    normal: Unit<Vector2<f32>>,
+    normal: uv::Vec2,
     depth: f32,
-    point: Point2<f32>,
+    point: uv::Vec2,
 }
 
 /// Checks two transformed colliders for intersection.
@@ -37,9 +37,9 @@ pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec
                 normal: c.normal,
                 depth: c.depth,
                 point: c.point,
-                offsets_objspace: [
-                    (obj1.tr.inverse() * c.point).coords,
-                    (obj2.tr.inverse() * c.point).coords,
+                offsets: [
+                    c.point - obj1.tr.0.translation,
+                    c.point - obj2.tr.0.translation,
                 ],
             })
             .collect()
@@ -61,32 +61,32 @@ pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec
 fn flip_contacts(mut contacts: Vec<Contact>) -> Vec<Contact> {
     for c in &mut contacts {
         c.ids = [c.ids[1], c.ids[0]];
-        c.point += c.depth * *c.normal;
+        c.point -= c.depth * c.normal;
         c.normal = -c.normal;
     }
     contacts
 }
 
 fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Contact_> {
-    let pos1 = tr1.0 * Point2::origin();
-    let pos2 = tr2.0 * Point2::origin();
+    let pos1 = tr1.0 * uv::Vec2::zero();
+    let pos2 = tr2.0 * uv::Vec2::zero();
 
-    let r1_s = r1 * tr1.scaling();
-    let r2_s = r2 * tr2.scaling();
+    let r1_s = r1 * tr1.0.scale;
+    let r2_s = r2 * tr2.0.scale;
 
     let dist = pos2 - pos1;
-    let dist_sq = dist.norm_squared();
+    let dist_sq = dist.mag_sq();
 
     let depth;
     let normal;
     if dist_sq < 0.001 {
         // same position, consider penetration to be on x axis
         depth = r1_s + r2_s;
-        normal = Vector2::x_axis();
+        normal = uv::Vec2::unit_x();
     } else if dist_sq < (r1_s + r2_s) * (r1_s + r2_s) {
         // normal collision
-        depth = (r1_s + r2_s) - dist.norm();
-        normal = Unit::new_normalize(dist);
+        depth = (r1_s + r2_s) - dist.mag();
+        normal = dist.normalized();
     } else {
         return vec![];
     }
@@ -94,7 +94,7 @@ fn circle_circle(tr1: &Transform, r1: f32, tr2: &Transform, r2: f32) -> Vec<Cont
     vec![Contact_ {
         normal,
         depth,
-        point: pos1 + (normal.as_ref() * r1_s),
+        point: pos1 + (normal * r1_s),
     }]
 }
 
@@ -105,60 +105,58 @@ fn rect_circle(
     tr_circle: &Transform,
     r: f32,
 ) -> Vec<Contact_> {
-    let tr_c_wrt_rect = tr_rect.inverse() * tr_circle.0;
-    let dist = tr_c_wrt_rect * Point2::origin();
-    let dist_abs = Point2::new(dist.x.abs(), dist.y.abs());
-    let dist_signums = Point2::new(dist.x.signum(), dist.y.signum());
-    let r = tr_c_wrt_rect.scaling() * r;
+    let tr_c_wrt_rect = tr_rect.0.inversed() * tr_circle.0;
+    let dist = tr_c_wrt_rect * uv::Vec2::zero();
+    let dist_abs = uv::Vec2::new(dist.x.abs(), dist.y.abs());
+    let dist_signums = uv::Vec2::new(dist.x.signum(), dist.y.signum());
+    let r = tr_c_wrt_rect.scale * r;
 
-    let c_to_corner = Vector2::new(hw - dist_abs.x, hh - dist_abs.y);
+    let c_to_corner = uv::Vec2::new(hw - dist_abs.x, hh - dist_abs.y);
     if c_to_corner.x < -r || c_to_corner.y < -r {
         // too far to possibly intersect
         return vec![];
     }
-    let point_abs: Point2<f32>;
+    let point_abs: uv::Vec2;
     let depth: f32;
-    let normal_abs: Unit<Vector2<f32>>;
+    let normal_abs: uv::Vec2;
     if c_to_corner.x > 0.0 && c_to_corner.y > 0.0 {
         // circle center is inside the rect
         if c_to_corner.x < c_to_corner.y {
-            point_abs = Point2::new(hw, dist_abs.y);
+            point_abs = uv::Vec2::new(hw, dist_abs.y);
             depth = c_to_corner.x + r;
-            normal_abs = Vector2::x_axis();
+            normal_abs = uv::Vec2::unit_x();
         } else {
-            point_abs = Point2::new(dist_abs.x, hh);
+            point_abs = uv::Vec2::new(dist_abs.x, hh);
             depth = c_to_corner.y + r;
-            normal_abs = Vector2::y_axis();
+            normal_abs = uv::Vec2::unit_y();
         };
     } else if c_to_corner.x > 0.0 {
         // inside in the x direction but not y
-        point_abs = Point2::new(dist_abs.x, hh);
+        point_abs = uv::Vec2::new(dist_abs.x, hh);
         depth = c_to_corner.y + r; // c_to_corner.y is negative
-        normal_abs = Vector2::y_axis();
+        normal_abs = uv::Vec2::unit_y();
     } else if c_to_corner.y > 0.0 {
         // inside in the y direction but not x
-        point_abs = Point2::new(hw, dist_abs.y);
+        point_abs = uv::Vec2::new(hw, dist_abs.y);
         depth = c_to_corner.x + r;
-        normal_abs = Vector2::x_axis();
+        normal_abs = uv::Vec2::unit_x();
     } else {
         // outside both edges, possible intersection with the corner point
-        depth = r - c_to_corner.norm();
+        depth = r - c_to_corner.mag();
         if depth > 0.0 {
-            point_abs = Point2::new(hw, hh);
-            normal_abs = Unit::new_normalize(-c_to_corner);
+            point_abs = uv::Vec2::new(hw, hh);
+            normal_abs = -c_to_corner.normalized();
         } else {
             return vec![];
         }
     }
 
     let contact = Contact_ {
-        normal: tr_rect.isometry.rotation
-            * Unit::new_unchecked(Vector2::new(
-                dist_signums.x * normal_abs.x,
-                dist_signums.y * normal_abs.y,
-            )),
-        depth: tr_rect.scaling() * depth,
-        point: tr_rect.0 * Point2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
+        normal: tr_rect.0.rotation
+            * uv::Vec2::new(dist_signums.x * normal_abs.x, dist_signums.y * normal_abs.y),
+        depth: tr_rect.0.scale * depth,
+        point: tr_rect.0
+            * uv::Vec2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
     };
 
     vec![contact]
@@ -172,29 +170,29 @@ fn rect_rect(
     hw2: f32,
     hh2: f32,
 ) -> Vec<Contact_> {
-    let tr2_wrt_tr1 = tr1.inverse() * tr2.0;
+    let tr2_wrt_tr1 = tr1.0.inversed() * tr2.0;
 
     // obj1 is axis-aligned at origin, these are obj2's values
-    let dist = tr2_wrt_tr1 * Point2::origin();
-    let rot = tr2_wrt_tr1.isometry.rotation;
-    let rot_ang = rot.angle(); // ]-pi, pi]
+    let dist = tr2_wrt_tr1 * uv::Vec2::zero();
 
-    let hw2 = tr2_wrt_tr1.scaling() * hw2;
-    let hh2 = tr2_wrt_tr1.scaling() * hh2;
+    let hw2 = tr2_wrt_tr1.scale * hw2;
+    let hh2 = tr2_wrt_tr1.scale * hh2;
 
     // aligned special cases
+
+    let rot_ang = Transform(tr2_wrt_tr1).angle().rad();
 
     if rot_ang.abs() < FLAT_COLLISION_ANGLE_THRESHOLD
         || (rot_ang.abs() - PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
     {
-        return aabb_aabb(dist.coords, hw1, hh1, hw2, hh2)
+        return aabb_aabb(dist, hw1, hh1, hw2, hh2)
             .into_iter()
             .map(|cont| transform_contact(&tr1, cont))
             .collect();
     } else if (rot_ang - 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
         || (rot_ang + 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
     {
-        return aabb_aabb(dist.coords, hw1, hh1, hh2, hw2)
+        return aabb_aabb(dist, hw1, hh1, hh2, hw2)
             .into_iter()
             .map(|cont| transform_contact(&tr1, cont))
             .collect();
@@ -202,31 +200,29 @@ fn rect_rect(
 
     // unaligned general case with one collision point
 
-    let x2_axis = rot * Vector2::x_axis();
-    let hw2_v = hw2 * (*x2_axis);
+    let x2_axis = tr2_wrt_tr1.rotation * uv::Vec2::unit_x();
+    let hw2_v = hw2 * x2_axis;
 
-    let y2_axis = Unit::new_unchecked(Vector2::new(-x2_axis[1], x2_axis[0]));
-    let hh2_v = hh2 * (*y2_axis);
+    let y2_axis = uv::Vec2::new(-x2_axis.y, x2_axis.x);
+    let hh2_v = hh2 * y2_axis;
 
-    let axes = [Vector2::x_axis(), Vector2::y_axis(), x2_axis, y2_axis];
+    let axes = [uv::Vec2::unit_x(), uv::Vec2::unit_y(), x2_axis, y2_axis];
 
     // penetration
-    let x1_pen = hw1 + hw2_v[0].abs() + hh2_v[0].abs() - dist.coords[0].abs();
+    let x1_pen = hw1 + hw2_v.x.abs() + hh2_v.x.abs() - dist.x.abs();
     if x1_pen <= 0.0 {
         return vec![];
     }
-    let y1_pen = hh1 + hw2_v[1].abs() + hh2_v[1].abs() - dist.coords[1].abs();
+    let y1_pen = hh1 + hw2_v.y.abs() + hh2_v.y.abs() - dist.y.abs();
     if y1_pen <= 0.0 {
         return vec![];
     }
 
-    let x2_pen =
-        hw2 + x2_axis[0].abs() * hw1 + x2_axis[1].abs() * hh1 - (dist.coords.dot(&x2_axis)).abs();
+    let x2_pen = hw2 + x2_axis.x.abs() * hw1 + x2_axis.y.abs() * hh1 - (dist.dot(x2_axis)).abs();
     if x2_pen <= 0.0 {
         return vec![];
     }
-    let y2_pen =
-        hh2 + y2_axis[0].abs() * hw1 + y2_axis[1].abs() * hh1 - (dist.coords.dot(&y2_axis)).abs();
+    let y2_pen = hh2 + y2_axis.x.abs() * hw1 + y2_axis.y.abs() * hh1 - (dist.dot(y2_axis)).abs();
     if y2_pen <= 0.0 {
         return vec![];
     }
@@ -244,23 +240,21 @@ fn rect_rect(
         .unwrap();
 
     // orient axis of penetration towards obj2
-    let axis = Unit::new_unchecked(axis.dot(&dist.coords).signum() * (**axis));
-    let depth_s = *depth * tr1.scaling();
-    let normal = tr1.isometry.rotation * axis;
+    let axis = axis.dot(dist).signum() * *axis;
+    let depth_s = *depth * tr1.0.scale;
+    let normal = tr1.0.rotation * axis;
 
     if axis_i <= 1 {
         // axis is on obj1, penetrating point is on obj2
-        let point = Point2::from(
-            dist.coords - (axis.dot(&hw2_v).signum() * hw2_v) - (axis.dot(&hh2_v).signum() * hh2_v),
-        );
+        let point = dist - (axis.dot(hw2_v).signum() * hw2_v) - (axis.dot(hh2_v).signum() * hh2_v);
         vec![Contact_ {
             normal,
             depth: depth_s,
-            point: tr1.0 * (point + (*depth) * (*axis)),
+            point: tr1.0 * (point + *depth * axis),
         }]
     } else {
         // axis is on obj2, penetrating point is on obj1
-        let point = Point2::new(axis[0].signum() * hw1, axis[1].signum() * hh1);
+        let point = uv::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
         vec![Contact_ {
             normal,
             depth: depth_s,
@@ -271,57 +265,57 @@ fn rect_rect(
 
 fn transform_contact(tr: &Transform, cont: Contact_) -> Contact_ {
     Contact_ {
-        normal: tr.isometry.rotation * cont.normal,
-        depth: cont.depth * tr.scaling(),
+        normal: tr.0.rotation * cont.normal,
+        depth: cont.depth * tr.0.scale,
         point: tr.0 * cont.point,
     }
 }
 
-fn aabb_aabb(dist: Vector2<f32>, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<Contact_> {
-    let x_pen = hw1 + hw2 - dist[0].abs();
+fn aabb_aabb(dist: uv::Vec2, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<Contact_> {
+    let x_pen = hw1 + hw2 - dist.x.abs();
     if x_pen <= 0.0 {
         return vec![];
     }
-    let y_pen = hh1 + hh2 - dist[1].abs();
+    let y_pen = hh1 + hh2 - dist.y.abs();
     if y_pen <= 0.0 {
         return vec![];
     }
 
-    let x_dir = dist[0].signum();
-    let y_dir = dist[1].signum();
+    let x_dir = dist.x.signum();
+    let y_dir = dist.y.signum();
 
     if x_pen < y_pen {
         let x1 = x_dir * hw1;
-        let y1 = (-hh1).max(dist[1] - hh2);
-        let y2 = hh1.min(dist[1] + hh2);
+        let y1 = (-hh1).max(dist.y - hh2);
+        let y2 = hh1.min(dist.y + hh2);
 
         vec![
             Contact_ {
-                normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
+                normal: uv::Vec2::new(x_dir, 0.0),
                 depth: x_pen,
-                point: Point2::new(x1, y1),
+                point: uv::Vec2::new(x1, y1),
             },
             Contact_ {
-                normal: Unit::new_unchecked(Vector2::new(x_dir, 0.0)),
+                normal: uv::Vec2::new(x_dir, 0.0),
                 depth: x_pen,
-                point: Point2::new(x1, y2),
+                point: uv::Vec2::new(x1, y2),
             },
         ]
     } else {
         let y1 = y_dir * hh1;
-        let x1 = (-hw1).max(dist[0] - hw2);
-        let x2 = hw1.min(dist[0] + hw2);
+        let x1 = (-hw1).max(dist.x - hw2);
+        let x2 = hw1.min(dist.x + hw2);
 
         vec![
             Contact_ {
-                normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
+                normal: uv::Vec2::new(0.0, y_dir),
                 depth: y_pen,
-                point: Point2::new(x1, y1),
+                point: uv::Vec2::new(x1, y1),
             },
             Contact_ {
-                normal: Unit::new_unchecked(Vector2::new(0.0, y_dir)),
+                normal: uv::Vec2::new(0.0, y_dir),
                 depth: y_pen,
-                point: Point2::new(x2, y1),
+                point: uv::Vec2::new(x2, y1),
             },
         ]
     }

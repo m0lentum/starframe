@@ -47,8 +47,8 @@ impl Integrator for ExplicitEuler {
         }
 
         for (tr, vel) in variables {
-            tr.translate(self.timestep * vel.linear);
-            tr.rotate(Angle::Radians(self.timestep * vel.angular));
+            tr.0.append_translation(self.timestep * vel.linear);
+            tr.0.prepend_rotation(Angle::Radians(self.timestep * vel.angular).into());
         }
 
         self.done = true;
@@ -83,8 +83,8 @@ impl Integrator for SemiImplicitEuler {
         }
 
         for (tr, vel) in variables {
-            tr.translate(self.timestep * vel.linear);
-            tr.rotate(Angle::Radians(self.timestep * vel.angular));
+            tr.0.append_translation(self.timestep * vel.linear);
+            tr.0.prepend_rotation(Angle::Radians(self.timestep * vel.angular).into());
         }
 
         IntegratorState::Done
