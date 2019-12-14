@@ -242,7 +242,7 @@ impl Space {
         let mut queue = EventQueue::new();
 
         self.write_component(id, |l: &mut EventListenerComponent<E>| {
-            l.run_listener(&evt, &self, &mut queue)
+            l.0.run_listener(&evt, &self, &mut queue)
         });
 
         queue.run_all(self);
