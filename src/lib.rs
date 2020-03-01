@@ -1,3 +1,4 @@
+pub mod core;
 pub mod util;
 
 #[cfg(feature = "ecs")]
