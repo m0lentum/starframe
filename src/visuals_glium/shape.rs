@@ -21,9 +21,10 @@ pub enum ShapeStyle {
 /// Concavity will not result in an error but will be rendered incorrectly.
 #[derive(Clone)]
 pub struct Shape {
-    pub(self) verts: Arc<glium::VertexBuffer<Vertex2D>>,
-    pub(self) color: Color,
-    pub(self) primitive_type: PrimitiveType,
+    // TODO: turn these back to pub(self) once we move the new system here
+    pub(crate) verts: Arc<glium::VertexBuffer<Vertex2D>>,
+    pub(crate) color: Color,
+    pub(crate) primitive_type: PrimitiveType,
 }
 
 impl Shape {
