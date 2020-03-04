@@ -176,16 +176,21 @@ fn update_space(res: &mut Resources, dt: f32) {
 }
 
 fn reload_main_space(space: &mut MainSpace) {
+    let ctx = vis::Context::get();
+    let square =
+        |size| vis::Shape::new_square(&ctx.display, size, vis::shape::ShapeStyle::Fill([1.0; 4]));
+    let tr = |x, y| Transform::from_position(uv::Vec2::new(x, y));
+
     space.clear();
+
     let obj = space.create_object();
-    let f = &mut space.features;
-    f.tr.add_transform(&obj, Transform::from_position(uv::Vec2::new(1.0, 0.0)));
-    f.shape.add_shape(
-        &obj,
-        vis::Shape::new_square(
-            &vis::Context::get().display,
-            1.0,
-            vis::shape::ShapeStyle::Fill([1.0; 4]),
-        ),
-    );
+    space.features.tr.add_transform(&obj, tr(1.0, 0.0));
+    space.features.shape.add_shape(&obj, square(1.0));
+
+    let obj = space.create_object();
+    space.features.tr.add_transform(&obj, tr(0.0, 0.0));
+
+    let obj = space.create_object();
+    space.features.tr.add_transform(&obj, tr(-1.0, 1.0));
+    space.features.shape.add_shape(&obj, square(1.2));
 }

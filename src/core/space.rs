@@ -58,8 +58,13 @@ impl ShapeFeature {
     }
 
     pub fn sync_transforms(&mut self, transforms: &TransformFeature) {
-        for (shape_frag, tr_frag) in self.fragments.iter_mut().zip(transforms.fragments.iter()) {
-            shape_frag.tr = tr_frag.tr;
+        let simple_iter = self
+            .fragments
+            .build_iter_simple()
+            .and(&transforms.fragments)
+            .build(|id| (self.fragments.get(id), transforms.fragments.get(id)));
+        for (i, (shape_frag, tr_frag)) in simple_iter.enumerate() {
+            println!("We got a shape and tr boyz {}", i);
         }
     }
 
