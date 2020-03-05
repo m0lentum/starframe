@@ -58,13 +58,11 @@ impl ShapeFeature {
     }
 
     pub fn sync_transforms(&mut self, transforms: &TransformFeature) {
-        let simple_iter = self
-            .fragments
-            .build_iter_simple()
-            .and(&transforms.fragments)
-            .build(|id| (self.fragments.get(id), transforms.fragments.get(id)));
-        for (i, (shape_frag, tr_frag)) in simple_iter.enumerate() {
-            println!("We got a shape and tr boyz {}", i);
+        for (shape_frag, tr_frag) in (self.fragments.iter_mut())
+            .and(transforms.fragments.iter())
+            .build()
+        {
+            shape_frag.tr = tr_frag.tr;
         }
     }
 
@@ -76,7 +74,7 @@ impl ShapeFeature {
     ) {
         let view = camera.view_matrix();
 
-        for frag in self.fragments.iter() {
+        for frag in self.fragments.iter().build() {
             let model = frag.tr.0.into_homogeneous_matrix();
             let mv = view * model;
             let mv_uniform = [
