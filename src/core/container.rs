@@ -58,11 +58,19 @@ impl<T: 'static> Container<T> {
     }
 }
 
-pub struct IterBuilder<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> {
+pub struct IterBuilder<Item, Bits, Get>
+where
+    Bits: hb::BitSetLike,
+    Get: FnMut(IdType) -> Item,
+{
     bits: Bits,
     get: Get,
 }
-impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IterBuilder<Item, Bits, Get> {
+impl<Item, Bits, Get> IterBuilder<Item, Bits, Get>
+where
+    Bits: hb::BitSetLike,
+    Get: FnMut(IdType) -> Item,
+{
     pub fn and<OI, OB: hb::BitSetLike, OG: FnMut(IdType) -> OI>(
         self,
         other: IterBuilder<OI, OB, OG>,
@@ -74,6 +82,16 @@ impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IterBuilder<Item, B
         }
     }
 
+    pub fn not<OI, OB: hb::BitSetLike, OG: FnMut(IdType) -> OI>(
+        self,
+        other: IterBuilder<OI, OB, OG>,
+    ) -> IterBuilder<Item, hb::BitSetAnd<Bits, hb::BitSetNot<OB>>, impl FnMut(IdType) -> Item> {
+        IterBuilder {
+            bits: hb::BitSetAnd(self.bits, hb::BitSetNot(other.bits)),
+            get: self.get,
+        }
+    }
+
     pub fn build(self) -> Iter<Item, Bits, Get> {
         Iter {
             bit_iter: self.bits.iter(),
@@ -81,8 +99,10 @@ impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IterBuilder<Item, B
         }
     }
 }
-impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IntoIterator
-    for IterBuilder<Item, Bits, Get>
+impl<Item, Bits, Get> IntoIterator for IterBuilder<Item, Bits, Get>
+where
+    Bits: hb::BitSetLike,
+    Get: FnMut(IdType) -> Item,
 {
     type Item = Item;
     type IntoIter = Iter<Item, Bits, Get>;
@@ -91,11 +111,19 @@ impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IntoIterator
     }
 }
 
-pub struct Iter<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> {
+pub struct Iter<Item, Bits, Get>
+where
+    Bits: hb::BitSetLike,
+    Get: FnMut(IdType) -> Item,
+{
     bit_iter: hb::BitIter<Bits>,
     get: Get,
 }
-impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> Iterator for Iter<Item, Bits, Get> {
+impl<Item, Bits, Get> Iterator for Iter<Item, Bits, Get>
+where
+    Bits: hb::BitSetLike,
+    Get: FnMut(IdType) -> Item,
+{
     type Item = Item;
     fn next(&mut self) -> Option<Self::Item> {
         let id = self.bit_iter.next()? as IdType;

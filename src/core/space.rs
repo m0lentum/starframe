@@ -75,6 +75,14 @@ impl ShapeFeature {
                 )
                 .expect("Drawing failed");
         }
+
+        for (i, _shape) in (self.fragments.iter())
+            .not(trs.fragments.iter())
+            .build()
+            .enumerate()
+        {
+            println!("There was {} thing with shape but no tr", i);
+        }
     }
 }
 

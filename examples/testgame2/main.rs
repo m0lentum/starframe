@@ -243,6 +243,12 @@ fn reload_main_space(space: &mut MainSpace) {
     space.features.tr.add(&obj, tr(0.0, 0.0));
 
     let obj = space.create_object();
+    space.features.shape.add(&obj, square(1.2));
+
+    let obj = space.create_object();
     space.features.tr.add(&obj, tr(-1.0, 1.0));
+    space.features.shape.add(&obj, square(1.2));
+
+    let obj = space.create_object();
     space.features.shape.add(&obj, square(1.2));
 }
