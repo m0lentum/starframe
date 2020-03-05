@@ -38,7 +38,7 @@ fn main() {
     microprofile::shutdown!();
 }
 
-// ================ Setup resources ===========================
+// ================ Main types ===========================
 
 pub type Camera = cam::Camera2D<cam::MouseDragController>;
 
@@ -67,6 +67,8 @@ impl core::space::FeatureSet for MainSpaceFeatures {
 }
 
 pub type MainSpace = core::Space<MainSpaceFeatures>;
+
+// ================== Setup resources ===========================
 
 pub fn init_resources() -> Resources {
     let events = unsafe { vis::Context::init() };
@@ -211,8 +213,7 @@ fn draw_space(res: &mut Resources) {
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
     let f = &mut res.space.features;
-    f.shape.sync_transforms(&f.tr);
-    f.shape.draw(&mut target, &res.camera, &ctx.shaders);
+    f.shape.draw(&f.tr, &mut target, &res.camera, &ctx.shaders);
 
     target.finish().unwrap();
 }
@@ -236,12 +237,12 @@ fn reload_main_space(space: &mut MainSpace) {
 
     let obj = space.create_object();
     space.features.tr.add(&obj, tr(1.0, 0.0));
-    space.features.shape.add_shape(&obj, square(1.0));
+    space.features.shape.add(&obj, square(1.0));
 
     let obj = space.create_object();
     space.features.tr.add(&obj, tr(0.0, 0.0));
 
     let obj = space.create_object();
     space.features.tr.add(&obj, tr(-1.0, 1.0));
-    space.features.shape.add_shape(&obj, square(1.2));
+    space.features.shape.add(&obj, square(1.2));
 }

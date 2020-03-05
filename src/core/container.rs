@@ -1,4 +1,3 @@
-use hb::BitSetLike;
 use hibitset as hb;
 
 use super::{space::MasterObjectHandle, IdType};

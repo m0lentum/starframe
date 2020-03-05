@@ -28,20 +28,8 @@ impl TransformFeature {
 //
 
 use crate::visuals_glium::Shape;
-pub struct ShapeFragment {
-    pub shape: Shape,
-    tr: Transform,
-}
-impl ShapeFragment {
-    pub fn new(shape: Shape) -> Self {
-        ShapeFragment {
-            shape,
-            tr: Transform::default(),
-        }
-    }
-}
 pub struct ShapeFeature {
-    fragments: Container<ShapeFragment>,
+    fragments: Container<Shape>,
 }
 impl ShapeFeature {
     pub fn with_capacity(capacity: IdType) -> Self {
@@ -50,26 +38,21 @@ impl ShapeFeature {
         }
     }
 
-    pub fn add_shape(&mut self, obj: &MasterObjectHandle, shape: Shape) {
-        self.fragments.insert(obj, ShapeFragment::new(shape));
-    }
-
-    pub fn sync_transforms(&mut self, transforms: &TransformFeature) {
-        for (shape_frag, tr_frag) in (self.fragments.iter_mut()).and(transforms.fragments.iter()) {
-            shape_frag.tr = *tr_frag;
-        }
+    pub fn add(&mut self, obj: &MasterObjectHandle, shape: Shape) {
+        self.fragments.insert(obj, shape);
     }
 
     pub fn draw<S: glium::Surface, C: crate::visuals_glium::camera::CameraController>(
         &self,
+        trs: &TransformFeature,
         target: &mut S,
         camera: &crate::visuals_glium::camera::Camera2D<C>,
         shaders: &crate::visuals_glium::Shaders,
     ) {
         let view = camera.view_matrix();
 
-        for frag in self.fragments.iter() {
-            let model = frag.tr.0.into_homogeneous_matrix();
+        for (shape, tr) in self.fragments.iter().and(trs.fragments.iter()) {
+            let model = tr.0.into_homogeneous_matrix();
             let mv = view * model;
             let mv_uniform = [
                 [mv.cols[0].x, mv.cols[0].y, mv.cols[0].z],
@@ -80,12 +63,12 @@ impl ShapeFeature {
             use glium::uniform;
             let uniforms = glium::uniform! {
                 model_view: mv_uniform,
-                color: frag.shape.color,
+                color: shape.color,
             };
             target
                 .draw(
-                    &*frag.shape.verts,
-                    glium::index::NoIndices(frag.shape.primitive_type),
+                    &*shape.verts,
+                    glium::index::NoIndices(shape.primitive_type),
                     &shaders.ortho_2d,
                     &uniforms,
                     &Default::default(),
