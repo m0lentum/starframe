@@ -10,11 +10,8 @@ pub trait FeatureSet: 'static {
 // TODO: decide which file these should live in
 use super::container::Container;
 use crate::util::Transform;
-pub struct TransformFragment {
-    pub tr: Transform,
-}
 pub struct TransformFeature {
-    fragments: Container<TransformFragment>,
+    fragments: Container<Transform>,
 }
 impl TransformFeature {
     pub fn with_capacity(capacity: IdType) -> Self {
@@ -23,8 +20,8 @@ impl TransformFeature {
         }
     }
 
-    pub fn add_transform(&mut self, obj: &MasterObjectHandle, tr: Transform) {
-        self.fragments.insert(obj, TransformFragment { tr });
+    pub fn add(&mut self, obj: &MasterObjectHandle, tr: Transform) {
+        self.fragments.insert(obj, tr);
     }
 }
 
@@ -58,11 +55,8 @@ impl ShapeFeature {
     }
 
     pub fn sync_transforms(&mut self, transforms: &TransformFeature) {
-        for (shape_frag, tr_frag) in (self.fragments.iter_mut())
-            .and(transforms.fragments.iter())
-            .build()
-        {
-            shape_frag.tr = tr_frag.tr;
+        for (shape_frag, tr_frag) in (self.fragments.iter_mut()).and(transforms.fragments.iter()) {
+            shape_frag.tr = *tr_frag;
         }
     }
 
@@ -74,7 +68,7 @@ impl ShapeFeature {
     ) {
         let view = camera.view_matrix();
 
-        for frag in self.fragments.iter().build() {
+        for frag in self.fragments.iter() {
             let model = frag.tr.0.into_homogeneous_matrix();
             let mv = view * model;
             let mv_uniform = [

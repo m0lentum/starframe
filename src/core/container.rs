@@ -82,6 +82,16 @@ impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IterBuilder<Item, B
         }
     }
 }
+impl<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> IntoIterator
+    for IterBuilder<Item, Bits, Get>
+{
+    type Item = Item;
+    type IntoIter = Iter<Item, Bits, Get>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.build()
+    }
+}
+
 pub struct Iter<Item, Bits: hb::BitSetLike, Get: FnMut(IdType) -> Item> {
     bit_iter: hb::BitIter<Bits>,
     get: Get,
