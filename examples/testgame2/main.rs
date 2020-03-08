@@ -25,6 +25,8 @@ const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 const _CYAN_COLOR: [f32; 4] = [0.3, 0.7, 0.8, 1.0];
 const _LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];
 
+mod recipes;
+
 fn main() {
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
@@ -236,35 +238,14 @@ fn update_space(res: &mut Resources, dt: f32) {
 }
 
 fn load_main_space() -> Option<MainSpace> {
-    let ctx = vis::Context::get();
-    let square =
-        |size| vis::Shape::new_square(&ctx.display, size, vis::shape::ShapeStyle::Fill([1.0; 4]));
-    let tr = |x, y| Transform::from_position(uv::Vec2::new(x, y));
+    let mut space = MainSpace::with_capacity(15);
 
-    let mut space = MainSpace::with_capacity(10);
+    let dir = "./examples/testgame2/scenes";
 
-    space.create_object_with(|id, feat| {
-        feat.tr.insert(id, tr(1.0, 0.0));
-        feat.shape.insert(id, square(1.0));
-    })?;
-
-    space.create_object_with(|id, feat| {
-        feat.tr.insert(id, tr(0.0, 0.0));
-    })?;
-
-    space.create_object_with(|id, feat| {
-        feat.shape.insert(id, square(1.2));
-    })?;
-
-    let mut obj_whomst_will_die = space.create_object_with(|id, feat| {
-        feat.tr.insert(id, tr(-1.0, 1.0));
-        feat.shape.insert(id, square(1.2));
-    })?;
-    obj_whomst_will_die.kill();
-
-    space.create_object_with(|id, feat| {
-        feat.shape.insert(id, square(1.2));
-    })?;
+    let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
+    space
+        .read_ron_file::<recipes::Recipes>(file)
+        .expect("Failed to load scene");
 
     Some(space)
 }

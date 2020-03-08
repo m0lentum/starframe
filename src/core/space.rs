@@ -110,20 +110,12 @@ impl<F: FeatureSet> Space<F> {
         }
     }
 
-    /// Create an object and immediately add some Features to it.
-    pub fn create_object_with(
-        &mut self,
-        add_fn: impl FnOnce(Id, &mut F),
-    ) -> Option<MasterObjectHandle<F>> {
-        let mut handle = self.create_object()?;
-        handle.add_features(add_fn);
-        Some(handle)
-    }
-
     fn create_object_at(&mut self, id: usize) {
         self.alive_objects.add(id as u32);
         self.enabled_objects.add(id as u32);
     }
+
+    // TODO: disabling objects (add this while adding pools)
 
     fn kill_object(&mut self, id: Id) {
         let id = id.0 as u32;
@@ -131,6 +123,35 @@ impl<F: FeatureSet> Space<F> {
         for container in self.features.containers() {
             container.users().remove(id);
         }
+    }
+
+    /// Create an object and immediately add some Features to it.
+    pub fn create_object_with(
+        &mut self,
+        add_fn: impl FnOnce(Id, &mut F),
+    ) -> Option<MasterObjectHandle<F>> {
+        let mut handle = self.create_object()?;
+        handle.manage_features(add_fn);
+        Some(handle)
+    }
+
+    pub fn spawn<R: super::Recipe<F>>(&mut self, recipe: R) -> Option<MasterObjectHandle<F>> {
+        self.create_object_with(|id, feat| recipe.spawn(id, feat))
+    }
+
+    /// Spawn objects described in a RON file into this Space.
+    #[cfg(feature = "ron-recipes")]
+    pub fn read_ron_file<R>(&mut self, file: std::fs::File) -> Result<(), ron::de::Error>
+    where
+        R: super::recipe::DeserializeRecipes<F>,
+    {
+        let mut reader = std::io::BufReader::new(file);
+        let mut bytes = Vec::new();
+        use std::io::Read;
+        reader.read_to_end(&mut bytes)?;
+
+        let mut deser = ron::de::Deserializer::from_bytes(bytes.as_slice())?;
+        R::deserialize_into_space(&mut deser, self)
     }
 
     pub fn tick(&mut self, dt: f32) {
@@ -144,7 +165,7 @@ pub struct MasterObjectHandle<'a, F: FeatureSet> {
 }
 
 impl<'a, F: FeatureSet> MasterObjectHandle<'a, F> {
-    pub fn add_features(&mut self, add_fn: impl FnOnce(Id, &mut F)) {
+    pub fn manage_features(&mut self, add_fn: impl FnOnce(Id, &mut F)) {
         add_fn(self.id, &mut self.space.features);
     }
 
