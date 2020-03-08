@@ -56,7 +56,7 @@ pub struct MainSpaceFeatures {
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
-    fn init(capacity: core::space::IdType) -> Self {
+    fn init(capacity: usize) -> Self {
         MainSpaceFeatures {
             tr: core::space::TransformFeature::with_capacity(capacity),
             shape: core::space::ShapeFeature::with_capacity(capacity),

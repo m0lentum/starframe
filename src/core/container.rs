@@ -1,6 +1,6 @@
 use hibitset as hb;
 
-use super::IdType;
+use super::Id;
 
 pub struct Container<T: 'static> {
     users: hb::BitSet,
@@ -18,7 +18,7 @@ impl<T: 'static> ContainerAccess for Container<T> {
 }
 
 impl<T: 'static> Container<T> {
-    pub fn with_capacity(capacity: IdType) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
         let mut storage = Vec::new();
         storage.resize_with(capacity, || None);
         Container {
@@ -27,20 +27,20 @@ impl<T: 'static> Container<T> {
         }
     }
 
-    pub fn insert(&mut self, id: IdType, comp: T) {
-        self.users.add(id as u32);
-        self.storage[id] = Some(comp);
+    pub fn insert(&mut self, id: Id, comp: T) {
+        self.users.add(id.0 as u32);
+        self.storage[id.0] = Some(comp);
     }
 
-    pub fn get(&self, id: IdType) -> Option<&T> {
-        self.storage[id].as_ref()
+    pub fn get(&self, id: Id) -> Option<&T> {
+        self.storage[id.0].as_ref()
     }
 
-    pub fn get_mut(&mut self, id: IdType) -> Option<&mut T> {
-        self.storage[id].as_mut()
+    pub fn get_mut(&mut self, id: Id) -> Option<&mut T> {
+        self.storage[id.0].as_mut()
     }
 
-    pub fn iter<'a>(&'a self) -> IterBuilder<&'a T, &'a hb::BitSet, impl FnMut(IdType) -> &'a T> {
+    pub fn iter<'a>(&'a self) -> IterBuilder<&'a T, &'a hb::BitSet, impl FnMut(Id) -> &'a T> {
         IterBuilder {
             bits: &self.users,
             get: move |id| self.get(id).expect("Bug!!!"),
@@ -49,7 +49,7 @@ impl<T: 'static> Container<T> {
 
     pub fn iter_mut<'a>(
         &'a mut self,
-    ) -> IterBuilder<&'a mut T, &'a hb::BitSet, impl FnMut(IdType) -> &'a mut T> {
+    ) -> IterBuilder<&'a mut T, &'a hb::BitSet, impl FnMut(Id) -> &'a mut T> {
         let storage = &mut self.storage;
         IterBuilder {
             bits: &self.users,
@@ -58,7 +58,7 @@ impl<T: 'static> Container<T> {
                 // so we can safely alias mutable references here
                 let storage_ptr: *mut _ = storage;
                 let storage_ref = unsafe { storage_ptr.as_mut().unwrap() };
-                storage_ref[id].as_mut().expect("Bug!!!")
+                storage_ref[id.0].as_mut().expect("Bug!!!")
             },
         }
     }
@@ -67,7 +67,7 @@ impl<T: 'static> Container<T> {
 pub struct IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(IdType) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     bits: Bits,
     get: Get,
@@ -75,12 +75,12 @@ where
 impl<Item, Bits, Get> IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(IdType) -> Item,
+    Get: FnMut(Id) -> Item,
 {
-    pub fn and<OI, OB: hb::BitSetLike, OG: FnMut(IdType) -> OI>(
+    pub fn and<OI, OB: hb::BitSetLike, OG: FnMut(Id) -> OI>(
         self,
         other: IterBuilder<OI, OB, OG>,
-    ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, OB>, impl FnMut(IdType) -> (Item, OI)> {
+    ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, OB>, impl FnMut(Id) -> (Item, OI)> {
         let mut gets = (self.get, other.get);
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, other.bits),
@@ -88,10 +88,10 @@ where
         }
     }
 
-    pub fn not<OI, OB: hb::BitSetLike, OG: FnMut(IdType) -> OI>(
+    pub fn not<OI, OB: hb::BitSetLike, OG: FnMut(Id) -> OI>(
         self,
         other: IterBuilder<OI, OB, OG>,
-    ) -> IterBuilder<Item, hb::BitSetAnd<Bits, hb::BitSetNot<OB>>, impl FnMut(IdType) -> Item> {
+    ) -> IterBuilder<Item, hb::BitSetAnd<Bits, hb::BitSetNot<OB>>, impl FnMut(Id) -> Item> {
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, hb::BitSetNot(other.bits)),
             get: self.get,
@@ -101,7 +101,7 @@ where
 impl<Item, Bits, Get> IntoIterator for IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(IdType) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     type Item = Item;
     type IntoIter = Iter<Item, Bits, Get>;
@@ -116,7 +116,7 @@ where
 pub struct Iter<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(IdType) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     bit_iter: hb::BitIter<Bits>,
     get: Get,
@@ -124,11 +124,11 @@ where
 impl<Item, Bits, Get> Iterator for Iter<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(IdType) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     type Item = Item;
     fn next(&mut self) -> Option<Self::Item> {
-        let id = self.bit_iter.next()? as IdType;
+        let id = Id(self.bit_iter.next()? as usize);
         Some((self.get)(id))
     }
 }

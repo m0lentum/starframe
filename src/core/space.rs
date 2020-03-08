@@ -1,10 +1,12 @@
 use hibitset as hb;
 
-pub type IdType = usize;
+/// Opaque id type so they cannot be accidentally mutated and break things.
+#[derive(Clone, Copy, Debug)]
+pub struct Id(pub(crate) usize);
 
 use super::container::{Container, ContainerAccess};
 pub trait FeatureSet: 'static {
-    fn init(capacity: IdType) -> Self;
+    fn init(capacity: usize) -> Self;
     fn containers(&mut self) -> Vec<&mut dyn ContainerAccess>;
     fn tick(&mut self, dt: f32);
 }
@@ -60,8 +62,8 @@ impl ShapeFeature {
 pub struct Space<F: FeatureSet> {
     alive_objects: hb::BitSet,
     enabled_objects: hb::BitSet,
-    next_obj_id: IdType,
-    capacity: IdType,
+    next_obj_id: usize,
+    capacity: usize,
     pub features: F,
 }
 
@@ -70,7 +72,7 @@ pub struct SpaceInternals {
 }
 
 impl<F: FeatureSet> Space<F> {
-    pub fn with_capacity(capacity: IdType) -> Self {
+    pub fn with_capacity(capacity: usize) -> Self {
         Space {
             alive_objects: hb::BitSet::with_capacity(capacity as u32),
             enabled_objects: hb::BitSet::with_capacity(capacity as u32),
@@ -88,15 +90,18 @@ impl<F: FeatureSet> Space<F> {
             let id = self.next_obj_id;
             self.next_obj_id += 1;
             self.create_object_at(id);
-            Some(MasterObjectHandle { id, space: self })
+            Some(MasterObjectHandle {
+                id: Id(id),
+                space: self,
+            })
         } else {
             // find a dead object
             use hb::BitSetLike;
             match (!&self.alive_objects).iter().nth(0) {
                 Some(id) if id < self.capacity as u32 => {
-                    self.create_object_at(id as IdType);
+                    self.create_object_at(id as usize);
                     Some(MasterObjectHandle {
-                        id: id as IdType,
+                        id: Id(id as usize),
                         space: self,
                     })
                 }
@@ -108,20 +113,20 @@ impl<F: FeatureSet> Space<F> {
     /// Create an object and immediately add some Features to it.
     pub fn create_object_with(
         &mut self,
-        add_fn: impl FnOnce(IdType, &mut F),
+        add_fn: impl FnOnce(Id, &mut F),
     ) -> Option<MasterObjectHandle<F>> {
         let mut handle = self.create_object()?;
         handle.add_features(add_fn);
         Some(handle)
     }
 
-    fn create_object_at(&mut self, id: IdType) {
+    fn create_object_at(&mut self, id: usize) {
         self.alive_objects.add(id as u32);
         self.enabled_objects.add(id as u32);
     }
 
-    fn kill_object(&mut self, id: IdType) {
-        let id = id as u32;
+    fn kill_object(&mut self, id: Id) {
+        let id = id.0 as u32;
         self.alive_objects.remove(id);
         for container in self.features.containers() {
             container.users().remove(id);
@@ -134,12 +139,12 @@ impl<F: FeatureSet> Space<F> {
 }
 
 pub struct MasterObjectHandle<'a, F: FeatureSet> {
-    id: IdType,
+    id: Id,
     space: &'a mut Space<F>,
 }
 
 impl<'a, F: FeatureSet> MasterObjectHandle<'a, F> {
-    pub fn add_features(&mut self, add_fn: impl FnOnce(IdType, &mut F)) {
+    pub fn add_features(&mut self, add_fn: impl FnOnce(Id, &mut F)) {
         add_fn(self.id, &mut self.space.features);
     }
 
