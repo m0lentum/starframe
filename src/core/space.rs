@@ -2,46 +2,19 @@ use hibitset as hb;
 
 pub type IdType = usize;
 
+use super::container::{Container, ContainerAccess};
 pub trait FeatureSet: 'static {
     fn init(capacity: IdType) -> Self;
+    fn containers(&mut self) -> Vec<&mut dyn ContainerAccess>;
     fn tick(&mut self, dt: f32);
 }
 
 // TODO: decide which file these should live in
-use super::container::Container;
 use crate::util::Transform;
-pub struct TransformFeature {
-    fragments: Container<Transform>,
-}
-impl TransformFeature {
-    pub fn with_capacity(capacity: IdType) -> Self {
-        TransformFeature {
-            fragments: Container::with_capacity(capacity),
-        }
-    }
-
-    pub fn add(&mut self, obj: &MasterObjectHandle, tr: Transform) {
-        self.fragments.insert(obj, tr);
-    }
-}
-
-//
-
+pub type TransformFeature = Container<Transform>;
 use crate::visuals_glium::Shape;
-pub struct ShapeFeature {
-    fragments: Container<Shape>,
-}
+pub type ShapeFeature = Container<Shape>;
 impl ShapeFeature {
-    pub fn with_capacity(capacity: IdType) -> Self {
-        ShapeFeature {
-            fragments: Container::with_capacity(capacity),
-        }
-    }
-
-    pub fn add(&mut self, obj: &MasterObjectHandle, shape: Shape) {
-        self.fragments.insert(obj, shape);
-    }
-
     pub fn draw<S: glium::Surface, C: crate::visuals_glium::camera::CameraController>(
         &self,
         trs: &TransformFeature,
@@ -51,7 +24,7 @@ impl ShapeFeature {
     ) {
         let view = camera.view_matrix();
 
-        for (shape, tr) in self.fragments.iter().and(trs.fragments.iter()) {
+        for (shape, tr) in self.iter().and(trs.iter()) {
             let model = tr.0.into_homogeneous_matrix();
             let mv = view * model;
             let mv_uniform = [
@@ -76,11 +49,7 @@ impl ShapeFeature {
                 .expect("Drawing failed");
         }
 
-        for (i, _shape) in (self.fragments.iter())
-            .not(trs.fragments.iter())
-            .build()
-            .enumerate()
-        {
+        for (i, _shape) in self.iter().not(trs.iter()).into_iter().enumerate() {
             println!("There was {} thing with shape but no tr", i);
         }
     }
@@ -91,10 +60,12 @@ impl ShapeFeature {
 pub struct Space<F: FeatureSet> {
     alive_objects: hb::BitSet,
     enabled_objects: hb::BitSet,
-    generations: Vec<u8>,
     next_obj_id: IdType,
     capacity: IdType,
     pub features: F,
+}
+
+pub struct SpaceInternals {
     // TODO: pools
 }
 
@@ -103,7 +74,6 @@ impl<F: FeatureSet> Space<F> {
         Space {
             alive_objects: hb::BitSet::with_capacity(capacity as u32),
             enabled_objects: hb::BitSet::with_capacity(capacity as u32),
-            generations: vec![0; capacity],
             next_obj_id: 0,
             capacity,
             features: F::init(capacity),
@@ -112,23 +82,13 @@ impl<F: FeatureSet> Space<F> {
 
     /// Create a new object in this Space. An object does not do anything on its own;
     /// use SpaceFeatures to add functionality to it.
-    /// # Panics
-    /// Panics if the Space is full.
-    pub fn create_object(&mut self) -> MasterObjectHandle {
-        self.try_create_object()
-            .expect("Tried to add an object to a full space")
-    }
-
-    /// Like create_object, but returns None instead of panicking if the Space is full.
-    pub fn try_create_object(&mut self) -> Option<MasterObjectHandle> {
+    /// Returns None if the Space is full.
+    pub fn create_object(&mut self) -> Option<MasterObjectHandle<F>> {
         if self.next_obj_id < self.capacity {
             let id = self.next_obj_id;
             self.next_obj_id += 1;
             self.create_object_at(id);
-            Some(MasterObjectHandle {
-                id,
-                gen: self.generations[id],
-            })
+            Some(MasterObjectHandle { id, space: self })
         } else {
             // find a dead object
             use hb::BitSetLike;
@@ -137,7 +97,7 @@ impl<F: FeatureSet> Space<F> {
                     self.create_object_at(id as IdType);
                     Some(MasterObjectHandle {
                         id: id as IdType,
-                        gen: self.generations[id as usize],
+                        space: self,
                     })
                 }
                 _ => None,
@@ -145,17 +105,26 @@ impl<F: FeatureSet> Space<F> {
         }
     }
 
+    /// Create an object and immediately add some Features to it.
+    pub fn create_object_with(
+        &mut self,
+        add_fn: impl FnOnce(IdType, &mut F),
+    ) -> Option<MasterObjectHandle<F>> {
+        let mut handle = self.create_object()?;
+        handle.add_features(add_fn);
+        Some(handle)
+    }
+
     fn create_object_at(&mut self, id: IdType) {
         self.alive_objects.add(id as u32);
         self.enabled_objects.add(id as u32);
-        self.generations[id] += 1;
     }
 
-    pub fn clear(&mut self) {
-        self.alive_objects.clear();
-        // self.pools.clear();
-        for gen in &mut self.generations {
-            *gen = 0;
+    fn kill_object(&mut self, id: IdType) {
+        let id = id as u32;
+        self.alive_objects.remove(id);
+        for container in self.features.containers() {
+            container.users().remove(id);
         }
     }
 
@@ -164,12 +133,17 @@ impl<F: FeatureSet> Space<F> {
     }
 }
 
-pub struct MasterObjectHandle {
-    pub(crate) id: IdType,
-    pub(crate) gen: u8,
+pub struct MasterObjectHandle<'a, F: FeatureSet> {
+    id: IdType,
+    space: &'a mut Space<F>,
 }
 
-pub struct ObjectHandle {
-    pub(crate) id: IdType,
-    pub(crate) gen: u8,
+impl<'a, F: FeatureSet> MasterObjectHandle<'a, F> {
+    pub fn add_features(&mut self, add_fn: impl FnOnce(IdType, &mut F)) {
+        add_fn(self.id, &mut self.space.features);
+    }
+
+    pub fn kill(&mut self) {
+        self.space.kill_object(self.id);
+    }
 }

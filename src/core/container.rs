@@ -1,11 +1,20 @@
 use hibitset as hb;
 
-use super::{space::MasterObjectHandle, IdType};
+use super::IdType;
 
 pub struct Container<T: 'static> {
     users: hb::BitSet,
-    generations: Vec<u8>,
     storage: Vec<Option<T>>, // TODO: bring back storages
+}
+
+pub trait ContainerAccess {
+    fn users(&mut self) -> &mut hb::BitSet;
+}
+
+impl<T: 'static> ContainerAccess for Container<T> {
+    fn users(&mut self) -> &mut hb::BitSet {
+        &mut self.users
+    }
 }
 
 impl<T: 'static> Container<T> {
@@ -14,18 +23,15 @@ impl<T: 'static> Container<T> {
         storage.resize_with(capacity, || None);
         Container {
             users: hb::BitSet::with_capacity(capacity as u32),
-            generations: vec![0; capacity],
             storage,
         }
     }
 
-    pub fn insert(&mut self, obj: &MasterObjectHandle, comp: T) {
-        self.users.add(obj.id as u32);
-        self.generations[obj.id] = obj.gen;
-        self.storage[obj.id] = Some(comp);
+    pub fn insert(&mut self, id: IdType, comp: T) {
+        self.users.add(id as u32);
+        self.storage[id] = Some(comp);
     }
 
-    // TODO: also check generation here
     pub fn get(&self, id: IdType) -> Option<&T> {
         self.storage[id].as_ref()
     }
@@ -91,13 +97,6 @@ where
             get: self.get,
         }
     }
-
-    pub fn build(self) -> Iter<Item, Bits, Get> {
-        Iter {
-            bit_iter: self.bits.iter(),
-            get: self.get,
-        }
-    }
 }
 impl<Item, Bits, Get> IntoIterator for IterBuilder<Item, Bits, Get>
 where
@@ -107,7 +106,10 @@ where
     type Item = Item;
     type IntoIter = Iter<Item, Bits, Get>;
     fn into_iter(self) -> Self::IntoIter {
-        self.build()
+        Iter {
+            bit_iter: self.bits.iter(),
+            get: self.get,
+        }
     }
 }
 

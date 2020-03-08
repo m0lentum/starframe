@@ -63,6 +63,10 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
+    fn containers(&mut self) -> Vec<&mut dyn core::container::ContainerAccess> {
+        vec![&mut self.tr, &mut self.shape]
+    }
+
     fn tick(&mut self, dt: f32) {}
 }
 
@@ -81,7 +85,7 @@ pub fn init_resources() -> Resources {
         ]);
     }
 
-    let space = MainSpace::with_capacity(100);
+    let space = load_main_space().unwrap();
 
     let camera = cam::Camera2D::new(
         cam::MouseDragController::new(Transform::identity()),
@@ -119,7 +123,7 @@ impl GameState<Resources> for StatePlaying {
         }
 
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
-            reload_main_space(&mut res.space);
+            res.space = load_main_space().unwrap();
         }
 
         // pool spawning
@@ -212,8 +216,12 @@ fn draw_space(res: &mut Resources) {
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
-    let f = &mut res.space.features;
-    f.shape.draw(&f.tr, &mut target, &res.camera, &ctx.shaders);
+    res.space.features.shape.draw(
+        &res.space.features.tr,
+        &mut target,
+        &res.camera,
+        &ctx.shaders,
+    );
 
     target.finish().unwrap();
 }
@@ -227,28 +235,36 @@ fn update_space(res: &mut Resources, dt: f32) {
     }
 }
 
-fn reload_main_space(space: &mut MainSpace) {
+fn load_main_space() -> Option<MainSpace> {
     let ctx = vis::Context::get();
     let square =
         |size| vis::Shape::new_square(&ctx.display, size, vis::shape::ShapeStyle::Fill([1.0; 4]));
     let tr = |x, y| Transform::from_position(uv::Vec2::new(x, y));
 
-    space.clear();
+    let mut space = MainSpace::with_capacity(10);
 
-    let obj = space.create_object();
-    space.features.tr.add(&obj, tr(1.0, 0.0));
-    space.features.shape.add(&obj, square(1.0));
+    space.create_object_with(|id, feat| {
+        feat.tr.insert(id, tr(1.0, 0.0));
+        feat.shape.insert(id, square(1.0));
+    })?;
 
-    let obj = space.create_object();
-    space.features.tr.add(&obj, tr(0.0, 0.0));
+    space.create_object_with(|id, feat| {
+        feat.tr.insert(id, tr(0.0, 0.0));
+    })?;
 
-    let obj = space.create_object();
-    space.features.shape.add(&obj, square(1.2));
+    space.create_object_with(|id, feat| {
+        feat.shape.insert(id, square(1.2));
+    })?;
 
-    let obj = space.create_object();
-    space.features.tr.add(&obj, tr(-1.0, 1.0));
-    space.features.shape.add(&obj, square(1.2));
+    let mut obj_whomst_will_die = space.create_object_with(|id, feat| {
+        feat.tr.insert(id, tr(-1.0, 1.0));
+        feat.shape.insert(id, square(1.2));
+    })?;
+    obj_whomst_will_die.kill();
 
-    let obj = space.create_object();
-    space.features.shape.add(&obj, square(1.2));
+    space.create_object_with(|id, feat| {
+        feat.shape.insert(id, square(1.2));
+    })?;
+
+    Some(space)
 }
