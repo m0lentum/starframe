@@ -7,5 +7,5 @@ pub mod ecs;
 #[cfg(feature = "physics2d")]
 pub mod physics2d;
 
-#[cfg(feature = "visuals_glium")]
-pub mod visuals_glium;
+#[cfg(feature = "graphics")]
+pub mod graphics;

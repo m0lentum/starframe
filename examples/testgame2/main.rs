@@ -8,6 +8,7 @@ use glium::{glutin, Surface};
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
     core,
+    graphics::{self as gx, camera as cam},
     physics2d::{self as phys, collision as coll, integrator},
     util::{
         gameloop::{GameLoop, LockstepLoop},
@@ -15,7 +16,6 @@ use moleengine::{
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
-    visuals_glium::{self as vis, camera as cam},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -53,7 +53,7 @@ pub struct Resources {
 
 pub struct MainSpaceFeatures {
     pub tr: core::TransformFeature,
-    pub shape: vis::ShapeFeature,
+    pub shape: gx::ShapeFeature,
     pub camera: Camera,
 }
 
@@ -61,10 +61,10 @@ impl core::space::FeatureSet for MainSpaceFeatures {
     fn init(capacity: usize) -> Self {
         MainSpaceFeatures {
             tr: core::TransformFeature::with_capacity(capacity),
-            shape: vis::ShapeFeature::with_capacity(capacity),
+            shape: gx::ShapeFeature::with_capacity(capacity),
             camera: Camera::new(
                 cam::MouseDragController::new(Transform::identity()),
-                vis::camera::ScalingStrategy::ConstantDisplayArea {
+                gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 8.0,
                     height: 6.0,
                 },
@@ -89,7 +89,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         microprofile::scope!("render", "all");
 
         // TODO: consider abstracting context creation into the game loop
-        let ctx = vis::Context::get();
+        let ctx = gx::Context::get();
 
         let mut target = ctx.display.draw();
 
@@ -107,7 +107,7 @@ pub type MainSpace = core::Space<MainSpaceFeatures>;
 // ================== Setup resources ===========================
 
 pub fn init_resources() -> Resources {
-    let events = unsafe { vis::Context::init() };
+    let events = unsafe { gx::Context::init() };
 
     let mut input_cache = InputCache::new();
     {

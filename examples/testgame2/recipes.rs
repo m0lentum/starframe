@@ -1,4 +1,4 @@
-use moleengine::{core, core::Transform, physics2d as phys, visuals_glium as vis};
+use moleengine::{core, core::Transform, graphics as gx, physics2d as phys};
 
 use super::MainSpaceFeatures;
 
@@ -27,11 +27,11 @@ impl core::Recipe<MainSpaceFeatures> for Player {
         // ));
         feat.shape.insert(
             id,
-            vis::Shape::new_rect(
-                &vis::Context::get().display,
+            gx::Shape::new_rect(
+                &gx::Context::get().display,
                 width,
                 height,
-                vis::ShapeStyle::Outline([0.2, 0.8, 0.6, 1.0]),
+                gx::ShapeStyle::Outline([0.2, 0.8, 0.6, 1.0]),
             ),
         );
         // obj.add(KeyboardControls);
@@ -54,11 +54,11 @@ impl core::Recipe<MainSpaceFeatures> for StaticBlock {
         // )));
         feat.shape.insert(
             id,
-            vis::Shape::new_rect(
-                &vis::Context::get().display,
+            gx::Shape::new_rect(
+                &gx::Context::get().display,
                 self.width,
                 self.height,
-                vis::ShapeStyle::Fill([0.5; 4]),
+                gx::ShapeStyle::Fill([0.5; 4]),
             ),
         );
     }
@@ -80,11 +80,11 @@ impl core::Recipe<MainSpaceFeatures> for DynamicBlock {
         // ));
         feat.shape.insert(
             id,
-            vis::Shape::new_rect(
-                &vis::Context::get().display,
+            gx::Shape::new_rect(
+                &gx::Context::get().display,
                 self.width,
                 self.height,
-                vis::ShapeStyle::Outline([1.0; 4]),
+                gx::ShapeStyle::Outline([1.0; 4]),
             ),
         );
     }
@@ -106,11 +106,11 @@ impl core::Recipe<MainSpaceFeatures> for Ball {
         // ));
         feat.shape.insert(
             id,
-            vis::Shape::new_circle(
-                &vis::Context::get().display,
+            gx::Shape::new_circle(
+                &gx::Context::get().display,
                 self.radius,
                 24,
-                vis::ShapeStyle::Outline([1.0; 4]),
+                gx::ShapeStyle::Outline([1.0; 4]),
             ),
         );
     }

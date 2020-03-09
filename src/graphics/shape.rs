@@ -111,12 +111,12 @@ impl Shape {
 use crate::core::Container;
 pub type ShapeFeature = Container<Shape>;
 impl ShapeFeature {
-    pub fn draw<S: glium::Surface, C: crate::visuals_glium::camera::CameraController>(
+    pub fn draw<S: glium::Surface, C: crate::graphics::camera::CameraController>(
         &self,
         trs: &crate::core::TransformFeature,
         target: &mut S,
-        camera: &crate::visuals_glium::camera::Camera2D<C>,
-        shaders: &crate::visuals_glium::Shaders,
+        camera: &crate::graphics::camera::Camera2D<C>,
+        shaders: &crate::graphics::Shaders,
     ) {
         let view = camera.view_matrix();
 
