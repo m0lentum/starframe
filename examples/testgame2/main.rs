@@ -53,15 +53,15 @@ pub struct Resources {
 }
 
 pub struct MainSpaceFeatures {
-    tr: core::space::TransformFeature,
-    shape: core::space::ShapeFeature,
+    tr: core::TransformFeature,
+    shape: vis::ShapeFeature,
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
     fn init(capacity: usize) -> Self {
         MainSpaceFeatures {
-            tr: core::space::TransformFeature::with_capacity(capacity),
-            shape: core::space::ShapeFeature::with_capacity(capacity),
+            tr: core::TransformFeature::with_capacity(capacity),
+            shape: vis::ShapeFeature::with_capacity(capacity),
         }
     }
 

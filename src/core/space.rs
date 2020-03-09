@@ -4,57 +4,11 @@ use hibitset as hb;
 #[derive(Clone, Copy, Debug)]
 pub struct Id(pub(crate) usize);
 
-use super::container::{Container, ContainerAccess};
+use super::container::ContainerAccess;
 pub trait FeatureSet: 'static {
     fn init(capacity: usize) -> Self;
     fn containers(&mut self) -> Vec<&mut dyn ContainerAccess>;
     fn tick(&mut self, dt: f32);
-}
-
-// TODO: decide which file these should live in
-use crate::util::Transform;
-pub type TransformFeature = Container<Transform>;
-use crate::visuals_glium::Shape;
-pub type ShapeFeature = Container<Shape>;
-impl ShapeFeature {
-    pub fn draw<S: glium::Surface, C: crate::visuals_glium::camera::CameraController>(
-        &self,
-        trs: &TransformFeature,
-        target: &mut S,
-        camera: &crate::visuals_glium::camera::Camera2D<C>,
-        shaders: &crate::visuals_glium::Shaders,
-    ) {
-        let view = camera.view_matrix();
-
-        for (shape, tr) in self.iter().and(trs.iter()) {
-            let model = tr.0.into_homogeneous_matrix();
-            let mv = view * model;
-            let mv_uniform = [
-                [mv.cols[0].x, mv.cols[0].y, mv.cols[0].z],
-                [mv.cols[1].x, mv.cols[1].y, mv.cols[1].z],
-                [mv.cols[2].x, mv.cols[2].y, mv.cols[2].z],
-            ];
-
-            use glium::uniform;
-            let uniforms = glium::uniform! {
-                model_view: mv_uniform,
-                color: shape.color,
-            };
-            target
-                .draw(
-                    &*shape.verts,
-                    glium::index::NoIndices(shape.primitive_type),
-                    &shaders.ortho_2d,
-                    &uniforms,
-                    &Default::default(),
-                )
-                .expect("Drawing failed");
-        }
-
-        for (i, _shape) in self.iter().not(trs.iter()).into_iter().enumerate() {
-            println!("There was {} thing with shape but no tr", i);
-        }
-    }
 }
 
 //
@@ -65,10 +19,6 @@ pub struct Space<F: FeatureSet> {
     next_obj_id: usize,
     capacity: usize,
     pub features: F,
-}
-
-pub struct SpaceInternals {
-    // TODO: pools
 }
 
 impl<F: FeatureSet> Space<F> {

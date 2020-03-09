@@ -1,4 +1,4 @@
-use moleengine::{core, physics2d as phys, util::Transform, visuals_glium as vis};
+use moleengine::{core, core::Transform, physics2d as phys, visuals_glium as vis};
 
 use super::MainSpaceFeatures;
 

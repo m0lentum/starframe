@@ -108,6 +108,44 @@ impl Shape {
     }
 }
 
+use crate::core::Container;
+pub type ShapeFeature = Container<Shape>;
+impl ShapeFeature {
+    pub fn draw<S: glium::Surface, C: crate::visuals_glium::camera::CameraController>(
+        &self,
+        trs: &crate::core::TransformFeature,
+        target: &mut S,
+        camera: &crate::visuals_glium::camera::Camera2D<C>,
+        shaders: &crate::visuals_glium::Shaders,
+    ) {
+        let view = camera.view_matrix();
+
+        for (shape, tr) in self.iter().and(trs.iter()) {
+            let model = tr.0.into_homogeneous_matrix();
+            let mv = view * model;
+            let mv_uniform = [
+                [mv.cols[0].x, mv.cols[0].y, mv.cols[0].z],
+                [mv.cols[1].x, mv.cols[1].y, mv.cols[1].z],
+                [mv.cols[2].x, mv.cols[2].y, mv.cols[2].z],
+            ];
+
+            let uniforms = glium::uniform! {
+                model_view: mv_uniform,
+                color: shape.color,
+            };
+            target
+                .draw(
+                    &*shape.verts,
+                    glium::index::NoIndices(shape.primitive_type),
+                    &shaders.ortho_2d,
+                    &uniforms,
+                    &Default::default(),
+                )
+                .expect("Drawing failed");
+        }
+    }
+}
+
 impl crate::ecs::DefaultStorage for Shape {
     // TODO: change this to DenseVecStorage once implemented
     type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
