@@ -9,6 +9,7 @@ pub trait FeatureSet: 'static {
     fn init(capacity: usize) -> Self;
     fn containers(&mut self) -> Vec<&mut dyn ContainerAccess>;
     fn tick(&mut self, dt: f32);
+    fn render(&self);
 }
 
 //
@@ -106,6 +107,10 @@ impl<F: FeatureSet> Space<F> {
 
     pub fn tick(&mut self, dt: f32) {
         self.features.tick(dt);
+    }
+
+    pub fn render(&self) {
+        self.features.render();
     }
 }
 

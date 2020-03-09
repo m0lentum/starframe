@@ -47,14 +47,14 @@ pub type Camera = cam::Camera2D<cam::MouseDragController>;
 pub struct Resources {
     pub events: glutin::EventsLoop,
     pub space: MainSpace,
-    pub camera: Camera,
     pub input_cache: InputCache,
     pub impulse_cache: phys::constraint::ImpulseCache, // TODO: this can now exist inside a spacefeature
 }
 
 pub struct MainSpaceFeatures {
-    tr: core::TransformFeature,
-    shape: vis::ShapeFeature,
+    pub tr: core::TransformFeature,
+    pub shape: vis::ShapeFeature,
+    pub camera: Camera,
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
@@ -62,6 +62,13 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         MainSpaceFeatures {
             tr: core::TransformFeature::with_capacity(capacity),
             shape: vis::ShapeFeature::with_capacity(capacity),
+            camera: Camera::new(
+                cam::MouseDragController::new(Transform::identity()),
+                vis::camera::ScalingStrategy::ConstantDisplayArea {
+                    width: 8.0,
+                    height: 6.0,
+                },
+            ),
         }
     }
 
@@ -69,7 +76,30 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         vec![&mut self.tr, &mut self.shape]
     }
 
-    fn tick(&mut self, dt: f32) {}
+    fn tick(&mut self, dt: f32) {
+        microprofile::flip();
+        microprofile::scope!("update", "all");
+        {
+            microprofile::scope!("update", "rigid body solver");
+            // TODO
+        }
+    }
+
+    fn render(&self) {
+        microprofile::scope!("render", "all");
+
+        // TODO: consider abstracting context creation into the game loop
+        let ctx = vis::Context::get();
+
+        let mut target = ctx.display.draw();
+
+        target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
+
+        self.shape
+            .draw(&self.tr, &mut target, &self.camera, &ctx.shaders);
+
+        target.finish().unwrap();
+    }
 }
 
 pub type MainSpace = core::Space<MainSpaceFeatures>;
@@ -89,20 +119,11 @@ pub fn init_resources() -> Resources {
 
     let space = load_main_space().unwrap();
 
-    let camera = cam::Camera2D::new(
-        cam::MouseDragController::new(Transform::identity()),
-        vis::camera::ScalingStrategy::ConstantDisplayArea {
-            width: 8.0,
-            height: 6.0,
-        },
-    );
-
     let impulse_cache = phys::constraint::ImpulseCache::new();
 
     Resources {
         events,
         space,
-        camera,
         input_cache,
         impulse_cache,
     }
@@ -114,7 +135,11 @@ pub struct StatePlaying;
 
 impl GameState<Resources> for StatePlaying {
     fn update(&mut self, res: &mut Resources, dt: f32) -> StateOp<Resources> {
-        if let Some(op) = handle_events(&mut res.events, &mut res.input_cache, &mut res.camera) {
+        if let Some(op) = handle_events(
+            &mut res.events,
+            &mut res.input_cache,
+            &mut res.space.features.camera,
+        ) {
             return op;
         }
         if res.input_cache.is_key_pressed(Key::Escape, None) {
@@ -132,27 +157,28 @@ impl GameState<Resources> for StatePlaying {
 
         // mouse camera
 
-        res.camera
+        let camera = &mut res.space.features.camera;
+        camera
             .controller
-            .update_position(&res.input_cache, res.camera.scaling_factor());
+            .update_position(&res.input_cache, camera.scaling_factor());
 
         if res
             .input_cache
             .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
         {
-            res.camera.controller.transform.0 = uv::Similarity2::identity();
+            camera.controller.transform.0 = uv::Similarity2::identity();
         }
 
         //
 
-        update_space(res, dt);
+        res.space.tick(dt);
 
         res.input_cache.tick();
         StateOp::Stay
     }
 
     fn render(&mut self, res: &mut Resources) {
-        draw_space(res);
+        res.space.render();
     }
 }
 
@@ -162,7 +188,11 @@ pub struct StatePaused;
 
 impl GameState<Resources> for StatePaused {
     fn update(&mut self, res: &mut Resources, _dt: f32) -> StateOp<Resources> {
-        if let Some(op) = handle_events(&mut res.events, &mut res.input_cache, &mut res.camera) {
+        if let Some(op) = handle_events(
+            &mut res.events,
+            &mut res.input_cache,
+            &mut res.space.features.camera,
+        ) {
             return op;
         }
         if res.input_cache.is_key_pressed(Key::Escape, None) {
@@ -177,7 +207,7 @@ impl GameState<Resources> for StatePaused {
     }
 
     fn render(&mut self, res: &mut Resources) {
-        draw_space(res);
+        res.space.render();
     }
 }
 
@@ -206,34 +236,6 @@ fn handle_events(
         Some(StateOp::Destroy)
     } else {
         None
-    }
-}
-
-fn draw_space(res: &mut Resources) {
-    microprofile::scope!("render", "all");
-
-    let ctx = vis::Context::get();
-
-    let mut target = ctx.display.draw();
-
-    target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
-
-    res.space.features.shape.draw(
-        &res.space.features.tr,
-        &mut target,
-        &res.camera,
-        &ctx.shaders,
-    );
-
-    target.finish().unwrap();
-}
-
-fn update_space(res: &mut Resources, dt: f32) {
-    microprofile::flip();
-    microprofile::scope!("update", "all");
-    {
-        microprofile::scope!("update", "rigid body solver");
-        // TODO
     }
 }
 
