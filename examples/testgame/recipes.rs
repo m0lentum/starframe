@@ -1,5 +1,5 @@
 use crate::controls::KeyboardControls;
-use moleengine::{ecs, physics2d as phys, util::Transform, visuals_glium as vis};
+use moleengine::{ecs, graphics as gx, physics2d as phys, util::Transform};
 
 ecs::recipes! {
     Player,
@@ -23,11 +23,11 @@ impl ecs::ObjectRecipe for Player {
             phys::Collider::new_rect(width, height),
             3.0,
         ));
-        obj.add(vis::Shape::new_rect(
-            &vis::Context::get().display,
+        obj.add(gx::Shape::new_rect(
+            &gx::Context::get().display,
             width,
             height,
-            vis::ShapeStyle::Outline([0.2, 0.8, 0.6, 1.0]),
+            gx::ShapeStyle::Outline([0.2, 0.8, 0.6, 1.0]),
         ));
         obj.add(KeyboardControls);
     }
@@ -47,11 +47,11 @@ impl ecs::ObjectRecipe for StaticBlock {
             self.width,
             self.height,
         )));
-        obj.add(vis::Shape::new_rect(
-            &vis::Context::get().display,
+        obj.add(gx::Shape::new_rect(
+            &gx::Context::get().display,
             self.width,
             self.height,
-            vis::ShapeStyle::Fill([0.5; 4]),
+            gx::ShapeStyle::Fill([0.5; 4]),
         ));
     }
 }
@@ -70,11 +70,11 @@ impl ecs::ObjectRecipe for DynamicBlock {
             phys::Collider::new_rect(self.width, self.height),
             1.0,
         ));
-        obj.add(vis::Shape::new_rect(
-            &vis::Context::get().display,
+        obj.add(gx::Shape::new_rect(
+            &gx::Context::get().display,
             self.width,
             self.height,
-            vis::ShapeStyle::Outline([1.0; 4]),
+            gx::ShapeStyle::Outline([1.0; 4]),
         ));
     }
 }
@@ -92,11 +92,11 @@ impl ecs::ObjectRecipe for Ball {
             phys::Collider::new_circle(self.radius),
             1.0,
         ));
-        obj.add(vis::Shape::new_circle(
-            &vis::Context::get().display,
+        obj.add(gx::Shape::new_circle(
+            &gx::Context::get().display,
             self.radius,
             24,
-            vis::ShapeStyle::Outline([1.0; 4]),
+            gx::ShapeStyle::Outline([1.0; 4]),
         ));
     }
 }

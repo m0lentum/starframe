@@ -1,9 +1,9 @@
 use crate::{
-    physics2d::collision::ContactOutput,
-    visuals_glium::{
+    graphics::{
         camera::{Camera2D, CameraController},
         Color, Shaders, Vertex2D,
     },
+    physics2d::collision::ContactOutput,
 };
 use glium::{backend::Facade, uniform};
 use ultraviolet as uv;

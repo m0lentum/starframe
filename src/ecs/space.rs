@@ -116,7 +116,6 @@ impl Space {
     }
 
     /// Spawn objects described in a RON file into this Space.
-    #[cfg(feature = "ron-recipes")]
     pub fn read_ron_file<R>(&mut self, file: std::fs::File) -> Result<(), ron::de::Error>
     where
         R: DeserializeRecipes,

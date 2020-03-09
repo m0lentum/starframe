@@ -11,28 +11,14 @@ hibitset = "0.6.2"
 anymap = "0.12.1"
 parking_lot = "0.10.0"
 lazy_static = "1.4.0"
-moleengine_ecs_codegen = { optional = true, path = "./ecs_codegen" }
-glium = { optional = true, version = "0.25.1" }
-serde = { optional = true, features = ["derive"], version = "1.0.103" }
-ron = { optional = true, version = "0.5.1" }
+moleengine_ecs_codegen = { path = "./ecs_codegen" }
+glium = "0.25.1"
+serde = { features = ["derive"], version = "1.0.103" }
+ron = "0.5.1"
+rand = "0.7.2"
 
 [dev-dependencies]
 microprofile = "0.2.1"
-rand = "0.7.2"
-
-[features]
-ecs = ["moleengine_ecs_codegen", "serde"]
-ron-recipes = ["ecs", "serde", "ron"]
-physics2d = []
-graphics = ["glium"]
-debug_visuals = []
-
-default = ["ecs", "ron-recipes", "physics2d", "graphics"]
-all = ["ecs", "ron-recipes", "physics2d", "graphics", "debug_visuals"]
-
-[[example]]
-name = "testgame"
-required-features = ["all"]
 
 [profile.dev]
 opt-level = 1

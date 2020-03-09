@@ -9,7 +9,6 @@ pub use shaders::Shaders;
 mod context;
 pub use context::Context;
 
-#[cfg(feature = "debug_visuals")]
 pub mod debug;
 
 //

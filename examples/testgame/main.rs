@@ -10,9 +10,10 @@ mod test_events;
 
 use glium::glutin;
 use moleengine::{
-    ecs, physics2d as phys,
+    ecs,
+    graphics::{self as gx, camera as cam},
+    physics2d as phys,
     util::{InputCache, Transform},
-    visuals_glium::{self as vis, camera as cam},
 };
 
 //
@@ -21,7 +22,7 @@ pub type Camera = cam::Camera2D<cam::MouseDragController>;
 
 pub struct DebugVisuals {
     pub contact_cache: phys::collision::ContactOutput,
-    pub contact_indicator: vis::debug::ContactIndicator,
+    pub contact_indicator: gx::debug::ContactIndicator,
 }
 
 pub struct Resources {
@@ -45,7 +46,7 @@ fn main() {
 }
 
 pub fn init_resources() -> Resources {
-    let events = unsafe { vis::Context::init() };
+    let events = unsafe { gx::Context::init() };
 
     let mut input_cache = InputCache::new();
     {
@@ -59,7 +60,7 @@ pub fn init_resources() -> Resources {
 
     let camera = cam::Camera2D::new(
         cam::MouseDragController::new(Transform::identity()),
-        vis::camera::ScalingStrategy::ConstantDisplayArea {
+        gx::camera::ScalingStrategy::ConstantDisplayArea {
             width: 8.0,
             height: 6.0,
         },
@@ -70,7 +71,7 @@ pub fn init_resources() -> Resources {
     //
 
     let contact_cache = phys::collision::ContactOutput::new();
-    let contact_indicator = vis::debug::ContactIndicator::new(&vis::Context::get().display, 50);
+    let contact_indicator = gx::debug::ContactIndicator::new(&gx::Context::get().display, 50);
 
     Resources {
         events,

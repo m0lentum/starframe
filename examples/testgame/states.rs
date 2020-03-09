@@ -3,7 +3,7 @@ use crate::{controls::*, recipes, Camera, Resources};
 use glium::{glutin, Surface};
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
-    ecs,
+    ecs, graphics as gx,
     physics2d::{self as phys, collision as coll, integrator},
     util::{
         gameloop::{GameLoop, LockstepLoop},
@@ -11,7 +11,6 @@ use moleengine::{
         statemachine::{GameState, StateMachine, StateOp},
         Transform,
     },
-    visuals_glium as vis,
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -157,13 +156,13 @@ fn handle_events(
 fn draw_space(res: &mut Resources) {
     microprofile::scope!("render", "all");
 
-    let ctx = vis::Context::get();
+    let ctx = gx::Context::get();
 
     let mut target = ctx.display.draw();
 
     target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
-    res.space.run_system(vis::ShapeRenderer {
+    res.space.run_system(gx::ShapeRenderer {
         camera: &res.camera,
         target: &mut target,
         shaders: &ctx.shaders,

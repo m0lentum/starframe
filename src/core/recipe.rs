@@ -5,7 +5,6 @@ pub trait Recipe<F: super::space::FeatureSet> {
 
 /// Objects that can read recipes from RON and apply them to a Space.
 /// Implementations are auto-generated with the `ecs::recipes!` macro.
-#[cfg(feature = "ron-recipes")]
 pub trait DeserializeRecipes<F: super::space::FeatureSet> {
     fn deserialize_into_space<'a, 'de, D>(
         deserializer: D,
@@ -17,7 +16,6 @@ pub trait DeserializeRecipes<F: super::space::FeatureSet> {
 
 // TODO: rename this macro once the old stuff is deleted
 pub use crate::recipes_new;
-#[cfg(feature = "ron-recipes")]
 #[macro_export]
 macro_rules! recipes_new {
     ($feat_type:ident, $( $recipe_type:ident, )+) => {

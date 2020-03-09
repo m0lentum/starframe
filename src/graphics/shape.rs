@@ -86,7 +86,6 @@ impl Shape {
 
     /// Create a Shape that matches the given Collider.
     /// Circle colliders are approximated with a polygon.
-    #[cfg(feature = "physics2d")]
     pub fn from_collider<F: Facade + ?Sized>(
         facade: &F,
         coll: &crate::physics2d::Collider,

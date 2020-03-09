@@ -1,7 +1,6 @@
 pub mod space;
 pub use space::{MasterObjectHandle, ObjectHandle, Space};
 
-#[cfg(feature = "ron-recipes")]
 mod recipes;
 pub use crate::recipes;
 pub use recipes::{DeserializeRecipes, ObjectRecipe};

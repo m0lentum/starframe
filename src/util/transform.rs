@@ -44,10 +44,9 @@ impl Default for Angle {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-#[cfg_attr(feature = "ron-recipes", derive(serde::Deserialize, serde::Serialize))]
-#[cfg_attr(feature = "ron-recipes", serde(from = "SerializeIntermediary"))]
-#[cfg_attr(feature = "ron-recipes", serde(into = "SerializeIntermediary"))]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(from = "SerializeIntermediary")]
+#[serde(into = "SerializeIntermediary")]
 pub struct Transform(pub uv::Similarity2);
 
 impl crate::ecs::DefaultStorage for Transform {
@@ -88,7 +87,6 @@ impl Transform {
     }
 }
 
-#[cfg(feature = "ron-recipes")]
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct SerializeIntermediary {
