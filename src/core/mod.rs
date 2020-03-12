@@ -1,8 +1,8 @@
 pub mod space;
-pub use space::{Id, Space};
+pub use space::Space;
 
 pub mod container;
-pub use container::{Container, ContainerAccess};
+pub use container::Container;
 
 pub mod recipe;
 pub use crate::recipes_new;

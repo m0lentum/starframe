@@ -4,22 +4,20 @@ extern crate microprofile;
 //
 
 use glium::{glutin, Surface};
+use rand::{distributions as distr, distributions::Distribution};
+use ultraviolet as uv;
 
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
-    core,
+    core::{self, space, Transform},
     graphics::{self as gx, camera as cam},
     physics2d::{self as phys, collision as coll, integrator},
     util::{
         gameloop::{GameLoop, LockstepLoop},
         inputcache::InputCache,
         statemachine::{GameState, StateMachine, StateOp},
-        Transform,
     },
 };
-
-use rand::{distributions as distr, distributions::Distribution};
-use ultraviolet as uv;
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 const _CYAN_COLOR: [f32; 4] = [0.3, 0.7, 0.8, 1.0];
@@ -58,12 +56,12 @@ pub struct MainSpaceFeatures {
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
-    fn init(capacity: usize) -> Self {
+    fn init(cont: core::container::Init) -> Self {
         MainSpaceFeatures {
-            tr: core::TransformFeature::with_capacity(capacity),
-            shape: gx::ShapeFeature::with_capacity(capacity),
+            tr: core::TransformFeature::new(cont),
+            shape: gx::ShapeFeature::new(cont),
             camera: Camera::new(
-                cam::MouseDragController::new(Transform::identity()),
+                cam::MouseDragController::new(moleengine::util::Transform::identity()),
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 8.0,
                     height: 6.0,
@@ -72,11 +70,16 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn containers(&mut self) -> Vec<&mut dyn core::container::ContainerAccess> {
+    fn containers(&mut self) -> core::container::DynRefs {
         vec![&mut self.tr, &mut self.shape]
     }
 
-    fn tick(&mut self, dt: f32) {
+    fn create_pools(mut p: space::PoolCreateAccess<Self>) {
+        p.create::<recipes::Player>(5);
+        //p.create::<recipes::Ball>(25);
+    }
+
+    fn tick(&mut self, _dt: f32) {
         microprofile::flip();
         microprofile::scope!("update", "all");
         {
@@ -113,7 +116,7 @@ pub fn init_resources() -> Resources {
     {
         use glutin::VirtualKeyCode::*;
         input_cache.track_keys(&[
-            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, T, LShift,
+            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, T, P, LShift,
         ]);
     }
 
@@ -151,6 +154,12 @@ impl GameState<Resources> for StatePlaying {
 
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
             res.space = load_main_space().unwrap();
+        }
+        if res.input_cache.is_key_pressed(Key::P, Some(0)) {
+            // spawning players for now to check that everything from `spawn_consts` stays
+            res.space.spawn(recipes::Player {
+                transform: Transform::from_position(uv::Vec2::new(1.0, 1.0)),
+            });
         }
 
         // pool spawning
@@ -240,7 +249,7 @@ fn handle_events(
 }
 
 fn load_main_space() -> Option<MainSpace> {
-    let mut space = MainSpace::with_capacity(15);
+    let mut space = MainSpace::with_capacity(150);
 
     let dir = "./examples/testgame2/scenes";
 
