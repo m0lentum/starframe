@@ -1,8 +1,25 @@
+//! A Space is an environment that manages game objects,
+//! and the only way you can create objects at all in MoleEngine.
+//! It implements a variant of the Entity-Component-System pattern.
+//!
+//! Component storage and Systems are bundled into Features,
+//! which are implemented as a user-defined freeform struct
+//! that implements `FeatureSet` and parameterizes the Space.
+//! This way behaviours a Space supports and dependencies between them
+//! are defined at compile time and can be borrow-checked.
+//!
+//! TODOC: pools, containers, code example
+
 use anymap::AnyMap;
 use hibitset::{self as hb, BitSetLike};
 
 use super::{container as cont, Recipe};
 
+/// Trait describing Features of a Space.
+/// These determine which component types and behaviors are available in the Space.
+/// See the module-level documentation for a full usage example.
+///
+/// TODOC: containers, init, tick & render
 pub trait FeatureSet: 'static + Sized {
     fn init(container_init: cont::Init) -> Self;
     fn containers(&mut self) -> cont::DynRefs;
@@ -14,11 +31,16 @@ pub trait FeatureSet: 'static + Sized {
 //
 
 /// A handle to an object that can be used to add new components to it.
+/// Only given out during object creation.
 #[derive(Clone, Copy)]
 pub struct MasterKey {
     pub(crate) id: usize,
 }
 
+/// An environment where game objects live.
+/// The Space handles reserving and giving out IDs for objects,
+/// while all Components are stored and handled inside of Features.
+/// See the module-level documentation for a full usage example.
 pub struct Space<F: FeatureSet> {
     reserved_ids: hb::BitSet,
     enabled_ids: hb::BitSet,
@@ -29,6 +51,9 @@ pub struct Space<F: FeatureSet> {
 }
 
 impl<F: FeatureSet> Space<F> {
+    /// Create a Space with a a given maximum capacity.
+    /// Currently this capacity is a hard limit; Spaces do not grow.
+    /// The FeatureSet's `init` and `create_pools` functions are called here.
     pub fn with_capacity(capacity: usize) -> Self {
         let mut space = Space {
             reserved_ids: hb::BitSet::with_capacity(capacity as u32),
@@ -52,7 +77,7 @@ impl<F: FeatureSet> Space<F> {
         space
     }
 
-    /// Create an object in this Space and add some Features to it.
+    /// Create an 'ad-hoc' object in this Space, that is, one that isn't based on a Recipe.
     /// Returns `Some(())` if successful, `None` if there's no room left in the Space.
     pub fn create_object(&mut self, f: impl FnOnce(MasterKey, &mut F)) -> Option<()> {
         let key = self.do_create_object()?;
@@ -83,6 +108,9 @@ impl<F: FeatureSet> Space<F> {
         self.enabled_ids.add(id as u32);
     }
 
+    /// Instantiate a Recipe in this Space.
+    /// If a Pool exists for that Recipe, uses the Pool, otherwise reserves a new object.
+    /// Returns `Some(())` if successful, `None` if there's no room in the Pool or Space.
     pub fn spawn<R: super::Recipe<F>>(&mut self, recipe: R) -> Option<()> {
         if let Some(pool) = self.pools.get_mut::<Pool<F, R>>() {
             pool.spawn(recipe, &mut self.enabled_ids, &mut self.features)
@@ -95,6 +123,7 @@ impl<F: FeatureSet> Space<F> {
     }
 
     /// Spawn objects described in a RON file into this Space.
+    /// Can fail if either parsing the data fails or all objecs don't fit in the Space.
     pub fn read_ron_file<R>(&mut self, file: std::fs::File) -> Result<(), ron::de::Error>
     where
         R: super::recipe::DeserializeRecipes<F>,
@@ -119,6 +148,7 @@ impl<F: FeatureSet> Space<F> {
 
 // Pools
 
+/// Information required to create Pools in a Space.
 pub struct PoolCreateAccess<'a, F: FeatureSet> {
     pools: &'a mut AnyMap,
     reserved_ids: &'a mut hb::BitSet,
