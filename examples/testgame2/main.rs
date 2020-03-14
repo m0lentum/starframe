@@ -74,11 +74,6 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         vec![&mut self.tr, &mut self.shape]
     }
 
-    fn create_pools(mut p: space::PoolCreateAccess<Self>) {
-        p.create::<recipes::Player>(5);
-        //p.create::<recipes::Ball>(25);
-    }
-
     fn tick(&mut self, _dt: f32) {
         microprofile::flip();
         microprofile::scope!("update", "all");
@@ -250,6 +245,7 @@ fn handle_events(
 
 fn load_main_space() -> Option<MainSpace> {
     let mut space = MainSpace::with_capacity(150);
+    space.create_pool::<recipes::Player>(5).unwrap();
 
     let dir = "./examples/testgame2/scenes";
 

@@ -23,7 +23,6 @@ use super::{container as cont, Recipe};
 pub trait FeatureSet: 'static + Sized {
     fn init(container_init: cont::Init) -> Self;
     fn containers(&mut self) -> cont::DynRefs;
-    fn create_pools(mut _pool_access: PoolCreateAccess<Self>) {}
     fn tick(&mut self, dt: f32);
     fn render(&self);
 }
@@ -63,11 +62,6 @@ impl<F: FeatureSet> Space<F> {
             features: F::init(cont::Init { capacity }),
             pools: AnyMap::new(),
         };
-        F::create_pools(PoolCreateAccess {
-            pools: &mut space.pools,
-            reserved_ids: &mut space.reserved_ids,
-            features: &mut space.features,
-        });
         // find first index after what pools reserved and start accepting new objects from there
         //
         // negation of the bitset can't not have a first item so we unwrap here.
@@ -108,8 +102,35 @@ impl<F: FeatureSet> Space<F> {
         self.enabled_ids.add(id as u32);
     }
 
+    /// Create a pool for a specific Recipe in this Space.
+    /// Returns `None` if there's not enough continuous room left in the Space, `Some(())` otherwise.
+    ///
+    /// This creates all components defined in the Recipe's `spawn_consts` method immediately,
+    /// which won't need to be created again when an object is spawned.
+    /// If a pool exists it will automatically be used when spawning an object.
+    /// Spawning will fail if there's no room left in the pool; in other words,
+    /// a pool defines the maximum number of simultaneous instances of the Recipe in the Space.
+    pub fn create_pool<R: super::Recipe<F>>(&mut self, size: usize) -> Option<()> {
+        let start = self.next_obj_id;
+        let end = start + size + 1;
+        if end > self.capacity {
+            return None;
+        }
+
+        let slots: hb::BitSet = (start as u32..end as u32).collect();
+        self.next_obj_id = end;
+        for id in &slots {
+            self.reserved_ids.add(id);
+        }
+
+        let pool: Pool<F, R> = Pool::new(slots, &mut self.features);
+        self.pools.insert(pool);
+
+        Some(())
+    }
+
     /// Instantiate a Recipe in this Space.
-    /// If a Pool exists for that Recipe, uses the Pool, otherwise reserves a new object.
+    /// If a pool exists for that Recipe, uses the pool, otherwise reserves a new object.
     /// Returns `Some(())` if successful, `None` if there's no room in the Pool or Space.
     pub fn spawn<R: super::Recipe<F>>(&mut self, recipe: R) -> Option<()> {
         if let Some(pool) = self.pools.get_mut::<Pool<F, R>>() {
@@ -148,35 +169,13 @@ impl<F: FeatureSet> Space<F> {
 
 // Pools
 
-/// Information required to create Pools in a Space.
-pub struct PoolCreateAccess<'a, F: FeatureSet> {
-    pools: &'a mut AnyMap,
-    reserved_ids: &'a mut hb::BitSet,
-    features: &'a mut F,
-}
-
-impl<'a, F: FeatureSet> PoolCreateAccess<'a, F> {
-    pub fn create<R: Recipe<F> + 'static>(&mut self, size: usize) {
-        let pool: Pool<F, R> = Pool::init(size, self.reserved_ids, self.features);
-        self.pools.insert(pool);
-    }
-}
-
 struct Pool<F: FeatureSet, R: Recipe<F>> {
     reserved_slots: hb::BitSet,
     _marker: std::marker::PhantomData<(F, R)>,
 }
 
 impl<F: FeatureSet, R: Recipe<F>> Pool<F, R> {
-    pub(self) fn init(size: usize, reserved_ids: &mut hb::BitSet, features: &mut F) -> Self {
-        let mut slots = hb::BitSet::new();
-        for vacant_id in (!&*reserved_ids).iter().take(size) {
-            slots.add(vacant_id);
-        }
-        for taken_id in &slots {
-            reserved_ids.add(taken_id);
-        }
-
+    pub(self) fn new(slots: hb::BitSet, features: &mut F) -> Self {
         for slot in &slots {
             R::spawn_consts(MasterKey { id: slot as usize }, features);
         }
