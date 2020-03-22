@@ -70,11 +70,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn containers(&mut self) -> core::container::DynRefs {
-        vec![&mut self.tr, &mut self.shape]
-    }
-
-    fn tick(&mut self, _dt: f32) {
+    fn tick(&mut self, _dt: f32, _space: core::SpaceAccessMut) {
         microprofile::flip();
         microprofile::scope!("update", "all");
         {
@@ -83,7 +79,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn render(&self) {
+    fn draw(&self, space: core::SpaceAccess) {
         microprofile::scope!("render", "all");
 
         // TODO: consider abstracting context creation into the game loop
@@ -94,7 +90,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
 
         self.shape
-            .draw(&self.tr, &mut target, &self.camera, &ctx.shaders);
+            .draw(&space, &self.tr, &mut target, &self.camera, &ctx.shaders);
 
         target.finish().unwrap();
     }
@@ -182,7 +178,7 @@ impl GameState<Resources> for StatePlaying {
     }
 
     fn render(&mut self, res: &mut Resources) {
-        res.space.render();
+        res.space.draw();
     }
 }
 
@@ -211,7 +207,7 @@ impl GameState<Resources> for StatePaused {
     }
 
     fn render(&mut self, res: &mut Resources) {
-        res.space.render();
+        res.space.draw();
     }
 }
 

@@ -22,9 +22,8 @@ use super::{container as cont, Recipe};
 /// TODOC: containers, init, tick & render
 pub trait FeatureSet: 'static + Sized {
     fn init(container_init: cont::Init) -> Self;
-    fn containers(&mut self) -> cont::DynRefs;
-    fn tick(&mut self, dt: f32);
-    fn render(&self);
+    fn tick(&mut self, dt: f32, space: SpaceAccessMut);
+    fn draw(&self, space: SpaceAccess);
 }
 
 //
@@ -36,6 +35,42 @@ pub struct MasterKey {
     pub(crate) id: usize,
 }
 
+pub struct SpaceAccess<'a> {
+    enabled_ids: &'a hb::BitSet,
+}
+
+impl<'a> SpaceAccess<'a> {
+    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(usize) -> ()> {
+        cont::IterBuilder {
+            bits: self.enabled_ids,
+            get: |_| (),
+        }
+    }
+}
+
+pub struct SpaceAccessMut<'a> {
+    reserved_ids: &'a mut hb::BitSet,
+    enabled_ids: &'a mut hb::BitSet,
+}
+
+impl<'a> SpaceAccessMut<'a> {
+    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(usize) -> ()> {
+        cont::IterBuilder {
+            bits: self.enabled_ids,
+            get: |_| (),
+        }
+    }
+    pub fn spawn<R>(&mut self) {
+        unimplemented! {};
+    }
+    pub fn create_object() {
+        unimplemented! {};
+    }
+    pub fn kill_object() {
+        unimplemented! {};
+    }
+}
+
 /// An environment where game objects live.
 /// The Space handles reserving and giving out IDs for objects,
 /// while all Components are stored and handled inside of Features.
@@ -45,8 +80,8 @@ pub struct Space<F: FeatureSet> {
     enabled_ids: hb::BitSet,
     next_obj_id: usize,
     capacity: usize,
-    pub features: F,
     pools: AnyMap,
+    pub features: F,
 }
 
 impl<F: FeatureSet> Space<F> {
@@ -59,8 +94,8 @@ impl<F: FeatureSet> Space<F> {
             enabled_ids: hb::BitSet::with_capacity(capacity as u32),
             next_obj_id: 0,
             capacity,
-            features: F::init(cont::Init { capacity }),
             pools: AnyMap::new(),
+            features: F::init(cont::Init { capacity }),
         };
         // find first index after what pools reserved and start accepting new objects from there
         //
@@ -159,11 +194,22 @@ impl<F: FeatureSet> Space<F> {
     }
 
     pub fn tick(&mut self, dt: f32) {
-        self.features.tick(dt);
+        self.access_features(|f, a| f.tick(dt, a));
     }
 
-    pub fn render(&self) {
-        self.features.render();
+    pub fn draw(&self) {
+        let access = SpaceAccess {
+            enabled_ids: &self.enabled_ids,
+        };
+        self.features.draw(access);
+    }
+
+    pub fn access_features(&mut self, f: impl FnOnce(&mut F, SpaceAccessMut)) {
+        let access = SpaceAccessMut {
+            reserved_ids: &mut self.reserved_ids,
+            enabled_ids: &mut self.enabled_ids,
+        };
+        f(&mut self.features, access);
     }
 }
 

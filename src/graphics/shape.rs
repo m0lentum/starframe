@@ -107,11 +107,12 @@ impl Shape {
     }
 }
 
-use crate::core::Container;
+use crate::core::{Container, SpaceAccess};
 pub type ShapeFeature = Container<Shape>;
 impl ShapeFeature {
     pub fn draw<S: glium::Surface, C: crate::graphics::camera::CameraController>(
         &self,
+        space: &SpaceAccess,
         trs: &crate::core::TransformFeature,
         target: &mut S,
         camera: &crate::graphics::camera::Camera2D<C>,
@@ -119,7 +120,7 @@ impl ShapeFeature {
     ) {
         let view = camera.view_matrix();
 
-        for (shape, tr) in self.iter().and(trs.iter()) {
+        for (shape, tr) in space.iter().overlay(self.iter()).and(trs.iter()) {
             let model = tr.0.into_homogeneous_matrix();
             let mv = view * model;
             let mv_uniform = [

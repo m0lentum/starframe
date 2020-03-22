@@ -2,6 +2,9 @@ use hibitset as hb;
 
 use super::space::MasterKey;
 
+const ITER_ERR_MSG: &'static str =
+    "A component didn't exist where it should have. This is almost certainly an error in moleengine.";
+
 #[derive(Clone, Copy)]
 pub struct Init {
     pub(crate) capacity: usize,
@@ -10,18 +13,6 @@ pub struct Init {
 pub struct Container<T: 'static> {
     users: hb::BitSet,
     storage: Vec<Option<T>>, // TODO: bring back storages
-}
-
-pub trait AsDyn {
-    fn users(&mut self) -> &mut hb::BitSet;
-}
-
-pub type DynRefs<'a> = Vec<&'a mut dyn AsDyn>;
-
-impl<T: 'static> AsDyn for Container<T> {
-    fn users(&mut self) -> &mut hb::BitSet {
-        &mut self.users
-    }
 }
 
 impl<T: 'static> Container<T> {
@@ -47,25 +38,25 @@ impl<T: 'static> Container<T> {
         self.storage[id].as_mut()
     }
 
-    pub fn iter<'a>(&'a self) -> IterBuilder<&'a T, &'a hb::BitSet, impl FnMut(usize) -> &'a T> {
-        IterBuilder {
+    pub fn iter<'a>(&'a self) -> IterFragment<&'a T, &'a hb::BitSet, impl FnMut(usize) -> &'a T> {
+        IterFragment {
             bits: &self.users,
-            get: move |id| self.get(id).expect("Bug!!!"),
+            get: move |id| self.get(id).expect(ITER_ERR_MSG),
         }
     }
 
     pub fn iter_mut<'a>(
         &'a mut self,
-    ) -> IterBuilder<&'a mut T, &'a hb::BitSet, impl FnMut(usize) -> &'a mut T> {
+    ) -> IterFragment<&'a mut T, &'a hb::BitSet, impl FnMut(usize) -> &'a mut T> {
         let storage = &mut self.storage;
-        IterBuilder {
+        IterFragment {
             bits: &self.users,
             get: move |id| {
                 // the bitset iterator won't return the same id twice
                 // so we can safely alias mutable references here
                 let storage_ptr: *mut _ = storage;
                 let storage_ref = unsafe { storage_ptr.as_mut().unwrap() };
-                storage_ref[id].as_mut().expect("Bug!!!")
+                storage_ref[id].as_mut().expect(ITER_ERR_MSG)
             },
         }
     }
@@ -76,9 +67,19 @@ where
     Bits: hb::BitSetLike,
     Get: FnMut(usize) -> Item,
 {
+    pub(crate) bits: Bits,
+    pub(crate) get: Get,
+}
+
+pub struct IterFragment<Item, Bits, Get>
+where
+    Bits: hb::BitSetLike,
+    Get: FnMut(usize) -> Item,
+{
     bits: Bits,
     get: Get,
 }
+
 impl<Item, Bits, Get> IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
@@ -86,7 +87,7 @@ where
 {
     pub fn and<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
         self,
-        other: IterBuilder<OI, OB, OG>,
+        other: IterFragment<OI, OB, OG>,
     ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, OB>, impl FnMut(usize) -> (Item, OI)> {
         let mut gets = (self.get, other.get);
         IterBuilder {
@@ -95,9 +96,19 @@ where
         }
     }
 
+    pub fn overlay<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
+        self,
+        other: IterFragment<OI, OB, OG>,
+    ) -> IterBuilder<OI, hb::BitSetAnd<Bits, OB>, impl FnMut(usize) -> OI> {
+        IterBuilder {
+            bits: hb::BitSetAnd(self.bits, other.bits),
+            get: other.get,
+        }
+    }
+
     pub fn not<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
         self,
-        other: IterBuilder<OI, OB, OG>,
+        other: IterFragment<OI, OB, OG>,
     ) -> IterBuilder<Item, hb::BitSetAnd<Bits, hb::BitSetNot<OB>>, impl FnMut(usize) -> Item> {
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, hb::BitSetNot(other.bits)),
