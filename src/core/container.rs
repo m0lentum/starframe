@@ -1,3 +1,4 @@
+//! Storage and iterators for handling components of game objects.
 use hibitset as hb;
 
 use super::space::MasterKey;
@@ -5,17 +6,22 @@ use super::space::MasterKey;
 const ITER_ERR_MSG: &'static str =
     "A component didn't exist where it should have. This is almost certainly an error in moleengine.";
 
+/// Opaque information needed to create a Container.
+/// These are handed out when initializing a `space::FeatureSet`.
 #[derive(Clone, Copy)]
 pub struct Init {
     pub(crate) capacity: usize,
 }
 
+/// A container for a specific type of component,
+/// typically belonging to a feature of a Space.
 pub struct Container<T: 'static> {
     users: hb::BitSet,
     storage: Vec<Option<T>>, // TODO: bring back storages
 }
 
 impl<T: 'static> Container<T> {
+    /// Create a new Container from an Init struct.
     pub fn new(init: Init) -> Self {
         let mut storage = Vec::new();
         storage.resize_with(init.capacity, || None);
@@ -25,26 +31,25 @@ impl<T: 'static> Container<T> {
         }
     }
 
+    /// Insert a component into the Container.
+    ///
+    /// This requires a MasterKey, which you can get from the containing `Space` by creating an object.
+    /// See the `Space` documentation for usage examples.
     pub fn insert(&mut self, key: MasterKey, comp: T) {
         self.users.add(key.id as u32);
         self.storage[key.id] = Some(comp);
     }
 
-    pub fn get(&self, id: usize) -> Option<&T> {
-        self.storage[id].as_ref()
-    }
-
-    pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
-        self.storage[id].as_mut()
-    }
-
+    /// Create an IterFragment that can be turned into a concrete iterator
+    /// by joining it with an `IterBuilder`.
     pub fn iter<'a>(&'a self) -> IterFragment<&'a T, &'a hb::BitSet, impl FnMut(usize) -> &'a T> {
         IterFragment {
             bits: &self.users,
-            get: move |id| self.get(id).expect(ITER_ERR_MSG),
+            get: move |id| self.storage[id].as_ref().expect(ITER_ERR_MSG),
         }
     }
 
+    /// Create an IterFragment with mutable access to the components in this Container.
     pub fn iter_mut<'a>(
         &'a mut self,
     ) -> IterFragment<&'a mut T, &'a hb::BitSet, impl FnMut(usize) -> &'a mut T> {
@@ -62,6 +67,13 @@ impl<T: 'static> Container<T> {
     }
 }
 
+/// A builder to generate iterators over the set of objects that contains specific components.
+///
+/// The only way to get one of these is by starting with a `SpaceAccess` / `SpaceAccessMut`.
+/// This ensures that only objects that are actually alive in the Space are included in the resulting iterator.
+/// You can then combine it with `IterFragment`s from `Container`s to access the components you want.
+///
+/// TODOC: example
 pub struct IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
@@ -71,6 +83,8 @@ where
     pub(crate) get: Get,
 }
 
+/// Information required to add a `Container`'s content to an `IterBuilder`.
+/// See `IterBuilder` for a usage example.
 pub struct IterFragment<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
@@ -85,6 +99,14 @@ where
     Bits: hb::BitSetLike,
     Get: FnMut(usize) -> Item,
 {
+    /// Iterate only over objects that have the features of both this `IterBuilder`
+    /// and the given `IterFragment`, producing pairs of both.
+    ///
+    /// ```
+    /// for (foo, bar) in foo_iter().and(bar_container.iter()) {
+    ///     // ...
+    /// }
+    /// ```
     pub fn and<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
         self,
         other: IterFragment<OI, OB, OG>,
@@ -96,6 +118,16 @@ where
         }
     }
 
+    /// Filter objects like in `and`, but discard the item type of the current `IterBuilder`
+    /// from the resulting iterator.
+    ///
+    /// Typically used to discard the unit types produced by the initial `IterBuilder` you get from a `SpaceAccess`.
+    ///
+    /// ```
+    /// for bar in space_access.iter().overlay(bar_container.iter()) {
+    ///     // ...
+    /// }
+    /// ```
     pub fn overlay<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
         self,
         other: IterFragment<OI, OB, OG>,
@@ -106,6 +138,7 @@ where
         }
     }
 
+    /// Filter out objects which have the component iterated by the given `IterFragment`.
     pub fn not<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
         self,
         other: IterFragment<OI, OB, OG>,
@@ -131,6 +164,7 @@ where
     }
 }
 
+/// A concrete iterator produced by `IterBuilder::into_iterator`.
 pub struct Iter<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,

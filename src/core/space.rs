@@ -72,6 +72,7 @@ impl<'a> SpaceAccessMut<'a> {
 }
 
 /// An environment where game objects live.
+///
 /// The Space handles reserving and giving out IDs for objects,
 /// while all Components are stored and handled inside of Features.
 /// See the module-level documentation for a full usage example.
@@ -86,6 +87,7 @@ pub struct Space<F: FeatureSet> {
 
 impl<F: FeatureSet> Space<F> {
     /// Create a Space with a a given maximum capacity.
+    ///
     /// Currently this capacity is a hard limit; Spaces do not grow.
     /// The FeatureSet's `init` and `create_pools` functions are called here.
     pub fn with_capacity(capacity: usize) -> Self {
@@ -165,6 +167,7 @@ impl<F: FeatureSet> Space<F> {
     }
 
     /// Instantiate a Recipe in this Space.
+    ///
     /// If a pool exists for that Recipe, uses the pool, otherwise reserves a new object.
     /// Returns `Some(())` if successful, `None` if there's no room in the Pool or Space.
     pub fn spawn<R: super::Recipe<F>>(&mut self, recipe: R) -> Option<()> {
@@ -179,6 +182,7 @@ impl<F: FeatureSet> Space<F> {
     }
 
     /// Spawn objects described in a RON file into this Space.
+    ///
     /// Can fail if either parsing the data fails or all objecs don't fit in the Space.
     pub fn read_ron_file<R>(&mut self, file: std::fs::File) -> Result<(), ron::de::Error>
     where
