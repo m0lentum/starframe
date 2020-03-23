@@ -107,8 +107,8 @@ impl Shape {
     }
 }
 
-use crate::core::{Container, SpaceAccess};
-pub type ShapeFeature = Container<Shape>;
+use crate::core::{storage, Container, SpaceAccess};
+pub type ShapeFeature = Container<storage::DenseVecStorage<Shape>>;
 impl ShapeFeature {
     pub fn draw<S: glium::Surface, C: crate::graphics::camera::CameraController>(
         &self,

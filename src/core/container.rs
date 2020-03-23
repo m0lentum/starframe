@@ -2,6 +2,7 @@
 use hibitset as hb;
 
 use super::space::MasterKey;
+use super::storage::Storage;
 
 const ITER_ERR_MSG: &'static str =
     "A component didn't exist where it should have. This is almost certainly an error in moleengine.";
@@ -15,19 +16,21 @@ pub struct Init {
 
 /// A container for a specific type of component,
 /// typically belonging to a feature of a Space.
-pub struct Container<T: 'static> {
+///
+/// There are several `Storage` types to choose from (see the `core::storage` module);
+/// which one is optimal depends mostly on how common the component type is.
+/// Usually `DenseVecStorage` perfoms the best.
+pub struct Container<S: Storage> {
     users: hb::BitSet,
-    storage: Vec<Option<T>>, // TODO: bring back storages
+    storage: S,
 }
 
-impl<T: 'static> Container<T> {
+impl<S: Storage> Container<S> {
     /// Create a new Container from an Init struct.
     pub fn new(init: Init) -> Self {
-        let mut storage = Vec::new();
-        storage.resize_with(init.capacity, || None);
         Container {
             users: hb::BitSet::with_capacity(init.capacity as u32),
-            storage,
+            storage: S::with_capacity(init.capacity),
         }
     }
 
@@ -35,24 +38,26 @@ impl<T: 'static> Container<T> {
     ///
     /// This requires a MasterKey, which you can get from the containing `Space` by creating an object.
     /// See the `Space` documentation for usage examples.
-    pub fn insert(&mut self, key: MasterKey, comp: T) {
+    pub fn insert(&mut self, key: MasterKey, comp: S::Item) {
         self.users.add(key.id as u32);
-        self.storage[key.id] = Some(comp);
+        self.storage.insert(key.id, comp)
     }
 
     /// Create an IterFragment that can be turned into a concrete iterator
     /// by joining it with an `IterBuilder`.
-    pub fn iter<'a>(&'a self) -> IterFragment<&'a T, &'a hb::BitSet, impl FnMut(usize) -> &'a T> {
+    pub fn iter<'a>(
+        &'a self,
+    ) -> IterFragment<&'a S::Item, &'a hb::BitSet, impl FnMut(usize) -> &'a S::Item> {
         IterFragment {
             bits: &self.users,
-            get: move |id| self.storage[id].as_ref().expect(ITER_ERR_MSG),
+            get: move |id| self.storage.get(id).expect(ITER_ERR_MSG),
         }
     }
 
     /// Create an IterFragment with mutable access to the components in this Container.
     pub fn iter_mut<'a>(
         &'a mut self,
-    ) -> IterFragment<&'a mut T, &'a hb::BitSet, impl FnMut(usize) -> &'a mut T> {
+    ) -> IterFragment<&'a mut S::Item, &'a hb::BitSet, impl FnMut(usize) -> &'a mut S::Item> {
         let storage = &mut self.storage;
         IterFragment {
             bits: &self.users,
@@ -61,7 +66,7 @@ impl<T: 'static> Container<T> {
                 // so we can safely alias mutable references here
                 let storage_ptr: *mut _ = storage;
                 let storage_ref = unsafe { storage_ptr.as_mut().unwrap() };
-                storage_ref[id].as_mut().expect(ITER_ERR_MSG)
+                storage_ref.get_mut(id).expect(ITER_ERR_MSG)
             },
         }
     }

@@ -87,7 +87,8 @@ impl Transform {
     }
 }
 
-pub type TransformFeature = crate::core::Container<Transform>;
+use crate::core::{storage, Container};
+pub type TransformFeature = Container<storage::VecStorage<Transform>>;
 
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
