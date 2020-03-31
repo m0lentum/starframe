@@ -9,9 +9,9 @@ use ultraviolet as uv;
 
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
-    core::{self, space, Transform},
+    core::{self, Transform},
     graphics::{self as gx, camera as cam},
-    physics2d::{self as phys, collision as coll, integrator},
+    physics2d::{self as phys},
     util::{
         gameloop::{GameLoop, LockstepLoop},
         inputcache::InputCache,
@@ -146,14 +146,35 @@ impl GameState<Resources> for StatePlaying {
         if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
             res.space = load_main_space().unwrap();
         }
-        if res.input_cache.is_key_pressed(Key::P, Some(0)) {
-            // spawning players for now to check that everything from `spawn_consts` stays
-            res.space.spawn(recipes::Player {
-                transform: Transform::from_position(uv::Vec2::new(1.0, 1.0)),
-            });
-        }
 
         // pool spawning
+
+        let random_pos = || {
+            let mut rng = rand::thread_rng();
+            uv::Vec2::new(
+                distr::Uniform::from(-3.0..3.0).sample(&mut rng),
+                distr::Uniform::from(0.0..2.0).sample(&mut rng),
+            )
+        };
+        let random_angle = || {
+            core::transform::Angle::Degrees(
+                distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()),
+            )
+        };
+        let mut rng = rand::thread_rng();
+        if res.input_cache.is_key_pressed(Key::S, Some(0)) {
+            res.space.spawn(recipes::DynamicBlock {
+                transform: Transform::new(random_pos(), random_angle(), 1.0),
+                width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
+                height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
+            });
+        }
+        if res.input_cache.is_key_pressed(Key::T, Some(0)) {
+            res.space.spawn(recipes::Ball {
+                position: random_pos().into(),
+                radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
+            });
+        }
 
         // mouse camera
 
@@ -242,6 +263,8 @@ fn handle_events(
 fn load_main_space() -> Option<MainSpace> {
     let mut space = MainSpace::with_capacity(150);
     space.create_pool::<recipes::Player>(5).unwrap();
+    space.create_pool::<recipes::Ball>(20).unwrap();
+    space.create_pool::<recipes::DynamicBlock>(20).unwrap();
 
     let dir = "./examples/testgame2/scenes";
 
