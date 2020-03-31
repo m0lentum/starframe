@@ -1,5 +1,5 @@
 use super::Collider;
-use crate::{ecs::IdType, util::Transform};
+use crate::core::Transform;
 
 /// A broad phase algorithm for collision detection,
 /// responsible for generating pairs of possibly intersecting objects.
@@ -44,7 +44,7 @@ impl BroadPhase for BruteForce {
 
 #[derive(Clone, Copy)]
 pub struct Collidable<'a> {
-    pub id: IdType,
+    pub(crate) id: usize,
     pub tr: &'a Transform,
     pub coll: &'a Collider,
     pub responds_to_collisions: bool,

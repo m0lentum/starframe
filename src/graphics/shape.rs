@@ -3,8 +3,7 @@ use super::{
     shaders::Shaders,
     Color, Vertex2D,
 };
-use crate::ecs::system::*;
-use crate::util::Transform;
+use crate::core::{storage, Container, SpaceAccess, TransformFeature};
 
 use glium::{backend::Facade, index::PrimitiveType, uniform};
 use std::sync::Arc;
@@ -107,16 +106,15 @@ impl Shape {
     }
 }
 
-use crate::core::{storage, Container, SpaceAccess};
 pub type ShapeFeature = Container<storage::DenseVecStorage<Shape>>;
 impl ShapeFeature {
-    pub fn draw<S: glium::Surface, C: crate::graphics::camera::CameraController>(
+    pub fn draw<S: glium::Surface, C: CameraController>(
         &self,
         space: &SpaceAccess,
-        trs: &crate::core::TransformFeature,
+        trs: &TransformFeature,
         target: &mut S,
-        camera: &crate::graphics::camera::Camera2D<C>,
-        shaders: &crate::graphics::Shaders,
+        camera: &Camera2D<C>,
+        shaders: &Shaders,
     ) {
         let view = camera.view_matrix();
 
@@ -138,60 +136,6 @@ impl ShapeFeature {
                     &*shape.verts,
                     glium::index::NoIndices(shape.primitive_type),
                     &shaders.ortho_2d,
-                    &uniforms,
-                    &Default::default(),
-                )
-                .expect("Drawing failed");
-        }
-    }
-}
-
-impl crate::ecs::DefaultStorage for Shape {
-    // TODO: change this to DenseVecStorage once implemented
-    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
-}
-
-/// System that draws Shapes on the screen.
-/// A Transform must also be present for the Shape to be drawn.
-/// See the ecs module for more information on Systems.
-pub struct ShapeRenderer<'a, C: CameraController, S: glium::Surface> {
-    pub camera: &'a Camera2D<C>,
-    pub target: &'a mut S,
-    pub shaders: &'a Shaders,
-}
-
-/// The component query for ShapeRenderer.
-#[derive(ComponentQuery)]
-pub struct ShapeQuery<'a> {
-    transform: &'a Transform,
-    shape: &'a Shape,
-}
-
-impl<'a, C: CameraController, S: glium::Surface> SimpleSystem<'a> for ShapeRenderer<'a, C, S> {
-    type Query = ShapeQuery<'a>;
-
-    fn run_system(self, items: &mut [Self::Query]) {
-        let view = self.camera.view_matrix();
-
-        for item in items {
-            let model = item.transform.0.into_homogeneous_matrix();
-            let mv = view * model;
-            // TODO: this is really ugly, make some conversion function or something
-            let mv_uniform = [
-                [mv.cols[0].x, mv.cols[0].y, mv.cols[0].z],
-                [mv.cols[1].x, mv.cols[1].y, mv.cols[1].z],
-                [mv.cols[2].x, mv.cols[2].y, mv.cols[2].z],
-            ];
-
-            let uniforms = glium::uniform! {
-                model_view: mv_uniform,
-                color: item.shape.color,
-            };
-            self.target
-                .draw(
-                    &*item.shape.verts,
-                    glium::index::NoIndices(item.shape.primitive_type),
-                    &self.shaders.ortho_2d,
                     &uniforms,
                     &Default::default(),
                 )

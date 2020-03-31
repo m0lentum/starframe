@@ -1,5 +1,5 @@
 use super::{broadphase::Collidable, collider::ColliderShape};
-use crate::{ecs, util::Transform};
+use crate::core::Transform;
 
 use std::f32::consts::PI;
 use ultraviolet as uv;
@@ -10,7 +10,7 @@ const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
-    pub ids: [ecs::IdType; 2],
+    ids: [usize; 2],
     /// The normal, facing away from obj1
     pub normal: uv::Vec2,
     /// Penetration depth

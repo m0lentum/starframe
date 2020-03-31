@@ -1,7 +1,7 @@
 pub mod camera;
 
 pub mod shape;
-pub use shape::{Shape, ShapeFeature, ShapeRenderer, ShapeStyle};
+pub use shape::{Shape, ShapeFeature, ShapeStyle};
 
 pub mod shaders;
 pub use shaders::Shaders;

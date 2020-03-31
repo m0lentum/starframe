@@ -1,89 +1,46 @@
 use crate::{
-    ecs::{self, system::*},
+    core,
     physics2d::{self as phys, collision as coll},
-    util,
 };
 
 use std::marker::PhantomData;
 
-pub struct ContactSolver<'a, B: coll::BroadPhase> {
+pub struct ContactSolver<B: coll::BroadPhase> {
     stabilisation_coef: f32,
-    contact_out: Option<&'a mut ContactOutput>,
     _broad_phase_marker: PhantomData<B>,
 }
 
-impl<'a, B: coll::BroadPhase> ContactSolver<'a, B> {
+impl<'a, B: coll::BroadPhase> ContactSolver<B> {
     pub fn new(stabilisation_coef: f32) -> Self {
         ContactSolver {
             stabilisation_coef,
-            contact_out: None,
             _broad_phase_marker: PhantomData,
         }
     }
 
-    /// Give the solver a ContactOutput to write contacts to.
-    pub fn output_raw_contacts(mut self, contact_out: &'a mut ContactOutput) -> Self {
-        contact_out.0.clear();
-        self.contact_out = Some(contact_out);
-        self
-    }
-
     /// Check for collisions in a Space and output inequality constraints for use in the constraint solver.
-    pub fn gather_contact_constraints(mut self, space: &mut ecs::Space) -> Vec<phys::Constraint> {
-        // TODO allow queries to return stuff so this variable isn't necessary
-        let mut contact_constraints = Vec::new();
+    pub fn gather_contact_constraints(&mut self) {
+        // space.run_query(|items: &mut [RigidBodyQuery]| {
+        //     let contacts = B::run(items.iter().map(|rbq| rbq.as_collidable()));
 
-        space.run_query(|items: &mut [RigidBodyQuery]| {
-            let contacts = B::run(items.iter().map(|rbq| rbq.as_collidable()));
+        //     contact_constraints = contacts
+        //         .iter()
+        //         .map(|cont| phys::Constraint {
+        //             ids: cont.ids,
+        //             normal: cont.normal,
+        //             offsets: cont.offsets,
+        //             impulse_bounds: (Some(0.0), None),
+        //             bias: cont.depth * self.stabilisation_coef,
+        //         })
+        //         .collect();
 
-            contact_constraints = contacts
-                .iter()
-                .map(|cont| phys::Constraint {
-                    ids: cont.ids,
-                    normal: cont.normal,
-                    offsets: cont.offsets,
-                    impulse_bounds: (Some(0.0), None),
-                    bias: cont.depth * self.stabilisation_coef,
-                })
-                .collect();
-
-            if let Some(ref mut out) = self.contact_out {
-                out.0 = contacts;
-            }
-        });
+        //     if let Some(ref mut out) = self.contact_out {
+        //         out.0 = contacts;
+        //     }
+        // });
 
         // if contact_constraints.len() > 0 {
         //     dbg!(&contact_constraints);
         // }
-
-        contact_constraints
-    }
-}
-
-/// A CollisionSolver can optionally output detected contacts for e.g. debug visualization.
-pub struct ContactOutput(pub Vec<coll::Contact>);
-
-impl ContactOutput {
-    pub fn new() -> Self {
-        ContactOutput(Vec::new())
-    }
-}
-
-#[derive(ComponentQuery)]
-pub struct RigidBodyQuery<'a> {
-    #[id]
-    id: ecs::IdType,
-    tr: &'a mut util::Transform,
-    body: &'a mut phys::RigidBody,
-}
-
-impl<'a> RigidBodyQuery<'a> {
-    pub(self) fn as_collidable(&'a self) -> coll::broadphase::Collidable<'a> {
-        coll::broadphase::Collidable {
-            id: self.id,
-            tr: self.tr,
-            coll: &self.body.collider,
-            responds_to_collisions: self.body.responds_to_collisions(),
-        }
     }
 }

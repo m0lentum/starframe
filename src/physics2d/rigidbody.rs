@@ -177,11 +177,6 @@ impl RigidBody {
     }
 }
 
-impl crate::ecs::DefaultStorage for RigidBody {
-    // TODO: change this to DenseVecStorage once implemented
-    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
-}
-
 /// This stores both a mass value and its inverse, because calculating inverse mass
 /// is expensive and needed a lot in physics calculations.
 #[derive(Clone, Copy)]

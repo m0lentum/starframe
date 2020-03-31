@@ -49,10 +49,6 @@ impl Default for Angle {
 #[serde(into = "SerializeIntermediary")]
 pub struct Transform(pub uv::Similarity2);
 
-impl crate::ecs::DefaultStorage for Transform {
-    type DefaultStorage = crate::ecs::storage::VecStorage<Self>;
-}
-
 impl Transform {
     pub fn identity() -> Self {
         Transform(uv::Similarity2::identity())

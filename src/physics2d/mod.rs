@@ -1,5 +1,5 @@
 pub mod collision;
-pub use collision::{Collider, ColliderShape, CollisionEvent, ContactSolver};
+pub use collision::{Collider, ColliderShape, ContactSolver};
 
 pub mod constraint;
 pub use constraint::Constraint;

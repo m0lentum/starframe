@@ -3,7 +3,7 @@ use crate::{
         camera::{Camera2D, CameraController},
         Color, Shaders, Vertex2D,
     },
-    physics2d::collision::ContactOutput,
+    physics2d::collision::Contact,
 };
 use glium::{backend::Facade, uniform};
 use ultraviolet as uv;
@@ -33,14 +33,13 @@ impl ContactIndicator {
         &mut self,
         camera: &Camera2D<C>,
         target: &mut S,
-        contacts: &ContactOutput,
+        contacts: &Vec<Contact>,
         color: Color,
         shaders: &Shaders,
     ) {
         // update vertex buffer
 
         for (coll, verts) in contacts
-            .0
             .iter()
             .zip(self.vb.map().chunks_mut(VERTS_PER_INDICATOR))
         {
@@ -70,7 +69,7 @@ impl ContactIndicator {
         target
             .draw(
                 self.vb
-                    .slice(..(contacts.0.len() * VERTS_PER_INDICATOR).min(self.vb.len()))
+                    .slice(..(contacts.len() * VERTS_PER_INDICATOR).min(self.vb.len()))
                     .expect("Range error on ContactIndicator vertex buffer"),
                 glium::index::NoIndices(glium::index::PrimitiveType::LinesList),
                 &shaders.ortho_2d,
