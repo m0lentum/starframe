@@ -1,5 +1,5 @@
 pub mod space;
-pub use space::{Space, SpaceAccess, SpaceAccessMut};
+pub use space::{Space, SpaceAccess, SpaceReadAccess, SpaceWriteAccess};
 
 pub mod container;
 pub use container::Container;

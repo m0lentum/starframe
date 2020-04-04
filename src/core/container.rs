@@ -153,6 +153,21 @@ where
             get: self.get,
         }
     }
+
+    /// Also bundle the id of the object in question with the components.
+    pub fn with_ids(self) -> IterBuilder<(Item, usize), Bits, impl FnMut(usize) -> (Item, usize)> {
+        let mut get = self.get;
+        IterBuilder {
+            bits: self.bits,
+            get: move |id| (get(id), id as usize),
+        }
+    }
+
+    /// Convenience method to collect the resulting iterator into a Vec.
+    /// Useful when you need to iterate multiple times.
+    pub fn collect_to_vec(self) -> Vec<Item> {
+        self.into_iter().collect()
+    }
 }
 impl<Item, Bits, Get> IntoIterator for IterBuilder<Item, Bits, Get>
 where

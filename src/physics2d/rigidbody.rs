@@ -4,8 +4,7 @@ use super::{Collider, Velocity};
 #[derive(Clone, Copy)]
 pub struct RigidBody {
     body: BodyType,
-    pub(crate) material: BodyMaterial,
-    pub(crate) collider: Collider,
+    material: BodyMaterial,
 }
 
 /// The type of a rigid body determines how it is treated in physics updates.
@@ -52,13 +51,13 @@ impl Default for BodyMaterial {
 impl RigidBody {
     /// Dynamic rigid bodies respond to collisions and environment forces.
     /// This constructor calculates mass and moment of inertia from the given density.
-    pub fn new_dynamic(collider: Collider, density: f32) -> Self {
+    pub fn new_dynamic(collider: &Collider, density: f32) -> Self {
         Self::new_dynamic_const_mass(collider, collider.area() * density)
     }
 
     /// Create a dynamic rigid body with the given mass instead of using density.
-    /// Moment of inertia is still calculated from the collider.
-    pub fn new_dynamic_const_mass(collider: Collider, mass: f32) -> Self {
+    /// The collider is still required to compute moment of inertia.
+    pub fn new_dynamic_const_mass(collider: &Collider, mass: f32) -> Self {
         RigidBody {
             body: BodyType::Dynamic {
                 velocity: Velocity::default(),
@@ -66,27 +65,24 @@ impl RigidBody {
                 moment_of_inertia: Mass::mass(collider.moment_of_inertia_coef() * mass),
             },
             material: BodyMaterial::default(),
-            collider,
         }
     }
 
     /// Kinematic rigid bodies are not affected by collision forces.
-    pub fn new_kinematic(collider: Collider) -> Self {
+    pub fn new_kinematic() -> Self {
         RigidBody {
             body: BodyType::Kinematic {
                 velocity: Velocity::default(),
             },
             material: BodyMaterial::default(),
-            collider,
         }
     }
 
     /// Static rigid bodies do not move at all.
-    pub fn new_static(collider: Collider) -> Self {
+    pub fn new_static() -> Self {
         RigidBody {
             body: BodyType::Static,
             material: BodyMaterial::default(),
-            collider,
         }
     }
 
@@ -115,10 +111,6 @@ impl RigidBody {
 
     pub fn material(&self) -> &BodyMaterial {
         &self.material
-    }
-
-    pub fn collider(&self) -> &Collider {
-        &self.collider
     }
 
     pub fn responds_to_collisions(&self) -> bool {

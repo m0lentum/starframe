@@ -1,14 +1,16 @@
-pub mod collision;
-pub use collision::{Collider, ColliderShape, ContactSolver};
+use crate::core::{
+    container::Init, space::MasterKey, space::SpaceReadAccess, storage, Container, Transform,
+    TransformFeature,
+};
+use std::collections::HashMap;
 
-pub mod constraint;
-pub use constraint::Constraint;
+//
+
+pub mod collision;
+pub use collision::{Collider, ColliderShape};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
-
-pub mod integrator;
-pub use integrator::Integrator;
 
 pub mod rigidbody;
 pub use rigidbody::RigidBody;
@@ -39,5 +41,351 @@ impl Velocity {
     pub fn point_velocity(&self, offset: uv::Vec2) -> uv::Vec2 {
         let tangent = uv::Vec2::new(-offset[1], offset[0]) * self.angular;
         self.linear + tangent
+    }
+}
+
+/// Everything you need to have rigid body physics in your Space.
+/// Put one of these inside your FeatureSet.
+///
+/// TODOC: usage example
+pub struct PhysicsFeature {
+    bodies: Container<storage::DenseVecStorage<RigidBody>>,
+    colliders: Container<storage::DenseVecStorage<Collider>>,
+    impulse_cache: ImpulseCache,
+    forcefield: ForceField,
+    stabilisation_coef: f32,
+    loop_condition: SolverLoopCondition,
+}
+
+impl PhysicsFeature {
+    pub fn new(init: Init) -> Self {
+        PhysicsFeature {
+            bodies: Container::new(init),
+            colliders: Container::new(init),
+            impulse_cache: ImpulseCache::new(),
+            forcefield: ForceField::none(),
+            // TODO: ability to change these
+            stabilisation_coef: 0.1,
+            loop_condition: SolverLoopCondition {
+                max_loops: 10,
+                convergence_threshold: 0.05,
+            },
+        }
+    }
+
+    /// Set the constant force field such as gravity.
+    ///
+    /// ```
+    /// physics.set_forcefield(ForceField::gravity(Vec2::new(0.0, -9.81)));
+    /// ```
+    pub fn set_forcefield(&mut self, ff: ForceField) {
+        self.forcefield = ff;
+    }
+
+    /// Set the constant force field, in a builder-like manner.
+    pub fn with_forcefield(mut self, ff: ForceField) -> Self {
+        self.forcefield = ff;
+        self
+    }
+
+    /// Replace the default constraint bias coefficient used in Baumgarte stabilisation.
+    /// The default value is good for most purposes.
+    ///
+    /// Lower values resolve penetration more slowly and vice versa.
+    pub fn with_stabilisation_coef(mut self, sc: f32) -> Self {
+        self.stabilisation_coef = sc;
+        self
+    }
+
+    /// Replace the default condition to stop the constraint solver loop.
+    pub fn with_loop_condition(mut self, cond: SolverLoopCondition) -> Self {
+        self.loop_condition = cond;
+        self
+    }
+
+    /// Add a rigid body component to an object.
+    pub fn add_body(&mut self, key: MasterKey, body: RigidBody, collider: Collider) {
+        self.bodies.insert(key, body);
+        self.colliders.insert(key, collider);
+    }
+
+    /// Detect collisions, solve constraint forces and move bodies.
+    /// Call this once in your `FeatureSet`'s `tick` function.
+    pub fn tick(&mut self, space: &SpaceReadAccess, trs: &mut TransformFeature, dt: f32) {
+        struct Item<'a> {
+            body: &'a mut RigidBody,
+            coll: &'a Collider,
+            tr: &'a mut Transform,
+            id: usize,
+        }
+        let mut items: Vec<Item<'_>> = space
+            .iter()
+            .overlay(self.bodies.iter_mut())
+            .and(self.colliders.iter())
+            .and(trs.iter_mut())
+            .with_ids()
+            .into_iter()
+            .map(|(((body, coll), tr), id)| Item { body, coll, tr, id })
+            .collect();
+
+        //
+        // Detect collisions
+        //
+
+        use collision::BroadPhase;
+        let pairs = collision::broadphase::BruteForce::pairs(
+            items
+                .iter()
+                .map(|Item { tr, coll, .. }| collision::BodyRef { tr, coll }),
+        );
+        let mut contact_constraints = Vec::new();
+        for [i1, i2] in pairs {
+            let objs = [&items[i1], &items[i2]];
+            if objs[0].body.responds_to_collisions() || objs[1].body.responds_to_collisions() {
+                let contacts = collision::narrowphase::intersection_check(
+                    collision::BodyRef {
+                        tr: objs[0].tr,
+                        coll: objs[0].coll,
+                    },
+                    collision::BodyRef {
+                        tr: objs[1].tr,
+                        coll: objs[1].coll,
+                    },
+                );
+                for contact in contacts {
+                    contact_constraints.push(WorkingConstraint {
+                        indices: [i1, i2],
+                        normal: contact.normal,
+                        offsets: contact.offsets,
+                        impulse_bounds: (Some(0.0), None),
+                        bias: contact.depth * (1.0 / dt) * self.stabilisation_coef,
+                    });
+                }
+            }
+        }
+
+        //
+        // Solve constraints
+        //
+
+        // TODO: also allow other constraints in the world
+        let constraints = contact_constraints;
+
+        // apply environment forces (gravity, usually)
+        for obj in items.iter_mut() {
+            if let Some(vel) = obj.body.velocity_mut() {
+                vel.linear += self.forcefield.value_at(obj.tr.0.translation) * dt;
+            }
+        }
+
+        fn map_array_2<T, R>(arr: &[T; 2], mut f: impl FnMut(&T) -> R) -> [R; 2] {
+            [f(&arr[0]), f(&arr[1])]
+        }
+
+        let mut accumulators = Vec::new();
+        // Initialize accumulators
+        for constraint in constraints {
+            assert!(
+                constraint.indices[0] != constraint.indices[1],
+                "bug: paired an object with itself"
+            );
+
+            // objects guaranteed not the same -> we can do this trick to get mutable ref to both
+            let objs = {
+                let (l, r) = items.split_at_mut(constraint.indices[1]);
+                [&mut l[constraint.indices[0]], &mut r[0]]
+            };
+            let ids = [objs[0].id, objs[1].id];
+
+            // begin accumulator construction
+            let offsets_cross_normals = map_array_2(&constraint.offsets, |offset| {
+                offset[0] * constraint.normal[1] - constraint.normal[0] * offset[1]
+            });
+            let inv_masses = map_array_2(&objs, |o_| o_.body.inverse_mass());
+            let inv_mom_inertias = map_array_2(&objs, |o_| o_.body.inverse_moment_of_inertia());
+            let inv_masses_sum = inv_masses[0]
+                + (inv_mom_inertias[0] * offsets_cross_normals[0] * offsets_cross_normals[0])
+                + inv_masses[1]
+                + (inv_mom_inertias[1] * offsets_cross_normals[1] * offsets_cross_normals[1]);
+
+            // warm start
+            let initial_impulse = if let Some(prev_impulse) = self.impulse_cache.get(ids) {
+                if let Some(vel) = objs[0].body.velocity_mut() {
+                    vel.linear -= inv_masses[0] * prev_impulse * constraint.normal;
+                    vel.angular -= inv_mom_inertias[0] * prev_impulse * offsets_cross_normals[0];
+                }
+                if let Some(vel) = objs[1].body.velocity_mut() {
+                    vel.linear += inv_masses[1] * prev_impulse * constraint.normal;
+                    vel.angular += inv_mom_inertias[1] * prev_impulse * offsets_cross_normals[1];
+                }
+                *prev_impulse
+            } else {
+                0.0
+            };
+
+            accumulators.push(ConstraintAccumulator {
+                constraint,
+                ids,
+                inv_masses,
+                inv_mom_inertias,
+                inv_masses_sum,
+                offsets_cross_normals,
+                total_impulse: initial_impulse,
+            });
+        }
+
+        // iterative impulse accumulation
+        let mut biggest_change = std::f32::MAX;
+        let mut loop_count = 0;
+        while biggest_change > self.loop_condition.convergence_threshold
+            && loop_count < self.loop_condition.max_loops
+        {
+            loop_count += 1;
+            biggest_change = 0.0;
+
+            for acc in accumulators.iter_mut() {
+                let objs = {
+                    let (l, r) = items.split_at_mut(acc.constraint.indices[1]);
+                    [&mut l[acc.constraint.indices[0]], &mut r[0]]
+                };
+
+                let vels = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
+                // TODO: this part is the actual constraint function and should be generalized
+                let normal_vels = [
+                    vels[0].linear.dot(acc.constraint.normal)
+                        + (acc.offsets_cross_normals[0] * vels[0].angular),
+                    vels[1].linear.dot(acc.constraint.normal)
+                        + (acc.offsets_cross_normals[1] * vels[1].angular),
+                ];
+
+                let relative_normal_vel = normal_vels[0] - normal_vels[1] + acc.constraint.bias;
+
+                let impulse_magnitude = relative_normal_vel / acc.inv_masses_sum;
+                biggest_change = biggest_change.max(impulse_magnitude.abs());
+
+                // clamp total accumulated to the constraint's bounds
+                let new_total = acc.total_impulse + impulse_magnitude;
+                let clamped_impulse = match acc.constraint.impulse_bounds {
+                    (Some(lo), _) if new_total < lo => {
+                        acc.total_impulse = lo;
+                        impulse_magnitude - new_total
+                    }
+                    (_, Some(hi)) if new_total > hi => {
+                        acc.total_impulse = hi;
+                        impulse_magnitude - new_total
+                    }
+                    _ => {
+                        acc.total_impulse = new_total;
+                        impulse_magnitude
+                    }
+                };
+
+                // apply the impulse
+                if let Some(vel) = objs[0].body.velocity_mut() {
+                    vel.linear -= acc.inv_masses[0] * clamped_impulse * acc.constraint.normal;
+                    vel.angular -=
+                        acc.inv_mom_inertias[0] * clamped_impulse * acc.offsets_cross_normals[0];
+                }
+                if let Some(vel) = objs[1].body.velocity_mut() {
+                    vel.linear += acc.inv_masses[1] * clamped_impulse * acc.constraint.normal;
+                    vel.angular +=
+                        acc.inv_mom_inertias[1] * clamped_impulse * acc.offsets_cross_normals[1];
+                }
+            }
+
+            // store impulses for next frame's warm start
+            self.impulse_cache.replace(&accumulators);
+        }
+
+        //
+        // Apply movement
+        //
+
+        // semi-implicit Euler integration: use velocities at the end of the time step
+        for obj in items {
+            if let Some(vel) = obj.body.velocity() {
+                obj.tr.0.append_translation(dt * vel.linear);
+                obj.tr.0.prepend_rotation(
+                    crate::core::transform::Angle::Radians(dt * vel.angular).into(),
+                );
+            }
+        }
+    }
+}
+
+// TODO: WorkingConstraint and ConstraintAccumulator should be one and the same
+// and we should have another Constraint type that's a general constraint that can be added manually.
+#[derive(Clone, Copy, Debug)]
+struct WorkingConstraint {
+    indices: [usize; 2],
+    normal: uv::Vec2,
+    offsets: [uv::Vec2; 2],
+    impulse_bounds: (Option<f32>, Option<f32>),
+    bias: f32,
+}
+
+#[derive(Debug)]
+struct ConstraintAccumulator {
+    constraint: WorkingConstraint,
+    ids: [usize; 2],
+    inv_masses: [f32; 2],
+    inv_mom_inertias: [f32; 2],
+    inv_masses_sum: f32,
+    offsets_cross_normals: [f32; 2],
+    total_impulse: f32,
+}
+
+/// Condition to stop iterating on the collision solver.
+/// Ends either when converging close enough to the actual solution (`convergence_threshold`)
+/// or after the given maximum number of loops, whichever comes first.
+#[derive(Clone, Copy)]
+pub struct SolverLoopCondition {
+    pub convergence_threshold: f32,
+    pub max_loops: usize,
+}
+
+impl SolverLoopCondition {
+    /// Create a loop condition and set the converge threshold to zero.
+    /// Effectively means `max_loops` number of loops every update.
+    pub fn from_max_loops(max_loops: usize) -> Self {
+        SolverLoopCondition {
+            convergence_threshold: 0.0,
+            max_loops,
+        }
+    }
+}
+
+/// A container to store impulses across updates,
+/// used for warm starting the solver algorithm.
+pub struct ImpulseCache(HashMap<[usize; 2], f32>);
+
+impl ImpulseCache {
+    pub fn new() -> Self {
+        ImpulseCache(HashMap::new())
+    }
+
+    pub(self) fn get(&self, ids: [usize; 2]) -> Option<&f32> {
+        if ids[0] < ids[1] {
+            self.0.get(&ids)
+        } else {
+            self.0.get(&[ids[1], ids[0]])
+        }
+    }
+
+    pub(self) fn replace<'a>(
+        &mut self,
+        items: impl IntoIterator<Item = &'a ConstraintAccumulator>,
+    ) {
+        self.0 = items
+            .into_iter()
+            .map(|acc| {
+                let ids = if acc.ids[0] < acc.ids[1] {
+                    acc.ids
+                } else {
+                    [acc.ids[1], acc.ids[0]]
+                };
+                (ids, acc.total_impulse)
+            })
+            .collect();
     }
 }

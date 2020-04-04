@@ -1,25 +1,14 @@
-use super::Collider;
-use crate::core::Transform;
+//! Broad phase collision detection algorithms
+//! are responsible for detecting pairs of possibly intersecting objects
+//! for further, more accurate narrow phase inspection.
+use super::BodyRef;
 
-/// A broad phase algorithm for collision detection,
-/// responsible for generating pairs of possibly intersecting objects.
+/// A broad phase algorithm.
 pub trait BroadPhase {
-    /// Run collision checks on pairs produced by this broad phase.
-    fn run<'a>(
-        items: impl Iterator<Item = Collidable<'a>> + Clone,
-    ) -> Vec<super::narrowphase::Contact> {
-        let mut contacts = Vec::new();
-        for pair in Self::pairs(items) {
-            contacts.append(&mut super::narrowphase::intersection_check(
-                pair[0], pair[1],
-            ));
-        }
-        contacts
-    }
-
     /// Returns pairs of potentially intersecting objects.
-    /// This is the part that differs in different broad phase implementations.
-    fn pairs<'a>(items: impl Iterator<Item = Collidable<'a>> + Clone) -> Vec<[Collidable<'a>; 2]>;
+    ///
+    /// Implementors should note that the pairs are of their indices in the iterator, not their IDs.
+    fn pairs<'a>(items: impl Iterator<Item = BodyRef<'a>> + Clone) -> Vec<[usize; 2]>;
 }
 
 /// The simplest possible broad phase algorithm,
@@ -28,24 +17,15 @@ pub trait BroadPhase {
 pub struct BruteForce;
 
 impl BroadPhase for BruteForce {
-    fn pairs<'a>(
-        mut items: impl Iterator<Item = Collidable<'a>> + Clone,
-    ) -> Vec<[Collidable<'a>; 2]> {
+    fn pairs<'a>(items: impl Iterator<Item = BodyRef<'a>> + Clone) -> Vec<[usize; 2]> {
         let mut pairs = Vec::new();
-        while let Some(item) = items.next() {
-            for other in items.clone() {
-                pairs.push([item, other]);
+        let mut indexed_items = items.enumerate();
+        while let Some((i, _)) = indexed_items.next() {
+            for (j, _) in indexed_items.clone() {
+                pairs.push([i, j]);
             }
         }
 
         pairs
     }
-}
-
-#[derive(Clone, Copy)]
-pub struct Collidable<'a> {
-    pub(crate) id: usize,
-    pub tr: &'a Transform,
-    pub coll: &'a Collider,
-    pub responds_to_collisions: bool,
 }

@@ -22,8 +22,8 @@ use super::{container as cont, Recipe};
 /// TODOC: containers, init, tick & render
 pub trait FeatureSet: 'static + Sized {
     fn init(container_init: cont::Init) -> Self;
-    fn tick(&mut self, dt: f32, space: SpaceAccessMut);
-    fn draw(&self, space: SpaceAccess);
+    fn tick(&mut self, dt: f32, space: SpaceAccess);
+    fn draw(&self, space: SpaceReadAccess);
 }
 
 //
@@ -35,11 +35,33 @@ pub struct MasterKey {
     pub(crate) id: usize,
 }
 
-pub struct SpaceAccess<'a> {
+/// Access to read or write the non-Feature contents of a Space,
+/// that is, alive and enabled objects.
+pub struct SpaceAccess<'a>(SpaceWriteAccess<'a>);
+impl<'a> SpaceAccess<'a> {
+    pub fn read(&'a self) -> SpaceReadAccess<'a> {
+        SpaceReadAccess {
+            enabled_ids: self.0.enabled_ids,
+        }
+    }
+    pub fn write(&'a mut self) -> SpaceWriteAccess<'a> {
+        SpaceWriteAccess {
+            enabled_ids: self.0.enabled_ids,
+            reserved_ids: self.0.reserved_ids,
+        }
+    }
+}
+
+/// Read-only access to a Space. This cannot create or destroy objects,
+/// but can still modify their components.
+#[derive(Clone, Copy)]
+pub struct SpaceReadAccess<'a> {
     enabled_ids: &'a hb::BitSet,
 }
 
-impl<'a> SpaceAccess<'a> {
+impl<'a> SpaceReadAccess<'a> {
+    /// Create an iterator over all alive objects in the space.
+    /// Combine with container iterators to get useful information out of it.
     pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(usize) -> ()> {
         cont::IterBuilder {
             bits: self.enabled_ids,
@@ -48,12 +70,15 @@ impl<'a> SpaceAccess<'a> {
     }
 }
 
-pub struct SpaceAccessMut<'a> {
+/// Write access to a Space. Can create and destroy objects.
+pub struct SpaceWriteAccess<'a> {
     reserved_ids: &'a mut hb::BitSet,
     enabled_ids: &'a mut hb::BitSet,
 }
 
-impl<'a> SpaceAccessMut<'a> {
+impl<'a> SpaceWriteAccess<'a> {
+    /// Create an iterator over all alive objects in the space.
+    /// Combine with container iterators to get useful information out of it.
     pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(usize) -> ()> {
         cont::IterBuilder {
             bits: self.enabled_ids,
@@ -202,17 +227,17 @@ impl<F: FeatureSet> Space<F> {
     }
 
     pub fn draw(&self) {
-        let access = SpaceAccess {
+        let access = SpaceReadAccess {
             enabled_ids: &self.enabled_ids,
         };
         self.features.draw(access);
     }
 
-    pub fn access_features(&mut self, f: impl FnOnce(&mut F, SpaceAccessMut)) {
-        let access = SpaceAccessMut {
+    pub fn access_features(&mut self, f: impl FnOnce(&mut F, SpaceAccess)) {
+        let access = SpaceAccess(SpaceWriteAccess {
             reserved_ids: &mut self.reserved_ids,
             enabled_ids: &mut self.enabled_ids,
-        };
+        });
         f(&mut self.features, access);
     }
 }

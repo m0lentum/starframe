@@ -1,17 +1,17 @@
-use ultraviolet as uv;
-
-//
-
 pub mod broadphase;
 pub use broadphase::BroadPhase;
 
 mod collider;
 pub use collider::{Collider, ColliderShape};
 
-mod narrowphase;
+pub mod narrowphase;
 pub use narrowphase::Contact;
-mod solver;
-pub use solver::ContactSolver;
+
+/// References to the parts of a body that we need to find out if it collides with anything.
+pub struct BodyRef<'a> {
+    pub tr: &'a crate::core::Transform,
+    pub coll: &'a Collider,
+}
 
 // TODO: reimplement events
 

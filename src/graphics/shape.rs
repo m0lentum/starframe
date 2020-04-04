@@ -3,7 +3,7 @@ use super::{
     shaders::Shaders,
     Color, Vertex2D,
 };
-use crate::core::{storage, Container, SpaceAccess, TransformFeature};
+use crate::core::{space::SpaceReadAccess, storage, Container, TransformFeature};
 
 use glium::{backend::Facade, index::PrimitiveType, uniform};
 use std::sync::Arc;
@@ -110,7 +110,7 @@ pub type ShapeFeature = Container<storage::DenseVecStorage<Shape>>;
 impl ShapeFeature {
     pub fn draw<S: glium::Surface, C: CameraController>(
         &self,
-        space: &SpaceAccess,
+        space: &SpaceReadAccess,
         trs: &TransformFeature,
         target: &mut S,
         camera: &Camera2D<C>,

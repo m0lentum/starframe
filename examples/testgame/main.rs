@@ -46,12 +46,12 @@ pub struct Resources {
     pub events: glutin::EventsLoop,
     pub space: MainSpace,
     pub input_cache: InputCache,
-    pub impulse_cache: phys::constraint::ImpulseCache, // TODO: this can now exist inside a spacefeature
 }
 
 pub struct MainSpaceFeatures {
     pub tr: core::TransformFeature,
     pub shape: gx::ShapeFeature,
+    pub physics: phys::PhysicsFeature,
     pub camera: Camera,
 }
 
@@ -60,6 +60,8 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         MainSpaceFeatures {
             tr: core::TransformFeature::new(cont),
             shape: gx::ShapeFeature::new(cont),
+            physics: phys::PhysicsFeature::new(cont)
+                .with_forcefield(phys::ForceField::gravity(uv::Vec2::new(0.0, -9.81))),
             camera: Camera::new(
                 cam::MouseDragController::new(Transform::identity()),
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
@@ -70,16 +72,16 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn tick(&mut self, _dt: f32, _space: core::SpaceAccessMut) {
+    fn tick(&mut self, dt: f32, space: core::SpaceAccess) {
         microprofile::flip();
         microprofile::scope!("update", "all");
         {
             microprofile::scope!("update", "rigid body solver");
-            // TODO
+            self.physics.tick(&space.read(), &mut self.tr, dt);
         }
     }
 
-    fn draw(&self, space: core::SpaceAccess) {
+    fn draw(&self, space: core::SpaceReadAccess) {
         microprofile::scope!("render", "all");
 
         // TODO: consider abstracting context creation into the game loop
@@ -113,13 +115,10 @@ pub fn init_resources() -> Resources {
 
     let space = load_main_space().unwrap();
 
-    let impulse_cache = phys::constraint::ImpulseCache::new();
-
     Resources {
         events,
         space,
         input_cache,
-        impulse_cache,
     }
 }
 

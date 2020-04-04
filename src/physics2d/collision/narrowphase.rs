@@ -1,4 +1,4 @@
-use super::{broadphase::Collidable, collider::ColliderShape};
+use super::collider::ColliderShape;
 use crate::core::Transform;
 
 use std::f32::consts::PI;
@@ -10,7 +10,6 @@ const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
-    ids: [usize; 2],
     /// The normal, facing away from obj1
     pub normal: uv::Vec2,
     /// Penetration depth
@@ -29,11 +28,10 @@ struct Contact_ {
 }
 
 /// Checks two transformed colliders for intersection.
-pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec<Contact> {
+pub fn intersection_check<'a>(obj1: super::BodyRef<'a>, obj2: super::BodyRef<'a>) -> Vec<Contact> {
     let complete = |cs: Vec<Contact_>| {
         cs.iter()
             .map(|c| Contact {
-                ids: [obj1.id, obj2.id],
                 normal: c.normal,
                 depth: c.depth,
                 point: c.point,
@@ -60,7 +58,6 @@ pub fn intersection_check<'a>(obj1: Collidable<'a>, obj2: Collidable<'a>) -> Vec
 
 fn flip_contacts(mut contacts: Vec<Contact>) -> Vec<Contact> {
     for c in &mut contacts {
-        c.ids = [c.ids[1], c.ids[0]];
         c.point -= c.depth * c.normal;
         c.normal = -c.normal;
     }
