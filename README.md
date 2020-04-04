@@ -3,10 +3,10 @@ Its primary focuses are cool physics tools and a simple interface that allows fo
 
 [Introductory blog post](https://moletrooper.github.io/blog/2018/09/moleengine-part-0-introduction/)
 
-# Implemented features
+# Current features
 
-- Entity-Component-System framework
-  - functional but with some loose ends
+- Entity-Component-System inspired object model
+  - **a big rewrite is currently in progress**
 - 2D rigid body physics
   - narrow phase collision detection
   - rudimentary collision impulse solver
@@ -17,8 +17,10 @@ See the [issues](https://github.com/MoleTrooper/moleengine/issues) for notes on 
 
 # Blog
 
-Blog posts regarding this project and other things can be found
-once in a blue moon on my [personal website](https://moletrooper.github.io/blog/).
+There used to be a blog link here, but
+progress on this project has been slow and I've put it on ice for now.
+I plan to get back to it in the fall of 2020 as I begin my master's degree studies;
+until then, stay tuned.
 
 # Running the test game
 
