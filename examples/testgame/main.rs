@@ -11,8 +11,7 @@ use glutin::VirtualKeyCode as Key;
 use moleengine::{
     core::{
         self,
-        gameloop::{GameLoop, GameState, LockstepLoop},
-        inputcache::InputCache,
+        gameloop::{GameLoop, GameState, Globals, LockstepLoop},
         Transform,
     },
     graphics::{self as gx, camera as cam},
@@ -47,17 +46,13 @@ pub enum StateEnum {
 }
 pub struct State {
     pub state: StateEnum,
-    pub events: glutin::EventsLoop,
     pub space: MainSpace,
-    pub input_cache: InputCache,
 }
 impl State {
     fn init() -> Self {
         State {
             state: StateEnum::Playing,
-            events: unsafe { gx::Context::init() },
             space: load_main_space().unwrap(),
-            input_cache: InputCache::new(),
         }
     }
 }
@@ -115,16 +110,11 @@ impl core::space::FeatureSet for MainSpaceFeatures {
 }
 
 impl GameState for State {
-    fn tick(mut self, dt: f32) -> Option<Self> {
+    fn tick(mut self, dt: f32, globals: &Globals) -> Option<Self> {
         //
         // State-independent stuff
         //
-        handle_events(
-            &mut self.events,
-            &mut self.input_cache,
-            &mut self.space.features.camera,
-        )?;
-        if self.input_cache.is_key_pressed(Key::Escape, None) {
+        if globals.input.is_key_pressed(Key::Escape, None) {
             return None;
         }
 
@@ -133,10 +123,10 @@ impl GameState for State {
         let camera = &mut self.space.features.camera;
         camera
             .controller
-            .update_position(&self.input_cache, camera.scaling_factor());
+            .update_position(&globals.input, camera.scaling_factor());
 
-        if self
-            .input_cache
+        if globals
+            .input
             .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
         {
             camera.controller.transform.0 = uv::Similarity2::identity();
@@ -147,12 +137,12 @@ impl GameState for State {
             // Playing
             //
             StateEnum::Playing => {
-                if self.input_cache.is_key_pressed(Key::Space, Some(0)) {
+                if globals.input.is_key_pressed(Key::Space, Some(0)) {
                     self.state = StateEnum::Paused;
                     return Some(self);
                 }
 
-                if self.input_cache.is_key_pressed(Key::Return, Some(0)) {
+                if globals.input.is_key_pressed(Key::Return, Some(0)) {
                     self.space = load_main_space().unwrap();
                 }
 
@@ -171,14 +161,14 @@ impl GameState for State {
                     )
                 };
                 let mut rng = rand::thread_rng();
-                if self.input_cache.is_key_pressed(Key::S, Some(0)) {
+                if globals.input.is_key_pressed(Key::S, Some(0)) {
                     self.space.spawn(recipes::DynamicBlock {
                         transform: Transform::new(random_pos(), random_angle(), 1.0),
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
                         height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
                     });
                 }
-                if self.input_cache.is_key_pressed(Key::T, Some(0)) {
+                if globals.input.is_key_pressed(Key::T, Some(0)) {
                     self.space.spawn(recipes::Ball {
                         position: random_pos().into(),
                         radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
@@ -189,54 +179,34 @@ impl GameState for State {
 
                 self.space.tick(dt);
 
-                self.input_cache.tick();
                 Some(self)
             }
             //
             // Paused
             //
             StateEnum::Paused => {
-                if self.input_cache.is_key_pressed(Key::Space, Some(0)) {
+                if globals.input.is_key_pressed(Key::Space, Some(0)) {
                     self.state = StateEnum::Playing;
                     return Some(self);
                 }
 
-                self.input_cache.tick();
                 Some(self)
             }
         }
     }
 
-    fn draw(&self) {
+    fn draw(&self, _globals: &Globals) {
         self.space.draw();
     }
-}
 
-// ==================== Helper functions ======================
-
-fn handle_events(
-    events: &mut glutin::EventsLoop,
-    input_cache: &mut InputCache,
-    camera: &mut Camera,
-) -> Option<()> {
-    let mut should_close = false;
-    use glutin::WindowEvent::*;
-    events.poll_events(|evt| match evt {
-        glutin::Event::WindowEvent { event, .. } => {
-            input_cache.track_window_event(&event);
-            match event {
-                CloseRequested => should_close = true,
-                Resized(_) => camera.update_scaling(),
-                _ => (),
-            }
+    fn on_event(&mut self, evt: &glutin::Event, _globals: &Globals) {
+        match evt {
+            glutin::Event::WindowEvent {
+                event: glutin::WindowEvent::Resized(_),
+                ..
+            } => self.space.features.camera.update_scaling(),
+            _ => (),
         }
-        _ => (),
-    });
-
-    if should_close {
-        None
-    } else {
-        Some(())
     }
 }
 

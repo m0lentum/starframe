@@ -12,18 +12,45 @@ const SNAP_THRESHOLD: u128 = 200_000;
 
 const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 
+/// Globally used information that is created before the game loop starts and owned by the game loop.
+pub struct Globals {
+    pub input: crate::core::InputCache,
+}
+impl Globals {
+    fn init() -> Self {
+        Globals {
+            input: crate::core::InputCache::new(),
+        }
+    }
+}
+/// The entire state of a game.
 pub trait GameState: Sized {
-    fn tick(self, dt: f32) -> Option<Self>;
-    fn draw(&self);
+    /// Advance the game forward by a timestep and return the new state at the end of it.
+    fn tick(self, dt: f32, globals: &Globals) -> Option<Self>;
+    /// Render the game onto the screen.
+    fn draw(&self, globals: &Globals);
+    /// Handle a winit event.
+    /// For instance, you might use this to recalculate a camera's scaling factor on window resize.
+    fn on_event(&mut self, event: &glutin::Event, globals: &Globals);
 }
 
+/// A game loop's job is to call the `GameState`'s `tick` and `render` methods
+/// at appropriate times. These times can be different between different loop types.
 pub trait GameLoop {
-    fn run<S: GameState>(&self, initial_state: S);
+    /// Start the game.
+    fn run<S: GameState>(self, initial_state: S);
 }
 
+/// A loop that runs both simulation and rendering at a fixed framerate.
+///
+/// ```
+/// LockstepLoop::from_fps(60).run(MyState::init());
+/// ```
 pub struct LockstepLoop {
     nanos_per_frame: u128,
     dt: f32,
+    events: glutin::EventsLoop,
+    globals: Globals,
 }
 
 impl LockstepLoop {
@@ -31,13 +58,16 @@ impl LockstepLoop {
         LockstepLoop {
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
             dt: 1.0 / fps as f32,
+            events: unsafe { crate::graphics::Context::init() },
+            globals: Globals::init(),
         }
     }
 }
 
 impl GameLoop for LockstepLoop {
-    fn run<S: GameState>(&self, initial_state: S) {
+    fn run<S: GameState>(mut self, initial_state: S) {
         let mut state = initial_state;
+
         let mut acc = 0;
         let mut prev_time = Instant::now();
         'main: loop {
@@ -62,15 +92,38 @@ impl GameLoop for LockstepLoop {
             }
 
             while acc >= self.nanos_per_frame {
-                match state.tick(self.dt) {
+                // window events
+                let mut should_close = false;
+                let globals = &mut self.globals;
+                use glutin::WindowEvent::*;
+                self.events.poll_events(|evt| {
+                    state.on_event(&evt, globals);
+                    match evt {
+                        glutin::Event::WindowEvent { event, .. } => {
+                            globals.input.track_window_event(&event);
+                            match event {
+                                CloseRequested => should_close = true,
+                                _ => (),
+                            }
+                        }
+                        _ => (),
+                    }
+                });
+                if should_close {
+                    break 'main;
+                }
+
+                // tick
+                match state.tick(self.dt, &self.globals) {
                     Some(new_state) => state = new_state,
                     None => break 'main,
                 }
+                self.globals.input.tick();
 
                 acc -= self.nanos_per_frame;
             }
 
-            state.draw();
+            state.draw(&self.globals);
 
             prev_time = Instant::now();
 
