@@ -13,9 +13,8 @@ use moleengine::{
     graphics::{self as gx, camera as cam},
     physics2d::{self as phys},
     util::{
-        gameloop::{GameLoop, LockstepLoop},
+        gameloop::{GameLoop, GameState, LockstepLoop},
         inputcache::InputCache,
-        statemachine::{GameState, StateMachine, StateOp},
     },
 };
 
@@ -29,24 +28,55 @@ fn main() {
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
 
-    let res = init_resources();
-    let mut sm = StateMachine::new(res, Box::new(StatePlaying));
-    let l = LockstepLoop::from_fps(60);
-    l.begin(&mut sm);
+    LockstepLoop::from_fps(60).run(init_state());
 
     //microprofile::dump_file_immediately!("profile.html", "");
     microprofile::shutdown!();
 }
 
-// ================ Main types ===========================
+//
+// Initial state
+//
+
+pub fn init_state() -> State {
+    let events = unsafe { gx::Context::init() };
+
+    let mut input_cache = InputCache::new();
+    {
+        use glutin::VirtualKeyCode::*;
+        input_cache.track_keys(&[
+            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, T, P, LShift,
+        ]);
+    }
+
+    let space = load_main_space().unwrap();
+
+    State {
+        state: StateEnum::Playing,
+        events,
+        space,
+        input_cache,
+    }
+}
+
+//
+// Types
+//
 
 pub type Camera = cam::Camera2D<cam::MouseDragController>;
 
-pub struct Resources {
+pub enum StateEnum {
+    Playing,
+    Paused,
+}
+pub struct State {
+    pub state: StateEnum,
     pub events: glutin::EventsLoop,
     pub space: MainSpace,
     pub input_cache: InputCache,
 }
+
+pub type MainSpace = core::Space<MainSpaceFeatures>;
 
 pub struct MainSpaceFeatures {
     pub tr: core::TransformFeature,
@@ -98,136 +128,101 @@ impl core::space::FeatureSet for MainSpaceFeatures {
     }
 }
 
-pub type MainSpace = core::Space<MainSpaceFeatures>;
-
-// ================== Setup resources ===========================
-
-pub fn init_resources() -> Resources {
-    let events = unsafe { gx::Context::init() };
-
-    let mut input_cache = InputCache::new();
-    {
-        use glutin::VirtualKeyCode::*;
-        input_cache.track_keys(&[
-            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, T, P, LShift,
-        ]);
-    }
-
-    let space = load_main_space().unwrap();
-
-    Resources {
-        events,
-        space,
-        input_cache,
-    }
-}
-
-// ================ Playing ==================
-
-pub struct StatePlaying;
-
-impl GameState<Resources> for StatePlaying {
-    fn update(&mut self, res: &mut Resources, dt: f32) -> StateOp<Resources> {
-        if let Some(op) = handle_events(
-            &mut res.events,
-            &mut res.input_cache,
-            &mut res.space.features.camera,
-        ) {
-            return op;
-        }
-        if res.input_cache.is_key_pressed(Key::Escape, None) {
-            return StateOp::Destroy;
-        }
-        if res.input_cache.is_key_pressed(Key::Space, Some(0)) {
-            return StateOp::Push(Box::new(StatePaused));
-        }
-
-        if res.input_cache.is_key_pressed(Key::Return, Some(0)) {
-            res.space = load_main_space().unwrap();
-        }
-
-        // pool spawning
-
-        let random_pos = || {
-            let mut rng = rand::thread_rng();
-            uv::Vec2::new(
-                distr::Uniform::from(-3.0..3.0).sample(&mut rng),
-                distr::Uniform::from(0.0..2.0).sample(&mut rng),
-            )
-        };
-        let random_angle = || {
-            core::transform::Angle::Degrees(
-                distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()),
-            )
-        };
-        let mut rng = rand::thread_rng();
-        if res.input_cache.is_key_pressed(Key::S, Some(0)) {
-            res.space.spawn(recipes::DynamicBlock {
-                transform: Transform::new(random_pos(), random_angle(), 1.0),
-                width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
-            });
-        }
-        if res.input_cache.is_key_pressed(Key::T, Some(0)) {
-            res.space.spawn(recipes::Ball {
-                position: random_pos().into(),
-                radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
-            });
+impl GameState for State {
+    fn tick(mut self, dt: f32) -> Option<Self> {
+        //
+        // State-independent stuff
+        //
+        handle_events(
+            &mut self.events,
+            &mut self.input_cache,
+            &mut self.space.features.camera,
+        )?;
+        if self.input_cache.is_key_pressed(Key::Escape, None) {
+            return None;
         }
 
         // mouse camera
 
-        let camera = &mut res.space.features.camera;
+        let camera = &mut self.space.features.camera;
         camera
             .controller
-            .update_position(&res.input_cache, camera.scaling_factor());
+            .update_position(&self.input_cache, camera.scaling_factor());
 
-        if res
+        if self
             .input_cache
             .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
         {
             camera.controller.transform.0 = uv::Similarity2::identity();
         }
 
-        //
+        match self.state {
+            //
+            // Playing
+            //
+            StateEnum::Playing => {
+                if self.input_cache.is_key_pressed(Key::Space, Some(0)) {
+                    self.state = StateEnum::Paused;
+                    return Some(self);
+                }
 
-        res.space.tick(dt);
+                if self.input_cache.is_key_pressed(Key::Return, Some(0)) {
+                    self.space = load_main_space().unwrap();
+                }
 
-        res.input_cache.tick();
-        StateOp::Stay
+                // pool spawning
+
+                let random_pos = || {
+                    let mut rng = rand::thread_rng();
+                    uv::Vec2::new(
+                        distr::Uniform::from(-3.0..3.0).sample(&mut rng),
+                        distr::Uniform::from(0.0..2.0).sample(&mut rng),
+                    )
+                };
+                let random_angle = || {
+                    core::transform::Angle::Degrees(
+                        distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()),
+                    )
+                };
+                let mut rng = rand::thread_rng();
+                if self.input_cache.is_key_pressed(Key::S, Some(0)) {
+                    self.space.spawn(recipes::DynamicBlock {
+                        transform: Transform::new(random_pos(), random_angle(), 1.0),
+                        width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
+                        height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
+                    });
+                }
+                if self.input_cache.is_key_pressed(Key::T, Some(0)) {
+                    self.space.spawn(recipes::Ball {
+                        position: random_pos().into(),
+                        radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
+                    });
+                }
+
+                //
+
+                self.space.tick(dt);
+
+                self.input_cache.tick();
+                Some(self)
+            }
+            //
+            // Paused
+            //
+            StateEnum::Paused => {
+                if self.input_cache.is_key_pressed(Key::Space, Some(0)) {
+                    self.state = StateEnum::Playing;
+                    return Some(self);
+                }
+
+                self.input_cache.tick();
+                Some(self)
+            }
+        }
     }
 
-    fn render(&mut self, res: &mut Resources) {
-        res.space.draw();
-    }
-}
-
-// ===================== Paused ========================
-
-pub struct StatePaused;
-
-impl GameState<Resources> for StatePaused {
-    fn update(&mut self, res: &mut Resources, _dt: f32) -> StateOp<Resources> {
-        if let Some(op) = handle_events(
-            &mut res.events,
-            &mut res.input_cache,
-            &mut res.space.features.camera,
-        ) {
-            return op;
-        }
-        if res.input_cache.is_key_pressed(Key::Escape, None) {
-            return StateOp::Destroy;
-        }
-        if res.input_cache.is_key_pressed(Key::Space, Some(0)) {
-            return StateOp::Pop;
-        }
-
-        res.input_cache.tick();
-        StateOp::Stay
-    }
-
-    fn render(&mut self, res: &mut Resources) {
-        res.space.draw();
+    fn draw(&self) {
+        self.space.draw();
     }
 }
 
@@ -237,7 +232,7 @@ fn handle_events(
     events: &mut glutin::EventsLoop,
     input_cache: &mut InputCache,
     camera: &mut Camera,
-) -> Option<StateOp<Resources>> {
+) -> Option<()> {
     let mut should_close = false;
     use glutin::WindowEvent::*;
     events.poll_events(|evt| match evt {
@@ -253,9 +248,9 @@ fn handle_events(
     });
 
     if should_close {
-        Some(StateOp::Destroy)
-    } else {
         None
+    } else {
+        Some(())
     }
 }
 

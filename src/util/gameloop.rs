@@ -1,8 +1,6 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::statemachine::StateMachine;
-
 // time snapping technique from Tyler Glaiel's blog post
 // https://medium.com/@tglaiel/how-to-make-your-game-run-at-60fps-24c61210fe75
 const NANOS_120FPS: u128 = 1_000_000_000 / 120;
@@ -14,13 +12,13 @@ const SNAP_THRESHOLD: u128 = 200_000;
 
 const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 
-pub enum LoopState {
-    Continue,
-    End,
+pub trait GameState: Sized {
+    fn tick(self, dt: f32) -> Option<Self>;
+    fn draw(&self);
 }
 
 pub trait GameLoop {
-    fn begin<D>(&self, state_machine: &mut StateMachine<D>);
+    fn run<S: GameState>(&self, initial_state: S);
 }
 
 pub struct LockstepLoop {
@@ -38,7 +36,8 @@ impl LockstepLoop {
 }
 
 impl GameLoop for LockstepLoop {
-    fn begin<D>(&self, state_machine: &mut StateMachine<D>) {
+    fn run<S: GameState>(&self, initial_state: S) {
+        let mut state = initial_state;
         let mut acc = 0;
         let mut prev_time = Instant::now();
         'main: loop {
@@ -63,15 +62,15 @@ impl GameLoop for LockstepLoop {
             }
 
             while acc >= self.nanos_per_frame {
-                match state_machine.update(self.dt) {
-                    LoopState::Continue => (),
-                    LoopState::End => break 'main,
+                match state.tick(self.dt) {
+                    Some(new_state) => state = new_state,
+                    None => break 'main,
                 }
 
                 acc -= self.nanos_per_frame;
             }
 
-            state_machine.render();
+            state.draw();
 
             prev_time = Instant::now();
 
