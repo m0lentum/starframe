@@ -23,7 +23,7 @@ use super::{container as cont, Recipe};
 pub trait FeatureSet: 'static + Sized {
     fn init(container_init: cont::Init) -> Self;
     fn tick(&mut self, dt: f32, space: SpaceAccess);
-    fn draw(&self, space: SpaceReadAccess);
+    fn draw<S: glium::Surface>(&self, space: SpaceReadAccess, target: &mut S);
 }
 
 //
@@ -226,11 +226,11 @@ impl<F: FeatureSet> Space<F> {
         self.access_features(|f, a| f.tick(dt, a));
     }
 
-    pub fn draw(&self) {
+    pub fn draw<S: glium::Surface>(&self, target: &mut S) {
         let access = SpaceReadAccess {
             enabled_ids: &self.enabled_ids,
         };
-        self.features.draw(access);
+        self.features.draw(access, target);
     }
 
     pub fn access_features(&mut self, f: impl FnOnce(&mut F, SpaceAccess)) {

@@ -3,7 +3,6 @@ extern crate microprofile;
 
 //
 
-use glium::{glutin, Surface};
 use rand::{distributions as distr, distributions::Distribution};
 use ultraviolet as uv;
 
@@ -17,10 +16,6 @@ use moleengine::{
     graphics::{self as gx, camera as cam},
     physics2d::{self as phys},
 };
-
-const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
-const _CYAN_COLOR: [f32; 4] = [0.3, 0.7, 0.8, 1.0];
-const _LINE_COLOR: [f32; 4] = [0.729, 0.855, 0.333, 1.0];
 
 mod recipes;
 
@@ -92,20 +87,10 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn draw(&self, space: core::SpaceReadAccess) {
+    fn draw<S: glium::Surface>(&self, space: core::SpaceReadAccess, target: &mut S) {
         microprofile::scope!("render", "all");
 
-        // TODO: consider abstracting context creation into the game loop
-        let ctx = gx::Context::get();
-
-        let mut target = ctx.display.draw();
-
-        target.clear_color(BG_COLOR[0], BG_COLOR[1], BG_COLOR[2], BG_COLOR[3]);
-
-        self.shape
-            .draw(&space, &self.tr, &mut target, &self.camera, &ctx.shaders);
-
-        target.finish().unwrap();
+        self.shape.draw(&space, &self.tr, target, &self.camera);
     }
 }
 
@@ -195,8 +180,8 @@ impl GameState for State {
         }
     }
 
-    fn draw(&self, _globals: &Globals) {
-        self.space.draw();
+    fn draw<S: glium::Surface>(&self, target: &mut S, _globals: &Globals) {
+        self.space.draw(target);
     }
 
     fn on_event(&mut self, evt: &glutin::Event, _globals: &Globals) {

@@ -28,7 +28,7 @@ pub trait GameState: Sized {
     /// Advance the game forward by a timestep and return the new state at the end of it.
     fn tick(self, dt: f32, globals: &Globals) -> Option<Self>;
     /// Render the game onto the screen.
-    fn draw(&self, globals: &Globals);
+    fn draw<S: glium::Surface>(&self, target: &mut S, globals: &Globals);
     /// Handle a winit event.
     /// For instance, you might use this to recalculate a camera's scaling factor on window resize.
     fn on_event(&mut self, event: &glutin::Event, globals: &Globals);
@@ -123,10 +123,20 @@ impl GameLoop for LockstepLoop {
                 acc -= self.nanos_per_frame;
             }
 
-            state.draw(&self.globals);
+            // draw
+
+            use glium::Surface;
+            let ctx = crate::graphics::Context::get();
+            let mut target = ctx.display.draw();
+            target.clear_color(0.1, 0.1, 0.1, 1.0);
+
+            state.draw(&mut target, &self.globals);
+
+            target.finish().unwrap();
+
+            // sleep till next frame
 
             prev_time = Instant::now();
-
             thread::sleep(Duration::from_nanos((self.nanos_per_frame - acc) as u64));
         }
     }

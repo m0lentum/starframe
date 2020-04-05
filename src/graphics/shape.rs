@@ -1,7 +1,6 @@
 use super::{
     camera::{Camera2D, CameraController},
-    shaders::Shaders,
-    Color, Vertex2D,
+    Color, Context, Vertex2D,
 };
 use crate::core::{space::SpaceReadAccess, storage, Container, TransformFeature};
 
@@ -114,7 +113,6 @@ impl ShapeFeature {
         trs: &TransformFeature,
         target: &mut S,
         camera: &Camera2D<C>,
-        shaders: &Shaders,
     ) {
         let view = camera.view_matrix();
 
@@ -135,7 +133,7 @@ impl ShapeFeature {
                 .draw(
                     &*shape.verts,
                     glium::index::NoIndices(shape.primitive_type),
-                    &shaders.ortho_2d,
+                    &Context::get().shaders.ortho_2d,
                     &uniforms,
                     &Default::default(),
                 )
