@@ -9,13 +9,14 @@ use ultraviolet as uv;
 
 use glutin::VirtualKeyCode as Key;
 use moleengine::{
-    core::{self, Transform},
-    graphics::{self as gx, camera as cam},
-    physics2d::{self as phys},
-    util::{
+    core::{
+        self,
         gameloop::{GameLoop, GameState, LockstepLoop},
         inputcache::InputCache,
+        Transform,
     },
+    graphics::{self as gx, camera as cam},
+    physics2d::{self as phys},
 };
 
 const BG_COLOR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];

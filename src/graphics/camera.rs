@@ -1,6 +1,6 @@
-use crate::{
-    core::Transform,
-    util::inputcache::{DragState, InputCache},
+use crate::core::{
+    inputcache::{DragState, InputCache},
+    Transform,
 };
 
 use ultraviolet as uv;

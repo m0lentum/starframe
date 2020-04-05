@@ -1,3 +1,8 @@
+pub mod gameloop;
+
+pub mod inputcache;
+pub use inputcache::InputCache;
+
 pub mod space;
 pub use space::{Space, SpaceAccess, SpaceReadAccess, SpaceWriteAccess};
 
