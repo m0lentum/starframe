@@ -29,35 +29,10 @@ fn main() {
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
 
-    LockstepLoop::from_fps(60).run(init_state());
+    LockstepLoop::from_fps(60).run(State::init());
 
     //microprofile::dump_file_immediately!("profile.html", "");
     microprofile::shutdown!();
-}
-
-//
-// Initial state
-//
-
-pub fn init_state() -> State {
-    let events = unsafe { gx::Context::init() };
-
-    let mut input_cache = InputCache::new();
-    {
-        use glutin::VirtualKeyCode::*;
-        input_cache.track_keys(&[
-            Left, Right, Down, Up, PageDown, PageUp, Escape, Return, Space, S, T, P, LShift,
-        ]);
-    }
-
-    let space = load_main_space().unwrap();
-
-    State {
-        state: StateEnum::Playing,
-        events,
-        space,
-        input_cache,
-    }
 }
 
 //
@@ -75,6 +50,16 @@ pub struct State {
     pub events: glutin::EventsLoop,
     pub space: MainSpace,
     pub input_cache: InputCache,
+}
+impl State {
+    fn init() -> Self {
+        State {
+            state: StateEnum::Playing,
+            events: unsafe { gx::Context::init() },
+            space: load_main_space().unwrap(),
+            input_cache: InputCache::new(),
+        }
+    }
 }
 
 pub type MainSpace = core::Space<MainSpaceFeatures>;

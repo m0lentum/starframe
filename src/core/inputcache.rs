@@ -1,13 +1,14 @@
-use glutin::{dpi::LogicalPosition, VirtualKeyCode};
+use glutin::dpi::LogicalPosition;
 use std::collections::HashMap;
 
 pub use glutin::ElementState;
+pub use glutin::VirtualKeyCode as Key;
 
 /// A global input state cache that you can feed input events into
 /// and poll from anywhere to avoid complicated event piping.
 #[derive(Clone)]
 pub struct InputCache {
-    keyboard: HashMap<VirtualKeyCode, AgedState>,
+    keyboard: HashMap<Key, AgedState>,
     mouse_buttons: MouseButtonState,
     cursor_pos: CursorPosition,
     scroll_delta: f32,
@@ -16,8 +17,177 @@ pub struct InputCache {
 
 impl InputCache {
     pub fn new() -> Self {
+        // Track every key. No way to iterate over all variants automatically, unfortunately
+        // When updating glutin, make sure this still contains all the codes
+        use Key::*;
+        let full_keyboard_map = [
+            Key1,
+            Key2,
+            Key3,
+            Key4,
+            Key5,
+            Key6,
+            Key7,
+            Key8,
+            Key9,
+            Key0,
+            A,
+            B,
+            C,
+            D,
+            E,
+            F,
+            G,
+            H,
+            I,
+            J,
+            K,
+            L,
+            M,
+            N,
+            O,
+            P,
+            Q,
+            R,
+            S,
+            T,
+            U,
+            V,
+            W,
+            X,
+            Y,
+            Z,
+            Escape,
+            F1,
+            F2,
+            F3,
+            F4,
+            F5,
+            F6,
+            F7,
+            F8,
+            F9,
+            F10,
+            F11,
+            F12,
+            F13,
+            F14,
+            F15,
+            F16,
+            F17,
+            F18,
+            F19,
+            F20,
+            F21,
+            F22,
+            F23,
+            F24,
+            Snapshot,
+            Scroll,
+            Pause,
+            Insert,
+            Home,
+            Delete,
+            End,
+            PageDown,
+            PageUp,
+            Left,
+            Up,
+            Right,
+            Down,
+            Back,
+            Return,
+            Space,
+            Compose,
+            Caret,
+            Numlock,
+            Numpad0,
+            Numpad1,
+            Numpad2,
+            Numpad3,
+            Numpad4,
+            Numpad5,
+            Numpad6,
+            Numpad7,
+            Numpad8,
+            Numpad9,
+            AbntC1,
+            AbntC2,
+            Add,
+            Apostrophe,
+            Apps,
+            At,
+            Ax,
+            Backslash,
+            Calculator,
+            Capital,
+            Colon,
+            Comma,
+            Convert,
+            Decimal,
+            Divide,
+            Equals,
+            Grave,
+            Kana,
+            Kanji,
+            LAlt,
+            LBracket,
+            LControl,
+            LShift,
+            LWin,
+            Mail,
+            MediaSelect,
+            MediaStop,
+            Minus,
+            Multiply,
+            Mute,
+            MyComputer,
+            NavigateForward,
+            NavigateBackward,
+            NextTrack,
+            NoConvert,
+            NumpadComma,
+            NumpadEnter,
+            NumpadEquals,
+            OEM102,
+            Period,
+            PlayPause,
+            Power,
+            PrevTrack,
+            RAlt,
+            RBracket,
+            RControl,
+            RShift,
+            RWin,
+            Semicolon,
+            Slash,
+            Sleep,
+            Stop,
+            Subtract,
+            Sysrq,
+            Tab,
+            Underline,
+            Unlabeled,
+            VolumeDown,
+            VolumeUp,
+            Wake,
+            WebBack,
+            WebFavorites,
+            WebForward,
+            WebHome,
+            WebRefresh,
+            WebSearch,
+            WebStop,
+            Yen,
+            Copy,
+            Paste,
+            Cut,
+        ]
+        .iter()
+        .map(|key| (*key, AgedState::new(ElementState::Released)))
+        .collect();
         InputCache {
-            keyboard: HashMap::new(),
+            keyboard: full_keyboard_map,
             mouse_buttons: Default::default(),
             cursor_pos: CursorPosition::OutOfWindow(LogicalPosition::new(0.0, 0.0)),
             scroll_delta: 0.0,
@@ -47,33 +217,24 @@ impl InputCache {
         }
     }
 
-    /// Add keys for tracking. Only keys added with this method will have their state stored.
-    pub fn track_keys(&mut self, keys: &[VirtualKeyCode]) {
-        self.keyboard.reserve(keys.len());
-        for key in keys {
-            self.keyboard
-                .insert(*key, AgedState::new(ElementState::Released));
-        }
-    }
-
     //
     // Getters
     //
 
-    /// Get the state of a keyboard key along with its age, or None if it isn't tracked.
-    pub fn get_key_state(&self, key: VirtualKeyCode) -> Option<&AgedState> {
-        self.keyboard.get(&key)
+    /// Get the state of a keyboard key along with the number of frames since it last changed.
+    pub fn get_key_state(&self, key: Key) -> &AgedState {
+        self.keyboard.get(&key).unwrap_or_else(|| {
+            panic!(
+                "Key {:?} was not found in the tracking map. This is a bug in moleengine.",
+                key
+            )
+        })
     }
 
     /// True if the requested key is currently pressed
     /// (for fewer frames than age_limit if provided), false otherwise.
-    /// # Panics
-    /// Panics if the requested key is not tracked.
-    pub fn is_key_pressed(&self, key: VirtualKeyCode, age_limit: Option<u32>) -> bool {
-        let AgedState { state, age } = self
-            .keyboard
-            .get(&key)
-            .unwrap_or_else(|| panic!("Untracked key: {:?}", key));
+    pub fn is_key_pressed(&self, key: Key, age_limit: Option<u32>) -> bool {
+        let AgedState { state, age } = self.get_key_state(key);
 
         if let ElementState::Pressed = state {
             if let Some(al) = age_limit {
