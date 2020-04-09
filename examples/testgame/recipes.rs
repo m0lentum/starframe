@@ -5,7 +5,7 @@ use moleengine::{
 
 use super::MainSpaceFeatures;
 
-moleengine::core::recipes_new! {
+moleengine::core::recipes! {
     MainSpaceFeatures,
     Player,
     StaticBlock,

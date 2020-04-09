@@ -11,7 +11,7 @@ pub use container::Container;
 pub mod storage;
 
 pub mod recipe;
-pub use crate::recipes_new;
+pub use crate::recipes;
 pub use recipe::Recipe;
 
 pub mod transform;

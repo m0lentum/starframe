@@ -17,10 +17,9 @@ pub trait DeserializeRecipes<F: FeatureSet> {
         D: serde::Deserializer<'de>;
 }
 
-// TODO: rename this macro once the old stuff is deleted
-pub use crate::recipes_new;
+pub use crate::recipes;
 #[macro_export]
-macro_rules! recipes_new {
+macro_rules! recipes {
     ($feat_type:ident, $( $recipe_type:ident, )+) => {
         #[derive(serde::Deserialize, serde::Serialize)]
         pub enum Recipes {
