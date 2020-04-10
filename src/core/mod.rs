@@ -1,4 +1,4 @@
-pub mod gameloop;
+pub mod game;
 
 pub mod inputcache;
 pub use inputcache::InputCache;

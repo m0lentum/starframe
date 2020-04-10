@@ -14,6 +14,7 @@ use anymap::AnyMap;
 use hibitset::{self as hb, BitSetLike};
 
 use super::{container as cont, Recipe};
+use crate::graphics::RenderContext;
 
 /// Trait describing Features of a Space.
 /// These determine which component types and behaviors are available in the Space.
@@ -21,9 +22,16 @@ use super::{container as cont, Recipe};
 ///
 /// TODOC: containers, init, tick & render
 pub trait FeatureSet: 'static + Sized {
-    fn init(container_init: cont::Init) -> Self;
+    fn init(init: FeatureSetInit) -> Self;
     fn tick(&mut self, dt: f32, space: SpaceAccess);
-    fn draw<S: glium::Surface>(&self, space: SpaceReadAccess, target: &mut S);
+    fn draw(&self, space: SpaceReadAccess, ctx: &mut RenderContext);
+}
+
+/// Opaque type that allows you to create Features, only handed out during `FeatureSet::init`.
+#[derive(Clone, Copy)]
+pub struct FeatureSetInit<'a> {
+    pub(crate) capacity: usize,
+    pub(crate) device: &'a wgpu::Device,
 }
 
 //
@@ -115,14 +123,14 @@ impl<F: FeatureSet> Space<F> {
     ///
     /// Currently this capacity is a hard limit; Spaces do not grow.
     /// The FeatureSet's `init` and `create_pools` functions are called here.
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn with_capacity(capacity: usize, device: &wgpu::Device) -> Self {
         let mut space = Space {
             reserved_ids: hb::BitSet::with_capacity(capacity as u32),
             enabled_ids: hb::BitSet::with_capacity(capacity as u32),
             next_obj_id: 0,
             capacity,
             pools: AnyMap::new(),
-            features: F::init(cont::Init { capacity }),
+            features: F::init(FeatureSetInit { capacity, device }),
         };
         // find first index after what pools reserved and start accepting new objects from there
         //
@@ -226,11 +234,11 @@ impl<F: FeatureSet> Space<F> {
         self.access_features(|f, a| f.tick(dt, a));
     }
 
-    pub fn draw<S: glium::Surface>(&self, target: &mut S) {
+    pub fn draw(&self, ctx: &mut RenderContext) {
         let access = SpaceReadAccess {
             enabled_ids: &self.enabled_ids,
         };
-        self.features.draw(access, target);
+        self.features.draw(access, ctx);
     }
 
     pub fn access_features(&mut self, f: impl FnOnce(&mut F, SpaceAccess)) {

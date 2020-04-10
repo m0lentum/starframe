@@ -6,15 +6,14 @@ extern crate microprofile;
 use rand::{distributions as distr, distributions::Distribution};
 use ultraviolet as uv;
 
-use glutin::VirtualKeyCode as Key;
 use moleengine::{
     core::{
         self,
-        gameloop::{GameLoop, GameState, Globals, LockstepLoop},
+        game::{self, Game},
+        inputcache::{Key, MouseButton},
         Transform,
     },
-    graphics::{self as gx, camera as cam},
-    physics2d::{self as phys},
+    graphics as gx, physics2d as phys,
 };
 
 mod recipes;
@@ -23,17 +22,23 @@ fn main() {
     microprofile::init!();
     microprofile::set_enable_all_groups!(true);
 
-    LockstepLoop::from_fps(60).run(State::init());
+    let game = Game::init(
+        winit::window::WindowBuilder::new()
+            .with_title("MoleEngine test")
+            .with_inner_size(winit::dpi::LogicalSize {
+                width: 800.0,
+                height: 600.0,
+            }),
+    );
+    let state = State::init(&game.renderer.device);
+    game.run(game::LockstepLoop::from_fps(60), state);
 
-    //microprofile::dump_file_immediately!("profile.html", "");
     microprofile::shutdown!();
 }
 
 //
 // Types
 //
-
-pub type Camera = cam::Camera2D<cam::MouseDragController>;
 
 pub enum StateEnum {
     Playing,
@@ -44,10 +49,10 @@ pub struct State {
     pub space: MainSpace,
 }
 impl State {
-    fn init() -> Self {
+    fn init(device: &wgpu::Device) -> Self {
         State {
             state: StateEnum::Playing,
-            space: load_main_space().unwrap(),
+            space: load_main_space(device).unwrap(),
         }
     }
 }
@@ -58,23 +63,15 @@ pub struct MainSpaceFeatures {
     pub tr: core::TransformFeature,
     pub shape: gx::ShapeFeature,
     pub physics: phys::PhysicsFeature,
-    pub camera: Camera,
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
-    fn init(cont: core::container::Init) -> Self {
+    fn init(cont: core::space::FeatureSetInit) -> Self {
         MainSpaceFeatures {
             tr: core::TransformFeature::new(cont),
             shape: gx::ShapeFeature::new(cont),
             physics: phys::PhysicsFeature::new(cont)
                 .with_forcefield(phys::ForceField::gravity(uv::Vec2::new(0.0, -9.81))),
-            camera: Camera::new(
-                cam::MouseDragController::new(Transform::identity()),
-                gx::camera::ScalingStrategy::ConstantDisplayArea {
-                    width: 8.0,
-                    height: 6.0,
-                },
-            ),
         }
     }
 
@@ -87,48 +84,48 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn draw<S: glium::Surface>(&self, space: core::SpaceReadAccess, target: &mut S) {
+    fn draw(&self, space: core::SpaceReadAccess, ctx: &mut gx::RenderContext) {
         microprofile::scope!("render", "all");
 
-        self.shape.draw(&space, &self.tr, target, &self.camera);
+        self.shape.draw(&space, &self.tr, ctx);
     }
 }
 
-impl GameState for State {
-    fn tick(mut self, dt: f32, globals: &Globals) -> Option<Self> {
+impl game::GameState for State {
+    fn tick(&mut self, dt: f32, game: &Game) -> Option<()> {
         //
         // State-independent stuff
         //
-        if globals.input.is_key_pressed(Key::Escape, None) {
+        if game.input.is_key_pressed(Key::Escape, None) {
             return None;
         }
 
         // mouse camera
 
-        let camera = &mut self.space.features.camera;
-        camera
-            .controller
-            .update_position(&globals.input, camera.scaling_factor());
+        // let camera = &mut self.space.features.camera;
+        // camera
+        //     .controller
+        //     .update_position(&globals.input, camera.scaling_factor());
 
-        if globals
-            .input
-            .is_mouse_button_pressed(glutin::MouseButton::Middle, Some(0))
-        {
-            camera.controller.transform.0 = uv::Similarity2::identity();
-        }
+        // if globals
+        //     .input
+        //     .is_mouse_button_pressed(MouseButton::Middle, Some(0))
+        // {
+        //     camera.controller.transform.0 = uv::Similarity2::identity();
+        // }
 
         match self.state {
             //
             // Playing
             //
             StateEnum::Playing => {
-                if globals.input.is_key_pressed(Key::Space, Some(0)) {
+                if game.input.is_key_pressed(Key::Space, Some(0)) {
                     self.state = StateEnum::Paused;
-                    return Some(self);
+                    return Some(());
                 }
 
-                if globals.input.is_key_pressed(Key::Return, Some(0)) {
-                    self.space = load_main_space().unwrap();
+                if game.input.is_key_pressed(Key::Return, Some(0)) {
+                    self.space = load_main_space(&game.renderer.device).unwrap();
                 }
 
                 // pool spawning
@@ -146,14 +143,14 @@ impl GameState for State {
                     )
                 };
                 let mut rng = rand::thread_rng();
-                if globals.input.is_key_pressed(Key::S, Some(0)) {
+                if game.input.is_key_pressed(Key::S, Some(0)) {
                     self.space.spawn(recipes::DynamicBlock {
                         transform: Transform::new(random_pos(), random_angle(), 1.0),
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
                         height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
                     });
                 }
-                if globals.input.is_key_pressed(Key::T, Some(0)) {
+                if game.input.is_key_pressed(Key::T, Some(0)) {
                     self.space.spawn(recipes::Ball {
                         position: random_pos().into(),
                         radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
@@ -164,39 +161,37 @@ impl GameState for State {
 
                 self.space.tick(dt);
 
-                Some(self)
+                Some(())
             }
             //
             // Paused
             //
             StateEnum::Paused => {
-                if globals.input.is_key_pressed(Key::Space, Some(0)) {
+                if game.input.is_key_pressed(Key::Space, Some(0)) {
                     self.state = StateEnum::Playing;
-                    return Some(self);
+                    return Some(());
                 }
 
-                Some(self)
+                Some(())
             }
         }
     }
 
-    fn draw<S: glium::Surface>(&self, target: &mut S, _globals: &Globals) {
-        self.space.draw(target);
-    }
-
-    fn on_event(&mut self, evt: &glutin::Event, _globals: &Globals) {
-        match evt {
-            glutin::Event::WindowEvent {
-                event: glutin::WindowEvent::Resized(_),
-                ..
-            } => self.space.features.camera.update_scaling(),
-            _ => (),
-        }
+    fn draw(&self, renderer: &mut gx::Renderer) {
+        let mut ctx = renderer.draw_to_window();
+        ctx.clear(wgpu::Color {
+            r: 0.1,
+            g: 0.1,
+            b: 0.1,
+            a: 1.0,
+        });
+        //self.space.draw(&mut ctx);
+        ctx.submit();
     }
 }
 
-fn load_main_space() -> Option<MainSpace> {
-    let mut space = MainSpace::with_capacity(150);
+fn load_main_space(device: &wgpu::Device) -> Option<MainSpace> {
+    let mut space = MainSpace::with_capacity(150, device);
     space.create_pool::<recipes::Player>(5).unwrap();
     space.create_pool::<recipes::Ball>(20).unwrap();
     space.create_pool::<recipes::DynamicBlock>(20).unwrap();

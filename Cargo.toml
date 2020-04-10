@@ -5,8 +5,10 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-glutin = "0.21.2"
-glium = "0.25.1"
+winit = "0.22.0"
+wgpu = "0.5.0"
+zerocopy = "0.3.0"
+futures = "0.3.4"
 ultraviolet = "0.4.5"
 hibitset = "0.6.3"
 anymap = "0.12.1"

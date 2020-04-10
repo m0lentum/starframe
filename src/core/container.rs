@@ -7,13 +7,6 @@ use super::storage::Storage;
 const ITER_ERR_MSG: &'static str =
     "A component didn't exist where it should have. This is almost certainly an error in moleengine.";
 
-/// Opaque information needed to create a Container.
-/// These are handed out when initializing a `space::FeatureSet`.
-#[derive(Clone, Copy)]
-pub struct Init {
-    pub(crate) capacity: usize,
-}
-
 /// A container for a specific type of component,
 /// typically belonging to a feature of a Space.
 ///
@@ -27,7 +20,7 @@ pub struct Container<S: Storage> {
 
 impl<S: Storage> Container<S> {
     /// Create a new Container from an Init struct.
-    pub fn new(init: Init) -> Self {
+    pub fn new(init: super::space::FeatureSetInit) -> Self {
         Container {
             users: hb::BitSet::with_capacity(init.capacity as u32),
             storage: S::with_capacity(init.capacity),

@@ -6,7 +6,11 @@ in
 pkgs.mkShell {
   buildInputs = [
     rust
+    # for wgpu
+    pkgs.pkgconfig
+    pkgs.xlibs.libX11
+    pkgs.shaderc
   ];
-  # make openGL libraries available
-  LD_LIBRARY_PATH = with pkgs.xlibs; "${pkgs.mesa}/lib:${libX11}/lib:${libXcursor}/lib:${libXxf86vm}/lib:${libXi}/lib:${libXrandr}/lib:${pkgs.libGL}/lib";
+  # make graphics libraries available
+  LD_LIBRARY_PATH = with pkgs.xlibs; "${pkgs.mesa}/lib:${libX11}/lib:${libXcursor}/lib:${libXxf86vm}/lib:${libXi}/lib:${libXrandr}/lib:${pkgs.libGL}/lib:${pkgs.vulkan-loader}/lib";
 }

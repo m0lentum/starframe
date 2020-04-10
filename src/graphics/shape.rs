@@ -1,144 +1,179 @@
-use super::{
-    camera::{Camera2D, CameraController},
-    Color, Context, Vertex2D,
+use crate::{
+    core::{
+        space::{FeatureSetInit, MasterKey, SpaceReadAccess},
+        storage, Container, TransformFeature,
+    },
+    graphics as gx,
 };
-use crate::core::{space::SpaceReadAccess, storage, Container, TransformFeature};
 
-use glium::{backend::Facade, index::PrimitiveType, uniform};
-use std::sync::Arc;
+use ultraviolet as uv;
+use zerocopy::{AsBytes, FromBytes};
 
-#[derive(Clone, Copy)]
-pub enum ShapeStyle {
-    Fill(Color),
-    Outline(Color),
-}
-
-/// A flat-colored convex polygon shape, rendered using the ShapeRenderer system.
-/// When creating multiple identical shapes, it is preferable to create one and clone it,
-/// as this reuses the same vertex buffer for all clones.
+type Color = [f32; 4];
+/// A flat-colored convex polygon shape.
+///
 /// Concavity will not result in an error but will be rendered incorrectly.
-#[derive(Clone)]
-pub struct Shape {
-    // TODO: turn these back to pub(self) once we move the new system here
-    pub(crate) verts: Arc<glium::VertexBuffer<Vertex2D>>,
-    pub(crate) color: Color,
-    pub(crate) primitive_type: PrimitiveType,
+pub enum Shape {
+    Circle { r: f32, color: Color },
+    Rect { w: f32, h: f32, color: Color },
+    Poly { points: Vec<uv::Vec2>, color: Color },
 }
 
 impl Shape {
-    /// Create a new Shape from a set of points.
-    pub fn new<F: Facade + ?Sized>(facade: &F, points: &[[f32; 2]], style: ShapeStyle) -> Self {
-        let points_as_verts: Vec<Vertex2D> = points.iter().map(|p| Vertex2D::from(*p)).collect();
-        let (color, primitive_type) = match style {
-            ShapeStyle::Fill(c) => (c, PrimitiveType::TriangleFan),
-            ShapeStyle::Outline(c) => (c, PrimitiveType::LineLoop),
-        };
-        Shape {
-            verts: Arc::new(
-                glium::VertexBuffer::new(facade, points_as_verts.as_slice())
-                    .expect("Failed to create vertex buffer"),
-            ),
-            color,
-            primitive_type,
-        }
-    }
-
-    pub fn set_color(&mut self, color: Color) {
-        self.color = color;
-    }
-
-    /// Create an axis-aligned square Shape with the given side length.
-    pub fn new_square<F: Facade + ?Sized>(facade: &F, width: f32, style: ShapeStyle) -> Self {
-        let hw = width * 0.5;
-        Self::new(facade, &[[-hw, -hw], [hw, -hw], [hw, hw], [-hw, hw]], style)
-    }
-
-    /// Create an axis-aligned rectangle Shape with the given dimensions.
-    pub fn new_rect<F: Facade + ?Sized>(
-        facade: &F,
-        width: f32,
-        height: f32,
-        style: ShapeStyle,
-    ) -> Self {
-        let hw = width * 0.5;
-        let hh = height * 0.5;
-        Self::new(facade, &[[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], style)
-    }
-
-    /// Create a polygonal approximation of a circle with the given radius and number of points.
-    pub fn new_circle<F: Facade + ?Sized>(
-        facade: &F,
-        radius: f32,
-        point_count: u32,
-        style: ShapeStyle,
-    ) -> Self {
-        let angle_incr = 2.0 * std::f32::consts::PI / point_count as f32;
-        let pts: Vec<[f32; 2]> = (0..point_count)
-            .map(|i| {
-                let angle = angle_incr * i as f32;
-                [radius * angle.cos(), radius * angle.sin()]
-            })
-            .collect();
-        Self::new(facade, pts.as_slice(), style)
-    }
-
     /// Create a Shape that matches the given Collider.
-    /// Circle colliders are approximated with a polygon.
-    pub fn from_collider<F: Facade + ?Sized>(
-        facade: &F,
-        coll: &crate::physics2d::Collider,
-        style: ShapeStyle,
-    ) -> Self {
+    pub fn from_collider(coll: &crate::physics2d::Collider, color: Color) -> Self {
         use crate::physics2d::ColliderShape;
         match coll.shape() {
-            ColliderShape::Circle { r } => {
-                let pts: Vec<[f32; 2]> =
-                    CIRCLE_VERTS.iter().map(|p| [r * p[0], r * p[1]]).collect();
-                Self::new(facade, pts.as_slice(), style)
-            }
-            ColliderShape::Rect { hw, hh } => Self::new(
-                facade,
-                &[[-hw, -hh], [*hw, -hh], [*hw, *hh], [-hw, *hh]],
-                style,
-            ),
+            ColliderShape::Circle { r } => Shape::Circle { r: *r, color },
+            ColliderShape::Rect { hw, hh } => Shape::Rect {
+                w: 2.0 * hw,
+                h: 2.0 * hh,
+                color,
+            },
         }
     }
 }
 
-pub type ShapeFeature = Container<storage::DenseVecStorage<Shape>>;
+#[repr(C)]
+#[derive(Clone, Copy, AsBytes, FromBytes)]
+struct Uniforms {
+    view: [[f32; 3]; 3],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, AsBytes, FromBytes)]
+struct Vertex {
+    position: [f32; 3],
+    color: [f32; 4],
+}
+
+pub struct ShapeFeature {
+    shapes: Container<storage::DenseVecStorage<Shape>>,
+    pipeline: wgpu::RenderPipeline,
+    bind_group: wgpu::BindGroup,
+    uniform_buf: wgpu::Buffer,
+    vert_buf: wgpu::Buffer,
+    vert_count: u32,
+}
 impl ShapeFeature {
-    pub fn draw<S: glium::Surface, C: CameraController>(
+    pub fn new(init: FeatureSetInit) -> Self {
+        let shapes = Container::new(init);
+        let init_uniforms = Uniforms {
+            view: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        };
+
+        // shaders
+
+        let device = init.device;
+        let o2d_vert = include_bytes!("shaders/shape.vert.spv");
+        let o2d_vert_module = device.create_shader_module(
+            &wgpu::read_spirv(std::io::Cursor::new(&o2d_vert[..])).expect("Failed to read shader"),
+        );
+        let o2d_frag = include_bytes!("shaders/shape.frag.spv");
+        let o2d_frag_module = device.create_shader_module(
+            &wgpu::read_spirv(std::io::Cursor::new(&o2d_frag[..])).expect("Failed to read shader"),
+        );
+
+        // bind group & buffers
+
+        let uniform_buf =
+            device.create_buffer_with_data(init_uniforms.as_bytes(), wgpu::BufferUsage::UNIFORM);
+        let uniform_buf_size = std::mem::size_of::<Uniforms>();
+
+        let initial_vert_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: 10,
+            usage: wgpu::BufferUsage::VERTEX,
+            label: Some("shape"),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            bindings: &[wgpu::BindGroupLayoutEntry {
+                binding: 0, // view matrix
+                visibility: wgpu::ShaderStage::VERTEX,
+                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+            }],
+            label: Some("shape"),
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &bind_group_layout,
+            bindings: &[wgpu::Binding {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer {
+                    buffer: &uniform_buf,
+                    range: 0..uniform_buf_size as wgpu::BufferAddress,
+                },
+            }],
+            label: Some("shape"),
+        });
+
+        // pipeline
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            bind_group_layouts: &[&bind_group_layout],
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            layout: &pipeline_layout,
+            vertex_stage: wgpu::ProgrammableStageDescriptor {
+                module: &o2d_vert_module,
+                entry_point: "main",
+            },
+            fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
+                module: &o2d_frag_module,
+                entry_point: "main",
+            }),
+            rasterization_state: Some(wgpu::RasterizationStateDescriptor {
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: wgpu::CullMode::None,
+                depth_bias: 0,
+                depth_bias_slope_scale: 0.0,
+                depth_bias_clamp: 0.0,
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            color_states: &[wgpu::ColorStateDescriptor {
+                format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                color_blend: wgpu::BlendDescriptor::REPLACE,
+                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                write_mask: wgpu::ColorWrite::ALL,
+            }],
+            depth_stencil_state: None,
+            vertex_state: wgpu::VertexStateDescriptor {
+                index_format: wgpu::IndexFormat::Uint16,
+                vertex_buffers: &[],
+            },
+            sample_count: 1,
+            sample_mask: !0,
+            alpha_to_coverage_enabled: false,
+        });
+
+        ShapeFeature {
+            shapes,
+            pipeline,
+            bind_group,
+            uniform_buf,
+            vert_buf: initial_vert_buf,
+            vert_count: 0,
+        }
+    }
+
+    pub fn draw(
         &self,
         space: &SpaceReadAccess,
         trs: &TransformFeature,
-        target: &mut S,
-        camera: &Camera2D<C>,
+        ctx: &mut gx::RenderContext,
     ) {
-        let view = camera.view_matrix();
+        // TODO: build the vertex array
+        // This is currently horribly broken, but committing to save my code
 
-        for (shape, tr) in space.iter().overlay(self.iter()).and(trs.iter()) {
-            let model = tr.0.into_homogeneous_matrix();
-            let mv = view * model;
-            let mv_uniform = [
-                [mv.cols[0].x, mv.cols[0].y, mv.cols[0].z],
-                [mv.cols[1].x, mv.cols[1].y, mv.cols[1].z],
-                [mv.cols[2].x, mv.cols[2].y, mv.cols[2].z],
-            ];
+        let mut pass = ctx.pass();
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, &self.vert_buf, 0, 0);
+        pass.draw(0..self.vert_count, 0..1);
+    }
 
-            let uniforms = glium::uniform! {
-                model_view: mv_uniform,
-                color: shape.color,
-            };
-            target
-                .draw(
-                    &*shape.verts,
-                    glium::index::NoIndices(shape.primitive_type),
-                    &Context::get().shaders.ortho_2d,
-                    &uniforms,
-                    &Default::default(),
-                )
-                .expect("Drawing failed");
-        }
+    /// Add a Shape to an object.
+    pub fn add(&mut self, key: MasterKey, shape: Shape) {
+        self.shapes.insert(key, shape);
     }
 }
 

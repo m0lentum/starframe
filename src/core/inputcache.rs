@@ -1,8 +1,11 @@
-use glutin::dpi::LogicalPosition;
 use std::collections::HashMap;
+use winit::dpi::{LogicalPosition, PhysicalPosition};
 
-pub use glutin::ElementState;
-pub use glutin::VirtualKeyCode as Key;
+use winit::event as ev;
+
+pub use ev::ElementState;
+pub use ev::MouseButton;
+pub use ev::VirtualKeyCode as Key;
 
 /// A global input state cache that you can feed input events into
 /// and poll from anywhere to avoid complicated event piping.
@@ -189,7 +192,7 @@ impl InputCache {
         InputCache {
             keyboard: full_keyboard_map,
             mouse_buttons: Default::default(),
-            cursor_pos: CursorPosition::OutOfWindow(LogicalPosition::new(0.0, 0.0)),
+            cursor_pos: CursorPosition::OutOfWindow(PhysicalPosition::new(0.0, 0.0)),
             scroll_delta: 0.0,
             drag_state: None,
         }
@@ -252,11 +255,7 @@ impl InputCache {
     /// # Panics
     /// Panics if the requested mouse button is not tracked.
     /// Left, Middle and Right are tracked by default.
-    pub fn is_mouse_button_pressed(
-        &self,
-        button: glutin::MouseButton,
-        age_limit: Option<u32>,
-    ) -> bool {
+    pub fn is_mouse_button_pressed(&self, button: ev::MouseButton, age_limit: Option<u32>) -> bool {
         let AgedState { age, state } = self
             .mouse_buttons
             .get(button)
@@ -292,7 +291,7 @@ impl InputCache {
     //
 
     /// Track the effect of a keyboard event.
-    pub fn track_keyboard(&mut self, evt: glutin::KeyboardInput) {
+    pub fn track_keyboard(&mut self, evt: ev::KeyboardInput) {
         if let Some(code) = evt.virtual_keycode {
             if let Some(state) = self.keyboard.get_mut(&code) {
                 match evt.state {
@@ -312,8 +311,8 @@ impl InputCache {
     }
 
     /// Perform whatever tracking is available for the given window event.
-    pub fn track_window_event(&mut self, event: &glutin::WindowEvent) {
-        use glutin::WindowEvent::*;
+    pub fn track_window_event(&mut self, event: &ev::WindowEvent) {
+        use ev::WindowEvent::*;
         match event {
             KeyboardInput { input, .. } => self.track_keyboard(*input),
             MouseInput { button, state, .. } => self.track_mouse_button(*button, *state),
@@ -326,21 +325,21 @@ impl InputCache {
     }
 
     /// Track a mouse button event.
-    pub fn track_mouse_button(&mut self, button: glutin::MouseButton, new_state: ElementState) {
+    pub fn track_mouse_button(&mut self, button: ev::MouseButton, new_state: ElementState) {
         self.mouse_buttons
             .get_mut(button)
             .map(|s| *s = AgedState::new(new_state));
 
         // drag, at least for now hardcoded to only work with left click
         match (button, new_state, self.drag_state) {
-            (glutin::MouseButton::Left, ElementState::Pressed, None) => self.begin_drag(),
-            (glutin::MouseButton::Left, ElementState::Released, _) => self.finish_drag(),
+            (ev::MouseButton::Left, ElementState::Pressed, None) => self.begin_drag(),
+            (ev::MouseButton::Left, ElementState::Released, _) => self.finish_drag(),
             _ => (),
         }
     }
 
     /// Track the screen position of the mouse cursor.
-    pub fn track_cursor_movement(&mut self, position: LogicalPosition) {
+    pub fn track_cursor_movement(&mut self, position: PhysicalPosition<f64>) {
         *self.cursor_pos.get_mut() = position;
     }
 
@@ -356,10 +355,10 @@ impl InputCache {
     ///
     /// TODO: test to make line and pixel delta effects match
     ///
-    pub fn track_mouse_wheel(&mut self, delta: glutin::MouseScrollDelta) {
+    pub fn track_mouse_wheel(&mut self, delta: ev::MouseScrollDelta) {
         const PIXELS_PER_LINE: f32 = 10.0;
 
-        use glutin::MouseScrollDelta::*;
+        use ev::MouseScrollDelta::*;
         match delta {
             LineDelta(_, y) => self.scroll_delta += PIXELS_PER_LINE * y,
             PixelDelta(LogicalPosition { y, .. }) => self.scroll_delta += y as f32,
@@ -418,26 +417,26 @@ impl Default for AgedState {
 /// Usually you don't want to do anything if you're outside the window.
 #[derive(Clone, Copy)]
 pub enum CursorPosition {
-    InWindow(LogicalPosition),
-    OutOfWindow(LogicalPosition),
+    InWindow(PhysicalPosition<f64>),
+    OutOfWindow(PhysicalPosition<f64>),
 }
 
 impl CursorPosition {
-    pub fn get(&self) -> &LogicalPosition {
+    pub fn get(&self) -> &PhysicalPosition<f64> {
         match self {
             CursorPosition::InWindow(p) => p,
             CursorPosition::OutOfWindow(p) => p,
         }
     }
 
-    pub fn get_mut(&mut self) -> &mut LogicalPosition {
+    pub fn get_mut(&mut self) -> &mut PhysicalPosition<f64> {
         match self {
             CursorPosition::InWindow(p) => p,
             CursorPosition::OutOfWindow(p) => p,
         }
     }
 
-    pub fn take(self) -> LogicalPosition {
+    pub fn take(self) -> PhysicalPosition<f64> {
         match self {
             CursorPosition::InWindow(p) => p,
             CursorPosition::OutOfWindow(p) => p,
@@ -455,8 +454,8 @@ struct MouseButtonState {
 }
 
 impl MouseButtonState {
-    pub fn get(&self, button: glutin::MouseButton) -> Option<&AgedState> {
-        use glutin::MouseButton as MB;
+    pub fn get(&self, button: MouseButton) -> Option<&AgedState> {
+        use MouseButton as MB;
         match button {
             MB::Left => Some(&self.left),
             MB::Middle => Some(&self.middle),
@@ -465,8 +464,8 @@ impl MouseButtonState {
         }
     }
 
-    pub fn get_mut(&mut self, button: glutin::MouseButton) -> Option<&mut AgedState> {
-        use glutin::MouseButton as MB;
+    pub fn get_mut(&mut self, button: MouseButton) -> Option<&mut AgedState> {
+        use MouseButton as MB;
         match button {
             MB::Left => Some(&mut self.left),
             MB::Middle => Some(&mut self.middle),
@@ -479,12 +478,12 @@ impl MouseButtonState {
 #[derive(Clone, Copy)]
 pub enum DragState {
     InProgress {
-        start: LogicalPosition,
+        start: PhysicalPosition<f64>,
         duration: u32,
     },
     Completed {
-        start: LogicalPosition,
-        end: LogicalPosition,
+        start: PhysicalPosition<f64>,
+        end: PhysicalPosition<f64>,
         duration: u32,
     },
 }

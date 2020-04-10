@@ -1,6 +1,7 @@
 use crate::core::{
-    container::Init, space::MasterKey, space::SpaceReadAccess, storage, Container, Transform,
-    TransformFeature,
+    space::SpaceReadAccess,
+    space::{FeatureSetInit, MasterKey},
+    storage, Container, Transform, TransformFeature,
 };
 use std::collections::HashMap;
 
@@ -58,7 +59,7 @@ pub struct PhysicsFeature {
 }
 
 impl PhysicsFeature {
-    pub fn new(init: Init) -> Self {
+    pub fn new(init: FeatureSetInit) -> Self {
         PhysicsFeature {
             bodies: Container::new(init),
             colliders: Container::new(init),
