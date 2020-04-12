@@ -11,7 +11,7 @@ Its primary focuses are cool physics tools and a simple interface that allows fo
   - narrow phase collision detection
   - rudimentary collision impulse solver
 - Graphics
-  - Simple 2D mesh rendering with [glium](https://github.com/glium/glium); heavily WIP
+  - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
 
 See the [issues](https://github.com/MoleTrooper/moleengine/issues) for notes on future developments.
 
@@ -24,15 +24,20 @@ until then, stay tuned.
 
 # Running the test game
 
-There's not much to show here, but thanks to the Rust toolchain it's very easy to
-check out my tiny test game should you wish to do so.
+There's not much to show here, but should you wish to check out my tiny test game, here's how:
+
+**The manual way**
 
 1. Install [Rust](https://www.rust-lang.org/learn/get-started)
-2. Clone and navigate to this repository
-3. `cargo run --example testgame`
+2. You may need to install `pkgconfig` and drivers for Vulkan, DX12, or Metal depending on your platform
+3. Clone and navigate to this repository
+4. `cargo run --example testgame`
 
-Alternatively, you can install Rust using [Nix](https://nixos.org/nix/)
-by simply opening a `nix-shell` in the project root directory.
+**The easy way, using [Nix](https://nixos.org/nix/)**
+
+1. Clone and navigate to this repository
+2. `nix-shell`
+3. `cargo run --example testgame`
 
 ### Testgame keybindings
 
