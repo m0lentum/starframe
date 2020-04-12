@@ -84,7 +84,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn draw(&self, space: core::SpaceReadAccess, ctx: &mut gx::RenderContext) {
+    fn draw(&mut self, space: core::SpaceReadAccess, ctx: &mut gx::RenderContext) {
         microprofile::scope!("render", "all");
 
         self.shape.draw(&space, &self.tr, ctx);
@@ -177,7 +177,7 @@ impl game::GameState for State {
         }
     }
 
-    fn draw(&self, renderer: &mut gx::Renderer) {
+    fn draw(&mut self, renderer: &mut gx::Renderer) {
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
@@ -185,7 +185,7 @@ impl game::GameState for State {
             b: 0.1,
             a: 1.0,
         });
-        //self.space.draw(&mut ctx);
+        self.space.draw(&mut ctx);
         ctx.submit();
     }
 }

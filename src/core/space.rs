@@ -24,7 +24,7 @@ use crate::graphics::RenderContext;
 pub trait FeatureSet: 'static + Sized {
     fn init(init: FeatureSetInit) -> Self;
     fn tick(&mut self, dt: f32, space: SpaceAccess);
-    fn draw(&self, space: SpaceReadAccess, ctx: &mut RenderContext);
+    fn draw(&mut self, space: SpaceReadAccess, ctx: &mut RenderContext);
 }
 
 /// Opaque type that allows you to create Features, only handed out during `FeatureSet::init`.
@@ -234,7 +234,7 @@ impl<F: FeatureSet> Space<F> {
         self.access_features(|f, a| f.tick(dt, a));
     }
 
-    pub fn draw(&self, ctx: &mut RenderContext) {
+    pub fn draw(&mut self, ctx: &mut RenderContext) {
         let access = SpaceReadAccess {
             enabled_ids: &self.enabled_ids,
         };

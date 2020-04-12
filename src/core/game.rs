@@ -42,7 +42,7 @@ pub trait GameState: Sized + 'static {
     /// Advance the game forward by a timestep. Return None to exit the game.
     fn tick(&mut self, dt: f32, game: &Game) -> Option<()>;
     /// Render the game onto the screen.
-    fn draw(&self, renderer: &mut crate::graphics::Renderer);
+    fn draw(&mut self, renderer: &mut crate::graphics::Renderer);
 }
 
 /// A game loop's job is to call the `GameState`'s `tick` and `render` methods

@@ -1,7 +1,7 @@
 use crate::{
     core::{
         space::{FeatureSetInit, MasterKey, SpaceReadAccess},
-        storage, Container, TransformFeature,
+        storage, Container, Transform, TransformFeature,
     },
     graphics as gx,
 };
@@ -14,7 +14,7 @@ type Color = [f32; 4];
 ///
 /// Concavity will not result in an error but will be rendered incorrectly.
 pub enum Shape {
-    Circle { r: f32, color: Color },
+    Circle { r: f32, points: usize, color: Color },
     Rect { w: f32, h: f32, color: Color },
     Poly { points: Vec<uv::Vec2>, color: Color },
 }
@@ -24,7 +24,11 @@ impl Shape {
     pub fn from_collider(coll: &crate::physics2d::Collider, color: Color) -> Self {
         use crate::physics2d::ColliderShape;
         match coll.shape() {
-            ColliderShape::Circle { r } => Shape::Circle { r: *r, color },
+            ColliderShape::Circle { r } => Shape::Circle {
+                r: *r,
+                points: 16,
+                color,
+            },
             ColliderShape::Rect { hw, hh } => Shape::Rect {
                 w: 2.0 * hw,
                 h: 2.0 * hh,
@@ -32,18 +36,81 @@ impl Shape {
             },
         }
     }
+
+    pub(self) fn verts(&self, tr: &Transform) -> Vec<Vertex> {
+        // generate a triangle mesh
+        fn as_verts(pts: &[uv::Vec2], tr: &Transform, color: Color) -> Vec<Vertex> {
+            let mut iter = pts.iter().map(|p| tr.0 * *p).peekable();
+            let first = match iter.next() {
+                Some(p) => Vertex {
+                    position: [p.x, p.y],
+                    color,
+                },
+                None => return Vec::new(),
+            };
+            let mut verts = Vec::with_capacity((pts.len() - 2) * 3);
+            while let Some(curr) = iter.next() {
+                if let Some(&next) = iter.peek() {
+                    verts.push(first);
+                    verts.push(Vertex {
+                        position: [curr.x, curr.y],
+                        color,
+                    });
+                    verts.push(Vertex {
+                        position: [next.x, next.y],
+                        color,
+                    });
+                }
+            }
+            verts
+        };
+
+        // do it
+        match self {
+            Shape::Circle { r, points, color } => {
+                let angle_incr = 2.0 * std::f32::consts::PI / *points as f32;
+                let verts: Vec<uv::Vec2> = (0..*points)
+                    .map(|i| {
+                        let angle = angle_incr * i as f32;
+                        uv::Vec2::new(r * angle.cos(), r * angle.sin())
+                    })
+                    .collect();
+                as_verts(verts.as_slice(), tr, *color)
+            }
+            Shape::Rect { w, h, color } => {
+                let hw = 0.5 * w;
+                let hh = 0.5 * h;
+                as_verts(
+                    &[
+                        uv::Vec2::new(hw, hh),
+                        uv::Vec2::new(-hw, hh),
+                        uv::Vec2::new(-hw, -hh),
+                        uv::Vec2::new(hw, -hh),
+                    ],
+                    tr,
+                    *color,
+                )
+            }
+            Shape::Poly { points, color } => as_verts(points.as_slice(), tr, *color),
+        }
+    }
 }
+
+//
+// Rendering
+//
 
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
-struct Uniforms {
-    view: [[f32; 3]; 3],
+struct GlobalUniforms {
+    // a `mat3` is actually three `vec4`s in memory
+    view: [[f32; 4]; 3],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct Vertex {
-    position: [f32; 3],
+    position: [f32; 2],
     color: [f32; 4],
 }
 
@@ -52,38 +119,33 @@ pub struct ShapeFeature {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
-    vert_buf: wgpu::Buffer,
-    vert_count: u32,
+    // we don't create the vertex buffer until in the draw method where we have some objects
+    vert_buf: Option<wgpu::Buffer>,
+    vert_buf_len: u32,
 }
 impl ShapeFeature {
     pub fn new(init: FeatureSetInit) -> Self {
         let shapes = Container::new(init);
-        let init_uniforms = Uniforms {
-            view: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        };
 
         // shaders
 
         let device = init.device;
-        let o2d_vert = include_bytes!("shaders/shape.vert.spv");
-        let o2d_vert_module = device.create_shader_module(
-            &wgpu::read_spirv(std::io::Cursor::new(&o2d_vert[..])).expect("Failed to read shader"),
+        let shader_v = include_bytes!("shaders/shape.vert.spv");
+        let shader_v_mod = device.create_shader_module(
+            &wgpu::read_spirv(std::io::Cursor::new(&shader_v[..])).expect("Failed to read shader"),
         );
-        let o2d_frag = include_bytes!("shaders/shape.frag.spv");
-        let o2d_frag_module = device.create_shader_module(
-            &wgpu::read_spirv(std::io::Cursor::new(&o2d_frag[..])).expect("Failed to read shader"),
+        let shader_f = include_bytes!("shaders/shape.frag.spv");
+        let shader_f_mod = device.create_shader_module(
+            &wgpu::read_spirv(std::io::Cursor::new(&shader_f[..])).expect("Failed to read shader"),
         );
 
         // bind group & buffers
 
-        let uniform_buf =
-            device.create_buffer_with_data(init_uniforms.as_bytes(), wgpu::BufferUsage::UNIFORM);
-        let uniform_buf_size = std::mem::size_of::<Uniforms>();
-
-        let initial_vert_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: 10,
-            usage: wgpu::BufferUsage::VERTEX,
-            label: Some("shape"),
+        let uniform_buf_size = std::mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: uniform_buf_size,
+            usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
+            label: Some("shape uniforms"),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -100,7 +162,7 @@ impl ShapeFeature {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer {
                     buffer: &uniform_buf,
-                    range: 0..uniform_buf_size as wgpu::BufferAddress,
+                    range: 0..uniform_buf_size,
                 },
             }],
             label: Some("shape"),
@@ -114,11 +176,11 @@ impl ShapeFeature {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout: &pipeline_layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &o2d_vert_module,
+                module: &shader_v_mod,
                 entry_point: "main",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &o2d_frag_module,
+                module: &shader_f_mod,
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
@@ -138,7 +200,24 @@ impl ShapeFeature {
             depth_stencil_state: None,
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint16,
-                vertex_buffers: &[],
+                vertex_buffers: &[wgpu::VertexBufferDescriptor {
+                    stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+                    step_mode: wgpu::InputStepMode::Vertex,
+                    attributes: &[
+                        // position
+                        wgpu::VertexAttributeDescriptor {
+                            format: wgpu::VertexFormat::Float2,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        // color
+                        wgpu::VertexAttributeDescriptor {
+                            format: wgpu::VertexFormat::Float4,
+                            offset: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                            shader_location: 1,
+                        },
+                    ],
+                }],
             },
             sample_count: 1,
             sample_mask: !0,
@@ -150,42 +229,96 @@ impl ShapeFeature {
             pipeline,
             bind_group,
             uniform_buf,
-            vert_buf: initial_vert_buf,
-            vert_count: 0,
+            vert_buf: None,
+            vert_buf_len: 0,
         }
     }
 
+    /// Draw all the alive `Shape`s that have associated `Transform`s.
     pub fn draw(
-        &self,
+        &mut self,
         space: &SpaceReadAccess,
         trs: &TransformFeature,
         ctx: &mut gx::RenderContext,
     ) {
-        // TODO: build the vertex array
-        // This is currently horribly broken, but committing to save my code
+        let iter = || {
+            (space.iter().overlay(self.shapes.iter()))
+                .and(trs.iter())
+                .into_iter()
+        };
 
-        let mut pass = ctx.pass();
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, &self.vert_buf, 0, 0);
-        pass.draw(0..self.vert_count, 0..1);
+        //
+        // Update the uniform buffer
+        //
+
+        // TODO: get this from a camera
+        let uniforms = GlobalUniforms {
+            view: [
+                [1.0 / 4.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0 / 3.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+        };
+        let temp_uniform_buf = ctx
+            .device
+            .create_buffer_with_data(uniforms.as_bytes(), wgpu::BufferUsage::COPY_SRC);
+        ctx.encoder.copy_buffer_to_buffer(
+            &temp_uniform_buf,
+            0,
+            &self.uniform_buf,
+            0,
+            std::mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress,
+        );
+
+        //
+        // Update the vertex buffer
+        //
+
+        let verts: Vec<Vertex> = iter().flat_map(|(s, t)| s.verts(t)).collect();
+        let active_verts_len = verts.len() as u32;
+        let active_verts_size = active_verts_len as u64 * std::mem::size_of::<Vertex>() as u64;
+
+        let temp_vert_buf = ctx
+            .device
+            .create_buffer_with_data(verts.as_bytes(), wgpu::BufferUsage::COPY_SRC);
+
+        // Allocate a new buffer if we don't have room for everything
+        //
+        // TODO: currently this grows on every frame that new shapes have been added,
+        // it should reserve some extra space to avoid this
+        if self.vert_buf == None || self.vert_buf_len < active_verts_len {
+            self.vert_buf = Some(ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("shape"),
+                size: active_verts_size,
+                usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+            }));
+            self.vert_buf_len = active_verts_len;
+        }
+
+        // past this point the vertex buffer always exists
+        let vert_buf = self.vert_buf.as_ref().unwrap();
+        ctx.encoder.copy_buffer_to_buffer(
+            &temp_vert_buf,
+            0 as wgpu::BufferAddress,
+            vert_buf,
+            0 as wgpu::BufferAddress,
+            active_verts_size,
+        );
+
+        //
+        // Render
+        //
+        {
+            let mut pass = ctx.pass();
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, vert_buf, 0, 0);
+            pass.draw(0..active_verts_len, 0..1);
+        }
     }
 
     /// Add a Shape to an object.
     pub fn add(&mut self, key: MasterKey, shape: Shape) {
         self.shapes.insert(key, shape);
     }
-}
-
-const CIRCLE_VERTS_COUNT: u32 = 16;
-
-lazy_static::lazy_static! {
-    /// All circles are the same so we can precalculate their vertices
-    static ref CIRCLE_VERTS: Vec<[f32; 2]> = {
-        let angle_incr = 2.0 * std::f32::consts::PI / CIRCLE_VERTS_COUNT as f32;
-        (0..CIRCLE_VERTS_COUNT).map(|i| {
-            let angle = angle_incr * i as f32;
-            [angle.cos(), angle.sin()]
-        }).collect()
-    };
 }

@@ -1,3 +1,4 @@
+/// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
     pub device: wgpu::Device,
     queue: wgpu::Queue,
@@ -17,7 +18,7 @@ impl Renderer {
             wgpu::BackendBit::PRIMARY,
         )
         .await
-        .expect("Failed to create adapter");
+        .expect("Renderer init failed: failed to create adapter");
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -46,19 +47,6 @@ impl Renderer {
         }
     }
 
-    pub fn draw_frame(
-        &mut self,
-        draw: impl FnOnce(&wgpu::SwapChainOutput, &wgpu::Device) -> wgpu::CommandBuffer,
-    ) {
-        let frame = self
-            .swap_chain
-            .get_next_texture()
-            .expect("Failed to get next swap chain texture");
-
-        let commands = draw(&frame, &self.device);
-        self.queue.submit(&[commands]);
-    }
-
     pub fn draw_to_window(&mut self) -> RenderContext {
         let frame = self
             .swap_chain
@@ -72,6 +60,7 @@ impl Renderer {
         RenderContext {
             target: RenderTarget::Window(frame),
             encoder,
+            device: &self.device,
             queue,
         }
     }
@@ -79,24 +68,29 @@ impl Renderer {
 
 enum RenderTarget {
     Window(wgpu::SwapChainOutput),
-    _Texture(wgpu::TextureView),
+    Texture(wgpu::TextureView),
 }
 impl RenderTarget {
     fn view(&self) -> &wgpu::TextureView {
         match self {
             RenderTarget::Window(frame) => &frame.view,
-            RenderTarget::_Texture(view) => view,
+            RenderTarget::Texture(view) => view,
         }
     }
 }
 
+/// An interface that lets you send draw instructions to the GPU.
+///
+/// TODOC: example
 pub struct RenderContext<'a> {
     target: RenderTarget,
     pub encoder: wgpu::CommandEncoder,
+    pub device: &'a wgpu::Device,
     queue: &'a mut wgpu::Queue,
 }
 
 impl<'a> RenderContext<'a> {
+    /// Fill the render target with a flat color.
     pub fn clear(&mut self, color: wgpu::Color) {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -112,6 +106,7 @@ impl<'a> RenderContext<'a> {
         // to be written to the encoder
     }
 
+    /// Begin a render pass.
     pub fn pass(&mut self) -> wgpu::RenderPass {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
@@ -125,6 +120,7 @@ impl<'a> RenderContext<'a> {
         })
     }
 
+    /// Submit the commands made through this context to the GPU.
     pub fn submit(self) {
         let commands = self.encoder.finish();
         self.queue.submit(&[commands]);

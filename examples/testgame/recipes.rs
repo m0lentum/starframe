@@ -109,6 +109,7 @@ impl core::Recipe<MainSpaceFeatures> for Ball {
             key,
             gx::Shape::Circle {
                 r: self.radius,
+                points: 24,
                 color: [1.0; 4],
             },
         );
