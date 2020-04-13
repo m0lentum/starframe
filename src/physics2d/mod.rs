@@ -54,7 +54,6 @@ pub struct PhysicsFeature {
     bodies: Container<storage::DenseVecStorage<RigidBody>>,
     colliders: Container<storage::DenseVecStorage<Collider>>,
     impulse_cache: ImpulseCache,
-    forcefield: ForceField,
     stabilisation_coef: f32,
     loop_condition: SolverLoopCondition,
 }
@@ -65,7 +64,6 @@ impl PhysicsFeature {
             bodies: Container::new(init),
             colliders: Container::new(init),
             impulse_cache: ImpulseCache::new(),
-            forcefield: ForceField::none(),
             // TODO: ability to change these
             stabilisation_coef: 0.1,
             loop_condition: SolverLoopCondition {
@@ -73,21 +71,6 @@ impl PhysicsFeature {
                 convergence_threshold: 0.05,
             },
         }
-    }
-
-    /// Set the constant force field such as gravity.
-    ///
-    /// ```
-    /// physics.set_forcefield(ForceField::gravity(Vec2::new(0.0, -9.81)));
-    /// ```
-    pub fn set_forcefield(&mut self, ff: ForceField) {
-        self.forcefield = ff;
-    }
-
-    /// Set the constant force field, in a builder-like manner.
-    pub fn with_forcefield(mut self, ff: ForceField) -> Self {
-        self.forcefield = ff;
-        self
     }
 
     /// Replace the default constraint bias coefficient used in Baumgarte stabilisation.
@@ -113,7 +96,13 @@ impl PhysicsFeature {
 
     /// Detect collisions, solve constraint forces and move bodies.
     /// Call this once in your `FeatureSet`'s `tick` function.
-    pub fn tick(&mut self, space: &SpaceReadAccess, trs: &mut TransformFeature, dt: f32) {
+    pub fn tick(
+        &mut self,
+        space: &SpaceReadAccess,
+        trs: &mut TransformFeature,
+        dt: f32,
+        forcefield: Option<&impl ForceField>,
+    ) {
         struct Item<'a> {
             body: &'a mut RigidBody,
             coll: &'a Collider,
@@ -174,9 +163,11 @@ impl PhysicsFeature {
         let constraints = contact_constraints;
 
         // apply environment forces (gravity, usually)
-        for obj in items.iter_mut() {
-            if let Some(vel) = obj.body.velocity_mut() {
-                vel.linear += self.forcefield.value_at(obj.tr.isometry.translation.vector) * dt;
+        if let Some(ff) = forcefield {
+            for obj in items.iter_mut() {
+                if let Some(vel) = obj.body.velocity_mut() {
+                    vel.linear += ff.value_at(obj.tr.isometry.translation.vector.into()) * dt;
+                }
             }
         }
 

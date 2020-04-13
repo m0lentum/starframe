@@ -69,8 +69,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         MainSpaceFeatures {
             tr: core::TransformFeature::new(cont),
             shape: gx::ShapeFeature::new(cont),
-            physics: phys::PhysicsFeature::new(cont)
-                .with_forcefield(phys::ForceField::gravity(m::Vec2::new(0.0, -9.81))),
+            physics: phys::PhysicsFeature::new(cont),
         }
     }
 
@@ -79,7 +78,18 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         microprofile::scope!("update", "all");
         {
             microprofile::scope!("update", "rigid body solver");
-            self.physics.tick(&space.read(), &mut self.tr, dt);
+            let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
+            let repulsor = phys::forcefield::PointGravity {
+                position: m::Point2::new(-1.0, -4.0),
+                strength: -14.0,
+                falloff: 0.3,
+            };
+            self.physics.tick(
+                &space.read(),
+                &mut self.tr,
+                dt,
+                Some(&phys::forcefield::Sum(grav, repulsor)),
+            );
         }
     }
 
