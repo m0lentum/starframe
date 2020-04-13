@@ -18,12 +18,13 @@ pub use rigidbody::RigidBody;
 
 //
 
-use ultraviolet as uv;
+use crate::core::math as m;
+use nalgebra as na;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Velocity {
     /// Linear velocity in metres per second.
-    pub linear: uv::Vec2,
+    pub linear: m::Vec2,
     /// Angular velocity in radians per second.
     pub angular: f32,
 }
@@ -31,7 +32,7 @@ pub struct Velocity {
 impl Default for Velocity {
     fn default() -> Self {
         Velocity {
-            linear: uv::Vec2::zero(),
+            linear: m::Vec2::zeros(),
             angular: 0.0,
         }
     }
@@ -39,8 +40,8 @@ impl Default for Velocity {
 
 impl Velocity {
     /// Get the linear velocity of a point offset from the center of mass.
-    pub fn point_velocity(&self, offset: uv::Vec2) -> uv::Vec2 {
-        let tangent = uv::Vec2::new(-offset[1], offset[0]) * self.angular;
+    pub fn point_velocity(&self, offset: m::Vec2) -> m::Vec2 {
+        let tangent = m::Vec2::new(-offset[1], offset[0]) * self.angular;
         self.linear + tangent
     }
 }
@@ -175,7 +176,7 @@ impl PhysicsFeature {
         // apply environment forces (gravity, usually)
         for obj in items.iter_mut() {
             if let Some(vel) = obj.body.velocity_mut() {
-                vel.linear += self.forcefield.value_at(obj.tr.0.translation) * dt;
+                vel.linear += self.forcefield.value_at(obj.tr.isometry.translation.vector) * dt;
             }
         }
 
@@ -212,11 +213,11 @@ impl PhysicsFeature {
             // warm start
             let initial_impulse = if let Some(prev_impulse) = self.impulse_cache.get(ids) {
                 if let Some(vel) = objs[0].body.velocity_mut() {
-                    vel.linear -= inv_masses[0] * prev_impulse * constraint.normal;
+                    vel.linear -= inv_masses[0] * prev_impulse * (*constraint.normal);
                     vel.angular -= inv_mom_inertias[0] * prev_impulse * offsets_cross_normals[0];
                 }
                 if let Some(vel) = objs[1].body.velocity_mut() {
-                    vel.linear += inv_masses[1] * prev_impulse * constraint.normal;
+                    vel.linear += inv_masses[1] * prev_impulse * (*constraint.normal);
                     vel.angular += inv_mom_inertias[1] * prev_impulse * offsets_cross_normals[1];
                 }
                 *prev_impulse
@@ -253,9 +254,9 @@ impl PhysicsFeature {
                 let vels = map_array_2(&objs, |o_| o_.body.velocity_or_zero());
                 // TODO: this part is the actual constraint function and should be generalized
                 let normal_vels = [
-                    vels[0].linear.dot(acc.constraint.normal)
+                    vels[0].linear.dot(&acc.constraint.normal)
                         + (acc.offsets_cross_normals[0] * vels[0].angular),
-                    vels[1].linear.dot(acc.constraint.normal)
+                    vels[1].linear.dot(&acc.constraint.normal)
                         + (acc.offsets_cross_normals[1] * vels[1].angular),
                 ];
 
@@ -283,12 +284,12 @@ impl PhysicsFeature {
 
                 // apply the impulse
                 if let Some(vel) = objs[0].body.velocity_mut() {
-                    vel.linear -= acc.inv_masses[0] * clamped_impulse * acc.constraint.normal;
+                    vel.linear -= acc.inv_masses[0] * clamped_impulse * (*acc.constraint.normal);
                     vel.angular -=
                         acc.inv_mom_inertias[0] * clamped_impulse * acc.offsets_cross_normals[0];
                 }
                 if let Some(vel) = objs[1].body.velocity_mut() {
-                    vel.linear += acc.inv_masses[1] * clamped_impulse * acc.constraint.normal;
+                    vel.linear += acc.inv_masses[1] * clamped_impulse * (*acc.constraint.normal);
                     vel.angular +=
                         acc.inv_mom_inertias[1] * clamped_impulse * acc.offsets_cross_normals[1];
                 }
@@ -305,10 +306,9 @@ impl PhysicsFeature {
         // semi-implicit Euler integration: use velocities at the end of the time step
         for obj in items {
             if let Some(vel) = obj.body.velocity() {
-                obj.tr.0.append_translation(dt * vel.linear);
-                obj.tr.0.prepend_rotation(
-                    crate::core::transform::Angle::Radians(dt * vel.angular).into(),
-                );
+                obj.tr.append_translation_mut(&(dt * vel.linear).into());
+                obj.tr
+                    .append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
             }
         }
     }
@@ -319,8 +319,8 @@ impl PhysicsFeature {
 #[derive(Clone, Copy, Debug)]
 struct WorkingConstraint {
     indices: [usize; 2],
-    normal: uv::Vec2,
-    offsets: [uv::Vec2; 2],
+    normal: na::Unit<m::Vec2>,
+    offsets: [m::Vec2; 2],
     impulse_bounds: (Option<f32>, Option<f32>),
     bias: f32,
 }

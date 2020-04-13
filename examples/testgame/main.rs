@@ -4,14 +4,13 @@ extern crate microprofile;
 //
 
 use rand::{distributions as distr, distributions::Distribution};
-use ultraviolet as uv;
 
 use moleengine::{
     core::{
         self,
         game::{self, Game},
         inputcache::{Key, MouseButton},
-        Transform,
+        math as m,
     },
     graphics as gx, physics2d as phys,
 };
@@ -71,7 +70,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
             tr: core::TransformFeature::new(cont),
             shape: gx::ShapeFeature::new(cont),
             physics: phys::PhysicsFeature::new(cont)
-                .with_forcefield(phys::ForceField::gravity(uv::Vec2::new(0.0, -9.81))),
+                .with_forcefield(phys::ForceField::gravity(m::Vec2::new(0.0, -9.81))),
         }
     }
 
@@ -132,20 +131,20 @@ impl game::GameState for State {
 
                 let random_pos = || {
                     let mut rng = rand::thread_rng();
-                    uv::Vec2::new(
+                    m::Vec2::new(
                         distr::Uniform::from(-3.0..3.0).sample(&mut rng),
                         distr::Uniform::from(0.0..2.0).sample(&mut rng),
                     )
                 };
                 let random_angle = || {
-                    core::transform::Angle::Degrees(
-                        distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()),
-                    )
+                    m::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()))
                 };
                 let mut rng = rand::thread_rng();
                 if game.input.is_key_pressed(Key::S, Some(0)) {
                     self.space.spawn(recipes::DynamicBlock {
-                        transform: Transform::new(random_pos(), random_angle(), 1.0),
+                        transform: m::TransformBuilder::new()
+                            .with_position(random_pos())
+                            .with_rotation(random_angle()),
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
                         height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
                     });

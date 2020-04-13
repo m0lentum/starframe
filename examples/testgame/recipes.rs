@@ -1,5 +1,5 @@
 use moleengine::{
-    core::{self, space::MasterKey, Transform},
+    core::{self, math as m, space::MasterKey},
     graphics as gx, physics2d as phys,
 };
 
@@ -16,12 +16,12 @@ moleengine::core::recipes! {
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Player {
-    pub transform: Transform,
+    pub transform: m::TransformBuilder,
 }
 
 impl core::Recipe<MainSpaceFeatures> for Player {
     fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform);
+        feat.tr.insert(key, self.transform.into());
     }
 
     fn spawn_consts(key: MasterKey, feat: &mut MainSpaceFeatures) {
@@ -46,12 +46,12 @@ impl core::Recipe<MainSpaceFeatures> for Player {
 pub struct StaticBlock {
     pub width: f32,
     pub height: f32,
-    pub transform: Transform,
+    pub transform: m::TransformBuilder,
 }
 
 impl core::Recipe<MainSpaceFeatures> for StaticBlock {
     fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform);
+        feat.tr.insert(key, self.transform.into());
         feat.physics.add_body(
             key,
             phys::RigidBody::new_static(),
@@ -72,12 +72,12 @@ impl core::Recipe<MainSpaceFeatures> for StaticBlock {
 pub struct DynamicBlock {
     pub width: f32,
     pub height: f32,
-    pub transform: Transform,
+    pub transform: m::TransformBuilder,
 }
 
 impl core::Recipe<MainSpaceFeatures> for DynamicBlock {
     fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform);
+        feat.tr.insert(key, self.transform.into());
         let collider = phys::Collider::new_rect(self.width, self.height);
         feat.physics
             .add_body(key, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
@@ -101,7 +101,7 @@ pub struct Ball {
 impl core::Recipe<MainSpaceFeatures> for Ball {
     fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
         feat.tr
-            .insert(key, Transform::from_position(self.position.into()));
+            .insert(key, m::TransformBuilder::from(self.position).into());
         let collider = phys::Collider::new_circle(self.radius);
         feat.physics
             .add_body(key, phys::RigidBody::new_dynamic(&collider, 1.0), collider);

@@ -1,12 +1,12 @@
 use crate::{
     core::{
+        math as m,
         space::{FeatureSetInit, MasterKey, SpaceReadAccess},
         storage, Container, Transform, TransformFeature,
     },
     graphics as gx,
 };
 
-use ultraviolet as uv;
 use zerocopy::{AsBytes, FromBytes};
 
 type Color = [f32; 4];
@@ -14,9 +14,20 @@ type Color = [f32; 4];
 ///
 /// Concavity will not result in an error but will be rendered incorrectly.
 pub enum Shape {
-    Circle { r: f32, points: usize, color: Color },
-    Rect { w: f32, h: f32, color: Color },
-    Poly { points: Vec<uv::Vec2>, color: Color },
+    Circle {
+        r: f32,
+        points: usize,
+        color: Color,
+    },
+    Rect {
+        w: f32,
+        h: f32,
+        color: Color,
+    },
+    Poly {
+        points: Vec<m::Point2>,
+        color: Color,
+    },
 }
 
 impl Shape {
@@ -39,8 +50,8 @@ impl Shape {
 
     pub(self) fn verts(&self, tr: &Transform) -> Vec<Vertex> {
         // generate a triangle mesh
-        fn as_verts(pts: &[uv::Vec2], tr: &Transform, color: Color) -> Vec<Vertex> {
-            let mut iter = pts.iter().map(|p| tr.0 * *p).peekable();
+        fn as_verts(pts: &[m::Point2], tr: &Transform, color: Color) -> Vec<Vertex> {
+            let mut iter = pts.iter().map(|p| tr * *p).peekable();
             let first = match iter.next() {
                 Some(p) => Vertex {
                     position: [p.x, p.y],
@@ -69,10 +80,10 @@ impl Shape {
         match self {
             Shape::Circle { r, points, color } => {
                 let angle_incr = 2.0 * std::f32::consts::PI / *points as f32;
-                let verts: Vec<uv::Vec2> = (0..*points)
+                let verts: Vec<m::Point2> = (0..*points)
                     .map(|i| {
                         let angle = angle_incr * i as f32;
-                        uv::Vec2::new(r * angle.cos(), r * angle.sin())
+                        m::Point2::new(r * angle.cos(), r * angle.sin())
                     })
                     .collect();
                 as_verts(verts.as_slice(), tr, *color)
@@ -82,10 +93,10 @@ impl Shape {
                 let hh = 0.5 * h;
                 as_verts(
                     &[
-                        uv::Vec2::new(hw, hh),
-                        uv::Vec2::new(-hw, hh),
-                        uv::Vec2::new(-hw, -hh),
-                        uv::Vec2::new(hw, -hh),
+                        m::Point2::new(hw, hh),
+                        m::Point2::new(-hw, hh),
+                        m::Point2::new(-hw, -hh),
+                        m::Point2::new(hw, -hh),
                     ],
                     tr,
                     *color,
