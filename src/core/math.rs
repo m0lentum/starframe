@@ -8,6 +8,7 @@ pub type Transform = na::Similarity2<f32>;
 pub type TransformFeature = Container<storage::VecStorage<Transform>>;
 pub type Vec2 = na::Vector2<f32>;
 pub type Point2 = na::Point2<f32>;
+pub type Mat3 = na::Matrix3<f32>;
 
 /// An angle in either degrees or radians.
 /// Default conversion from f32 is in degrees.

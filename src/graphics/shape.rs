@@ -4,7 +4,7 @@ use crate::{
         space::{FeatureSetInit, MasterKey, SpaceReadAccess},
         storage, Container, Transform, TransformFeature,
     },
-    graphics as gx,
+    graphics::{self as gx, util::GlslMat3},
 };
 
 use zerocopy::{AsBytes, FromBytes};
@@ -114,8 +114,7 @@ impl Shape {
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct GlobalUniforms {
-    // a `mat3` is actually three `vec4`s in memory
-    view: [[f32; 4]; 3],
+    view: GlslMat3,
 }
 
 #[repr(C)]
@@ -250,6 +249,7 @@ impl ShapeFeature {
         &mut self,
         space: &SpaceReadAccess,
         trs: &TransformFeature,
+        camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,
     ) {
         let iter = || {
@@ -262,13 +262,8 @@ impl ShapeFeature {
         // Update the uniform buffer
         //
 
-        // TODO: get this from a camera
         let uniforms = GlobalUniforms {
-            view: [
-                [1.0 / 4.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0 / 3.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
+            view: camera.view_matrix(ctx.target_size).into(),
         };
         let temp_uniform_buf = ctx
             .device

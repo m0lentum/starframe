@@ -1,13 +1,12 @@
 use crate::core::{
     inputcache::{DragState, InputCache},
-    Transform,
+    math as m, Transform,
 };
 
-use ultraviolet as uv;
+use nalgebra as na;
 
-/// Camera controllers are rules for transforming a camera.
-pub trait CameraController {
-    fn transform(&self) -> &Transform;
+pub trait Camera {
+    fn view_matrix(&self, viewport_size: (u32, u32)) -> m::Mat3;
 }
 
 /// Tells a camera how to adapt to changing viewport size.
@@ -20,85 +19,30 @@ pub enum ScalingStrategy {
     ConstantDisplayArea { width: f32, height: f32 },
 }
 
-pub struct Camera2D<C: CameraController> {
-    pub controller: C,
-    pub strategy: ScalingStrategy,
-    scaling_factor: f32,
-    viewport_scaling: uv::Vec2,
-}
-
-impl<C: CameraController> Camera2D<C> {
-    pub fn new(controller: C, strategy: ScalingStrategy) -> Self {
-        let mut him = Camera2D {
-            controller,
-            strategy,
-            scaling_factor: 0.0,
-            viewport_scaling: uv::Vec2::zero(),
-        };
-        him.update_scaling();
-        him
-    }
-
-    pub fn with_framebuffer_size(
-        controller: C,
-        strategy: ScalingStrategy,
-        framebuffer_size: (u32, u32),
-    ) -> Self {
-        let mut him = Camera2D {
-            controller,
-            strategy,
-            scaling_factor: 0.0,
-            viewport_scaling: uv::Vec2::zero(),
-        };
-        him.update_scaling_for_viewport(framebuffer_size);
-        him
-    }
-
-    /// Update the camera's scaling factor based on the viewport of the game window.
-    pub fn update_scaling(&mut self) {
-        self.update_scaling_for_viewport(
-            super::Context::get().display.get_framebuffer_dimensions(),
-        );
-    }
-
-    /// Update the camera's scaling factor based on an arbitrary framebuffer size.
-    pub fn update_scaling_for_viewport(&mut self, framebuffer_size: (u32, u32)) {
-        let (fb_width, fb_height) = framebuffer_size;
-        self.viewport_scaling = uv::Vec2::new(2.0 / fb_width as f32, 2.0 / fb_height as f32);
-
-        use self::ScalingStrategy::*;
-        self.scaling_factor = match self.strategy {
-            ConstantScale { pixels_per_unit } => pixels_per_unit,
-            ConstantDisplayArea { width, height } => {
-                (fb_width as f32 / width).min(fb_height as f32 / height)
+impl ScalingStrategy {
+    /// Get the uniform scaling factor that will result in the desired field of view
+    /// in the given viewport size.
+    pub fn scaling_factor(&self, viewport_size: (u32, u32)) -> f32 {
+        let (vp_w, vp_h) = viewport_size;
+        match self {
+            ScalingStrategy::ConstantScale { pixels_per_unit } => *pixels_per_unit,
+            ScalingStrategy::ConstantDisplayArea { width, height } => {
+                (vp_w as f32 / width).min(vp_h as f32 / height)
             }
         }
     }
 
-    /// Get the scaling factor that determines how many pixels each unit takes on screen at 1.0 zoom.
-    pub fn scaling_factor(&self) -> f32 {
-        self.scaling_factor
-    }
+    /// Get a nonuniform scaling vector to scale the camera's view to the given viewport.
+    pub fn scaling(&self, viewport_size: (u32, u32)) -> m::Vec2 {
+        let (vp_w, vp_h) = viewport_size;
+        let vp_scaling = m::Vec2::new(2.0 / vp_w as f32, 2.0 / vp_h as f32);
 
-    /// Get the 3x3 view transformation matrix for this camera.
-    pub fn view_matrix(&self) -> uv::Mat3 {
-        let full_scaling = self.viewport_scaling * self.scaling_factor;
-
-        uv::Mat3::from_nonuniform_scale_homogeneous(uv::Vec3::new(
-            full_scaling.x,
-            full_scaling.y,
-            1.0,
-        )) * self
-            .controller
-            .transform()
-            .0
-            .inversed()
-            .into_homogeneous_matrix()
+        self.scaling_factor(viewport_size) * vp_scaling
     }
 }
 
-/// A camera controller that can be dragged with the mouse.
-pub struct MouseDragController {
+pub struct MouseDragCamera {
+    pub scaling_strategy: ScalingStrategy,
     pub transform: Transform,
     pub zoom_speed: f32,
     pub min_zoom_out: f32,
@@ -106,10 +50,11 @@ pub struct MouseDragController {
     drag_start: Option<Transform>,
 }
 
-impl MouseDragController {
-    pub fn new(transform: Transform) -> Self {
-        MouseDragController {
-            transform,
+impl MouseDragCamera {
+    pub fn new(scaling_strategy: ScalingStrategy) -> Self {
+        MouseDragCamera {
+            scaling_strategy,
+            transform: Transform::identity(),
             zoom_speed: 0.01,
             min_zoom_out: 0.1,
             max_zoom_out: 10.0,
@@ -118,27 +63,32 @@ impl MouseDragController {
     }
 
     /// Update the camera's position using cached drag state.
-    pub fn update_position(&mut self, input_cache: &InputCache, scaling_factor: f32) {
+    ///
+    /// Viewport size is needed to scale mouse movements to the right size of camera movements.
+    pub fn update(&mut self, input_cache: &InputCache, viewport_size: (u32, u32)) {
+        let scaling_factor = self.scaling_strategy.scaling_factor(viewport_size);
         match (input_cache.drag_state(), self.drag_start) {
             (None, _) => self.drag_start = None,
             (Some(DragState::InProgress { .. }), None) => self.drag_start = Some(self.transform),
             (Some(DragState::InProgress { start, .. }), Some(tr_at_start)) => {
                 let cursor_pos = input_cache.cursor_position().get();
-                let offset = uv::Vec2::new(
+                let offset = m::Vec2::new(
                     (cursor_pos.x - start.x) as f32,
                     -(cursor_pos.y - start.y) as f32,
                 );
                 self.transform = tr_at_start;
                 self.transform
-                    .0
-                    .append_translation(-offset * self.transform.0.scale / scaling_factor);
+                    .append_translation_mut(&na::Translation2::from(
+                        -offset * self.transform.scaling() / scaling_factor,
+                    ));
             }
             (Some(DragState::Completed { start, end, .. }), Some(tr_at_start)) => {
-                let offset = uv::Vec2::new((end.x - start.x) as f32, -(end.y - start.y) as f32);
+                let offset = m::Vec2::new((end.x - start.x) as f32, -(end.y - start.y) as f32);
                 self.transform = tr_at_start;
                 self.transform
-                    .0
-                    .append_translation(-offset * self.transform.0.scale / scaling_factor);
+                    .append_translation_mut(&na::Translation2::from(
+                        -offset * self.transform.scaling() / scaling_factor,
+                    ));
                 self.drag_start = None;
             }
             _ => (),
@@ -147,15 +97,18 @@ impl MouseDragController {
         let scroll = input_cache.scroll_delta();
         if scroll != 0.0 {
             // TODO: zoom towards mouse cursor
-            let new_scaling = (1.0 + scroll * -self.zoom_speed) * self.transform.0.scale;
+            let new_scaling = (1.0 + scroll * -self.zoom_speed) * self.transform.scaling();
             let new_scaling = new_scaling.max(self.min_zoom_out).min(self.max_zoom_out);
-            self.transform.0.scale = new_scaling;
+            self.transform.set_scaling(new_scaling);
         }
     }
 }
 
-impl CameraController for MouseDragController {
-    fn transform(&self) -> &Transform {
-        &self.transform
+impl Camera for MouseDragCamera {
+    fn view_matrix(&self, viewport_size: (u32, u32)) -> m::Mat3 {
+        let vp_scaling =
+            m::Mat3::new_nonuniform_scaling(&self.scaling_strategy.scaling(viewport_size));
+        let my_transform_inv = self.transform.inverse().to_homogeneous();
+        vp_scaling * my_transform_inv
     }
 }

@@ -62,6 +62,7 @@ pub struct MainSpaceFeatures {
     pub tr: core::TransformFeature,
     pub shape: gx::ShapeFeature,
     pub physics: phys::PhysicsFeature,
+    pub camera: gx::camera::MouseDragCamera,
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
@@ -70,6 +71,12 @@ impl core::space::FeatureSet for MainSpaceFeatures {
             tr: core::TransformFeature::new(cont),
             shape: gx::ShapeFeature::new(cont),
             physics: phys::PhysicsFeature::new(cont),
+            camera: gx::camera::MouseDragCamera::new(
+                gx::camera::ScalingStrategy::ConstantDisplayArea {
+                    width: 8.0,
+                    height: 6.0,
+                },
+            ),
         }
     }
 
@@ -96,7 +103,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
     fn draw(&mut self, space: core::SpaceReadAccess, ctx: &mut gx::RenderContext) {
         microprofile::scope!("render", "all");
 
-        self.shape.draw(&space, &self.tr, ctx);
+        self.shape.draw(&space, &self.tr, &self.camera, ctx);
     }
 }
 
@@ -111,17 +118,11 @@ impl game::GameState for State {
 
         // mouse camera
 
-        // let camera = &mut self.space.features.camera;
-        // camera
-        //     .controller
-        //     .update_position(&globals.input, camera.scaling_factor());
-
-        // if globals
-        //     .input
-        //     .is_mouse_button_pressed(MouseButton::Middle, Some(0))
-        // {
-        //     camera.controller.transform.0 = uv::Similarity2::identity();
-        // }
+        let camera = &mut self.space.features.camera;
+        camera.update(&game.input, game.renderer.window_size().into());
+        if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
+            camera.transform = m::Transform::identity();
+        }
 
         match self.state {
             //

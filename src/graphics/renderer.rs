@@ -1,14 +1,18 @@
 /// A Renderer manages resources needed to draw graphics to the screen.
-/// You don't need to create one of these; the `Game`/`GameLoop` API handles it for you.
 pub struct Renderer {
     pub device: wgpu::Device,
     queue: wgpu::Queue,
     surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
     swap_chain_descriptor: wgpu::SwapChainDescriptor,
+    window_scale_factor: f64,
 }
 
 impl Renderer {
+    /// Create a Renderer.
+    ///
+    /// Most users won't need to create one of these manually;
+    /// the `Game`/`GameLoop` API handles it for you.
     pub async fn init(window: &winit::window::Window) -> Self {
         let surface = wgpu::Surface::create(window);
 
@@ -47,7 +51,22 @@ impl Renderer {
             surface,
             swap_chain,
             swap_chain_descriptor,
+            window_scale_factor: window.scale_factor(),
         }
+    }
+
+    /// Get the size of the window this Renderer draws to.
+    pub fn window_size(&self) -> winit::dpi::PhysicalSize<u32> {
+        winit::dpi::PhysicalSize::new(
+            self.swap_chain_descriptor.width,
+            self.swap_chain_descriptor.height,
+        )
+    }
+
+    /// Get the scale factor of the window this Renderer draws to.
+    /// Useful e.g. when rendering text.
+    pub fn window_scale_factor(&self) -> f64 {
+        self.window_scale_factor
     }
 
     /// Change the size of the frame `draw_to_window` draws into.
@@ -69,6 +88,7 @@ impl Renderer {
         let encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let target_size = self.window_size().into();
         let queue = &mut self.queue;
 
         RenderContext {
@@ -76,6 +96,7 @@ impl Renderer {
             encoder,
             device: &self.device,
             queue,
+            target_size,
         }
     }
 }
@@ -101,6 +122,7 @@ pub struct RenderContext<'a> {
     pub encoder: wgpu::CommandEncoder,
     pub device: &'a wgpu::Device,
     queue: &'a mut wgpu::Queue,
+    pub target_size: (u32, u32),
 }
 
 impl<'a> RenderContext<'a> {
