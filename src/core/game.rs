@@ -166,7 +166,9 @@ impl GameLoop for LockstepLoop {
                     game.input.track_window_event(&event);
                     match event {
                         WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-                        // TODO: resize swap chain on window resiez
+                        WindowEvent::Resized(new_size) => {
+                            game.renderer.resize_swap_chain(new_size);
+                        }
                         _ => (),
                     }
                 }

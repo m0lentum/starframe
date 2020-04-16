@@ -1,7 +1,9 @@
 /// A Renderer manages resources needed to draw graphics to the screen.
+/// You don't need to create one of these; the `Game`/`GameLoop` API handles it for you.
 pub struct Renderer {
     pub device: wgpu::Device,
     queue: wgpu::Queue,
+    surface: wgpu::Surface,
     swap_chain: wgpu::SwapChain,
     swap_chain_descriptor: wgpu::SwapChainDescriptor,
 }
@@ -42,11 +44,23 @@ impl Renderer {
         Renderer {
             device,
             queue,
+            surface,
             swap_chain,
             swap_chain_descriptor,
         }
     }
 
+    /// Change the size of the frame `draw_to_window` draws into.
+    /// This is called automatically by the gameloop when the window size changes.
+    pub fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        self.swap_chain_descriptor.width = new_size.width;
+        self.swap_chain_descriptor.height = new_size.height;
+        self.swap_chain = self
+            .device
+            .create_swap_chain(&self.surface, &self.swap_chain_descriptor);
+    }
+
+    /// Begin drawing directly into the game window.
     pub fn draw_to_window(&mut self) -> RenderContext {
         let frame = self
             .swap_chain
