@@ -1,4 +1,6 @@
 //! Storage and iterators for handling components of game objects.
+//!
+//! Heavily inspired by [`specs`](https://github.com/amethyst/specs).
 use hibitset as hb;
 
 use super::space::MasterKey;
@@ -23,7 +25,7 @@ impl<S: Storage> Container<S> {
     pub fn new(init: super::space::FeatureSetInit) -> Self {
         Container {
             users: hb::BitSet::with_capacity(init.capacity as u32),
-            storage: S::with_capacity(init.capacity),
+            storage: S::new(init),
         }
     }
 

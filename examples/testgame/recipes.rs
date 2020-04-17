@@ -13,34 +13,7 @@ moleengine::core::recipes! {
     Ball,
 }
 
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
-#[serde(default)]
-pub struct Player {
-    pub transform: m::TransformBuilder,
-}
-
-impl core::Recipe<MainSpaceFeatures> for Player {
-    fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform.into());
-    }
-
-    fn spawn_consts(key: MasterKey, feat: &mut MainSpaceFeatures) {
-        const WIDTH: f32 = 0.9;
-        const HEIGHT: f32 = 0.55;
-        feat.shape.add(
-            key,
-            gx::Shape::Rect {
-                w: WIDTH,
-                h: HEIGHT,
-                color: [0.2, 0.8, 0.6, 1.0],
-            },
-        );
-        let collider = phys::Collider::new_rect(WIDTH, HEIGHT);
-        feat.physics
-            .add_body(key, phys::RigidBody::new_dynamic(&collider, 3.0), collider);
-        // obj.add(KeyboardControls);
-    }
-}
+pub type Player = crate::player::PlayerRecipe;
 
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
 pub struct StaticBlock {

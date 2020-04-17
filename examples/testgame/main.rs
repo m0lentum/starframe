@@ -15,6 +15,7 @@ use moleengine::{
     graphics as gx, physics2d as phys,
 };
 
+mod player;
 mod recipes;
 
 fn main() {
@@ -62,15 +63,17 @@ pub struct MainSpaceFeatures {
     pub tr: core::TransformFeature,
     pub shape: gx::ShapeFeature,
     pub physics: phys::PhysicsFeature,
+    pub player: player::PlayerController,
     pub camera: gx::camera::MouseDragCamera,
 }
 
 impl core::space::FeatureSet for MainSpaceFeatures {
-    fn init(cont: core::space::FeatureSetInit) -> Self {
+    fn init(init: core::space::FeatureSetInit) -> Self {
         MainSpaceFeatures {
-            tr: core::TransformFeature::new(cont),
-            shape: gx::ShapeFeature::new(cont),
-            physics: phys::PhysicsFeature::new(cont),
+            tr: core::TransformFeature::new(init),
+            shape: gx::ShapeFeature::new(init),
+            physics: phys::PhysicsFeature::new(init),
+            player: player::PlayerController::new(init),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 8.0,
@@ -80,9 +83,14 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn tick(&mut self, dt: f32, space: core::SpaceAccess) {
+    fn tick(&mut self, mut space: core::SpaceAccess<'_>, game: &Game, dt: f32) {
         microprofile::flip();
         microprofile::scope!("update", "all");
+        {
+            microprofile::scope!("update", "player");
+            self.player
+                .tick(space.write(), &game.input, &self.tr, &self.physics);
+        }
         {
             microprofile::scope!("update", "physics");
             let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
@@ -92,7 +100,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
                 falloff: 0.3,
             };
             self.physics.tick(
-                &space.read(),
+                space.read(),
                 &mut self.tr,
                 dt,
                 Some(&phys::forcefield::Sum(grav, repulsor)),
@@ -100,7 +108,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         }
     }
 
-    fn draw(&mut self, space: core::SpaceReadAccess, ctx: &mut gx::RenderContext) {
+    fn draw(&mut self, space: core::SpaceReadAccess<'_>, ctx: &mut gx::RenderContext) {
         microprofile::scope!("render", "all");
 
         {
@@ -172,7 +180,7 @@ impl game::GameState for State {
 
                 //
 
-                self.space.tick(dt);
+                self.space.tick(game, dt);
 
                 Some(())
             }

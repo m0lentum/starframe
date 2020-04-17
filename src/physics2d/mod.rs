@@ -98,7 +98,7 @@ impl PhysicsFeature {
     /// Call this once in your `FeatureSet`'s `tick` function.
     pub fn tick(
         &mut self,
-        space: &SpaceReadAccess,
+        space: SpaceReadAccess,
         trs: &mut TransformFeature,
         dt: f32,
         forcefield: Option<&impl ForceField>,

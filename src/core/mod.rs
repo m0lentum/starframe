@@ -1,4 +1,5 @@
 pub mod game;
+pub use game::Game;
 
 pub mod inputcache;
 pub use inputcache::InputCache;

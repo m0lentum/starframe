@@ -14,6 +14,7 @@ use anymap::AnyMap;
 use hibitset::{self as hb, BitSetLike};
 
 use super::{container as cont, Recipe};
+use crate::core::Game;
 use crate::graphics::RenderContext;
 
 /// Trait describing Features of a Space.
@@ -23,8 +24,8 @@ use crate::graphics::RenderContext;
 /// TODOC: containers, init, tick & render
 pub trait FeatureSet: 'static + Sized {
     fn init(init: FeatureSetInit) -> Self;
-    fn tick(&mut self, dt: f32, space: SpaceAccess);
-    fn draw(&mut self, space: SpaceReadAccess, ctx: &mut RenderContext);
+    fn tick(&mut self, space: SpaceAccess<'_>, game: &Game, dt: f32);
+    fn draw(&mut self, space: SpaceReadAccess<'_>, ctx: &mut RenderContext);
 }
 
 /// Opaque type that allows you to create Features, only handed out during `FeatureSet::init`.
@@ -47,12 +48,12 @@ pub struct MasterKey {
 /// that is, alive and enabled objects.
 pub struct SpaceAccess<'a>(SpaceWriteAccess<'a>);
 impl<'a> SpaceAccess<'a> {
-    pub fn read(&'a self) -> SpaceReadAccess<'a> {
+    pub fn read<'b>(&'b self) -> SpaceReadAccess<'b> {
         SpaceReadAccess {
             enabled_ids: self.0.enabled_ids,
         }
     }
-    pub fn write(&'a mut self) -> SpaceWriteAccess<'a> {
+    pub fn write<'b>(&'b mut self) -> SpaceWriteAccess<'b> {
         SpaceWriteAccess {
             enabled_ids: self.0.enabled_ids,
             reserved_ids: self.0.reserved_ids,
@@ -230,8 +231,8 @@ impl<F: FeatureSet> Space<F> {
         R::deserialize_into_space(&mut deser, self)
     }
 
-    pub fn tick(&mut self, dt: f32) {
-        self.access_features(|f, a| f.tick(dt, a));
+    pub fn tick(&mut self, game: &Game, dt: f32) {
+        self.access_features(|f, a| f.tick(a, game, dt));
     }
 
     pub fn draw(&mut self, ctx: &mut RenderContext) {

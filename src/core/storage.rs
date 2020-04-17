@@ -3,7 +3,7 @@
 /// Trait allowing generic access to storage types.
 pub trait Storage {
     type Item;
-    fn with_capacity(capacity: usize) -> Self;
+    fn new(init: super::space::FeatureSetInit) -> Self;
     fn insert(&mut self, id: usize, component: Self::Item);
     fn get(&self, id: usize) -> Option<&Self::Item>;
     fn get_mut(&mut self, id: usize) -> Option<&mut Self::Item>;
@@ -18,10 +18,10 @@ pub struct DenseVecStorage<T> {
 }
 impl<T> Storage for DenseVecStorage<T> {
     type Item = T;
-    fn with_capacity(capacity: usize) -> Self {
+    fn new(init: super::space::FeatureSetInit) -> Self {
         let mut indices = Vec::new();
-        indices.resize_with(capacity, || None);
-        let items = Vec::with_capacity(capacity);
+        indices.resize_with(init.capacity, || None);
+        let items = Vec::with_capacity(init.capacity);
 
         DenseVecStorage { indices, items }
     }
@@ -49,9 +49,9 @@ pub struct VecStorage<T> {
 }
 impl<T> Storage for VecStorage<T> {
     type Item = T;
-    fn with_capacity(capacity: usize) -> Self {
+    fn new(init: super::space::FeatureSetInit) -> Self {
         let mut items = Vec::new();
-        items.resize_with(capacity, || None);
+        items.resize_with(init.capacity, || None);
 
         VecStorage { items }
     }
@@ -63,5 +63,45 @@ impl<T> Storage for VecStorage<T> {
     }
     fn get_mut(&mut self, id: usize) -> Option<&mut T> {
         self.items[id].as_mut()
+    }
+}
+
+use std::collections::HashMap;
+/// A hashmap-based storage. Good when there are very few objects with this component.
+pub struct HashMapStorage<T> {
+    items: HashMap<usize, T>,
+}
+impl<T> Storage for HashMapStorage<T> {
+    type Item = T;
+    fn new(_init: super::space::FeatureSetInit) -> Self {
+        // ignore capacity to save memory; this won't be used to hold that many things
+        HashMapStorage {
+            items: HashMap::new(),
+        }
+    }
+    fn insert(&mut self, id: usize, component: T) {
+        self.items.insert(id, component);
+    }
+    fn get(&self, id: usize) -> Option<&T> {
+        self.items.get(&id)
+    }
+    fn get_mut(&mut self, id: usize) -> Option<&mut T> {
+        self.items.get_mut(&id)
+    }
+}
+
+/// Storage for tags that don't contain any data.
+pub struct NullStorage(());
+impl Storage for NullStorage {
+    type Item = ();
+    fn new(_init: super::space::FeatureSetInit) -> Self {
+        NullStorage(())
+    }
+    fn insert(&mut self, _id: usize, _comp: ()) {}
+    fn get(&self, _id: usize) -> Option<&()> {
+        Some(&self.0)
+    }
+    fn get_mut(&mut self, _id: usize) -> Option<&mut ()> {
+        Some(&mut self.0)
     }
 }

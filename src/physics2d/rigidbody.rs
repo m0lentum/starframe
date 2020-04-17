@@ -4,7 +4,7 @@ use super::{Collider, Velocity};
 #[derive(Clone, Copy)]
 pub struct RigidBody {
     body: BodyType,
-    material: BodyMaterial,
+    material: SurfaceMaterial,
 }
 
 /// The type of a rigid body determines how it is treated in physics updates.
@@ -22,28 +22,21 @@ pub enum BodyType {
     },
 }
 
+/// Determines how the surface of a body responds to collisions.
+/// NOTE: work in progress, does not actually do anything at the moment!
 #[derive(Clone, Copy)]
-pub struct BodyMaterial {
-    /// restitution determines how "bouncy" a rigid body is,
-    /// in other words, how much energy is preserved in collisions.
+pub struct SurfaceMaterial {
+    /// How "bouncy" a body is, i.e. how much energy is preserved in collisions.
     pub restitution: f32,
-    // TODO: friction
-    /// Drag determines how much linear momentum is discarded between updates.
-    /// You can think of it as air resistance.
-    /// This should generally be non-zero to ensure numerical stability.
-    pub drag: f32,
-    /// Angular drag is like drag, but for angular momentum.
-    pub angular_drag: f32,
+    /// How much the body resists motion parallel to its surface.
+    pub friction: f32,
 }
 
-impl Default for BodyMaterial {
+impl Default for SurfaceMaterial {
     fn default() -> Self {
-        BodyMaterial {
-            // TODO: good defaults for these once they actually do something,
-            // also maybe several different presets
-            restitution: 0.75,
-            drag: 0.002,
-            angular_drag: 0.001,
+        SurfaceMaterial {
+            restitution: 0.2,
+            friction: 0.1,
         }
     }
 }
@@ -64,7 +57,7 @@ impl RigidBody {
                 mass: Mass::mass(mass),
                 moment_of_inertia: Mass::mass(collider.moment_of_inertia_coef() * mass),
             },
-            material: BodyMaterial::default(),
+            material: SurfaceMaterial::default(),
         }
     }
 
@@ -74,7 +67,7 @@ impl RigidBody {
             body: BodyType::Kinematic {
                 velocity: Velocity::default(),
             },
-            material: BodyMaterial::default(),
+            material: SurfaceMaterial::default(),
         }
     }
 
@@ -82,7 +75,7 @@ impl RigidBody {
     pub fn new_static() -> Self {
         RigidBody {
             body: BodyType::Static,
-            material: BodyMaterial::default(),
+            material: SurfaceMaterial::default(),
         }
     }
 
@@ -93,23 +86,13 @@ impl RigidBody {
         self
     }
 
-    pub fn with_drag(mut self, d: f32) -> Self {
-        self.material.drag = d;
-        self
-    }
-
-    pub fn with_angular_drag(mut self, d: f32) -> Self {
-        self.material.angular_drag = d;
-        self
-    }
-
     // accessors
 
     pub fn body(&self) -> &BodyType {
         &self.body
     }
 
-    pub fn material(&self) -> &BodyMaterial {
+    pub fn material(&self) -> &SurfaceMaterial {
         &self.material
     }
 
