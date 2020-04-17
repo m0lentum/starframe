@@ -84,7 +84,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         microprofile::flip();
         microprofile::scope!("update", "all");
         {
-            microprofile::scope!("update", "rigid body solver");
+            microprofile::scope!("update", "physics");
             let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
             let repulsor = phys::forcefield::PointGravity {
                 position: m::Point2::new(-1.0, -4.0),
@@ -103,7 +103,10 @@ impl core::space::FeatureSet for MainSpaceFeatures {
     fn draw(&mut self, space: core::SpaceReadAccess, ctx: &mut gx::RenderContext) {
         microprofile::scope!("render", "all");
 
-        self.shape.draw(&space, &self.tr, &self.camera, ctx);
+        {
+            microprofile::scope!("render", "shape");
+            self.shape.draw(&space, &self.tr, &self.camera, ctx);
+        }
     }
 }
 
@@ -201,10 +204,10 @@ impl game::GameState for State {
 }
 
 fn load_main_space(device: &wgpu::Device) -> Option<MainSpace> {
-    let mut space = MainSpace::with_capacity(150, device);
+    let mut space = MainSpace::with_capacity(200, device);
     space.create_pool::<recipes::Player>(5).unwrap();
-    space.create_pool::<recipes::Ball>(20).unwrap();
-    space.create_pool::<recipes::DynamicBlock>(20).unwrap();
+    space.create_pool::<recipes::Ball>(80).unwrap();
+    space.create_pool::<recipes::DynamicBlock>(80).unwrap();
 
     let dir = "./examples/testgame/scenes";
 

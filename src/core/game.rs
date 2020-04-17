@@ -1,5 +1,9 @@
-use std::thread;
-use std::time::{Duration, Instant};
+use std::{
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -93,18 +97,26 @@ impl GameLoop for LockstepLoop {
         let mut state = initial_state;
         let events = game.events.take().unwrap();
 
+        // A channel to acknowledge ticks from the event loop thread to the timer thread.
+        // This is necessary to prevent the timer from running ahead of the event loop
+        // and flooding it with events it doesn't have time to handle
+        let (ack_send, ack_recv) = mpsc::sync_channel(0);
+
         //
         // Timer loop
         //
         let event_proxy = events.create_proxy();
         let nanos_per_frame = self.nanos_per_frame;
         let timestep = self.dt;
-        let _timer_thread = std::thread::spawn(move || {
+        // return Option<()> so we can use `?` to return on error
+        let _timer_thread = std::thread::spawn(move || -> Option<()> {
             let mut acc = 0;
-            let mut prev_time = Instant::now();
+            let mut prev_frame_start = Instant::now();
             loop {
                 // if vsynced, pretend frame timing is exact (see blog post mentioned above)
-                let mut dt = prev_time.elapsed().as_nanos();
+                let mut dt = prev_frame_start.elapsed().as_nanos();
+                prev_frame_start = Instant::now();
+
                 if should_snap(dt, NANOS_120FPS) {
                     dt = NANOS_120FPS;
                 } else if should_snap(dt, NANOS_60FPS) {
@@ -125,21 +137,15 @@ impl GameLoop for LockstepLoop {
 
                 // tick
                 while acc >= nanos_per_frame {
-                    // TODO: wait for tick event to be handled by the game loop
-                    // to actually prevent spiral of death
-                    if let Err(_) = event_proxy.send_event(LoopEvent::Tick(timestep)) {
-                        return;
-                    }
+                    event_proxy.send_event(LoopEvent::Tick(timestep)).ok()?;
+                    ack_recv.recv().ok()?;
 
                     acc -= nanos_per_frame;
                 }
                 // draw
-                if let Err(_) = event_proxy.send_event(LoopEvent::Draw) {
-                    return;
-                }
+                event_proxy.send_event(LoopEvent::Draw).ok()?;
 
                 // sleep till next frame
-                prev_time = Instant::now();
                 thread::sleep(Duration::from_nanos((nanos_per_frame - acc) as u64));
             }
         });
@@ -154,6 +160,9 @@ impl GameLoop for LockstepLoop {
                         *control_flow = ControlFlow::Exit;
                     }
                     game.input.tick();
+                    if let Err(_) = ack_send.send(()) {
+                        *control_flow = ControlFlow::Exit;
+                    }
                 }
                 Event::UserEvent(LoopEvent::Draw) => {
                     // indirect like this so that we don't need to borrow window on the timer thread
