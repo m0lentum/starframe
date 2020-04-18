@@ -40,9 +40,7 @@ impl<S: Storage> Container<S> {
 
     /// Create an IterFragment that can be turned into a concrete iterator
     /// by joining it with an `IterBuilder`.
-    pub fn iter<'a>(
-        &'a self,
-    ) -> IterFragment<&'a S::Item, &'a hb::BitSet, impl FnMut(usize) -> &'a S::Item> {
+    pub fn iter<'a>(&'a self) -> IterFragment<&'a S::Item, impl FnMut(usize) -> &'a S::Item> {
         IterFragment {
             bits: &self.users,
             get: move |id| self.storage.get(id).expect(ITER_ERR_MSG),
@@ -52,7 +50,7 @@ impl<S: Storage> Container<S> {
     /// Create an IterFragment with mutable access to the components in this Container.
     pub fn iter_mut<'a>(
         &'a mut self,
-    ) -> IterFragment<&'a mut S::Item, &'a hb::BitSet, impl FnMut(usize) -> &'a mut S::Item> {
+    ) -> IterFragment<&'a mut S::Item, impl FnMut(usize) -> &'a mut S::Item> {
         let storage = &mut self.storage;
         IterFragment {
             bits: &self.users,
@@ -85,12 +83,11 @@ where
 
 /// Information required to add a `Container`'s content to an `IterBuilder`.
 /// See `IterBuilder` for a usage example.
-pub struct IterFragment<Item, Bits, Get>
+pub struct IterFragment<'a, Item, Get>
 where
-    Bits: hb::BitSetLike,
     Get: FnMut(usize) -> Item,
 {
-    bits: Bits,
+    bits: &'a hb::BitSet,
     get: Get,
 }
 
@@ -107,10 +104,11 @@ where
     ///     // ...
     /// }
     /// ```
-    pub fn and<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
+    pub fn and<'a, OI, OG: FnMut(usize) -> OI>(
         self,
-        other: IterFragment<OI, OB, OG>,
-    ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, OB>, impl FnMut(usize) -> (Item, OI)> {
+        other: IterFragment<'a, OI, OG>,
+    ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, &'a hb::BitSet>, impl FnMut(usize) -> (Item, OI)>
+    {
         let mut gets = (self.get, other.get);
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, other.bits),
@@ -128,10 +126,10 @@ where
     ///     // ...
     /// }
     /// ```
-    pub fn overlay<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
+    pub fn overlay<'a, OI, OG: FnMut(usize) -> OI>(
         self,
-        other: IterFragment<OI, OB, OG>,
-    ) -> IterBuilder<OI, hb::BitSetAnd<Bits, OB>, impl FnMut(usize) -> OI> {
+        other: IterFragment<'a, OI, OG>,
+    ) -> IterBuilder<OI, hb::BitSetAnd<Bits, &'a hb::BitSet>, impl FnMut(usize) -> OI> {
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, other.bits),
             get: other.get,
@@ -139,10 +137,14 @@ where
     }
 
     /// Filter out objects which have the component iterated by the given `IterFragment`.
-    pub fn not<OI, OB: hb::BitSetLike, OG: FnMut(usize) -> OI>(
+    pub fn not<'a, OI, OG: FnMut(usize) -> OI>(
         self,
-        other: IterFragment<OI, OB, OG>,
-    ) -> IterBuilder<Item, hb::BitSetAnd<Bits, hb::BitSetNot<OB>>, impl FnMut(usize) -> Item> {
+        other: IterFragment<'a, OI, OG>,
+    ) -> IterBuilder<
+        Item,
+        hb::BitSetAnd<Bits, hb::BitSetNot<&'a hb::BitSet>>,
+        impl FnMut(usize) -> Item,
+    > {
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, hb::BitSetNot(other.bits)),
             get: self.get,
