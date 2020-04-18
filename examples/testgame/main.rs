@@ -84,7 +84,6 @@ impl core::space::FeatureSet for MainSpaceFeatures {
     }
 
     fn tick(&mut self, mut space: core::SpaceAccess<'_>, game: &Game, dt: f32) {
-        microprofile::flip();
         microprofile::scope!("update", "all");
         {
             microprofile::scope!("update", "player");
@@ -120,6 +119,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
 
 impl game::GameState for State {
     fn tick(&mut self, dt: f32, game: &Game) -> Option<()> {
+        microprofile::flip();
         //
         // State-independent stuff
         //

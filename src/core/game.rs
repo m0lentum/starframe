@@ -111,11 +111,11 @@ impl GameLoop for LockstepLoop {
         // return Option<()> so we can use `?` to return on error
         let _timer_thread = std::thread::spawn(move || -> Option<()> {
             let mut acc = 0;
-            let mut prev_frame_start = Instant::now();
+            let mut frame_start_t = Instant::now();
             loop {
                 // if vsynced, pretend frame timing is exact (see blog post mentioned above)
-                let mut dt = prev_frame_start.elapsed().as_nanos();
-                prev_frame_start = Instant::now();
+                let mut dt = frame_start_t.elapsed().as_nanos();
+                frame_start_t = Instant::now();
 
                 if should_snap(dt, NANOS_120FPS) {
                     dt = NANOS_120FPS;
@@ -135,18 +135,31 @@ impl GameLoop for LockstepLoop {
                     acc = MAX_ACC_VALUE;
                 }
 
-                // tick
-                while acc >= nanos_per_frame {
-                    event_proxy.send_event(LoopEvent::Tick(timestep)).ok()?;
+                // if we're going too fast just wait, otherwise run as many ticks
+                // as have been passed since last update and draw once
+                if acc < nanos_per_frame {
+                    thread::sleep(Duration::from_nanos((nanos_per_frame - acc) as u64));
+                } else {
+                    while acc >= nanos_per_frame {
+                        event_proxy.send_event(LoopEvent::Tick(timestep)).ok()?;
+                        ack_recv.recv().ok()?;
+
+                        acc -= nanos_per_frame;
+                    }
+                    // draw
+                    event_proxy.send_event(LoopEvent::Draw).ok()?;
                     ack_recv.recv().ok()?;
 
-                    acc -= nanos_per_frame;
+                    let nanos_this_frame = frame_start_t.elapsed().as_nanos();
+                    // acc represents drift from the perfect tick timing that we should correct by
+                    let target_frame_duration = nanos_per_frame - acc;
+                    // sleep till next frame if we have time to kill
+                    if nanos_this_frame < target_frame_duration {
+                        thread::sleep(Duration::from_nanos(
+                            (target_frame_duration - nanos_this_frame) as u64,
+                        ));
+                    }
                 }
-                // draw
-                event_proxy.send_event(LoopEvent::Draw).ok()?;
-
-                // sleep till next frame
-                thread::sleep(Duration::from_nanos((nanos_per_frame - acc) as u64));
             }
         });
         //
@@ -165,11 +178,10 @@ impl GameLoop for LockstepLoop {
                     }
                 }
                 Event::UserEvent(LoopEvent::Draw) => {
-                    // indirect like this so that we don't need to borrow window on the timer thread
-                    game.window.request_redraw();
-                }
-                Event::RedrawRequested(_) => {
                     state.draw(&mut game.renderer);
+                    if let Err(_) = ack_send.send(()) {
+                        *control_flow = ControlFlow::Exit;
+                    }
                 }
                 Event::WindowEvent { event, .. } => {
                     game.input.track_window_event(&event);
