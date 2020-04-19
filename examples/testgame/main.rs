@@ -12,7 +12,7 @@ use moleengine::{
         inputcache::{Key, MouseButton},
         math as m,
     },
-    graphics as gx, physics2d as phys,
+    graphics as gx, physics as phys,
 };
 
 mod player;

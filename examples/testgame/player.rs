@@ -1,6 +1,6 @@
 use moleengine::{
     core::{self, container::Container, inputcache::Key, math as m, space, storage},
-    graphics as gx, physics2d as phys,
+    graphics as gx, physics as phys,
 };
 
 use crate::MainSpaceFeatures;

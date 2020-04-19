@@ -1,6 +1,6 @@
 use moleengine::{
     core::{self, math as m, space::MasterKey},
-    graphics as gx, physics2d as phys,
+    graphics as gx, physics as phys,
 };
 
 use super::MainSpaceFeatures;
