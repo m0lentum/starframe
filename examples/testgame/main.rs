@@ -88,7 +88,7 @@ impl core::space::FeatureSet for MainSpaceFeatures {
         {
             microprofile::scope!("update", "player");
             self.player
-                .tick(space.write(), &game.input, &self.tr, &self.physics);
+                .tick(space.write(), &game.input, &mut self.tr, &mut self.physics);
         }
         {
             microprofile::scope!("update", "physics");

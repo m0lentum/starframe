@@ -224,8 +224,12 @@ impl InputCache {
     // Getters
     //
 
+    pub fn get_key_state(&self, key: Key) -> &ElementState {
+        &self.get_key_state_and_age(key).state
+    }
+
     /// Get the state of a keyboard key along with the number of frames since it last changed.
-    pub fn get_key_state(&self, key: Key) -> &AgedState {
+    pub fn get_key_state_and_age(&self, key: Key) -> &AgedState {
         self.keyboard.get(&key).unwrap_or_else(|| {
             panic!(
                 "Key {:?} was not found in the tracking map. This is a bug in moleengine.",
@@ -237,7 +241,7 @@ impl InputCache {
     /// True if the requested key is currently pressed
     /// (for fewer frames than age_limit if provided), false otherwise.
     pub fn is_key_pressed(&self, key: Key, age_limit: Option<u32>) -> bool {
-        let AgedState { state, age } = self.get_key_state(key);
+        let AgedState { state, age } = self.get_key_state_and_age(key);
 
         if let ElementState::Pressed = state {
             if let Some(al) = age_limit {
@@ -247,6 +251,18 @@ impl InputCache {
             }
         } else {
             false
+        }
+    }
+
+    /// Get the state of an axis defined by a positive and negavite key.
+    /// Prefers the positive key if both are pressed.
+    pub fn get_key_axis_state(&self, pos_key: Key, neg_key: Key) -> KeyAxisState {
+        use ElementState::*;
+        use KeyAxisState::*;
+        match (self.get_key_state(pos_key), self.get_key_state(neg_key)) {
+            (Pressed, _) => Pos,
+            (Released, Pressed) => Neg,
+            (Released, Released) => Zero,
         }
     }
 
@@ -395,8 +411,8 @@ impl Default for InputCache {
 /// and time in number of ticks since last state change.
 #[derive(Clone, Copy)]
 pub struct AgedState {
-    state: ElementState,
-    age: u32,
+    pub state: ElementState,
+    pub age: u32,
 }
 
 impl AgedState {
@@ -411,7 +427,14 @@ impl Default for AgedState {
     }
 }
 
-//
+/// The state of an input axis defined by a positive and negative key.
+pub enum KeyAxisState {
+    Pos,
+    Zero,
+    Neg,
+}
+
+// Mouse
 
 /// Cursor position taking into account whether it's in the window or not.
 /// Usually you don't want to do anything if you're outside the window.

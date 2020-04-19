@@ -1,9 +1,15 @@
+use crate::MainSpaceFeatures;
 use moleengine::{
-    core::{self, container::Container, inputcache::Key, math as m, space, storage},
+    core::{
+        self,
+        container::Container,
+        inputcache::{Key, KeyAxisState},
+        math as m, space, storage,
+    },
     graphics as gx, physics as phys,
 };
 
-use crate::MainSpaceFeatures;
+use nalgebra as na;
 
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
@@ -36,11 +42,15 @@ impl core::Recipe<crate::MainSpaceFeatures> for PlayerRecipe {
 
 pub struct PlayerController {
     tags: Container<storage::NullStorage>,
+    base_move_speed: f32,
+    max_acceleration: f32,
 }
 impl PlayerController {
     pub fn new(init: space::FeatureSetInit) -> Self {
         PlayerController {
             tags: Container::new(init),
+            base_move_speed: 4.0,
+            max_acceleration: 8.0,
         }
     }
 
@@ -52,14 +62,45 @@ impl PlayerController {
         &mut self,
         space: space::SpaceWriteAccess<'_>,
         input: &core::InputCache,
-        trs: &m::TransformFeature,
-        phys_f: &phys::PhysicsFeature,
+        trs: &mut m::TransformFeature,
+        phys_f: &mut phys::PhysicsFeature,
     ) {
-        if input.is_key_pressed(Key::Right, Some(0)) {
-            println!("Yo sorry we're not really done here yet");
+        let target_hdir = match input.get_key_axis_state(Key::Right, Key::Left) {
+            KeyAxisState::Zero => 0.0,
+            KeyAxisState::Pos => 1.0,
+            KeyAxisState::Neg => -1.0,
+        };
+
+        for (player_body, player_tr) in space
+            .iter()
+            .overlay(self.tags.iter())
+            .overlay(phys_f.bodies.iter_mut())
+            .and(trs.iter_mut())
+        {
+            // move
+
+            let move_speed = self.base_move_speed;
+
+            let target_hvel = target_hdir * move_speed;
+            let player_vel = match player_body.velocity_mut() {
+                Some(vel) => vel,
+                None => continue,
+            };
+            let accel_needed = target_hvel - player_vel.linear.x;
+            let accel = accel_needed.min(self.max_acceleration);
+            player_vel.linear.x += accel;
+
+            // hacked up rotation locking
+
+            player_vel.angular = 0.0;
+            player_tr.isometry.rotation = na::UnitComplex::new(0.0);
+
+            // jump
+
+            if input.is_key_pressed(Key::LShift, Some(0)) {
+                // TODO: only on ground, double jump, custom curve
+                player_vel.linear.y = 8.0;
+            }
         }
-        let iter = space.iter().overlay(self.tags.iter()).overlay(trs.iter());
-        // TODO next time: get the body iterator from `phys_f`.
-        // See if a helper type to make returning iterator fragments less verbose is feasible
     }
 }

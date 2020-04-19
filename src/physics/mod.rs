@@ -49,10 +49,14 @@ impl Velocity {
 /// Everything you need to have rigid body physics in your Space.
 /// Put one of these inside your FeatureSet.
 ///
+/// Note: the containers for `bodies` and `colliders` are `pub` for easy access in game logic.
+/// You should probably not insert directly to them; use this feature's methods instead to get
+/// objects with a guaranteed well-defined meaning.
+///
 /// TODOC: usage example
 pub struct PhysicsFeature {
-    bodies: Container<storage::DenseVecStorage<RigidBody>>,
-    colliders: Container<storage::DenseVecStorage<Collider>>,
+    pub bodies: Container<storage::DenseVecStorage<RigidBody>>,
+    pub colliders: Container<storage::DenseVecStorage<Collider>>,
     impulse_cache: ImpulseCache,
     stabilisation_coef: f32,
     loop_condition: SolverLoopCondition,

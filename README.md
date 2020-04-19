@@ -44,11 +44,11 @@ There's not much to show here, but should you wish to check out my tiny test gam
 Disclaimer: these might be out of date - the test game changes in quick and dirty ways
 
 ```
+Arrows  - move the player
+LShift  - jump
 Space   - pause
-Enter   - load / reload level
+Enter   - reload level
 Esc     - close the game
 S       - spawn a box
-Arrows  - nudge the "player" box around
-PgUp/Dn - spin the "player" box
-LShift  - stop the "player" box from moving
+T       - spawn a ball
 ```
