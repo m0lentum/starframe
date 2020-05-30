@@ -1,8 +1,4 @@
-use std::{
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use winit::{
     event::{Event, WindowEvent},
@@ -16,7 +12,7 @@ pub struct Game {
     pub window: Window,
     pub renderer: crate::graphics::Renderer,
     // awkwardly moving the event loop around for the sake of clean API
-    events: Option<EventLoop<LoopEvent>>,
+    events: Option<EventLoop<()>>,
 }
 impl Game {
     /// Create the resources you need for a game.
@@ -24,7 +20,7 @@ impl Game {
     /// This does not immediately start the game, since you may want to
     /// use e.g. the renderer to initialize some resources first.
     pub fn init(window_b: WindowBuilder) -> Self {
-        let events: EventLoop<LoopEvent> = EventLoop::with_user_event();
+        let events: EventLoop<()> = EventLoop::new();
         let window = window_b.build(&events).expect("Failed to create window");
 
         let renderer = futures::executor::block_on(crate::graphics::Renderer::init(&window));
@@ -54,12 +50,6 @@ pub trait GameState: Sized + 'static {
 pub trait GameLoop {
     /// Start the loop. This is usually done via `Game::run`.
     fn run<S: GameState>(self, game: Game, initial_state: S);
-}
-
-/// We send custom events to the event loop to precisely control the framerate
-enum LoopEvent {
-    Tick(f32),
-    Draw,
 }
 
 // time snapping technique from Tyler Glaiel's blog post
@@ -97,90 +87,64 @@ impl GameLoop for LockstepLoop {
         let mut state = initial_state;
         let events = game.events.take().unwrap();
 
-        // A channel to acknowledge ticks from the event loop thread to the timer thread.
-        // This is necessary to prevent the timer from running ahead of the event loop
-        // and flooding it with events it doesn't have time to handle
-        let (ack_send, ack_recv) = mpsc::sync_channel(0);
-
-        //
-        // Timer loop
-        //
-        let event_proxy = events.create_proxy();
-        let nanos_per_frame = self.nanos_per_frame;
-        let timestep = self.dt;
-        // return Option<()> so we can use `?` to return on error
-        let _timer_thread = std::thread::spawn(move || -> Option<()> {
-            let mut acc = 0;
-            let mut frame_start_t = Instant::now();
-            loop {
-                // if vsynced, pretend frame timing is exact (see blog post mentioned above)
-                let mut dt = frame_start_t.elapsed().as_nanos();
-                frame_start_t = Instant::now();
-
-                if should_snap(dt, NANOS_120FPS) {
-                    dt = NANOS_120FPS;
-                } else if should_snap(dt, NANOS_60FPS) {
-                    dt = NANOS_60FPS;
-                } else if should_snap(dt, NANOS_30FPS) {
-                    dt = NANOS_30FPS;
-                } else if should_snap(dt, NANOS_20FPS) {
-                    dt = NANOS_20FPS;
-                } else if should_snap(dt, NANOS_15FPS) {
-                    dt = NANOS_15FPS;
-                }
-
-                acc += dt;
-                // limit acc to prevent spiral of death
-                if acc > MAX_ACC_VALUE {
-                    acc = MAX_ACC_VALUE;
-                }
-
-                // if we're going too fast just wait, otherwise run as many ticks
-                // as have been passed since last update and draw once
-                if acc < nanos_per_frame {
-                    thread::sleep(Duration::from_nanos((nanos_per_frame - acc) as u64));
-                } else {
-                    while acc >= nanos_per_frame {
-                        event_proxy.send_event(LoopEvent::Tick(timestep)).ok()?;
-                        ack_recv.recv().ok()?;
-
-                        acc -= nanos_per_frame;
-                    }
-                    // draw
-                    event_proxy.send_event(LoopEvent::Draw).ok()?;
-                    ack_recv.recv().ok()?;
-
-                    let nanos_this_frame = frame_start_t.elapsed().as_nanos();
-                    // acc represents drift from the perfect tick timing that we should correct by
-                    let target_frame_duration = nanos_per_frame - acc;
-                    // sleep till next frame if we have time to kill
-                    if nanos_this_frame < target_frame_duration {
-                        thread::sleep(Duration::from_nanos(
-                            (target_frame_duration - nanos_this_frame) as u64,
-                        ));
-                    }
-                }
-            }
-        });
-        //
-        // Event loop
-        //
+        let mut frame_start_t = Instant::now();
+        let mut acc = 0;
         events.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
-                Event::UserEvent(LoopEvent::Tick(dt)) => {
-                    if let None = state.tick(dt, &game) {
-                        *control_flow = ControlFlow::Exit;
+                Event::MainEventsCleared => {
+                    // if vsynced, pretend frame timing is exact (see blog post mentioned above)
+                    let mut dt = frame_start_t.elapsed().as_nanos();
+                    if should_snap(dt, NANOS_120FPS) {
+                        dt = NANOS_120FPS;
+                        acc = 0;
+                    } else if should_snap(dt, NANOS_60FPS) {
+                        dt = NANOS_60FPS;
+                        acc = 0;
+                    } else if should_snap(dt, NANOS_30FPS) {
+                        dt = NANOS_30FPS;
+                        acc = 0;
+                    } else if should_snap(dt, NANOS_20FPS) {
+                        dt = NANOS_20FPS;
+                        acc = 0;
+                    } else if should_snap(dt, NANOS_15FPS) {
+                        dt = NANOS_15FPS;
+                        acc = 0;
                     }
-                    game.input.tick();
-                    if let Err(_) = ack_send.send(()) {
-                        *control_flow = ControlFlow::Exit;
-                    }
-                }
-                Event::UserEvent(LoopEvent::Draw) => {
-                    state.draw(&mut game.renderer);
-                    if let Err(_) = ack_send.send(()) {
-                        *control_flow = ControlFlow::Exit;
+
+                    // if we're going too fast just wait, otherwise run as many ticks
+                    // as have been passed since last update and draw once
+                    if dt >= self.nanos_per_frame - acc {
+                        frame_start_t = Instant::now();
+
+                        acc += dt;
+                        // limit acc to prevent spiral of death
+                        if acc > MAX_ACC_VALUE {
+                            acc = MAX_ACC_VALUE;
+                        }
+
+                        while acc >= self.nanos_per_frame {
+                            if let None = state.tick(self.dt, &game) {
+                                *control_flow = ControlFlow::Exit;
+                                return;
+                            }
+                            game.input.tick();
+                            acc -= self.nanos_per_frame;
+                        }
+
+                        state.draw(&mut game.renderer);
+
+                        let nanos_this_frame = frame_start_t.elapsed().as_nanos();
+                        // acc represents drift from the perfect tick timing that we should correct by
+                        let target_frame_duration = self.nanos_per_frame - acc;
+                        // sleep till next frame if we have time to kill
+                        if nanos_this_frame < target_frame_duration {
+                            let next_frame_t =
+                                frame_start_t + Duration::from_nanos(target_frame_duration as u64);
+                            *control_flow = ControlFlow::WaitUntil(next_frame_t);
+                        } else {
+                            *control_flow = ControlFlow::Poll;
+                        }
                     }
                 }
                 Event::WindowEvent { event, .. } => {
