@@ -1,7 +1,7 @@
 use crate::{
     core::{
         math as m,
-        space::{FeatureSetInit, MasterKey, SpaceReadAccess},
+        space::{CreationId, FeatureSetInit, SpaceReadAccess},
         storage, Container, Transform, TransformFeature,
     },
     graphics::{self as gx, util::GlslMat3},
@@ -324,7 +324,7 @@ impl ShapeFeature {
     }
 
     /// Add a Shape to an object.
-    pub fn add(&mut self, key: MasterKey, shape: Shape) {
-        self.shapes.insert(key, shape);
+    pub fn add(&mut self, id: CreationId, shape: Shape) {
+        self.shapes.insert(id, shape);
     }
 }

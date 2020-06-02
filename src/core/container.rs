@@ -3,7 +3,7 @@
 //! Heavily inspired by [`specs`](https://github.com/amethyst/specs).
 use hibitset as hb;
 
-use super::space::MasterKey;
+use super::space::{CreationId, Id};
 use super::storage::Storage;
 
 const ITER_ERR_MSG: &'static str =
@@ -31,11 +31,33 @@ impl<S: Storage> Container<S> {
 
     /// Insert a component into the Container.
     ///
-    /// This requires a MasterKey, which you can get from the containing `Space` by creating an object.
+    /// This requires a `CreationId`, which you can get from the containing `Space` by creating an object.
     /// See the `Space` documentation for usage examples.
-    pub fn insert(&mut self, key: MasterKey, comp: S::Item) {
-        self.users.add(key.id as u32);
-        self.storage.insert(key.id, comp)
+    pub fn insert(&mut self, id: CreationId, comp: S::Item) {
+        self.users.add(id.0 as u32);
+        self.storage.insert(id.0, comp)
+    }
+
+    /// Get an immutable reference to a component of a specific object, if it has it.
+    pub fn get(&self, id: impl Into<Id>) -> Option<&S::Item> {
+        let id = id.into().0;
+        if self.users.contains(id as u32) {
+            // TODO: storage should not return Nones
+            Some(self.storage.get(id).unwrap())
+        } else {
+            None
+        }
+    }
+
+    /// Get a mutable reference to a component of a specific object, if it has it.
+    pub fn get_mut(&mut self, id: impl Into<Id>) -> Option<&mut S::Item> {
+        let id = id.into().0;
+        if self.users.contains(id as u32) {
+            // TODO: storage should not return Nones
+            Some(self.storage.get_mut(id).unwrap())
+        } else {
+            None
+        }
     }
 
     /// Create an IterFragment that can be turned into a concrete iterator

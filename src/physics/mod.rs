@@ -1,6 +1,6 @@
 use crate::core::{
     space::SpaceReadAccess,
-    space::{FeatureSetInit, MasterKey},
+    space::{CreationId, FeatureSetInit},
     storage, Container, Transform, TransformFeature,
 };
 use std::collections::HashMap;
@@ -93,9 +93,9 @@ impl PhysicsFeature {
     }
 
     /// Add a rigid body component to an object.
-    pub fn add_body(&mut self, key: MasterKey, body: RigidBody, collider: Collider) {
-        self.bodies.insert(key, body);
-        self.colliders.insert(key, collider);
+    pub fn add_body(&mut self, id: CreationId, body: RigidBody, collider: Collider) {
+        self.bodies.insert(id, body);
+        self.colliders.insert(id, collider);
     }
 
     /// Detect collisions, solve constraint forces and move bodies.

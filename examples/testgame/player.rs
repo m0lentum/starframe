@@ -18,11 +18,11 @@ pub struct PlayerRecipe {
 }
 
 impl core::Recipe<crate::MainSpaceFeatures> for PlayerRecipe {
-    fn spawn_vars(&self, key: space::MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform.into());
+    fn spawn_vars(&self, id: space::CreationId, feat: &mut MainSpaceFeatures) {
+        feat.tr.insert(id, self.transform.into());
     }
 
-    fn spawn_consts(key: space::MasterKey, feat: &mut MainSpaceFeatures) {
+    fn spawn_consts(key: space::CreationId, feat: &mut MainSpaceFeatures) {
         const WIDTH: f32 = 0.2;
         const HEIGHT: f32 = 0.4;
         feat.shape.add(
@@ -54,7 +54,7 @@ impl PlayerController {
         }
     }
 
-    pub fn add(&mut self, key: space::MasterKey) {
+    pub fn add(&mut self, key: space::CreationId) {
         self.tags.insert(key, ())
     }
 

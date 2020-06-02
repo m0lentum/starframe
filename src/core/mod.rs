@@ -6,6 +6,8 @@ pub use inputcache::InputCache;
 
 pub mod space;
 pub use space::{Space, SpaceAccess, SpaceReadAccess, SpaceWriteAccess};
+pub mod event;
+pub use event::Event;
 
 pub mod container;
 pub use container::Container;

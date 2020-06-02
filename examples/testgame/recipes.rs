@@ -1,5 +1,5 @@
 use moleengine::{
-    core::{self, math as m, space::MasterKey},
+    core::{self, math as m, space::CreationId},
     graphics as gx, physics as phys,
 };
 
@@ -23,15 +23,15 @@ pub struct StaticBlock {
 }
 
 impl core::Recipe<MainSpaceFeatures> for StaticBlock {
-    fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform.into());
+    fn spawn_vars(&self, id: CreationId, feat: &mut MainSpaceFeatures) {
+        feat.tr.insert(id, self.transform.into());
         feat.physics.add_body(
-            key,
+            id,
             phys::RigidBody::new_static(),
             phys::Collider::new_rect(self.width, self.height),
         );
         feat.shape.add(
-            key,
+            id,
             gx::Shape::Rect {
                 w: self.width,
                 h: self.height,
@@ -49,13 +49,13 @@ pub struct DynamicBlock {
 }
 
 impl core::Recipe<MainSpaceFeatures> for DynamicBlock {
-    fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(key, self.transform.into());
+    fn spawn_vars(&self, id: CreationId, feat: &mut MainSpaceFeatures) {
+        feat.tr.insert(id, self.transform.into());
         let collider = phys::Collider::new_rect(self.width, self.height);
         feat.physics
-            .add_body(key, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
+            .add_body(id, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
         feat.shape.add(
-            key,
+            id,
             gx::Shape::Rect {
                 w: self.width,
                 h: self.height,
@@ -72,14 +72,14 @@ pub struct Ball {
 }
 
 impl core::Recipe<MainSpaceFeatures> for Ball {
-    fn spawn_vars(&self, key: MasterKey, feat: &mut MainSpaceFeatures) {
+    fn spawn_vars(&self, id: CreationId, feat: &mut MainSpaceFeatures) {
         feat.tr
-            .insert(key, m::TransformBuilder::from(self.position).into());
+            .insert(id, m::TransformBuilder::from(self.position).into());
         let collider = phys::Collider::new_circle(self.radius);
         feat.physics
-            .add_body(key, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
+            .add_body(id, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
         feat.shape.add(
-            key,
+            id,
             gx::Shape::Circle {
                 r: self.radius,
                 points: 24,
