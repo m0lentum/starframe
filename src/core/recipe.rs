@@ -4,7 +4,6 @@ use super::space::FeatureSet;
 pub trait Recipe<F: super::space::FeatureSet>: 'static {
     fn spawn_vars(&self, id: super::space::CreationId, feat: &mut F);
     fn spawn_consts(_id: super::space::CreationId, _feat: &mut F) {}
-    fn handle_event(_id: super::space::Id, _evt: super::Event, _space: &mut super::Space<F>) {}
 }
 
 /// Objects that can read recipes from RON and apply them to a Space.

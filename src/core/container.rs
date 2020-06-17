@@ -60,19 +60,24 @@ impl<S: Storage> Container<S> {
         }
     }
 
+    /// Returns whether or not the given object has the component stored in this Container.
+    pub fn has(&self, id: impl Into<Id>) -> bool {
+        self.users.contains(id.into().0 as u32)
+    }
+
     /// Create an IterFragment that can be turned into a concrete iterator
     /// by joining it with an `IterBuilder`.
-    pub fn iter<'a>(&'a self) -> IterFragment<&'a S::Item, impl FnMut(usize) -> &'a S::Item> {
+    pub fn iter<'a>(&'a self) -> IterFragment<&'a S::Item, impl FnMut(Id) -> &'a S::Item> {
         IterFragment {
             bits: &self.users,
-            get: move |id| self.storage.get(id).expect(ITER_ERR_MSG),
+            get: move |id| self.storage.get(id.0).expect(ITER_ERR_MSG),
         }
     }
 
     /// Create an IterFragment with mutable access to the components in this Container.
     pub fn iter_mut<'a>(
         &'a mut self,
-    ) -> IterFragment<&'a mut S::Item, impl FnMut(usize) -> &'a mut S::Item> {
+    ) -> IterFragment<&'a mut S::Item, impl FnMut(Id) -> &'a mut S::Item> {
         let storage = &mut self.storage;
         IterFragment {
             bits: &self.users,
@@ -81,7 +86,7 @@ impl<S: Storage> Container<S> {
                 // so we can safely alias mutable references here
                 let storage_ptr: *mut _ = storage;
                 let storage_ref = unsafe { storage_ptr.as_mut().unwrap() };
-                storage_ref.get_mut(id).expect(ITER_ERR_MSG)
+                storage_ref.get_mut(id.0).expect(ITER_ERR_MSG)
             },
         }
     }
@@ -97,7 +102,7 @@ impl<S: Storage> Container<S> {
 pub struct IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(usize) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     pub(crate) bits: Bits,
     pub(crate) get: Get,
@@ -107,7 +112,7 @@ where
 /// See `IterBuilder` for a usage example.
 pub struct IterFragment<'a, Item, Get>
 where
-    Get: FnMut(usize) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     bits: &'a hb::BitSet,
     get: Get,
@@ -116,7 +121,7 @@ where
 impl<Item, Bits, Get> IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(usize) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     /// Iterate only over objects that have the features of both this `IterBuilder`
     /// and the given `IterFragment`, producing pairs of both.
@@ -126,10 +131,10 @@ where
     ///     // ...
     /// }
     /// ```
-    pub fn and<'a, OI, OG: FnMut(usize) -> OI>(
+    pub fn and<'a, OI, OG: FnMut(Id) -> OI>(
         self,
         other: IterFragment<'a, OI, OG>,
-    ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, &'a hb::BitSet>, impl FnMut(usize) -> (Item, OI)>
+    ) -> IterBuilder<(Item, OI), hb::BitSetAnd<Bits, &'a hb::BitSet>, impl FnMut(Id) -> (Item, OI)>
     {
         let mut gets = (self.get, other.get);
         IterBuilder {
@@ -148,10 +153,10 @@ where
     ///     // ...
     /// }
     /// ```
-    pub fn overlay<'a, OI, OG: FnMut(usize) -> OI>(
+    pub fn overlay<'a, OI, OG: FnMut(Id) -> OI>(
         self,
         other: IterFragment<'a, OI, OG>,
-    ) -> IterBuilder<OI, hb::BitSetAnd<Bits, &'a hb::BitSet>, impl FnMut(usize) -> OI> {
+    ) -> IterBuilder<OI, hb::BitSetAnd<Bits, &'a hb::BitSet>, impl FnMut(Id) -> OI> {
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, other.bits),
             get: other.get,
@@ -159,14 +164,11 @@ where
     }
 
     /// Filter out objects which have the component iterated by the given `IterFragment`.
-    pub fn not<'a, OI, OG: FnMut(usize) -> OI>(
+    pub fn not<'a, OI, OG: FnMut(Id) -> OI>(
         self,
         other: IterFragment<'a, OI, OG>,
-    ) -> IterBuilder<
-        Item,
-        hb::BitSetAnd<Bits, hb::BitSetNot<&'a hb::BitSet>>,
-        impl FnMut(usize) -> Item,
-    > {
+    ) -> IterBuilder<Item, hb::BitSetAnd<Bits, hb::BitSetNot<&'a hb::BitSet>>, impl FnMut(Id) -> Item>
+    {
         IterBuilder {
             bits: hb::BitSetAnd(self.bits, hb::BitSetNot(other.bits)),
             get: self.get,
@@ -174,11 +176,11 @@ where
     }
 
     /// Also bundle the id of the object in question with the components.
-    pub fn with_ids(self) -> IterBuilder<(Item, usize), Bits, impl FnMut(usize) -> (Item, usize)> {
+    pub fn with_ids(self) -> IterBuilder<(Item, Id), Bits, impl FnMut(Id) -> (Item, Id)> {
         let mut get = self.get;
         IterBuilder {
             bits: self.bits,
-            get: move |id| (get(id), id as usize),
+            get: move |id| (get(id), id),
         }
     }
 
@@ -191,7 +193,7 @@ where
 impl<Item, Bits, Get> IntoIterator for IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(usize) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     type Item = Item;
     type IntoIter = Iter<Item, Bits, Get>;
@@ -207,7 +209,7 @@ where
 pub struct Iter<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(usize) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     bit_iter: hb::BitIter<Bits>,
     get: Get,
@@ -215,11 +217,11 @@ where
 impl<Item, Bits, Get> Iterator for Iter<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
-    Get: FnMut(usize) -> Item,
+    Get: FnMut(Id) -> Item,
 {
     type Item = Item;
     fn next(&mut self) -> Option<Self::Item> {
-        let id = self.bit_iter.next()? as usize;
+        let id = Id(self.bit_iter.next()? as usize);
         Some((self.get)(id))
     }
 }

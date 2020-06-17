@@ -1,6 +1,6 @@
 use crate::core::{
     space::SpaceReadAccess,
-    space::{CreationId, FeatureSetInit},
+    space::{CreationId, FeatureSetInit, Id},
     storage, Container, Transform, TransformFeature,
 };
 use std::collections::HashMap;
@@ -46,6 +46,25 @@ impl Velocity {
     }
 }
 
+/// Events produced by the physics system when two physics objects collide.
+#[derive(Clone, Copy, Debug)]
+pub struct ContactEvent {
+    pub source: Id,
+    pub other: Id,
+    pub info: ContactInfo,
+}
+
+/// Detailed information about a contact event.
+#[derive(Clone, Copy, Debug)]
+pub struct ContactInfo {
+    /// The point in world space where the collision occurred.
+    pub point: m::Point2,
+    /// The normal of the colliding plane, facing towards this object.
+    pub normal: na::Unit<m::Vec2>,
+    /// The strength of the impulse caused by the contact.
+    pub impulse: f32,
+}
+
 /// Everything you need to have rigid body physics in your Space.
 /// Put one of these inside your FeatureSet.
 ///
@@ -68,7 +87,6 @@ impl PhysicsFeature {
             bodies: Container::new(init),
             colliders: Container::new(init),
             impulse_cache: ImpulseCache::new(),
-            // TODO: ability to change these
             stabilisation_coef: 0.1,
             loop_condition: SolverLoopCondition {
                 max_loops: 10,
@@ -106,12 +124,12 @@ impl PhysicsFeature {
         trs: &mut TransformFeature,
         dt: f32,
         forcefield: Option<&impl ForceField>,
-    ) {
+    ) -> Vec<ContactEvent> {
         struct Item<'a> {
             body: &'a mut RigidBody,
             coll: &'a Collider,
             tr: &'a mut Transform,
-            id: usize,
+            id: Id,
         }
         let mut items: Vec<Item<'_>> = space
             .iter()
@@ -151,6 +169,7 @@ impl PhysicsFeature {
                     contact_constraints.push(WorkingConstraint {
                         indices: [i1, i2],
                         normal: contact.normal,
+                        point: contact.point,
                         offsets: contact.offsets,
                         impulse_bounds: (Some(0.0), None),
                         bias: contact.depth * (1.0 / dt) * self.stabilisation_coef,
@@ -289,10 +308,36 @@ impl PhysicsFeature {
                         acc.inv_mom_inertias[1] * clamped_impulse * acc.offsets_cross_normals[1];
                 }
             }
-
-            // store impulses for next frame's warm start
-            self.impulse_cache.replace(&accumulators);
         }
+
+        //
+        // Post-solve bookkeeping
+        //
+
+        // push events
+        let mut events = Vec::new();
+        for acc in &accumulators {
+            events.push(ContactEvent {
+                source: acc.ids[0],
+                other: acc.ids[1],
+                info: ContactInfo {
+                    point: acc.constraint.point,
+                    normal: -acc.constraint.normal,
+                    impulse: acc.total_impulse,
+                },
+            });
+            events.push(ContactEvent {
+                source: acc.ids[1],
+                other: acc.ids[0],
+                info: ContactInfo {
+                    point: acc.constraint.point,
+                    normal: acc.constraint.normal,
+                    impulse: acc.total_impulse,
+                },
+            });
+        }
+        // store impulses for next frame's warm start
+        self.impulse_cache.replace(&accumulators);
 
         //
         // Apply movement
@@ -306,6 +351,8 @@ impl PhysicsFeature {
                     .append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
             }
         }
+
+        events
     }
 }
 
@@ -315,6 +362,7 @@ impl PhysicsFeature {
 struct WorkingConstraint {
     indices: [usize; 2],
     normal: na::Unit<m::Vec2>,
+    point: m::Point2,
     offsets: [m::Vec2; 2],
     impulse_bounds: (Option<f32>, Option<f32>),
     bias: f32,
@@ -323,7 +371,7 @@ struct WorkingConstraint {
 #[derive(Debug)]
 struct ConstraintAccumulator {
     constraint: WorkingConstraint,
-    ids: [usize; 2],
+    ids: [Id; 2],
     inv_masses: [f32; 2],
     inv_mom_inertias: [f32; 2],
     inv_masses_sum: f32,
@@ -353,15 +401,15 @@ impl SolverLoopCondition {
 
 /// A container to store impulses across updates,
 /// used for warm starting the solver algorithm.
-pub struct ImpulseCache(HashMap<[usize; 2], f32>);
+pub struct ImpulseCache(HashMap<[Id; 2], f32>);
 
 impl ImpulseCache {
     pub fn new() -> Self {
         ImpulseCache(HashMap::new())
     }
 
-    pub(self) fn get(&self, ids: [usize; 2]) -> Option<&f32> {
-        if ids[0] < ids[1] {
+    pub(self) fn get(&self, ids: [Id; 2]) -> Option<&f32> {
+        if ids[0].0 < ids[1].0 {
             self.0.get(&ids)
         } else {
             self.0.get(&[ids[1], ids[0]])
@@ -375,7 +423,7 @@ impl ImpulseCache {
         self.0 = items
             .into_iter()
             .map(|acc| {
-                let ids = if acc.ids[0] < acc.ids[1] {
+                let ids = if acc.ids[0].0 < acc.ids[1].0 {
                     acc.ids
                 } else {
                     [acc.ids[1], acc.ids[0]]

@@ -103,4 +103,12 @@ impl PlayerController {
             }
         }
     }
+
+    pub fn handle_collision(&self, evt: &phys::ContactEvent) {
+        if self.tags.has(evt.source) {
+            println!("Player collided with {:?}", evt.other);
+            // TODO: spawn bullets here
+            // (requires some modifications to Space first to do ergonomically)
+        }
+    }
 }

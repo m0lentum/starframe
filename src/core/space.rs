@@ -39,11 +39,11 @@ pub struct FeatureSetInit<'a> {
 
 /// A handle to an object that can be used to add new components to it.
 /// Only given out during object creation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct CreationId(pub(crate) usize);
 /// A handle to an object that can only be used to modify existing components,
 /// not create new ones.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Id(pub(crate) usize);
 impl From<CreationId> for Id {
     fn from(other: CreationId) -> Self {
@@ -64,7 +64,6 @@ impl<'a> SpaceAccess<'a> {
         SpaceWriteAccess {
             enabled_ids: self.0.enabled_ids,
             reserved_ids: self.0.reserved_ids,
-            event_queue: self.0.event_queue,
         }
     }
 }
@@ -79,7 +78,7 @@ pub struct SpaceReadAccess<'a> {
 impl<'a> SpaceReadAccess<'a> {
     /// Create an iterator over all alive objects in the space.
     /// Combine with container iterators to get useful information out of it.
-    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(usize) -> ()> {
+    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(Id) -> ()> {
         cont::IterBuilder {
             bits: self.enabled_ids,
             get: |_| (),
@@ -91,24 +90,18 @@ impl<'a> SpaceReadAccess<'a> {
 pub struct SpaceWriteAccess<'a> {
     reserved_ids: &'a mut hb::BitSet,
     enabled_ids: &'a mut hb::BitSet,
-    event_queue: &'a mut super::event::EventQueue,
 }
 
 impl<'a> SpaceWriteAccess<'a> {
     /// Create an iterator over all alive objects in the space.
     /// Combine with container iterators to get useful information out of it.
-    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(usize) -> ()> {
+    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(Id) -> ()> {
         cont::IterBuilder {
             bits: self.enabled_ids,
             get: |_| (),
         }
     }
-    pub fn push_event(&mut self, key: Id, evt: super::event::Event) {
-        self.event_queue.push(key, evt);
-    }
 }
-
-pub type EventHandler<F> = fn(Id, super::event::Event, &mut Space<F>);
 
 /// An environment where game objects live.
 ///
@@ -121,8 +114,6 @@ pub struct Space<F: FeatureSet> {
     next_obj_id: usize,
     capacity: usize,
     pools: AnyMap,
-    event_queue: super::event::EventQueue,
-    event_handlers: Vec<EventHandler<F>>,
     pub features: F,
 }
 
@@ -130,19 +121,14 @@ impl<F: FeatureSet> Space<F> {
     /// Create a Space with a a given maximum capacity.
     ///
     /// Currently this capacity is a hard limit; Spaces do not grow.
-    /// The FeatureSet's `init` and `create_pools` functions are called here.
+    /// The FeatureSet's `init` function is called here.
     pub fn with_capacity(capacity: usize, device: &wgpu::Device) -> Self {
-        let mut event_handlers: Vec<EventHandler<F>> = Vec::new();
-        // fill with functions that do nothing
-        event_handlers.resize_with(capacity, || (|_, _, _| {}));
         let mut space = Space {
             reserved_ids: hb::BitSet::with_capacity(capacity as u32),
             enabled_ids: hb::BitSet::with_capacity(capacity as u32),
             next_obj_id: 0,
             capacity,
             pools: AnyMap::new(),
-            event_queue: super::event::EventQueue::new(),
-            event_handlers: event_handlers,
             features: F::init(FeatureSetInit { capacity, device }),
         };
         // find first index after what pools reserved and start accepting new objects from there
@@ -183,7 +169,6 @@ impl<F: FeatureSet> Space<F> {
     fn create_object_at(&mut self, id: usize) {
         self.reserved_ids.add(id as u32);
         self.enabled_ids.add(id as u32);
-        self.event_handlers[id] = (|_, _, _| {}) as EventHandler<F>;
     }
 
     /// Create a pool for a specific Recipe in this Space.
@@ -225,7 +210,6 @@ impl<F: FeatureSet> Space<F> {
                 R::spawn_consts(a, feat);
                 recipe.spawn_vars(a, feat);
             })?;
-            self.event_handlers[id.0] = R::handle_event;
             Some(id)
         }
     }
@@ -261,26 +245,8 @@ impl<F: FeatureSet> Space<F> {
         let access = SpaceAccess(SpaceWriteAccess {
             reserved_ids: &mut self.reserved_ids,
             enabled_ids: &mut self.enabled_ids,
-            event_queue: &mut self.event_queue,
         });
         f(&mut self.features, access);
-    }
-
-    pub fn run_events(&mut self) {
-        if self.event_queue.is_empty() {
-            return;
-        }
-
-        // take the events accumulated so far out of the space and put in a new queue
-        let mut events = super::event::EventQueue::new();
-        std::mem::swap(&mut events, &mut self.event_queue);
-        let iter = events.drain();
-        for (id, evt) in iter {
-            self.event_handlers[id.0](id, evt, self);
-        }
-
-        // if events generated more events (e.g. killed some objects), go again
-        self.run_events();
     }
 }
 
