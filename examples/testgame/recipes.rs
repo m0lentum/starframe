@@ -1,11 +1,11 @@
-use moleengine::{
+use starframe::{
     core::{self, math as m, space::CreationId},
     graphics as gx, physics as phys,
 };
 
 use super::MainSpaceFeatures;
 
-moleengine::core::recipes! {
+starframe::core::recipes! {
     MainSpaceFeatures,
     Player,
     StaticBlock,

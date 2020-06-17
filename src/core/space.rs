@@ -1,5 +1,5 @@
 //! A Space is an environment that manages game objects,
-//! and the only way you can create objects at all in MoleEngine.
+//! and the only way you can create objects at all in Starframe.
 //! It implements a variant of the Entity-Component-System pattern.
 //!
 //! Component storage and Systems are bundled into Features,

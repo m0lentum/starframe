@@ -1,7 +1,10 @@
-MoleEngine is a general-purpose 2D game engine written in Rust as a solo hobby project.
-Its primary focuses are cool physics tools and a simple interface that allows for quick prototyping.
+# What the heck is even that?
 
-[Introductory blog post](https://moletrooper.github.io/blog/2018/09/moleengine-part-0-introduction/)
+In disc golf, a starframe occurs when every player in a group scores a birdie on the same hole.
+
+On the other hand, Starframe is a general-purpose 2D game engine written in Rust as a solo hobby project.
+Its design is driven by sidescrolling action games and cool physics tools for them,
+but its core building blocks should generalize to other styles of game quite well.
 
 # Current features
 
@@ -13,7 +16,7 @@ Its primary focuses are cool physics tools and a simple interface that allows fo
 - Graphics
   - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
 
-See the [issues](https://github.com/MoleTrooper/moleengine/issues) for notes on future developments.
+See the [issues](https://github.com/MoleTrooper/starframe/issues) for notes on future developments.
 
 # Blog
 

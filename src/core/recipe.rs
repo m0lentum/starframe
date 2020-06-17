@@ -26,15 +26,15 @@ macro_rules! recipes {
             $($recipe_type($recipe_type),)*
         }
 
-        impl moleengine::core::recipe::DeserializeRecipes<$feat_type> for Recipes {
+        impl starframe::core::recipe::DeserializeRecipes<$feat_type> for Recipes {
             fn deserialize_into_space<'a, 'de, D>(
                 deserializer: D,
-                space: &'a mut moleengine::core::Space<$feat_type>,
+                space: &'a mut starframe::core::Space<$feat_type>,
             ) -> Result<(), D::Error>
             where
                 D: serde::Deserializer<'de>,
             {
-                struct RecipeVisitor<'a>(&'a mut moleengine::core::Space<$feat_type>);
+                struct RecipeVisitor<'a>(&'a mut starframe::core::Space<$feat_type>);
 
                 impl<'a, 'de> serde::de::Visitor<'de> for RecipeVisitor<'a> {
                     type Value = ();

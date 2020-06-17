@@ -5,7 +5,7 @@ extern crate microprofile;
 
 use rand::{distributions as distr, distributions::Distribution};
 
-use moleengine::{
+use starframe::{
     core::{
         self,
         game::{self, Game},
@@ -24,7 +24,7 @@ fn main() {
 
     let game = Game::init(
         winit::window::WindowBuilder::new()
-            .with_title("MoleEngine test")
+            .with_title("starframe test")
             .with_inner_size(winit::dpi::LogicalSize {
                 width: 800.0,
                 height: 600.0,

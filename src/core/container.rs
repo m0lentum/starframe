@@ -7,7 +7,7 @@ use super::space::{CreationId, Id};
 use super::storage::Storage;
 
 const ITER_ERR_MSG: &'static str =
-    "A component didn't exist where it should have. This is almost certainly an error in moleengine.";
+    "A component didn't exist where it should have. This is almost certainly an error in starframe.";
 
 /// A container for a specific type of component,
 /// typically belonging to a feature of a Space.

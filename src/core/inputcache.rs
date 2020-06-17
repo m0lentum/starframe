@@ -232,7 +232,7 @@ impl InputCache {
     pub fn get_key_state_and_age(&self, key: Key) -> &AgedState {
         self.keyboard.get(&key).unwrap_or_else(|| {
             panic!(
-                "Key {:?} was not found in the tracking map. This is a bug in moleengine.",
+                "Key {:?} was not found in the tracking map. This is a bug in starframe.",
                 key
             )
         })
