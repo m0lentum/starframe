@@ -5,10 +5,10 @@ pub mod inputcache;
 pub use inputcache::InputCache;
 
 pub mod space;
-pub use space::{Space, SpaceAccess, SpaceReadAccess, SpaceWriteAccess};
+pub use space::Space;
 
 pub mod container;
-pub use container::Container;
+pub use container::{Container, ContainerInit};
 pub mod storage;
 
 pub mod recipe;

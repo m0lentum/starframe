@@ -1,9 +1,11 @@
 //! Data structures for component storage inside of `Container`s.
 
+use super::container::ContainerInit;
+
 /// Trait allowing generic access to storage types.
 pub trait Storage {
     type Item;
-    fn new(init: super::space::FeatureSetInit) -> Self;
+    fn new(init: super::container::ContainerInit) -> Self;
     fn insert(&mut self, id: usize, component: Self::Item);
     fn get(&self, id: usize) -> Option<&Self::Item>;
     fn get_mut(&mut self, id: usize) -> Option<&mut Self::Item>;
@@ -18,7 +20,7 @@ pub struct DenseVecStorage<T> {
 }
 impl<T> Storage for DenseVecStorage<T> {
     type Item = T;
-    fn new(init: super::space::FeatureSetInit) -> Self {
+    fn new(init: ContainerInit) -> Self {
         let mut indices = Vec::new();
         indices.resize_with(init.capacity, || None);
         let items = Vec::with_capacity(init.capacity);
@@ -49,7 +51,7 @@ pub struct VecStorage<T> {
 }
 impl<T> Storage for VecStorage<T> {
     type Item = T;
-    fn new(init: super::space::FeatureSetInit) -> Self {
+    fn new(init: ContainerInit) -> Self {
         let mut items = Vec::new();
         items.resize_with(init.capacity, || None);
 
@@ -73,7 +75,7 @@ pub struct HashMapStorage<T> {
 }
 impl<T> Storage for HashMapStorage<T> {
     type Item = T;
-    fn new(_init: super::space::FeatureSetInit) -> Self {
+    fn new(_init: ContainerInit) -> Self {
         // ignore capacity to save memory; this won't be used to hold that many things
         HashMapStorage {
             items: HashMap::new(),
@@ -94,7 +96,7 @@ impl<T> Storage for HashMapStorage<T> {
 pub struct NullStorage(());
 impl Storage for NullStorage {
     type Item = ();
-    fn new(_init: super::space::FeatureSetInit) -> Self {
+    fn new(_init: ContainerInit) -> Self {
         NullStorage(())
     }
     fn insert(&mut self, _id: usize, _comp: ()) {}

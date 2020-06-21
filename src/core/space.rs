@@ -14,32 +14,12 @@ use anymap::AnyMap;
 use hibitset::{self as hb, BitSetLike};
 
 use super::{container as cont, Recipe};
-use crate::core::Game;
-use crate::graphics::RenderContext;
-
-/// Trait describing Features of a Space.
-/// These determine which component types and behaviors are available in the Space.
-/// See the module-level documentation for a full usage example.
-///
-/// TODOC: containers, init, tick & render
-pub trait FeatureSet: 'static + Sized {
-    fn init(init: FeatureSetInit) -> Self;
-    fn tick(&mut self, space: SpaceAccess<'_>, game: &Game, dt: f32);
-    fn draw(&mut self, space: SpaceReadAccess<'_>, ctx: &mut RenderContext);
-}
-
-/// Opaque type that allows you to create Features, only handed out during `FeatureSet::init`.
-#[derive(Clone, Copy)]
-pub struct FeatureSetInit<'a> {
-    pub(crate) capacity: usize,
-    pub(crate) device: &'a wgpu::Device,
-}
 
 //
 
 /// A handle to an object that can be used to add new components to it.
 /// Only given out during object creation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CreationId(pub(crate) usize);
 /// A handle to an object that can only be used to modify existing components,
 /// not create new ones.
@@ -51,55 +31,26 @@ impl From<CreationId> for Id {
     }
 }
 
-/// Access to read or write the non-Feature contents of a Space,
-/// that is, alive and enabled objects.
-pub struct SpaceAccess<'a>(SpaceWriteAccess<'a>);
-impl<'a> SpaceAccess<'a> {
-    pub fn read<'b>(&'b self) -> SpaceReadAccess<'b> {
-        SpaceReadAccess {
-            enabled_ids: self.0.enabled_ids,
-        }
+/// Facilities to queue actions that need to be executed between ticks.
+pub struct CommandQueue<F: 'static> {
+    destroy_queue: hb::BitSet,
+    spawn_queue: Vec<Box<dyn FnOnce(&mut Space<F>)>>,
+}
+
+impl<F> CommandQueue<F> {
+    /// Destroy an object.
+    pub fn kill_object(&mut self, id: Id) {
+        self.destroy_queue.add(id.0 as u32);
     }
-    pub fn write<'b>(&'b mut self) -> SpaceWriteAccess<'b> {
-        SpaceWriteAccess {
-            enabled_ids: self.0.enabled_ids,
-            reserved_ids: self.0.reserved_ids,
-        }
-    }
-}
 
-/// Read-only access to a Space. This cannot create or destroy objects,
-/// but can still modify their components.
-#[derive(Clone, Copy)]
-pub struct SpaceReadAccess<'a> {
-    enabled_ids: &'a hb::BitSet,
-}
-
-impl<'a> SpaceReadAccess<'a> {
-    /// Create an iterator over all alive objects in the space.
-    /// Combine with container iterators to get useful information out of it.
-    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(Id) -> ()> {
-        cont::IterBuilder {
-            bits: self.enabled_ids,
-            get: |_| (),
-        }
-    }
-}
-
-/// Write access to a Space. Can create and destroy objects.
-pub struct SpaceWriteAccess<'a> {
-    reserved_ids: &'a mut hb::BitSet,
-    enabled_ids: &'a mut hb::BitSet,
-}
-
-impl<'a> SpaceWriteAccess<'a> {
-    /// Create an iterator over all alive objects in the space.
-    /// Combine with container iterators to get useful information out of it.
-    pub fn iter(&self) -> cont::IterBuilder<(), &hb::BitSet, impl FnMut(Id) -> ()> {
-        cont::IterBuilder {
-            bits: self.enabled_ids,
-            get: |_| (),
-        }
+    /// Spawn a new object.
+    ///
+    /// Note that this needs to do a dynamic allocation.
+    /// If you're spawning lots of objects, consider doing this manually between ticks if you can.
+    pub fn spawn_object<R: Recipe<F>>(&mut self, recipe: R) {
+        self.spawn_queue.push(Box::new(|space: &mut Space<F>| {
+            space.spawn(recipe);
+        }));
     }
 }
 
@@ -108,7 +59,7 @@ impl<'a> SpaceWriteAccess<'a> {
 /// The Space handles reserving and giving out IDs for objects,
 /// while all Components are stored and handled inside of Features.
 /// See the module-level documentation for a full usage example.
-pub struct Space<F: FeatureSet> {
+pub struct Space<F: 'static> {
     reserved_ids: hb::BitSet,
     enabled_ids: hb::BitSet,
     next_obj_id: usize,
@@ -117,19 +68,19 @@ pub struct Space<F: FeatureSet> {
     pub features: F,
 }
 
-impl<F: FeatureSet> Space<F> {
+impl<F> Space<F> {
     /// Create a Space with a a given maximum capacity.
     ///
     /// Currently this capacity is a hard limit; Spaces do not grow.
     /// The FeatureSet's `init` function is called here.
-    pub fn with_capacity(capacity: usize, device: &wgpu::Device) -> Self {
+    pub fn with_capacity(capacity: usize, f_init: impl FnOnce(cont::ContainerInit) -> F) -> Self {
         let mut space = Space {
             reserved_ids: hb::BitSet::with_capacity(capacity as u32),
             enabled_ids: hb::BitSet::with_capacity(capacity as u32),
             next_obj_id: 0,
             capacity,
             pools: AnyMap::new(),
-            features: F::init(FeatureSetInit { capacity, device }),
+            features: f_init(cont::ContainerInit { capacity }),
         };
         // find first index after what pools reserved and start accepting new objects from there
         //
@@ -230,34 +181,54 @@ impl<F: FeatureSet> Space<F> {
         R::deserialize_into_space(&mut deser, self)
     }
 
-    pub fn tick(&mut self, game: &Game, dt: f32) {
-        self.access_features(|f, a| f.tick(a, game, dt));
-    }
-
-    pub fn draw(&mut self, ctx: &mut RenderContext) {
-        let access = SpaceReadAccess {
-            enabled_ids: &self.enabled_ids,
+    pub fn tick<R>(
+        &mut self,
+        f: impl FnOnce(&mut F, cont::IterSeed, &mut CommandQueue<F>) -> R,
+    ) -> R {
+        let mut cmd = CommandQueue {
+            destroy_queue: hb::BitSet::new(),
+            spawn_queue: Vec::new(),
         };
-        self.features.draw(access, ctx);
+
+        let iter_seed = cont::IterSeed {
+            bits: &self.enabled_ids,
+        };
+        let ret = f(&mut self.features, iter_seed, &mut cmd);
+
+        for destr_id in cmd.destroy_queue {
+            self.enabled_ids.remove(destr_id);
+        }
+
+        for spawn_fn in cmd.spawn_queue {
+            spawn_fn(self);
+        }
+
+        ret
     }
 
-    pub fn access_features(&mut self, f: impl FnOnce(&mut F, SpaceAccess)) {
-        let access = SpaceAccess(SpaceWriteAccess {
-            reserved_ids: &mut self.reserved_ids,
-            enabled_ids: &mut self.enabled_ids,
-        });
-        f(&mut self.features, access);
+    pub fn access_features<R>(&self, f: impl FnOnce(&F, cont::IterSeed) -> R) -> R {
+        let iter_seed = cont::IterSeed {
+            bits: &self.enabled_ids,
+        };
+        f(&self.features, iter_seed)
+    }
+
+    pub fn access_features_mut<R>(&mut self, f: impl FnOnce(&mut F, cont::IterSeed) -> R) -> R {
+        let iter_seed = cont::IterSeed {
+            bits: &self.enabled_ids,
+        };
+        f(&mut self.features, iter_seed)
     }
 }
 
 // Pools
 
-struct Pool<F: FeatureSet, R: Recipe<F>> {
+struct Pool<F, R: Recipe<F>> {
     reserved_slots: hb::BitSet,
     _marker: std::marker::PhantomData<(F, R)>,
 }
 
-impl<F: FeatureSet, R: Recipe<F>> Pool<F, R> {
+impl<F, R: Recipe<F>> Pool<F, R> {
     pub(self) fn new(slots: hb::BitSet, features: &mut F) -> Self {
         for slot in &slots {
             R::spawn_consts(CreationId(slot as usize), features);

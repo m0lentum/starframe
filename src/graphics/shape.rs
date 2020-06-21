@@ -1,8 +1,9 @@
 use crate::{
     core::{
+        container::{Container, ContainerInit, IterSeed},
         math as m,
-        space::{CreationId, FeatureSetInit, SpaceReadAccess},
-        storage, Container, Transform, TransformFeature,
+        space::CreationId,
+        storage, Transform, TransformFeature,
     },
     graphics::{self as gx, util::GlslMat3},
 };
@@ -134,12 +135,11 @@ pub struct ShapeFeature {
     vert_buf_len: u32,
 }
 impl ShapeFeature {
-    pub fn new(init: FeatureSetInit) -> Self {
+    pub fn new(init: ContainerInit, device: &wgpu::Device) -> Self {
         let shapes = Container::new(init);
 
         // shaders
 
-        let device = init.device;
         let shader_v = include_bytes!("shaders/shape.vert.spv");
         let shader_v_mod = device.create_shader_module(
             &wgpu::read_spirv(std::io::Cursor::new(&shader_v[..])).expect("Failed to read shader"),
@@ -247,13 +247,14 @@ impl ShapeFeature {
     /// Draw all the alive `Shape`s that have associated `Transform`s.
     pub fn draw(
         &mut self,
-        space: &SpaceReadAccess,
+        iter_seed: IterSeed,
         trs: &TransformFeature,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,
     ) {
         let iter = || {
-            (space.iter().overlay(self.shapes.iter()))
+            iter_seed
+                .overlay(self.shapes.iter())
                 .and(trs.iter())
                 .into_iter()
         };

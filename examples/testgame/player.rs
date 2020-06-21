@@ -2,7 +2,7 @@ use crate::MainSpaceFeatures;
 use starframe::{
     core::{
         self,
-        container::Container,
+        container::{self as cont, Container},
         inputcache::{Key, KeyAxisState},
         math as m, space, storage,
     },
@@ -41,12 +41,12 @@ impl core::Recipe<crate::MainSpaceFeatures> for PlayerRecipe {
 }
 
 pub struct PlayerController {
-    tags: Container<storage::NullStorage>,
+    tags: cont::Container<storage::NullStorage>,
     base_move_speed: f32,
     max_acceleration: f32,
 }
 impl PlayerController {
-    pub fn new(init: space::FeatureSetInit) -> Self {
+    pub fn new(init: cont::ContainerInit) -> Self {
         PlayerController {
             tags: Container::new(init),
             base_move_speed: 4.0,
@@ -60,10 +60,11 @@ impl PlayerController {
 
     pub fn tick(
         &mut self,
-        space: space::SpaceWriteAccess<'_>,
+        iter_seed: cont::IterSeed,
         input: &core::InputCache,
         trs: &mut m::TransformFeature,
         phys_f: &mut phys::PhysicsFeature,
+        cmd_queue: &mut space::CommandQueue<MainSpaceFeatures>,
     ) {
         let target_hdir = match input.get_key_axis_state(Key::Right, Key::Left) {
             KeyAxisState::Zero => 0.0,
@@ -71,8 +72,7 @@ impl PlayerController {
             KeyAxisState::Neg => -1.0,
         };
 
-        for (player_body, player_tr) in space
-            .iter()
+        for (player_body, player_tr) in iter_seed
             .overlay(self.tags.iter())
             .overlay(phys_f.bodies.iter_mut())
             .and(trs.iter_mut())
@@ -101,14 +101,29 @@ impl PlayerController {
                 // TODO: only on ground, double jump, custom curve
                 player_vel.linear.y = 8.0;
             }
+
+            // testing spawning with the command queue
+            if input.is_key_pressed(Key::R, Some(0)) {
+                use rand::distributions::Distribution;
+                cmd_queue.spawn_object(crate::recipes::Ball {
+                    position: [0.0, 0.0],
+                    radius: rand::distributions::Uniform::from(0.1..0.4)
+                        .sample(&mut rand::thread_rng()),
+                });
+            }
         }
     }
 
-    pub fn handle_collision(&self, evt: &phys::ContactEvent) {
+    pub fn handle_collision(
+        &self,
+        evt: &phys::ContactEvent,
+        cmd_queue: &mut space::CommandQueue<MainSpaceFeatures>,
+    ) {
         if self.tags.has(evt.source) {
-            println!("Player collided with {:?}", evt.other);
-            // TODO: spawn bullets here
-            // (requires some modifications to Space first to do ergonomically)
+            // just some quick crap to test that spawning and killing stuff works
+            if rand::random::<u8>() < 4 {
+                cmd_queue.kill_object(evt.other);
+            }
         }
     }
 }

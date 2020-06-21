@@ -9,8 +9,13 @@ use super::storage::Storage;
 const ITER_ERR_MSG: &'static str =
     "A component didn't exist where it should have. This is almost certainly an error in starframe.";
 
-/// A container for a specific type of component,
-/// typically belonging to a feature of a Space.
+/// Opaque type that allows you to create Containers, only handed out during Space creation.
+#[derive(Clone, Copy)]
+pub struct ContainerInit {
+    pub(crate) capacity: usize,
+}
+
+/// A container for a specific type of component, belonging to a feature of a Space.
 ///
 /// There are several `Storage` types to choose from (see the `core::storage` module);
 /// which one is optimal depends mostly on how common the component type is.
@@ -22,7 +27,7 @@ pub struct Container<S: Storage> {
 
 impl<S: Storage> Container<S> {
     /// Create a new Container from an Init struct.
-    pub fn new(init: super::space::FeatureSetInit) -> Self {
+    pub fn new(init: ContainerInit) -> Self {
         Container {
             users: hb::BitSet::with_capacity(init.capacity as u32),
             storage: S::new(init),
@@ -92,24 +97,41 @@ impl<S: Storage> Container<S> {
     }
 }
 
+/// The starting point to every container Iterator,
+/// which filters down to the objects that are alive in the containing Space.
+///
+/// TODOC: full example
+#[derive(Clone, Copy)]
+pub struct IterSeed<'a> {
+    pub(crate) bits: &'a hb::BitSet,
+}
+impl<'a> IterSeed<'a> {
+    pub fn overlay<'b, OI, OG: FnMut(Id) -> OI>(
+        self,
+        other: IterFragment<'b, OI, OG>,
+    ) -> IterBuilder<OI, hb::BitSetAnd<&'a hb::BitSet, &'b hb::BitSet>, impl FnMut(Id) -> OI> {
+        IterBuilder {
+            bits: hb::BitSetAnd(self.bits, other.bits),
+            get: other.get,
+        }
+    }
+}
+
 /// A builder to generate iterators over the set of objects that contains specific components.
 ///
-/// The only way to get one of these is by starting with a `SpaceAccess` / `SpaceAccessMut`.
+/// The only way to get one of these is by starting with an `IterSeed`.
 /// This ensures that only objects that are actually alive in the Space are included in the resulting iterator.
 /// You can then combine it with `IterFragment`s from `Container`s to access the components you want.
-///
-/// TODOC: example
 pub struct IterBuilder<Item, Bits, Get>
 where
     Bits: hb::BitSetLike,
     Get: FnMut(Id) -> Item,
 {
-    pub(crate) bits: Bits,
-    pub(crate) get: Get,
+    bits: Bits,
+    get: Get,
 }
 
 /// Information required to add a `Container`'s content to an `IterBuilder`.
-/// See `IterBuilder` for a usage example.
 pub struct IterFragment<'a, Item, Get>
 where
     Get: FnMut(Id) -> Item,
@@ -127,7 +149,7 @@ where
     /// and the given `IterFragment`, producing pairs of both.
     ///
     /// ```
-    /// for (foo, bar) in foo_iter().and(bar_container.iter()) {
+    /// for (foo, bar) in foo_iter.and(bar_container.iter()) {
     ///     // ...
     /// }
     /// ```
@@ -145,11 +167,8 @@ where
 
     /// Filter objects like in `and`, but discard the item type of the current `IterBuilder`
     /// from the resulting iterator.
-    ///
-    /// Typically used to discard the unit types produced by the initial `IterBuilder` you get from a `SpaceAccess`.
-    ///
     /// ```
-    /// for bar in space_access.iter().overlay(bar_container.iter()) {
+    /// for bar in foo_iter.overlay(bar_container.iter()) {
     ///     // ...
     /// }
     /// ```

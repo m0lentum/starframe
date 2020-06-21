@@ -1,14 +1,12 @@
-use super::space::FeatureSet;
-
 /// A Recipe produces a specific kind of game object into a Space.
-pub trait Recipe<F: super::space::FeatureSet>: 'static {
+pub trait Recipe<F>: 'static {
     fn spawn_vars(&self, id: super::space::CreationId, feat: &mut F);
     fn spawn_consts(_id: super::space::CreationId, _feat: &mut F) {}
 }
 
 /// Objects that can read recipes from RON and apply them to a Space.
 /// Implementations are auto-generated with the `ecs::recipes!` macro.
-pub trait DeserializeRecipes<F: FeatureSet> {
+pub trait DeserializeRecipes<F> {
     fn deserialize_into_space<'a, 'de, D>(
         deserializer: D,
         space: &'a mut super::Space<F>,

@@ -67,11 +67,11 @@ pub struct MainSpaceFeatures {
     pub camera: gx::camera::MouseDragCamera,
 }
 
-impl core::space::FeatureSet for MainSpaceFeatures {
-    fn init(init: core::space::FeatureSetInit) -> Self {
+impl MainSpaceFeatures {
+    fn init(init: core::container::ContainerInit, device: &wgpu::Device) -> Self {
         MainSpaceFeatures {
             tr: core::TransformFeature::new(init),
-            shape: gx::ShapeFeature::new(init),
+            shape: gx::ShapeFeature::new(init, device),
             physics: phys::PhysicsFeature::new(init),
             player: player::PlayerController::new(init),
             camera: gx::camera::MouseDragCamera::new(
@@ -82,39 +82,13 @@ impl core::space::FeatureSet for MainSpaceFeatures {
             ),
         }
     }
-
-    fn tick(&mut self, mut space: core::SpaceAccess<'_>, game: &Game, dt: f32) {
-        microprofile::scope!("update", "all");
-        {
-            microprofile::scope!("update", "player");
-            self.player
-                .tick(space.write(), &game.input, &mut self.tr, &mut self.physics);
-        }
-        {
-            microprofile::scope!("update", "physics");
-            let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
-            let contact_evts = self
-                .physics
-                .tick(space.read(), &mut self.tr, dt, Some(&grav));
-            for evt in &contact_evts {
-                self.player.handle_collision(evt);
-            }
-        }
-    }
-
-    fn draw(&mut self, space: core::SpaceReadAccess<'_>, ctx: &mut gx::RenderContext) {
-        microprofile::scope!("render", "all");
-
-        {
-            microprofile::scope!("render", "shape");
-            self.shape.draw(&space, &self.tr, &self.camera, ctx);
-        }
-    }
 }
 
 impl game::GameState for State {
     fn tick(&mut self, dt: f32, game: &Game) -> Option<()> {
         microprofile::flip();
+        microprofile::scope!("update", "all");
+
         //
         // State-independent stuff
         //
@@ -175,7 +149,27 @@ impl game::GameState for State {
 
                 //
 
-                self.space.tick(game, dt);
+                self.space.tick(|feat, iter_seed, cmd_queue| {
+                    {
+                        microprofile::scope!("update", "player");
+                        feat.player.tick(
+                            iter_seed,
+                            &game.input,
+                            &mut feat.tr,
+                            &mut feat.physics,
+                            cmd_queue,
+                        );
+                    }
+                    {
+                        microprofile::scope!("update", "physics");
+                        let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
+                        let contact_evts =
+                            feat.physics.tick(iter_seed, &mut feat.tr, dt, Some(&grav));
+                        for evt in &contact_evts {
+                            feat.player.handle_collision(evt, cmd_queue);
+                        }
+                    }
+                });
 
                 Some(())
             }
@@ -194,6 +188,8 @@ impl game::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut gx::Renderer) {
+        microprofile::scope!("render", "all");
+
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
@@ -201,13 +197,18 @@ impl game::GameState for State {
             b: 0.1,
             a: 1.0,
         });
-        self.space.draw(&mut ctx);
+
+        self.space.access_features_mut(|feat, iter_seed| {
+            microprofile::scope!("render", "shape");
+            feat.shape.draw(iter_seed, &feat.tr, &feat.camera, &mut ctx);
+        });
+
         ctx.submit();
     }
 }
 
 fn load_main_space(device: &wgpu::Device) -> Option<MainSpace> {
-    let mut space = MainSpace::with_capacity(200, device);
+    let mut space = MainSpace::with_capacity(200, |init| MainSpaceFeatures::init(init, device));
     space.create_pool::<recipes::Player>(5).unwrap();
     space.create_pool::<recipes::Ball>(80).unwrap();
     space.create_pool::<recipes::DynamicBlock>(80).unwrap();

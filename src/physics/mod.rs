@@ -1,6 +1,6 @@
 use crate::core::{
-    space::SpaceReadAccess,
-    space::{CreationId, FeatureSetInit, Id},
+    container::{ContainerInit, IterSeed},
+    space::{CreationId, Id},
     storage, Container, Transform, TransformFeature,
 };
 use std::collections::HashMap;
@@ -82,7 +82,7 @@ pub struct PhysicsFeature {
 }
 
 impl PhysicsFeature {
-    pub fn new(init: FeatureSetInit) -> Self {
+    pub fn new(init: ContainerInit) -> Self {
         PhysicsFeature {
             bodies: Container::new(init),
             colliders: Container::new(init),
@@ -120,7 +120,7 @@ impl PhysicsFeature {
     /// Call this once in your `FeatureSet`'s `tick` function.
     pub fn tick(
         &mut self,
-        space: SpaceReadAccess,
+        iter_seed: IterSeed,
         trs: &mut TransformFeature,
         dt: f32,
         forcefield: Option<&impl ForceField>,
@@ -131,8 +131,7 @@ impl PhysicsFeature {
             tr: &'a mut Transform,
             id: Id,
         }
-        let mut items: Vec<Item<'_>> = space
-            .iter()
+        let mut items: Vec<Item<'_>> = iter_seed
             .overlay(self.bodies.iter_mut())
             .and(self.colliders.iter())
             .and(trs.iter_mut())
