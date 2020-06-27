@@ -1,3 +1,5 @@
+pub mod graph;
+
 pub mod game;
 pub use game::Game;
 
