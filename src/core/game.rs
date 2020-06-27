@@ -65,7 +65,7 @@ const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 
 /// A loop that runs both simulation and rendering at a fixed framerate.
 ///
-/// ```
+/// ```ignore
 /// LockstepLoop::from_fps(60).run(MyState::init());
 /// ```
 pub struct LockstepLoop {

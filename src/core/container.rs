@@ -148,7 +148,7 @@ where
     /// Iterate only over objects that have the features of both this `IterBuilder`
     /// and the given `IterFragment`, producing pairs of both.
     ///
-    /// ```
+    /// ```ignore
     /// for (foo, bar) in foo_iter.and(bar_container.iter()) {
     ///     // ...
     /// }
@@ -167,7 +167,7 @@ where
 
     /// Filter objects like in `and`, but discard the item type of the current `IterBuilder`
     /// from the resulting iterator.
-    /// ```
+    /// ```ignore
     /// for bar in foo_iter.overlay(bar_container.iter()) {
     ///     // ...
     /// }
