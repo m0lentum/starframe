@@ -2,7 +2,7 @@
 
 In disc golf, a starframe occurs when every player in a group scores a birdie on the same hole.
 
-On the other hand, Starframe is a general-purpose 2D game engine written in Rust as a solo hobby project.
+This starframe, however, is a general-purpose 2D game engine written in Rust as a solo hobby project.
 Its design is driven by sidescrolling action games and cool physics tools for them,
 but its core building blocks should generalize to other styles of game quite well.
 
@@ -16,7 +16,7 @@ but its core building blocks should generalize to other styles of game quite wel
 - Graphics
   - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
 
-See the [issues](https://github.com/MoleTrooper/starframe/issues) for notes on future developments.
+See the [kanban](https://github.com/MoleTrooper/starframe/projects/1) for the most up-to-date goings-on.
 
 # Blog
 
