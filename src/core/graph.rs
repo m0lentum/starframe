@@ -3,6 +3,10 @@ use std::marker::PhantomData;
 type ComponentIdx = usize;
 type LayerIdx = usize;
 
+//
+// Graph
+//
+
 #[derive(Debug)]
 pub struct Graph {
     /// 3D array:
@@ -37,22 +41,27 @@ impl Graph {
         }
     }
 
-    pub fn connect<T1, T2>(&mut self, node1: &NodeRef<'_, T1>, node2: &NodeRef<'_, T2>) {
+    pub fn connect(&mut self, node1: &impl AsRef<NodePosition>, node2: &impl AsRef<NodePosition>) {
         self.connect_oneway(node1, node2);
         self.connect_oneway(node2, node1);
     }
 
-    pub fn connect_oneway<T1, T2>(&mut self, start: &NodeRef<'_, T1>, end: &NodeRef<'_, T2>) {
-        let edge_vec = &mut self.edge_layers[start.layer_idx][end.layer_idx];
+    pub fn connect_oneway(
+        &mut self,
+        start: &impl AsRef<NodePosition>,
+        end: &impl AsRef<NodePosition>,
+    ) {
+        let (start_pos, end_pos) = (start.as_ref(), end.as_ref());
+        let edge_vec = &mut self.edge_layers[start_pos.layer_idx][end_pos.layer_idx];
         // extend the edge vec when adding an edge past its current end.
         // we don't allocate all the space at the start because it's likely to not get used
-        if edge_vec.len() <= start.item_idx {
-            if edge_vec.len() != start.item_idx {
-                edge_vec.resize_with(start.item_idx, || None);
+        if edge_vec.len() <= start_pos.item_idx {
+            if edge_vec.len() != start_pos.item_idx {
+                edge_vec.resize_with(start_pos.item_idx, || None);
             }
-            edge_vec.push(Some(end.item_idx));
+            edge_vec.push(Some(end_pos.item_idx));
         } else {
-            let prev_val = edge_vec[start.item_idx].replace(end.item_idx);
+            let prev_val = edge_vec[start_pos.item_idx].replace(end_pos.item_idx);
             assert!(
                 prev_val.is_none(),
                 "Attempted to overwrite an edge. \
@@ -61,23 +70,52 @@ impl Graph {
         }
     }
 
-    pub fn get_neighbor<'to, Fro, To>(
+    pub fn get_neighbor<'to, To>(
         &self,
-        node: &NodeRef<'_, Fro>,
+        node: &impl AsRef<NodePosition>,
         to_layer: &'to Layer<To>,
     ) -> Option<NodeRef<'to, To>> {
-        let edge_layer = &self.edge_layers[node.layer_idx][to_layer.index];
-        if edge_layer.len() <= node.item_idx {
+        let node_pos = node.as_ref();
+        let edge_layer = &self.edge_layers[node_pos.layer_idx][to_layer.index];
+        if edge_layer.len() <= node_pos.item_idx {
             None
         } else {
-            edge_layer[node.item_idx].map(|to_id| NodeRef {
+            let to_id = edge_layer[node_pos.item_idx]?;
+            Some(NodeRef {
                 item: &to_layer.content[to_id],
-                item_idx: to_id,
-                layer_idx: to_layer.index,
+                pos: NodePosition {
+                    item_idx: to_id,
+                    layer_idx: to_layer.index,
+                },
+            })
+        }
+    }
+
+    pub fn get_neighbor_mut<'to, To>(
+        &self,
+        node: &impl AsRef<NodePosition>,
+        to_layer: &'to mut Layer<To>,
+    ) -> Option<NodeRefMut<'to, To>> {
+        let node_pos = node.as_ref();
+        let edge_layer = &self.edge_layers[node_pos.layer_idx][to_layer.index];
+        if edge_layer.len() <= node_pos.item_idx {
+            None
+        } else {
+            let to_id = edge_layer[node_pos.item_idx]?;
+            Some(NodeRefMut {
+                item: &mut to_layer.content[to_id],
+                pos: NodePosition {
+                    item_idx: to_id,
+                    layer_idx: to_layer.index,
+                },
             })
         }
     }
 }
+
+//
+// Layer
+//
 
 pub struct Layer<T> {
     index: LayerIdx,
@@ -85,90 +123,182 @@ pub struct Layer<T> {
 }
 
 impl<T> Layer<T> {
-    pub fn push(&mut self, component: T) -> NodeRef<T> {
+    pub fn push(&mut self, component: T) -> NodeRefMut<'_, T> {
         let id = self.content.len();
         self.content.push(component);
 
-        NodeRef {
-            item: &self.content[id],
-            item_idx: id,
-            layer_idx: self.index,
+        NodeRefMut {
+            item: &mut self.content[id],
+            pos: NodePosition {
+                item_idx: id,
+                layer_idx: self.index,
+            },
         }
     }
 
     pub fn iter(&self) -> LayerIter<'_, T> {
         LayerIter {
-            layer: self,
-            idx: 0,
+            iter: self.content.iter().enumerate(),
+            layer_idx: self.index,
+        }
+    }
+
+    pub fn iter_mut(&mut self) -> LayerIterMut<'_, T> {
+        LayerIterMut {
+            iter: self.content.iter_mut().enumerate(),
+            layer_idx: self.index,
         }
     }
 }
 
+//
+// Iterators
+//
+
 pub struct LayerIter<'a, T> {
-    layer: &'a Layer<T>,
-    idx: usize,
+    iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
+    layer_idx: LayerIdx,
 }
 impl<'a, T> Iterator for LayerIter<'a, T> {
     type Item = NodeRef<'a, T>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.idx >= self.layer.content.len() {
-            return None;
-        }
+        let (item_idx, item) = self.iter.next()?;
 
-        let item = NodeRef {
-            item: &self.layer.content[self.idx],
-            item_idx: self.idx,
-            layer_idx: self.layer.index,
-        };
-
-        self.idx += 1;
-        Some(item)
+        Some(NodeRef {
+            item,
+            pos: NodePosition {
+                item_idx,
+                layer_idx: self.layer_idx,
+            },
+        })
     }
 }
 
+pub struct LayerIterMut<'a, T> {
+    iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
+    layer_idx: LayerIdx,
+}
+impl<'a, T> Iterator for LayerIterMut<'a, T> {
+    type Item = NodeRefMut<'a, T>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let (item_idx, item) = self.iter.next()?;
+
+        Some(NodeRefMut {
+            item,
+            pos: NodePosition {
+                item_idx,
+                layer_idx: self.layer_idx,
+            },
+        })
+    }
+}
+
+//
+// Ref types
+//
+
 pub struct NodeRef<'a, T> {
     item: &'a T,
-    item_idx: ComponentIdx,
-    layer_idx: LayerIdx,
+    pos: NodePosition,
 }
 impl<'a, T> std::ops::Deref for NodeRef<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
-        &self.item
+        self.item
     }
 }
-
 impl<'a, T> NodeRef<'a, T> {
     pub fn downgrade(self) -> WeakNodeRef<T> {
         WeakNodeRef {
-            layer_idx: self.layer_idx,
-            item_idx: self.item_idx,
+            pos: self.pos,
+            _marker: PhantomData,
+        }
+    }
+}
+impl<'a, T> AsRef<NodePosition> for NodeRef<'a, T> {
+    fn as_ref(&self) -> &NodePosition {
+        &self.pos
+    }
+}
+
+pub struct NodeRefMut<'a, T> {
+    item: &'a mut T,
+    pos: NodePosition,
+}
+impl<'a, T> std::ops::Deref for NodeRefMut<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.item
+    }
+}
+impl<'a, T> std::ops::DerefMut for NodeRefMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.item
+    }
+}
+impl<'a, T> AsRef<NodePosition> for NodeRefMut<'a, T> {
+    fn as_ref(&self) -> &NodePosition {
+        &self.pos
+    }
+}
+impl<'a, T> NodeRefMut<'a, T> {
+    pub fn downgrade(self) -> WeakNodeRef<T> {
+        WeakNodeRef {
+            pos: self.pos,
             _marker: PhantomData,
         }
     }
 }
 
+pub struct NodePosition {
+    item_idx: ComponentIdx,
+    layer_idx: LayerIdx,
+}
+
+//
+// Unsafe stuff that needs rethinking
+//
+
 /// TODO: because this can be stored, it will cause big problems if deleted stuff is moved.
+/// Also it just kind of sucks in general :v)
 /// We'll worry about it when we implement deletions
 pub struct WeakNodeRef<T> {
-    layer_idx: LayerIdx,
-    item_idx: ComponentIdx,
+    pos: NodePosition,
     _marker: PhantomData<T>,
 }
 
 impl<T> WeakNodeRef<T> {
     pub fn upgrade<'l>(&self, layer: &'l Layer<T>) -> NodeRef<'l, T> {
         assert_eq!(
-            layer.index, self.layer_idx,
+            layer.index, self.pos.layer_idx,
             "Layer was not the one this component belongs to"
         );
         NodeRef {
-            item: &layer.content[self.item_idx],
-            item_idx: self.item_idx,
-            layer_idx: layer.index,
+            item: &layer.content[self.pos.item_idx],
+            pos: NodePosition {
+                item_idx: self.pos.item_idx,
+                layer_idx: self.pos.layer_idx,
+            },
+        }
+    }
+    pub fn upgrade_mut<'l>(&self, layer: &'l mut Layer<T>) -> NodeRefMut<'l, T> {
+        assert_eq!(
+            layer.index, self.pos.layer_idx,
+            "Layer was not the one this component belongs to"
+        );
+        NodeRefMut {
+            item: &mut layer.content[self.pos.item_idx],
+            pos: NodePosition {
+                item_idx: self.pos.item_idx,
+                layer_idx: self.pos.layer_idx,
+            },
         }
     }
 }
+
+//
+//
+//
 
 #[cfg(test)]
 mod tests {
@@ -262,7 +392,7 @@ mod tests {
         for i in 0..10 {
             let tr_node = trs.push(Transform(i));
             let vel_node = vels.push(Velocity(i));
-            let rb_node = rbs.push(RigidBody(10 - i));
+            let rb_node = rbs.push(RigidBody(0));
             graph.connect(&rb_node, &tr_node);
             if i % 2 == 0 {
                 graph.connect(&tr_node, &vel_node);
@@ -276,7 +406,7 @@ mod tests {
 
         let mut match_count = 0; // not including shape
         let mut full_match_count = 0; // including shape
-        for rb in rbs.iter() {
+        for mut rb in rbs.iter_mut() {
             let tr = match graph.get_neighbor(&rb, &trs) {
                 Some(tr) => tr,
                 None => continue,
@@ -286,10 +416,12 @@ mod tests {
                 None => continue,
             };
             match_count += 1;
+            rb.0 = 42;
 
-            let shape = graph.get_neighbor(&rb, &shapes);
-            if shape.is_some() {
+            let mut shape = graph.get_neighbor_mut(&rb, &mut shapes);
+            if let Some(shape) = &mut shape {
                 full_match_count += 1;
+                shape.0 += 1;
             }
 
             // test that only real connections were followed
@@ -299,5 +431,20 @@ mod tests {
         }
         assert_eq!(match_count, 5);
         assert_eq!(full_match_count, 3);
+        assert_eq!(everyones_shape.upgrade(&shapes).0, 72);
+
+        println!("All rbs: {:?}", rbs.content);
+
+        for rb in rbs.iter() {
+            if graph
+                .get_neighbor(&rb, &trs)
+                .and_then(|tr| graph.get_neighbor(&tr, &vels))
+                .is_none()
+            {
+                assert_eq!(rb.0, 0);
+            } else {
+                assert_eq!(rb.0, 42);
+            }
+        }
     }
 }
