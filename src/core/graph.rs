@@ -36,6 +36,47 @@ impl Graph {
             content: Vec::new(),
         }
     }
+
+    pub fn connect<T1, T2>(&mut self, node1: &NodeRef<'_, T1>, node2: &NodeRef<'_, T2>) {
+        self.connect_oneway(node1, node2);
+        self.connect_oneway(node2, node1);
+    }
+
+    pub fn connect_oneway<T1, T2>(&mut self, start: &NodeRef<'_, T1>, end: &NodeRef<'_, T2>) {
+        let edge_vec = &mut self.edge_layers[start.layer_idx][end.layer_idx];
+        // extend the edge vec when adding an edge past its current end.
+        // we don't allocate all the space at the start because it's likely to not get used
+        if edge_vec.len() <= start.item_idx {
+            if edge_vec.len() != start.item_idx {
+                edge_vec.resize_with(start.item_idx, || None);
+            }
+            edge_vec.push(Some(end.item_idx));
+        } else {
+            let prev_val = edge_vec[start.item_idx].replace(end.item_idx);
+            assert!(
+                prev_val.is_none(),
+                "Attempted to overwrite an edge. \
+                If you're trying to do shared ownership, use `connect_oneway`."
+            );
+        }
+    }
+
+    pub fn get_neighbor<'to, Fro, To>(
+        &self,
+        node: &NodeRef<'_, Fro>,
+        to_layer: &'to Layer<To>,
+    ) -> Option<NodeRef<'to, To>> {
+        let edge_layer = &self.edge_layers[node.layer_idx][to_layer.index];
+        if edge_layer.len() <= node.item_idx {
+            None
+        } else {
+            edge_layer[node.item_idx].map(|to_id| NodeRef {
+                item: &to_layer.content[to_id],
+                item_idx: to_id,
+                layer_idx: to_layer.index,
+            })
+        }
+    }
 }
 
 pub struct Layer<T> {
@@ -98,47 +139,6 @@ impl<'a, T> std::ops::Deref for NodeRef<'a, T> {
 }
 
 impl<'a, T> NodeRef<'a, T> {
-    pub fn connect<O>(&self, other: &NodeRef<O>, graph: &mut Graph) {
-        self.connect_oneway(other, graph);
-        other.connect_oneway(self, graph);
-    }
-
-    pub fn connect_oneway<O>(&self, other: &NodeRef<O>, graph: &mut Graph) {
-        let edge_vec = &mut graph.edge_layers[self.layer_idx][other.layer_idx];
-        // extend the edge vec when adding an edge past its current end.
-        // we don't allocate all the space at the start because it's likely to not get used
-        if edge_vec.len() <= self.item_idx {
-            if edge_vec.len() != self.item_idx {
-                edge_vec.resize_with(self.item_idx, || None);
-            }
-            edge_vec.push(Some(other.item_idx));
-        } else {
-            let prev_val = edge_vec[self.item_idx].replace(other.item_idx);
-            assert!(
-                prev_val.is_none(),
-                "Attempted to overwrite an edge. \
-                If you're trying to do shared ownership, use `connect_oneway`."
-            );
-        }
-    }
-
-    pub fn get_neighbor<'o, O>(
-        &self,
-        other_layer: &'o Layer<O>,
-        graph: &Graph,
-    ) -> Option<NodeRef<'o, O>> {
-        let edge_layer = &graph.edge_layers[self.layer_idx][other_layer.index];
-        if edge_layer.len() <= self.item_idx {
-            None
-        } else {
-            edge_layer[self.item_idx].map(|other_id| NodeRef {
-                item: &other_layer.content[other_id],
-                item_idx: other_id,
-                layer_idx: other_layer.index,
-            })
-        }
-    }
-
     pub fn downgrade(self) -> WeakNodeRef<T> {
         WeakNodeRef {
             layer_idx: self.layer_idx,
@@ -218,26 +218,26 @@ mod tests {
             let vel_node = vels.push(Velocity(i));
             let rb_node = rbs.push(RigidBody(i));
             let shape_node = everyones_shape.upgrade(&shapes);
-            vel_node.connect(&tr_node, &mut graph);
-            rb_node.connect(&tr_node, &mut graph);
-            rb_node.connect(&vel_node, &mut graph);
-            rb_node.connect_oneway(&shape_node, &mut graph);
+            graph.connect(&vel_node, &tr_node);
+            graph.connect(&rb_node, &tr_node);
+            graph.connect(&rb_node, &vel_node);
+            graph.connect_oneway(&rb_node, &shape_node);
             assert_eq!(
-                rb_node.get_neighbor(&shapes, &graph).map(|n| *n),
+                graph.get_neighbor(&rb_node, &shapes).map(|n| *n),
                 Some(Shape(69))
             );
             assert_eq!(
-                tr_node.get_neighbor(&rbs, &graph).map(|n| *n),
+                graph.get_neighbor(&tr_node, &rbs).map(|n| *n),
                 Some(RigidBody(i))
             );
-            assert!(tr_node.get_neighbor(&shapes, &graph).is_none());
+            assert!(graph.get_neighbor(&tr_node, &shapes).is_none());
 
             // spawn something with different connections in between
             let tr_node_ = trs.push(Transform(42 + i));
             let shape_node_ = shapes.push(Shape(i));
-            tr_node_.connect(&shape_node_, &mut graph);
+            graph.connect(&tr_node_, &shape_node_);
             assert_eq!(
-                tr_node_.get_neighbor(&shapes, &graph).map(|n| *n),
+                graph.get_neighbor(&tr_node_, &shapes).map(|n| *n),
                 Some(Shape(i))
             );
         }
@@ -263,12 +263,12 @@ mod tests {
             let tr_node = trs.push(Transform(i));
             let vel_node = vels.push(Velocity(i));
             let rb_node = rbs.push(RigidBody(10 - i));
-            rb_node.connect(&tr_node, &mut graph);
+            graph.connect(&rb_node, &tr_node);
             if i % 2 == 0 {
-                tr_node.connect(&vel_node, &mut graph);
+                graph.connect(&tr_node, &vel_node);
             }
             if i % 4 == 0 {
-                rb_node.connect_oneway(&everyones_shape.upgrade(&shapes), &mut graph);
+                graph.connect_oneway(&rb_node, &everyones_shape.upgrade(&shapes));
             }
         }
 
@@ -277,17 +277,17 @@ mod tests {
         let mut match_count = 0; // not including shape
         let mut full_match_count = 0; // including shape
         for rb in rbs.iter() {
-            let tr = match rb.get_neighbor(&trs, &graph) {
+            let tr = match graph.get_neighbor(&rb, &trs) {
                 Some(tr) => tr,
                 None => continue,
             };
-            let vel = match tr.get_neighbor(&vels, &graph) {
+            let vel = match graph.get_neighbor(&tr, &vels) {
                 Some(vel) => vel,
                 None => continue,
             };
             match_count += 1;
 
-            let shape = rb.get_neighbor(&shapes, &graph);
+            let shape = graph.get_neighbor(&rb, &shapes);
             if shape.is_some() {
                 full_match_count += 1;
             }
