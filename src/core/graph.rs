@@ -48,25 +48,52 @@ impl<T> Layer<T> {
         let id = self.content.len();
         self.content.push(component);
 
-        NodeRef { layer: self, id }
+        NodeRef {
+            item: &self.content[id],
+            item_idx: id,
+            layer_idx: self.index,
+        }
+    }
+
+    pub fn iter(&self) -> LayerIter<'_, T> {
+        LayerIter {
+            layer: self,
+            idx: 0,
+        }
+    }
+}
+
+pub struct LayerIter<'a, T> {
+    layer: &'a Layer<T>,
+    idx: usize,
+}
+impl<'a, T> Iterator for LayerIter<'a, T> {
+    type Item = NodeRef<'a, T>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx >= self.layer.content.len() {
+            return None;
+        }
+
+        let item = NodeRef {
+            item: &self.layer.content[self.idx],
+            item_idx: self.idx,
+            layer_idx: self.layer.index,
+        };
+
+        self.idx += 1;
+        Some(item)
     }
 }
 
 pub struct NodeRef<'a, T> {
-    layer: &'a Layer<T>,
-    id: ComponentIdx,
+    item: &'a T,
+    item_idx: ComponentIdx,
+    layer_idx: LayerIdx,
 }
-
-/// TODO: because this can be stored, it will cause big problems if deleted stuff is moved.
-/// We'll worry about it when we implement deletions
-pub struct WeakNodeRef<T> {
-    id: ComponentIdx,
-    _marker: PhantomData<T>,
-}
-
-impl<T> WeakNodeRef<T> {
-    pub fn upgrade<'l>(&self, layer: &'l Layer<T>) -> NodeRef<'l, T> {
-        NodeRef { layer, id: self.id }
+impl<'a, T> std::ops::Deref for NodeRef<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.item
     }
 }
 
@@ -77,16 +104,16 @@ impl<'a, T> NodeRef<'a, T> {
     }
 
     pub fn connect_oneway<O>(&self, other: &NodeRef<O>, graph: &mut Graph) {
-        let edge_vec = &mut graph.edge_layers[self.layer.index][other.layer.index];
+        let edge_vec = &mut graph.edge_layers[self.layer_idx][other.layer_idx];
         // extend the edge vec when adding an edge past its current end.
         // we don't allocate all the space at the start because it's likely to not get used
-        if edge_vec.len() <= self.id {
-            if edge_vec.len() != self.id {
-                edge_vec.resize_with(self.id, || None);
+        if edge_vec.len() <= self.item_idx {
+            if edge_vec.len() != self.item_idx {
+                edge_vec.resize_with(self.item_idx, || None);
             }
-            edge_vec.push(Some(other.id));
+            edge_vec.push(Some(other.item_idx));
         } else {
-            let prev_val = edge_vec[self.id].replace(other.id);
+            let prev_val = edge_vec[self.item_idx].replace(other.item_idx);
             assert!(
                 prev_val.is_none(),
                 "Attempted to overwrite an edge. \
@@ -95,140 +122,51 @@ impl<'a, T> NodeRef<'a, T> {
         }
     }
 
-    pub fn get_neighbor<'o, O>(&self, other_layer: &'o Layer<O>, graph: &Graph) -> Option<&'o O> {
-        let edge_layer = &graph.edge_layers[self.layer.index][other_layer.index];
-        if edge_layer.len() <= self.id {
+    pub fn get_neighbor<'o, O>(
+        &self,
+        other_layer: &'o Layer<O>,
+        graph: &Graph,
+    ) -> Option<NodeRef<'o, O>> {
+        let edge_layer = &graph.edge_layers[self.layer_idx][other_layer.index];
+        if edge_layer.len() <= self.item_idx {
             None
         } else {
-            edge_layer[self.id].map(|other_id| &other_layer.content[other_id])
+            edge_layer[self.item_idx].map(|other_id| NodeRef {
+                item: &other_layer.content[other_id],
+                item_idx: other_id,
+                layer_idx: other_layer.index,
+            })
         }
     }
 
     pub fn downgrade(self) -> WeakNodeRef<T> {
         WeakNodeRef {
-            id: self.id,
+            layer_idx: self.layer_idx,
+            item_idx: self.item_idx,
             _marker: PhantomData,
         }
     }
 }
 
-#[derive(Debug)]
-pub struct Pattern {
-    layers: Vec<LayerIdx>,
-    connections: Vec<(usize, usize)>, // start and end index in self.layers
+/// TODO: because this can be stored, it will cause big problems if deleted stuff is moved.
+/// We'll worry about it when we implement deletions
+pub struct WeakNodeRef<T> {
+    layer_idx: LayerIdx,
+    item_idx: ComponentIdx,
+    _marker: PhantomData<T>,
 }
 
-impl Pattern {
-    pub fn begin<'l, T>(root_layer: &'l Layer<T>) -> (Self, PatternMember<'l, T>) {
-        let pattern = Pattern {
-            layers: vec![root_layer.index],
-            connections: vec![],
-        };
-        let root_member = PatternMember {
-            layer: root_layer,
-            idx_in_pattern: 0,
-        };
-
-        (pattern, root_member)
-    }
-
-    pub fn connect<'l, T>(&mut self, layer: &'l Layer<T>) -> PatternMember<'l, T> {
-        let next_idx = self.layers.len();
-        self.layers.push(layer.index);
-        self.connections.push((0, next_idx));
-        PatternMember {
-            layer,
-            idx_in_pattern: next_idx,
+impl<T> WeakNodeRef<T> {
+    pub fn upgrade<'l>(&self, layer: &'l Layer<T>) -> NodeRef<'l, T> {
+        assert_eq!(
+            layer.index, self.layer_idx,
+            "Layer was not the one this component belongs to"
+        );
+        NodeRef {
+            item: &layer.content[self.item_idx],
+            item_idx: self.item_idx,
+            layer_idx: layer.index,
         }
-    }
-
-    pub fn connect_transitive<'l, T1, T2>(
-        &mut self,
-        l1: &PatternMember<'l, T1>,
-        l2: &'l Layer<T2>,
-    ) -> PatternMember<'l, T2> {
-        let next_idx = self.layers.len();
-        self.layers.push(l2.index);
-        self.connections.push((l1.idx_in_pattern, next_idx));
-        PatternMember {
-            layer: l2,
-            idx_in_pattern: next_idx,
-        }
-    }
-
-    pub fn into_iter(self, graph: &Graph) -> PatternIter {
-        let layer_count = self.layers.len();
-        PatternIter {
-            pattern: self,
-            graph,
-            next_root_idx: 0,
-            current: PatternItem {
-                indices: vec![0; layer_count],
-            },
-        }
-    }
-}
-
-pub struct PatternMember<'a, T> {
-    layer: &'a Layer<T>,
-    idx_in_pattern: usize,
-}
-
-pub struct PatternIter<'g> {
-    pattern: Pattern,
-    graph: &'g Graph,
-    next_root_idx: usize,
-    // store the item here to
-    // 1. avoid allocating a new Vec every iteration
-    // 2. allow us to return a reference so the user isn't allowed to own these
-    current: PatternItem,
-}
-impl<'g> PatternIter<'g> {
-    pub fn next(&mut self) -> Option<&PatternItem> {
-        // root index is special, we use it to traverse forward and connect to everything else
-        self.current.indices[0] = self.next_root_idx;
-        self.next_root_idx += 1;
-        for conn in &self.pattern.connections {
-            let (l0, l1) = (self.pattern.layers[conn.0], self.pattern.layers[conn.1]);
-            let this_conns_edges = &self.graph.edge_layers[l0][l1];
-
-            let start_idx = self.current.indices[conn.0];
-
-            if conn.0 == 0 && start_idx >= this_conns_edges.len() {
-                // We've reached the end of one of our _root layer's_ edge lists.
-                // This means there can't be any more instances of this pattern going forward.
-                return None;
-            }
-
-            // because connections are naturally sorted in rising order by starting layer
-            // (the API guarantees this by only allowing to connect to the root or something that was already added),
-            // we've already updated this index earlier in this loop
-            match this_conns_edges.get(start_idx) {
-                // None if the layer doesn't have edges allocated up to here,
-                // Some(None) if it does but doesn't have this edge
-                None | Some(None) => {
-                    // pattern was not fulfilled, recursively traverse forward
-                    return self.next();
-                }
-                Some(Some(end_idx)) => {
-                    // pattern holds for now, check next connection
-                    self.current.indices[conn.1] = *end_idx;
-                }
-            }
-        }
-
-        // every connection was present so we have a complete item
-        Some(&self.current)
-    }
-}
-
-#[derive(Debug)]
-pub struct PatternItem {
-    indices: Vec<ComponentIdx>,
-}
-impl PatternItem {
-    pub fn get<'m, T>(&self, member: &'m PatternMember<'_, T>) -> &'m T {
-        &member.layer.content[self.indices[member.idx_in_pattern]]
     }
 }
 
@@ -284,15 +222,24 @@ mod tests {
             rb_node.connect(&tr_node, &mut graph);
             rb_node.connect(&vel_node, &mut graph);
             rb_node.connect_oneway(&shape_node, &mut graph);
-            assert_eq!(rb_node.get_neighbor(&shapes, &graph), Some(&Shape(69)));
-            assert_eq!(tr_node.get_neighbor(&rbs, &graph), Some(&RigidBody(i)));
+            assert_eq!(
+                rb_node.get_neighbor(&shapes, &graph).map(|n| *n),
+                Some(Shape(69))
+            );
+            assert_eq!(
+                tr_node.get_neighbor(&rbs, &graph).map(|n| *n),
+                Some(RigidBody(i))
+            );
             assert!(tr_node.get_neighbor(&shapes, &graph).is_none());
 
             // spawn something with different connections in between
             let tr_node_ = trs.push(Transform(42 + i));
             let shape_node_ = shapes.push(Shape(i));
             tr_node_.connect(&shape_node_, &mut graph);
-            assert_eq!(tr_node_.get_neighbor(&shapes, &graph), Some(&Shape(i)));
+            assert_eq!(
+                tr_node_.get_neighbor(&shapes, &graph).map(|n| *n),
+                Some(Shape(i))
+            );
         }
 
         println!("Contents after `connect_nodes`:");
@@ -302,7 +249,6 @@ mod tests {
         println!("{:?}", shapes.content);
     }
 
-    /// We can iterate over a layer along with edges it has towards a specific other layer.
     #[test]
     fn iterate() {
         let mut graph = Graph::new();
@@ -315,8 +261,8 @@ mod tests {
 
         for i in 0..10 {
             let tr_node = trs.push(Transform(i));
-            let vel_node = vels.push(Velocity(10 - i));
-            let rb_node = rbs.push(RigidBody(i));
+            let vel_node = vels.push(Velocity(i));
+            let rb_node = rbs.push(RigidBody(10 - i));
             rb_node.connect(&tr_node, &mut graph);
             if i % 2 == 0 {
                 tr_node.connect(&vel_node, &mut graph);
@@ -326,22 +272,32 @@ mod tests {
             }
         }
 
-        println!("{:?}", &graph);
+        println!("Patterns of `iterate`:");
 
-        let (mut pattern, pat_trs) = Pattern::begin(&trs);
-        let pat_vels = pattern.connect(&vels);
-        let pat_rbs = pattern.connect(&rbs);
-        let pat_shapes = pattern.connect_transitive(&pat_rbs, &shapes);
+        let mut match_count = 0; // not including shape
+        let mut full_match_count = 0; // including shape
+        for rb in rbs.iter() {
+            let tr = match rb.get_neighbor(&trs, &graph) {
+                Some(tr) => tr,
+                None => continue,
+            };
+            let vel = match tr.get_neighbor(&vels, &graph) {
+                Some(vel) => vel,
+                None => continue,
+            };
+            match_count += 1;
 
-        println!("{:?}", &pattern);
+            let shape = rb.get_neighbor(&shapes, &graph);
+            if shape.is_some() {
+                full_match_count += 1;
+            }
 
-        let mut iter = pattern.into_iter(&graph);
-        while let Some(item) = iter.next() {
-            assert_eq!(item.get(&pat_trs).0 + item.get(&pat_vels).0, 10);
-            println!("{:?}", item.get(&pat_trs));
-            println!("{:?}", item.get(&pat_vels));
-            println!("{:?}", item.get(&pat_rbs));
-            println!("{:?}", item.get(&pat_shapes));
+            // test that only real connections were followed
+            assert_eq!(vel.0 % 2, 0);
+
+            println!("{:?}, {:?}, {:?}, {:?}", *rb, *tr, *vel, shape.map(|s| *s));
         }
+        assert_eq!(match_count, 5);
+        assert_eq!(full_match_count, 3);
     }
 }
