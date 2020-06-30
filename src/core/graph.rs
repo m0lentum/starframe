@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 type ComponentIdx = usize;
 type LayerIdx = usize;
 
@@ -41,27 +39,22 @@ impl Graph {
         }
     }
 
-    pub fn connect(&mut self, node1: &impl AsRef<NodePosition>, node2: &impl AsRef<NodePosition>) {
+    pub fn connect(&mut self, node1: NodePosition, node2: NodePosition) {
         self.connect_oneway(node1, node2);
         self.connect_oneway(node2, node1);
     }
 
-    pub fn connect_oneway(
-        &mut self,
-        start: &impl AsRef<NodePosition>,
-        end: &impl AsRef<NodePosition>,
-    ) {
-        let (start_pos, end_pos) = (start.as_ref(), end.as_ref());
-        let edge_vec = &mut self.edge_layers[start_pos.layer_idx][end_pos.layer_idx];
+    pub fn connect_oneway(&mut self, start: NodePosition, end: NodePosition) {
+        let edge_vec = &mut self.edge_layers[start.layer_idx][end.layer_idx];
         // extend the edge vec when adding an edge past its current end.
         // we don't allocate all the space at the start because it's likely to not get used
-        if edge_vec.len() <= start_pos.item_idx {
-            if edge_vec.len() != start_pos.item_idx {
-                edge_vec.resize_with(start_pos.item_idx, || None);
+        if edge_vec.len() <= start.item_idx {
+            if edge_vec.len() != start.item_idx {
+                edge_vec.resize_with(start.item_idx, || None);
             }
-            edge_vec.push(Some(end_pos.item_idx));
+            edge_vec.push(Some(end.item_idx));
         } else {
-            let prev_val = edge_vec[start_pos.item_idx].replace(end_pos.item_idx);
+            let prev_val = edge_vec[start.item_idx].replace(end.item_idx);
             assert!(
                 prev_val.is_none(),
                 "Attempted to overwrite an edge. \
@@ -72,10 +65,10 @@ impl Graph {
 
     pub fn get_neighbor<'to, To>(
         &self,
-        node: &impl AsRef<NodePosition>,
+        node: impl Into<NodePosition>,
         to_layer: &'to Layer<To>,
     ) -> Option<NodeRef<'to, To>> {
-        let node_pos = node.as_ref();
+        let node_pos = node.into();
         let edge_layer = &self.edge_layers[node_pos.layer_idx][to_layer.index];
         if edge_layer.len() <= node_pos.item_idx {
             None
@@ -93,10 +86,10 @@ impl Graph {
 
     pub fn get_neighbor_mut<'to, To>(
         &self,
-        node: &impl AsRef<NodePosition>,
+        node: impl Into<NodePosition>,
         to_layer: &'to mut Layer<To>,
     ) -> Option<NodeRefMut<'to, To>> {
-        let node_pos = node.as_ref();
+        let node_pos = node.into();
         let edge_layer = &self.edge_layers[node_pos.layer_idx][to_layer.index];
         if edge_layer.len() <= node_pos.item_idx {
             None
@@ -123,16 +116,30 @@ pub struct Layer<T> {
 }
 
 impl<T> Layer<T> {
-    pub fn push(&mut self, component: T) -> NodeRefMut<'_, T> {
-        let id = self.content.len();
+    pub fn push(&mut self, component: T) -> NodePosition {
+        let item_idx = self.content.len();
         self.content.push(component);
+        NodePosition {
+            layer_idx: self.index,
+            item_idx,
+        }
+    }
 
-        NodeRefMut {
-            item: &mut self.content[id],
-            pos: NodePosition {
-                item_idx: id,
-                layer_idx: self.index,
-            },
+    pub fn get(&self, pos: NodePosition) -> Option<NodeRef<'_, T>> {
+        if pos.layer_idx == self.index {
+            let item = self.content.get(pos.item_idx)?;
+            Some(NodeRef { item, pos })
+        } else {
+            None
+        }
+    }
+
+    pub fn get_mut(&mut self, pos: NodePosition) -> Option<NodeRefMut<'_, T>> {
+        if pos.layer_idx == self.index {
+            let item = self.content.get_mut(pos.item_idx)?;
+            Some(NodeRefMut { item, pos })
+        } else {
+            None
         }
     }
 
@@ -197,6 +204,22 @@ impl<'a, T> Iterator for LayerIterMut<'a, T> {
 // Ref types
 //
 
+#[derive(Clone, Copy)]
+pub struct NodePosition {
+    item_idx: ComponentIdx,
+    layer_idx: LayerIdx,
+}
+impl<T> From<&NodeRef<'_, T>> for NodePosition {
+    fn from(node_ref: &NodeRef<'_, T>) -> Self {
+        node_ref.pos
+    }
+}
+impl<T> From<&NodeRefMut<'_, T>> for NodePosition {
+    fn from(node_ref: &NodeRefMut<'_, T>) -> Self {
+        node_ref.pos
+    }
+}
+
 pub struct NodeRef<'a, T> {
     item: &'a T,
     pos: NodePosition,
@@ -205,19 +228,6 @@ impl<'a, T> std::ops::Deref for NodeRef<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         self.item
-    }
-}
-impl<'a, T> NodeRef<'a, T> {
-    pub fn downgrade(self) -> WeakNodeRef<T> {
-        WeakNodeRef {
-            pos: self.pos,
-            _marker: PhantomData,
-        }
-    }
-}
-impl<'a, T> AsRef<NodePosition> for NodeRef<'a, T> {
-    fn as_ref(&self) -> &NodePosition {
-        &self.pos
     }
 }
 
@@ -236,68 +246,9 @@ impl<'a, T> std::ops::DerefMut for NodeRefMut<'a, T> {
         self.item
     }
 }
-impl<'a, T> AsRef<NodePosition> for NodeRefMut<'a, T> {
-    fn as_ref(&self) -> &NodePosition {
-        &self.pos
-    }
-}
-impl<'a, T> NodeRefMut<'a, T> {
-    pub fn downgrade(self) -> WeakNodeRef<T> {
-        WeakNodeRef {
-            pos: self.pos,
-            _marker: PhantomData,
-        }
-    }
-}
-
-pub struct NodePosition {
-    item_idx: ComponentIdx,
-    layer_idx: LayerIdx,
-}
 
 //
-// Unsafe stuff that needs rethinking
-//
-
-/// TODO: because this can be stored, it will cause big problems if deleted stuff is moved.
-/// Also it just kind of sucks in general :v)
-/// We'll worry about it when we implement deletions
-pub struct WeakNodeRef<T> {
-    pos: NodePosition,
-    _marker: PhantomData<T>,
-}
-
-impl<T> WeakNodeRef<T> {
-    pub fn upgrade<'l>(&self, layer: &'l Layer<T>) -> NodeRef<'l, T> {
-        assert_eq!(
-            layer.index, self.pos.layer_idx,
-            "Layer was not the one this component belongs to"
-        );
-        NodeRef {
-            item: &layer.content[self.pos.item_idx],
-            pos: NodePosition {
-                item_idx: self.pos.item_idx,
-                layer_idx: self.pos.layer_idx,
-            },
-        }
-    }
-    pub fn upgrade_mut<'l>(&self, layer: &'l mut Layer<T>) -> NodeRefMut<'l, T> {
-        assert_eq!(
-            layer.index, self.pos.layer_idx,
-            "Layer was not the one this component belongs to"
-        );
-        NodeRefMut {
-            item: &mut layer.content[self.pos.item_idx],
-            pos: NodePosition {
-                item_idx: self.pos.item_idx,
-                layer_idx: self.pos.layer_idx,
-            },
-        }
-    }
-}
-
-//
-//
+// Tests
 //
 
 #[cfg(test)]
@@ -341,33 +292,32 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        let everyones_shape = shapes.push(Shape(69)).downgrade();
+        let everyones_shape = shapes.push(Shape(69));
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
             let tr_node = trs.push(Transform(i));
             let vel_node = vels.push(Velocity(i));
             let rb_node = rbs.push(RigidBody(i));
-            let shape_node = everyones_shape.upgrade(&shapes);
-            graph.connect(&vel_node, &tr_node);
-            graph.connect(&rb_node, &tr_node);
-            graph.connect(&rb_node, &vel_node);
-            graph.connect_oneway(&rb_node, &shape_node);
+            graph.connect(vel_node, tr_node);
+            graph.connect(rb_node, tr_node);
+            graph.connect(rb_node, vel_node);
+            graph.connect_oneway(rb_node, everyones_shape);
             assert_eq!(
-                graph.get_neighbor(&rb_node, &shapes).map(|n| *n),
+                graph.get_neighbor(rb_node, &shapes).map(|n| *n),
                 Some(Shape(69))
             );
             assert_eq!(
-                graph.get_neighbor(&tr_node, &rbs).map(|n| *n),
+                graph.get_neighbor(tr_node, &rbs).map(|n| *n),
                 Some(RigidBody(i))
             );
-            assert!(graph.get_neighbor(&tr_node, &shapes).is_none());
+            assert!(graph.get_neighbor(tr_node, &shapes).is_none());
 
             // spawn something with different connections in between
             let tr_node_ = trs.push(Transform(42 + i));
             let shape_node_ = shapes.push(Shape(i));
-            graph.connect(&tr_node_, &shape_node_);
+            graph.connect(tr_node_, shape_node_);
             assert_eq!(
-                graph.get_neighbor(&tr_node_, &shapes).map(|n| *n),
+                graph.get_neighbor(tr_node_, &shapes).map(|n| *n),
                 Some(Shape(i))
             );
         }
@@ -387,18 +337,18 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        let everyones_shape = shapes.push(Shape(69)).downgrade();
+        let everyones_shape = shapes.push(Shape(69));
 
         for i in 0..10 {
             let tr_node = trs.push(Transform(i));
             let vel_node = vels.push(Velocity(i));
             let rb_node = rbs.push(RigidBody(0));
-            graph.connect(&rb_node, &tr_node);
+            graph.connect(rb_node, tr_node);
             if i % 2 == 0 {
-                graph.connect(&tr_node, &vel_node);
+                graph.connect(tr_node, vel_node);
             }
             if i % 4 == 0 {
-                graph.connect_oneway(&rb_node, &everyones_shape.upgrade(&shapes));
+                graph.connect_oneway(rb_node, everyones_shape);
             }
         }
 
@@ -431,7 +381,7 @@ mod tests {
         }
         assert_eq!(match_count, 5);
         assert_eq!(full_match_count, 3);
-        assert_eq!(everyones_shape.upgrade(&shapes).0, 72);
+        assert_eq!(*shapes.get(everyones_shape).unwrap(), Shape(72));
 
         println!("All rbs: {:?}", rbs.content);
 
