@@ -1,7 +1,8 @@
 use super::collider::ColliderShape;
 use crate::core::math as m;
-use nalgebra as na;
+use crate::physics::BodyRef;
 
+use nalgebra as na;
 use std::f32::consts::PI;
 
 /// determines how close to parallel two surfaces need to be to generate two contacts
@@ -28,7 +29,7 @@ struct Contact_ {
 }
 
 /// Checks two transformed colliders for intersection.
-pub fn intersection_check<'a>(obj1: super::BodyRef<'a>, obj2: super::BodyRef<'a>) -> Vec<Contact> {
+pub fn intersection_check<'a>(obj1: BodyRef<'a>, obj2: BodyRef<'a>) -> Vec<Contact> {
     let complete = |cs: Vec<Contact_>| {
         cs.iter()
             .map(|c| Contact {
@@ -45,13 +46,17 @@ pub fn intersection_check<'a>(obj1: super::BodyRef<'a>, obj2: super::BodyRef<'a>
 
     use ColliderShape::*;
     match (obj1.coll.shape(), obj2.coll.shape()) {
-        (Circle { r: r1 }, Circle { r: r2 }) => complete(circle_circle(obj1.tr, *r1, obj2.tr, *r2)),
-        (Rect { hw, hh }, Circle { r }) => complete(rect_circle(obj1.tr, *hw, *hh, obj2.tr, *r)),
+        (Circle { r: r1 }, Circle { r: r2 }) => {
+            complete(circle_circle(&*obj1.tr, *r1, &*obj2.tr, *r2))
+        }
+        (Rect { hw, hh }, Circle { r }) => {
+            complete(rect_circle(&*obj1.tr, *hw, *hh, &*obj2.tr, *r))
+        }
         (Circle { r }, Rect { hw, hh }) => {
-            flip_contacts(complete(rect_circle(obj2.tr, *hw, *hh, obj1.tr, *r)))
+            flip_contacts(complete(rect_circle(&*obj2.tr, *hw, *hh, &*obj1.tr, *r)))
         }
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
-            complete(rect_rect(obj1.tr, *hw1, *hh1, obj2.tr, *hw2, *hh2))
+            complete(rect_rect(&*obj1.tr, *hw1, *hh1, &*obj2.tr, *hw2, *hh2))
         }
     }
 }

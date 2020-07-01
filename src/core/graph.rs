@@ -162,6 +162,7 @@ impl<T> Layer<T> {
 // Iterators
 //
 
+#[derive(Clone, Debug)]
 pub struct LayerIter<'a, T> {
     iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
     layer_idx: LayerIdx,
@@ -204,9 +205,9 @@ impl<'a, T> Iterator for LayerIterMut<'a, T> {
 // Ref types
 //
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodePosition {
-    item_idx: ComponentIdx,
+    pub(crate) item_idx: ComponentIdx,
     layer_idx: LayerIdx,
 }
 impl<T> From<&NodeRef<'_, T>> for NodePosition {

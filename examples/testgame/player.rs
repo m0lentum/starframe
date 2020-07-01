@@ -1,70 +1,67 @@
-use crate::MainSpaceFeatures;
+use crate::MyGraph;
 use starframe::{
     core::{
-        self,
-        container::{self as cont, Container},
+        self, graph,
         inputcache::{Key, KeyAxisState},
-        math as m, space, storage,
+        math as m,
     },
     graphics as gx, physics as phys,
 };
 
 use nalgebra as na;
 
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize)]
+pub struct Tag;
+
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct PlayerRecipe {
     pub transform: m::TransformBuilder,
 }
 
-impl core::Recipe<crate::MainSpaceFeatures> for PlayerRecipe {
-    fn spawn_vars(&self, id: space::CreationId, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(id, self.transform.into());
-    }
-
-    fn spawn_consts(key: space::CreationId, feat: &mut MainSpaceFeatures) {
+impl PlayerRecipe {
+    pub fn spawn(&self, graph: &mut MyGraph) {
         const WIDTH: f32 = 0.2;
         const HEIGHT: f32 = 0.4;
-        feat.shape.add(
-            key,
-            gx::Shape::Rect {
-                w: WIDTH,
-                h: HEIGHT,
-                color: [0.2, 0.8, 0.6, 1.0],
-            },
-        );
-        let collider = phys::Collider::new_rect(WIDTH, HEIGHT);
-        feat.physics
-            .add_body(key, phys::RigidBody::new_dynamic(&collider, 3.0), collider);
-        feat.player.add(key);
+
+        let tr_node = graph.l_transform.push(self.transform.into());
+        let shape_node = graph.l_shape.push(gx::Shape::Rect {
+            w: WIDTH,
+            h: HEIGHT,
+            color: [0.2, 0.8, 0.6, 1.0],
+        });
+        let coll = phys::Collider::new_rect(WIDTH, HEIGHT);
+        let body = phys::RigidBody::new_dynamic(&coll, 3.0);
+        let coll_node = graph.l_collider.push(coll);
+        let body_node = graph.l_body.push(body);
+        let tag_node = graph.l_playertag.push(Tag);
+        graph.graph.connect(tr_node, body_node);
+        graph.graph.connect(body_node, coll_node);
+        graph.graph.connect(tr_node, shape_node);
+
+        graph.graph.connect(tag_node, tr_node);
+        graph.graph.connect(tag_node, body_node);
     }
 }
 
 pub struct PlayerController {
-    tags: cont::Container<storage::NullStorage>,
     base_move_speed: f32,
     max_acceleration: f32,
 }
 impl PlayerController {
-    pub fn new(init: cont::ContainerInit) -> Self {
+    pub fn new() -> Self {
         PlayerController {
-            tags: Container::new(init),
             base_move_speed: 4.0,
             max_acceleration: 8.0,
         }
     }
 
-    pub fn add(&mut self, key: space::CreationId) {
-        self.tags.insert(key, ())
-    }
-
     pub fn tick(
         &mut self,
-        iter_seed: cont::IterSeed,
+        graph: &graph::Graph,
+        l_transform: &mut graph::Layer<m::Transform>,
+        l_body: &mut graph::Layer<phys::RigidBody>,
+        l_tag: &graph::Layer<Tag>,
         input: &core::InputCache,
-        trs: &mut m::TransformFeature,
-        phys_f: &mut phys::PhysicsFeature,
-        cmd_queue: &mut space::CommandQueue<MainSpaceFeatures>,
     ) {
         let target_hdir = match input.get_key_axis_state(Key::Right, Key::Left) {
             KeyAxisState::Zero => 0.0,
@@ -72,11 +69,10 @@ impl PlayerController {
             KeyAxisState::Neg => -1.0,
         };
 
-        for (player_body, player_tr) in iter_seed
-            .overlay(self.tags.iter())
-            .overlay(phys_f.bodies.iter_mut())
-            .and(trs.iter_mut())
-        {
+        for tag in l_tag.iter() {
+            let mut player_body = graph.get_neighbor_mut(&tag, l_body).unwrap();
+            let mut player_tr = graph.get_neighbor_mut(&tag, l_transform).unwrap();
+
             // move
 
             let move_speed = self.base_move_speed;
@@ -100,29 +96,6 @@ impl PlayerController {
             if input.is_key_pressed(Key::LShift, Some(0)) {
                 // TODO: only on ground, double jump, custom curve
                 player_vel.linear.y = 8.0;
-            }
-
-            // testing spawning with the command queue
-            if input.is_key_pressed(Key::R, Some(0)) {
-                use rand::distributions::Distribution;
-                cmd_queue.spawn_object(crate::recipes::Ball {
-                    position: [0.0, 0.0],
-                    radius: rand::distributions::Uniform::from(0.1..0.4)
-                        .sample(&mut rand::thread_rng()),
-                });
-            }
-        }
-    }
-
-    pub fn handle_collision(
-        &self,
-        evt: &phys::ContactEvent,
-        cmd_queue: &mut space::CommandQueue<MainSpaceFeatures>,
-    ) {
-        if self.tags.has(evt.source) {
-            // just some quick crap to test that spawning and killing stuff works
-            if rand::random::<u8>() < 4 {
-                cmd_queue.kill_object(evt.other);
             }
         }
     }

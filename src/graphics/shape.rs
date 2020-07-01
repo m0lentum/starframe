@@ -1,10 +1,5 @@
 use crate::{
-    core::{
-        container::{Container, ContainerInit, IterSeed},
-        math as m,
-        space::CreationId,
-        storage, Transform, TransformFeature,
-    },
+    core::{graph, math as m, Transform},
     graphics::{self as gx, util::GlslMat3},
 };
 
@@ -125,8 +120,7 @@ struct Vertex {
     color: [f32; 4],
 }
 
-pub struct ShapeFeature {
-    shapes: Container<storage::DenseVecStorage<Shape>>,
+pub struct ShapeRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
@@ -134,10 +128,8 @@ pub struct ShapeFeature {
     vert_buf: Option<wgpu::Buffer>,
     vert_buf_len: u32,
 }
-impl ShapeFeature {
-    pub fn new(init: ContainerInit, device: &wgpu::Device) -> Self {
-        let shapes = Container::new(init);
-
+impl ShapeRenderer {
+    pub fn new(device: &wgpu::Device) -> Self {
         // shaders
 
         let shader_v = include_bytes!("shaders/shape.vert.spv");
@@ -234,8 +226,7 @@ impl ShapeFeature {
             alpha_to_coverage_enabled: false,
         });
 
-        ShapeFeature {
-            shapes,
+        ShapeRenderer {
             pipeline,
             bind_group,
             uniform_buf,
@@ -247,18 +238,12 @@ impl ShapeFeature {
     /// Draw all the alive `Shape`s that have associated `Transform`s.
     pub fn draw(
         &mut self,
-        iter_seed: IterSeed,
-        trs: &TransformFeature,
+        shapes: &graph::Layer<Shape>,
+        transforms: &graph::Layer<Transform>,
+        graph: &graph::Graph,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,
     ) {
-        let iter = || {
-            iter_seed
-                .overlay(self.shapes.iter())
-                .and(trs.iter())
-                .into_iter()
-        };
-
         //
         // Update the uniform buffer
         //
@@ -281,7 +266,14 @@ impl ShapeFeature {
         // Update the vertex buffer
         //
 
-        let verts: Vec<Vertex> = iter().flat_map(|(s, t)| s.verts(t)).collect();
+        let verts: Vec<Vertex> = shapes
+            .iter()
+            .filter_map(|s| graph.get_neighbor(&s, transforms).map(|tr| s.verts(&*tr)))
+            .flatten()
+            .collect();
+        if verts.len() == 0 {
+            return;
+        }
         let active_verts_len = verts.len() as u32;
         let active_verts_size = active_verts_len as u64 * std::mem::size_of::<Vertex>() as u64;
 
@@ -322,10 +314,5 @@ impl ShapeFeature {
             pass.set_vertex_buffer(0, vert_buf, 0, 0);
             pass.draw(0..active_verts_len, 0..1);
         }
-    }
-
-    /// Add a Shape to an object.
-    pub fn add(&mut self, id: CreationId, shape: Shape) {
-        self.shapes.insert(id, shape);
     }
 }
