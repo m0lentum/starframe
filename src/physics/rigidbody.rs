@@ -79,6 +79,11 @@ impl RigidBody {
         }
     }
 
+    pub fn with_velocity(mut self, vel: Velocity) -> Self {
+        self.velocity_mut().map(|v| *v = vel);
+        self
+    }
+
     /// Restitution determines how much energy is preserved in collisions
     /// (0 = none, 1 = all).
     pub fn with_restitution(mut self, e: f32) -> Self {

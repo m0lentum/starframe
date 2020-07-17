@@ -77,7 +77,7 @@ pub struct MyGraph {
     l_collider: graph::Layer<phys::Collider>,
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
-    l_playertag: graph::Layer<player::Tag>,
+    l_player: graph::Layer<player::Player>,
 }
 impl MyGraph {
     pub fn new() -> Self {
@@ -86,14 +86,14 @@ impl MyGraph {
         let l_collider = graph.create_layer();
         let l_body = graph.create_layer();
         let l_shape = graph.create_layer();
-        let l_playertag = graph.create_layer();
+        let l_player = graph.create_layer();
         MyGraph {
             graph,
             l_transform,
             l_collider,
             l_body,
             l_shape,
-            l_playertag,
+            l_player,
         }
     }
 
@@ -185,13 +185,7 @@ impl game::GameState for State {
                 }
                 {
                     microprofile::scope!("update", "player");
-                    self.player.tick(
-                        &self.graph.graph,
-                        &mut self.graph.l_transform,
-                        &mut self.graph.l_body,
-                        &self.graph.l_playertag,
-                        &game.input,
-                    );
+                    self.player.tick(&mut self.graph, &game.input);
                 }
 
                 Some(())

@@ -1,6 +1,6 @@
 [
     Player ((
-        transform: ( position: (0, 0) ),
+        transform: ( position: (-3, 0) ),
     )),
     DynamicBlock ((
         width: 1, height: 0.8, transform: ( position: (1, -1.5) ),
@@ -31,6 +31,6 @@
         width: 0.2, height: 6, transform: ( position: (-4, 0) ),
     )),
     StaticBlock ((
-        width: 6, height: 0.2, transform: ( position: (2, -2), rotation: Deg(22.5) ),
+        width: 6, height: 2, transform: ( position: (4, -2), rotation: Deg(60) ),
     )),
 ]
