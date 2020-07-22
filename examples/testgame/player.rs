@@ -86,11 +86,11 @@ impl PlayerController {
         };
 
         let mut bullet_queue: Vec<(m::Transform, phys::Velocity)> = Vec::new();
-        for mut player in g.l_player.iter_mut() {
-            let mut player_body = g.graph.get_neighbor_mut(&player, &mut g.l_body).unwrap();
-            let mut player_tr = g
+        for (mut player, player_pos) in g.l_player.iter_mut() {
+            let (player_body, _) = g.graph.get_neighbor_mut(player_pos, &mut g.l_body).unwrap();
+            let (mut player_tr, _) = g
                 .graph
-                .get_neighbor_mut(&player, &mut g.l_transform)
+                .get_neighbor_mut(player_pos, &mut g.l_transform)
                 .unwrap();
 
             // move and orient

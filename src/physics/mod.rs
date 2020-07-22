@@ -111,14 +111,10 @@ impl PhysicsSolver {
         // Detect collisions
         //
 
-        let body_ref_iter = l_body.iter().filter_map(|rb| {
-            let coll = graph.get_neighbor(&rb, &l_collider)?;
-            let tr = graph.get_neighbor(&rb, &l_transform)?;
-            Some(BodyRef {
-                tr,
-                coll,
-                rb_pos: graph::NodePosition::from(&rb),
-            })
+        let body_ref_iter = l_body.iter().filter_map(|(_, rb_pos)| {
+            let coll = graph.get_neighbor(rb_pos, &l_collider)?;
+            let tr = graph.get_neighbor(rb_pos, &l_transform)?;
+            Some(BodyRef { tr, coll, rb_pos })
         });
 
         use collision::BroadPhase;
@@ -154,9 +150,9 @@ impl PhysicsSolver {
 
         // apply environment forces (gravity, usually)
         if let Some(ff) = forcefield {
-            for mut rb in l_body.iter_mut() {
-                if let (Some(tr), Some(vel)) =
-                    (graph.get_neighbor(&rb, &l_transform), rb.velocity_mut())
+            for (rb, rb_pos) in l_body.iter_mut() {
+                if let (Some((tr, _)), Some(vel)) =
+                    (graph.get_neighbor(rb_pos, &l_transform), rb.velocity_mut())
                 {
                     vel.linear += ff.value_at(tr.isometry.translation.vector.into()) * dt;
                 }
@@ -323,9 +319,9 @@ impl PhysicsSolver {
         //
 
         // semi-implicit Euler integration: use velocities at the end of the time step
-        for rb in l_body.iter() {
-            if let (Some(mut tr), Some(vel)) =
-                (graph.get_neighbor_mut(&rb, l_transform), rb.velocity())
+        for (rb, rb_pos) in l_body.iter() {
+            if let (Some((tr, _)), Some(vel)) =
+                (graph.get_neighbor_mut(rb_pos, l_transform), rb.velocity())
             {
                 tr.append_translation_mut(&(dt * vel.linear).into());
                 tr.append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
@@ -433,8 +429,8 @@ pub struct BodyNodes {
 impl From<&BodyRef<'_>> for BodyNodes {
     fn from(br: &BodyRef<'_>) -> Self {
         BodyNodes {
-            tr: graph::NodePosition::from(&br.tr),
-            coll: graph::NodePosition::from(&br.coll),
+            tr: br.tr.1,
+            coll: br.coll.1,
             rb: br.rb_pos,
         }
     }
@@ -446,8 +442,14 @@ impl BodyNodes {
         l_coll: &'a graph::Layer<Collider>,
     ) -> BodyRef<'a> {
         BodyRef {
-            tr: l_tr.get(self.tr).expect("A BodyNodes was malformed"),
-            coll: l_coll.get(self.coll).expect("A BodyNodes was malformed"),
+            tr: (
+                l_tr.get(self.tr).expect("A BodyNodes was malformed"),
+                self.tr,
+            ),
+            coll: (
+                l_coll.get(self.coll).expect("A BodyNodes was malformed"),
+                self.coll,
+            ),
             rb_pos: self.rb,
         }
     }

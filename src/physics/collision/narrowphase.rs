@@ -37,26 +37,26 @@ pub fn intersection_check<'a>(obj1: BodyRef<'a>, obj2: BodyRef<'a>) -> Vec<Conta
                 depth: c.depth,
                 point: c.point,
                 offsets: [
-                    c.point.coords - obj1.tr.isometry.translation.vector,
-                    c.point.coords - obj2.tr.isometry.translation.vector,
+                    c.point.coords - obj1.tr.0.isometry.translation.vector,
+                    c.point.coords - obj2.tr.0.isometry.translation.vector,
                 ],
             })
             .collect()
     };
 
     use ColliderShape::*;
-    match (obj1.coll.shape(), obj2.coll.shape()) {
+    match (obj1.coll.0.shape(), obj2.coll.0.shape()) {
         (Circle { r: r1 }, Circle { r: r2 }) => {
-            complete(circle_circle(&*obj1.tr, *r1, &*obj2.tr, *r2))
+            complete(circle_circle(&obj1.tr.0, *r1, &obj2.tr.0, *r2))
         }
         (Rect { hw, hh }, Circle { r }) => {
-            complete(rect_circle(&*obj1.tr, *hw, *hh, &*obj2.tr, *r))
+            complete(rect_circle(&obj1.tr.0, *hw, *hh, &obj2.tr.0, *r))
         }
         (Circle { r }, Rect { hw, hh }) => {
-            flip_contacts(complete(rect_circle(&*obj2.tr, *hw, *hh, &*obj1.tr, *r)))
+            flip_contacts(complete(rect_circle(&obj2.tr.0, *hw, *hh, &obj1.tr.0, *r)))
         }
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
-            complete(rect_rect(&*obj1.tr, *hw1, *hh1, &*obj2.tr, *hw2, *hh2))
+            complete(rect_rect(&obj1.tr.0, *hw1, *hh1, &obj2.tr.0, *hw2, *hh2))
         }
     }
 }
