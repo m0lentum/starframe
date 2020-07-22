@@ -111,7 +111,7 @@ impl PhysicsSolver {
         // Detect collisions
         //
 
-        let body_ref_iter = l_body.iter().filter_map(|(_, rb_pos)| {
+        let body_ref_iter = l_body.iter(graph).filter_map(|(_, rb_pos)| {
             let coll = graph.get_neighbor(rb_pos, &l_collider)?;
             let tr = graph.get_neighbor(rb_pos, &l_transform)?;
             Some(BodyRef { tr, coll, rb_pos })
@@ -319,7 +319,7 @@ impl PhysicsSolver {
         //
 
         // semi-implicit Euler integration: use velocities at the end of the time step
-        for (rb, rb_pos) in l_body.iter() {
+        for (rb, rb_pos) in l_body.iter(graph) {
             if let (Some((tr, _)), Some(vel)) =
                 (graph.get_neighbor_mut(rb_pos, l_transform), rb.velocity())
             {

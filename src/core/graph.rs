@@ -4,6 +4,7 @@
 
 type ComponentIdx = usize;
 type LayerIdx = usize;
+type Refcount = usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodePosition {
@@ -26,12 +27,17 @@ pub struct Graph {
     /// * 3rd dimension is the component on the starting layer
     /// * and the stored value is the index of the component on the ending layer
     edge_layers: Vec<Vec<Vec<Option<ComponentIdx>>>>,
+    /// 2D array:
+    /// * 1st dimension is the layer
+    /// * 2nd dimension is the component
+    refcounts: Vec<Vec<Refcount>>,
 }
 
 impl Graph {
     pub fn new() -> Self {
         Self {
             edge_layers: Vec::new(),
+            refcounts: Vec::new(),
         }
     }
 
@@ -45,6 +51,9 @@ impl Graph {
         // for the new layer, add a target layer for each of the already existing ones plus itself
         let targets = vec![Vec::new(); next_idx + 1];
         self.edge_layers.push(targets);
+
+        // add refcounts for the layer
+        self.refcounts.push(Vec::new());
 
         Layer {
             index: next_idx,
@@ -74,6 +83,9 @@ impl Graph {
                 If you're trying to do shared ownership, use `connect_oneway`."
             );
         }
+
+        // increase refcount for the target, not the source
+        self.refcounts[end.layer_idx][end.item_idx] += 1;
     }
 
     pub fn get_neighbor<'to, To>(
@@ -115,6 +127,37 @@ impl Graph {
             ))
         }
     }
+
+    pub fn get_refcount(&self, node: NodePosition) -> Refcount {
+        self.refcounts[node.layer_idx][node.item_idx]
+    }
+
+    pub fn delete(&mut self, root: NodePosition) {
+        let mut visited = Vec::new();
+        self.recursive_delete(root, &mut visited);
+    }
+
+    fn recursive_delete(&mut self, node: NodePosition, visited: &mut Vec<NodePosition>) {
+        visited.push(node);
+
+        for other_layer_idx in 0..self.edge_layers.len() {
+            let edges_to_other = &mut self.edge_layers[node.layer_idx][other_layer_idx];
+            if node.item_idx < edges_to_other.len() {
+                if let Some(other_item_idx) = edges_to_other[node.item_idx] {
+                    edges_to_other[node.item_idx] = None;
+                    self.refcounts[other_layer_idx][other_item_idx] -= 1;
+
+                    let next_node = NodePosition {
+                        layer_idx: other_layer_idx,
+                        item_idx: other_item_idx,
+                    };
+                    if !visited.iter().any(|seen_node| *seen_node == next_node) {
+                        self.recursive_delete(next_node, visited);
+                    }
+                }
+            }
+        }
+    }
 }
 
 //
@@ -127,9 +170,10 @@ pub struct Layer<T> {
 }
 
 impl<T> Layer<T> {
-    pub fn push(&mut self, component: T) -> NodePosition {
+    pub fn insert(&mut self, component: T, graph: &mut Graph) -> NodePosition {
         let item_idx = self.content.len();
         self.content.push(component);
+        graph.refcounts[self.index].push(0);
         NodePosition {
             layer_idx: self.index,
             item_idx,
@@ -152,10 +196,11 @@ impl<T> Layer<T> {
         }
     }
 
-    pub fn iter(&self) -> LayerIter<'_, T> {
+    pub fn iter<'s, 'g: 's>(&'s self, graph: &'g Graph) -> LayerIter<'s, T> {
         LayerIter {
             iter: self.content.iter().enumerate(),
             layer_idx: self.index,
+            refcounts: &graph.refcounts[self.index],
         }
     }
 
@@ -175,18 +220,23 @@ impl<T> Layer<T> {
 pub struct LayerIter<'a, T> {
     iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
     layer_idx: LayerIdx,
+    refcounts: &'a Vec<Refcount>,
 }
 impl<'a, T> Iterator for LayerIter<'a, T> {
     type Item = NodeRef<'a, T>;
     fn next(&mut self) -> Option<Self::Item> {
         let (item_idx, item) = self.iter.next()?;
-        Some((
-            item,
-            NodePosition {
-                item_idx,
-                layer_idx: self.layer_idx,
-            },
-        ))
+        if self.refcounts[item_idx] > 0 {
+            Some((
+                item,
+                NodePosition {
+                    item_idx,
+                    layer_idx: self.layer_idx,
+                },
+            ))
+        } else {
+            self.next()
+        }
     }
 }
 
@@ -253,12 +303,12 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        let everyones_shape = shapes.push(Shape(69));
+        let everyones_shape = shapes.insert(Shape(69), &mut graph);
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
-            let tr_node = trs.push(Transform(i));
-            let vel_node = vels.push(Velocity(i));
-            let rb_node = rbs.push(RigidBody(i));
+            let tr_node = trs.insert(Transform(i), &mut graph);
+            let vel_node = vels.insert(Velocity(i), &mut graph);
+            let rb_node = rbs.insert(RigidBody(i), &mut graph);
             graph.connect(vel_node, tr_node);
             graph.connect(rb_node, tr_node);
             graph.connect(rb_node, vel_node);
@@ -272,22 +322,20 @@ mod tests {
                 Some(&RigidBody(i))
             );
             assert!(graph.get_neighbor(tr_node, &shapes).is_none());
+            // check refcounts
+            assert_eq!(graph.get_refcount(tr_node), 2);
+            assert_eq!(graph.get_refcount(rb_node), 2);
+            assert_eq!(graph.get_refcount(everyones_shape), i + 1);
 
             // spawn something with different connections in between
-            let tr_node_ = trs.push(Transform(42 + i));
-            let shape_node_ = shapes.push(Shape(i));
+            let tr_node_ = trs.insert(Transform(42 + i), &mut graph);
+            let shape_node_ = shapes.insert(Shape(i), &mut graph);
             graph.connect(tr_node_, shape_node_);
             assert_eq!(
                 graph.get_neighbor(tr_node_, &shapes).map(|(n, _)| n),
                 Some(&Shape(i))
             );
         }
-
-        println!("Contents after `connect_nodes`:");
-        println!("{:?}", trs.content);
-        println!("{:?}", vels.content);
-        println!("{:?}", rbs.content);
-        println!("{:?}", shapes.content);
     }
 
     #[test]
@@ -298,12 +346,12 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        let everyones_shape = shapes.push(Shape(69));
+        let everyones_shape = shapes.insert(Shape(69), &mut graph);
 
         for i in 0..10 {
-            let tr_node = trs.push(Transform(i));
-            let vel_node = vels.push(Velocity(i));
-            let rb_node = rbs.push(RigidBody(0));
+            let tr_node = trs.insert(Transform(i), &mut graph);
+            let vel_node = vels.insert(Velocity(i), &mut graph);
+            let rb_node = rbs.insert(RigidBody(0), &mut graph);
             graph.connect(rb_node, tr_node);
             if i % 2 == 0 {
                 graph.connect(tr_node, vel_node);
@@ -346,7 +394,7 @@ mod tests {
 
         println!("All rbs: {:?}", rbs.content);
 
-        for (rb, rb_pos) in rbs.iter() {
+        for (rb, rb_pos) in rbs.iter(&graph) {
             if graph
                 .get_neighbor(rb_pos, &trs)
                 .and_then(|(_, tr_pos)| graph.get_neighbor(tr_pos, &vels))
@@ -357,5 +405,56 @@ mod tests {
                 assert_eq!(rb.0, 42);
             }
         }
+    }
+
+    #[test]
+    fn delete() {
+        let mut graph = Graph::new();
+        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut vels: Layer<Velocity> = graph.create_layer();
+        let mut rbs: Layer<RigidBody> = graph.create_layer();
+        let mut shapes: Layer<Shape> = graph.create_layer();
+
+        let everyones_shape = shapes.insert(Shape(69), &mut graph);
+
+        for i in 0..10 {
+            let tr_node = trs.insert(Transform(i), &mut graph);
+            let vel_node = vels.insert(Velocity(i), &mut graph);
+            let rb_node = rbs.insert(RigidBody(0), &mut graph);
+            graph.connect(rb_node, tr_node);
+            if i % 2 == 0 {
+                graph.connect(tr_node, vel_node);
+            } else {
+                graph.connect_oneway(vel_node, vel_node); // connect vel to itself to "keep it alive"
+            }
+            if i % 3 == 0 {
+                graph.connect_oneway(rb_node, everyones_shape);
+            }
+        }
+
+        println!("Refcounts after creations {:?}", graph.refcounts);
+
+        assert_eq!(vels.iter(&graph).count(), 10);
+        for vel_to_del in vels.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
+            graph.delete(vel_to_del);
+        }
+        // all vels deleted (== have 0 referrers)
+        assert_eq!(vels.iter(&graph).count(), 0);
+        // half of trs had vels attached and have also been deleted
+        assert_eq!(trs.iter(&graph).count(), 5);
+
+        println!("Refcounts after first deletions {:?}", graph.refcounts);
+
+        // rbs are connected to everything so deleting all of them should delete everything
+        for rb_to_del in rbs.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
+            // everyones_shape should live until the last rb is deleted
+            assert_eq!(shapes.iter(&graph).count(), 1);
+
+            graph.delete(rb_to_del);
+        }
+        assert_eq!(shapes.iter(&graph).count(), 0);
+        assert_eq!(trs.iter(&graph).count(), 0);
+        assert_eq!(vels.iter(&graph).count(), 0);
+        assert_eq!(rbs.iter(&graph).count(), 0);
     }
 }

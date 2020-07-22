@@ -267,7 +267,7 @@ impl ShapeRenderer {
         //
 
         let verts: Vec<Vertex> = shapes
-            .iter()
+            .iter(graph)
             .filter_map(|(s, s_pos)| {
                 graph
                     .get_neighbor(s_pos, transforms)

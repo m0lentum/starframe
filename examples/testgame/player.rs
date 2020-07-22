@@ -46,17 +46,22 @@ impl PlayerRecipe {
         const WIDTH: f32 = 0.2;
         const HEIGHT: f32 = 0.4;
 
-        let tr_node = graph.l_transform.push(self.transform.into());
-        let shape_node = graph.l_shape.push(gx::Shape::Rect {
-            w: WIDTH,
-            h: HEIGHT,
-            color: [0.2, 0.8, 0.6, 1.0],
-        });
+        let tr_node = graph
+            .l_transform
+            .insert(self.transform.into(), &mut graph.graph);
+        let shape_node = graph.l_shape.insert(
+            gx::Shape::Rect {
+                w: WIDTH,
+                h: HEIGHT,
+                color: [0.2, 0.8, 0.6, 1.0],
+            },
+            &mut graph.graph,
+        );
         let coll = phys::Collider::new_rect(WIDTH, HEIGHT);
         let body = phys::RigidBody::new_dynamic(&coll, 3.0);
-        let coll_node = graph.l_collider.push(coll);
-        let body_node = graph.l_body.push(body);
-        let tag_node = graph.l_player.push(Player::new());
+        let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
+        let body_node = graph.l_body.insert(body, &mut graph.graph);
+        let tag_node = graph.l_player.insert(Player::new(), &mut graph.graph);
         graph.graph.connect(tr_node, body_node);
         graph.graph.connect(body_node, coll_node);
         graph.graph.connect(tr_node, shape_node);
@@ -147,16 +152,19 @@ impl PlayerController {
 
     fn spawn_bullet(tr: m::Transform, vel: phys::Velocity, graph: &mut MyGraph) {
         const R: f32 = 0.05;
-        let tr_node = graph.l_transform.push(tr);
-        let shape_node = graph.l_shape.push(gx::Shape::Circle {
-            r: R,
-            points: 5,
-            color: [1.0; 4],
-        });
+        let tr_node = graph.l_transform.insert(tr, &mut graph.graph);
+        let shape_node = graph.l_shape.insert(
+            gx::Shape::Circle {
+                r: R,
+                points: 5,
+                color: [1.0; 4],
+            },
+            &mut graph.graph,
+        );
         let coll = phys::Collider::new_circle(R);
         let body = phys::RigidBody::new_dynamic_const_mass(&coll, 1.0).with_velocity(vel);
-        let coll_node = graph.l_collider.push(coll);
-        let body_node = graph.l_body.push(body);
+        let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
+        let body_node = graph.l_body.insert(body, &mut graph.graph);
 
         graph.graph.connect(tr_node, body_node);
         graph.graph.connect(body_node, coll_node);
