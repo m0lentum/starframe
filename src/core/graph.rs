@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 
 type ComponentIdx = usize;
 type LayerIdx = usize;
-type Refcount = usize;
+type EdgeCount = usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnyNode {
@@ -70,14 +70,14 @@ pub struct Graph {
     /// 2D array:
     /// * 1st dimension is the layer
     /// * 2nd dimension is the component
-    refcounts: Vec<Vec<Refcount>>,
+    edge_counts: Vec<Vec<EdgeCount>>,
 }
 
 impl Graph {
     pub fn new() -> Self {
         Self {
             edge_layers: Vec::new(),
-            refcounts: Vec::new(),
+            edge_counts: Vec::new(),
         }
     }
 
@@ -93,7 +93,7 @@ impl Graph {
         self.edge_layers.push(targets);
 
         // add refcounts for the layer
-        self.refcounts.push(Vec::new());
+        self.edge_counts.push(Vec::new());
 
         Layer {
             index: next_idx,
@@ -128,8 +128,8 @@ impl Graph {
             );
         }
 
-        // increase refcount for the target, not the source
-        self.refcounts[end.layer_idx][end.item_idx] += 1;
+        self.edge_counts[start.layer_idx][start.item_idx] += 1;
+        self.edge_counts[end.layer_idx][end.item_idx] += 1;
     }
 
     pub fn get_neighbor<'to, To>(
@@ -176,9 +176,9 @@ impl Graph {
         }
     }
 
-    pub fn get_refcount(&self, node: impl Into<AnyNode>) -> Refcount {
+    pub fn get_edge_count(&self, node: impl Into<AnyNode>) -> EdgeCount {
         let node = node.into();
-        self.refcounts[node.layer_idx][node.item_idx]
+        self.edge_counts[node.layer_idx][node.item_idx]
     }
 
     pub fn delete(&mut self, root: impl Into<AnyNode>) {
@@ -195,7 +195,8 @@ impl Graph {
             if node.item_idx < edges_to_other.len() {
                 if let Some(other_item_idx) = edges_to_other[node.item_idx] {
                     edges_to_other[node.item_idx] = None;
-                    self.refcounts[other_layer_idx][other_item_idx] -= 1;
+                    self.edge_counts[other_layer_idx][other_item_idx] -= 1;
+                    self.edge_counts[node.layer_idx][node.item_idx] -= 1;
 
                     let next_node = AnyNode {
                         layer_idx: other_layer_idx,
@@ -223,7 +224,7 @@ impl<T> Layer<T> {
     pub fn insert(&mut self, component: T, graph: &mut Graph) -> TypedNode<T> {
         let item_idx = self.content.len();
         self.content.push(component);
-        graph.refcounts[self.index].push(0);
+        graph.edge_counts[self.index].push(0);
 
         AnyNode {
             layer_idx: self.index,
@@ -252,7 +253,7 @@ impl<T> Layer<T> {
         LayerIter {
             iter: self.content.iter().enumerate(),
             layer_idx: self.index,
-            refcounts: &graph.refcounts[self.index],
+            refcounts: &graph.edge_counts[self.index],
         }
     }
 
@@ -272,7 +273,7 @@ impl<T> Layer<T> {
 pub struct LayerIter<'a, T> {
     iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
     layer_idx: LayerIdx,
-    refcounts: &'a Vec<Refcount>,
+    refcounts: &'a Vec<EdgeCount>,
 }
 impl<'a, T> Iterator for LayerIter<'a, T> {
     type Item = NodeRef<'a, T>;
@@ -376,10 +377,10 @@ mod tests {
                 Some(&RigidBody(i))
             );
             assert!(graph.get_neighbor(tr_node, &shapes).is_none());
-            // check refcounts
-            assert_eq!(graph.get_refcount(tr_node), 2);
-            assert_eq!(graph.get_refcount(rb_node), 2);
-            assert_eq!(graph.get_refcount(everyones_shape), i + 1);
+            // check edge counts
+            assert_eq!(graph.get_edge_count(tr_node), 4);
+            assert_eq!(graph.get_edge_count(rb_node), 5);
+            assert_eq!(graph.get_edge_count(everyones_shape), i + 1);
 
             // spawn something with different connections in between
             let tr_node_ = trs.insert(Transform(42 + i), &mut graph);
@@ -486,7 +487,7 @@ mod tests {
             }
         }
 
-        println!("Refcounts after creations {:?}", graph.refcounts);
+        println!("Edge counts after creations {:?}", graph.edge_counts);
 
         assert_eq!(vels.iter(&graph).count(), 10);
         for vel_to_del in vels.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
@@ -497,7 +498,7 @@ mod tests {
         // half of trs had vels attached and have also been deleted
         assert_eq!(trs.iter(&graph).count(), 5);
 
-        println!("Refcounts after first deletions {:?}", graph.refcounts);
+        println!("Edge counts after first deletions {:?}", graph.edge_counts);
 
         // rbs are connected to everything so deleting all of them should delete everything
         for rb_to_del in rbs.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
