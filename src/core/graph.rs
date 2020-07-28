@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 //
 // Index & ref types
 //
@@ -7,13 +9,51 @@ type LayerIdx = usize;
 type Refcount = usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NodePosition {
+pub struct AnyNode {
     pub(crate) item_idx: ComponentIdx,
     layer_idx: LayerIdx,
 }
+impl AnyNode {
+    pub(self) fn typed<T>(self) -> TypedNode<T> {
+        TypedNode {
+            node: self,
+            _marker: PhantomData,
+        }
+    }
+}
+pub struct TypedNode<T> {
+    pub(crate) node: AnyNode,
+    _marker: PhantomData<*const T>,
+}
+impl<T> Into<AnyNode> for TypedNode<T> {
+    fn into(self) -> AnyNode {
+        self.node
+    }
+}
+// blanket impls required because derive restricts type of T
+impl<T> Clone for TypedNode<T> {
+    fn clone(&self) -> Self {
+        TypedNode {
+            node: self.node,
+            _marker: PhantomData,
+        }
+    }
+}
+impl<T> Copy for TypedNode<T> {}
+impl<T> std::fmt::Debug for TypedNode<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.node.fmt(f)
+    }
+}
+impl<T> PartialEq for TypedNode<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+    }
+}
+impl<T> Eq for TypedNode<T> {}
 
-pub type NodeRef<'a, T> = (&'a T, NodePosition);
-pub type NodeRefMut<'a, T> = (&'a mut T, NodePosition);
+pub type NodeRef<'a, T> = (&'a T, TypedNode<T>);
+pub type NodeRefMut<'a, T> = (&'a mut T, TypedNode<T>);
 
 //
 // Graph
@@ -61,12 +101,16 @@ impl Graph {
         }
     }
 
-    pub fn connect(&mut self, node1: NodePosition, node2: NodePosition) {
+    pub fn connect(&mut self, node1: impl Into<AnyNode>, node2: impl Into<AnyNode>) {
+        let node1 = node1.into();
+        let node2 = node2.into();
         self.connect_oneway(node1, node2);
         self.connect_oneway(node2, node1);
     }
 
-    pub fn connect_oneway(&mut self, start: NodePosition, end: NodePosition) {
+    pub fn connect_oneway(&mut self, start: impl Into<AnyNode>, end: impl Into<AnyNode>) {
+        let start = start.into();
+        let end = end.into();
         let edge_vec = &mut self.edge_layers[start.layer_idx][end.layer_idx];
         // extend the edge vec when adding an edge past its current end.
         // we don't allocate all the space at the start because it's likely to not get used
@@ -90,54 +134,60 @@ impl Graph {
 
     pub fn get_neighbor<'to, To>(
         &self,
-        node_pos: NodePosition,
+        node: impl Into<AnyNode>,
         to_layer: &'to Layer<To>,
     ) -> Option<NodeRef<'to, To>> {
-        let edge_layer = &self.edge_layers[node_pos.layer_idx][to_layer.index];
-        if edge_layer.len() <= node_pos.item_idx {
+        let node = node.into();
+        let edge_layer = &self.edge_layers[node.layer_idx][to_layer.index];
+        if edge_layer.len() <= node.item_idx {
             None
         } else {
-            let to_id = edge_layer[node_pos.item_idx]?;
+            let to_id = edge_layer[node.item_idx]?;
             Some((
                 &to_layer.content[to_id],
-                NodePosition {
+                AnyNode {
                     item_idx: to_id,
                     layer_idx: to_layer.index,
-                },
+                }
+                .typed(),
             ))
         }
     }
 
     pub fn get_neighbor_mut<'to, To>(
         &self,
-        node_pos: NodePosition,
+        node: impl Into<AnyNode>,
         to_layer: &'to mut Layer<To>,
     ) -> Option<NodeRefMut<'to, To>> {
-        let edge_layer = &self.edge_layers[node_pos.layer_idx][to_layer.index];
-        if edge_layer.len() <= node_pos.item_idx {
+        let node = node.into();
+        let edge_layer = &self.edge_layers[node.layer_idx][to_layer.index];
+        if edge_layer.len() <= node.item_idx {
             None
         } else {
-            let to_id = edge_layer[node_pos.item_idx]?;
+            let to_id = edge_layer[node.item_idx]?;
             Some((
                 &mut to_layer.content[to_id],
-                NodePosition {
+                AnyNode {
                     item_idx: to_id,
                     layer_idx: to_layer.index,
-                },
+                }
+                .typed(),
             ))
         }
     }
 
-    pub fn get_refcount(&self, node: NodePosition) -> Refcount {
+    pub fn get_refcount(&self, node: impl Into<AnyNode>) -> Refcount {
+        let node = node.into();
         self.refcounts[node.layer_idx][node.item_idx]
     }
 
-    pub fn delete(&mut self, root: NodePosition) {
+    pub fn delete(&mut self, root: impl Into<AnyNode>) {
+        let root = root.into();
         let mut visited = Vec::new();
         self.recursive_delete(root, &mut visited);
     }
 
-    fn recursive_delete(&mut self, node: NodePosition, visited: &mut Vec<NodePosition>) {
+    fn recursive_delete(&mut self, node: AnyNode, visited: &mut Vec<AnyNode>) {
         visited.push(node);
 
         for other_layer_idx in 0..self.edge_layers.len() {
@@ -147,7 +197,7 @@ impl Graph {
                     edges_to_other[node.item_idx] = None;
                     self.refcounts[other_layer_idx][other_item_idx] -= 1;
 
-                    let next_node = NodePosition {
+                    let next_node = AnyNode {
                         layer_idx: other_layer_idx,
                         item_idx: other_item_idx,
                     };
@@ -170,27 +220,29 @@ pub struct Layer<T> {
 }
 
 impl<T> Layer<T> {
-    pub fn insert(&mut self, component: T, graph: &mut Graph) -> NodePosition {
+    pub fn insert(&mut self, component: T, graph: &mut Graph) -> TypedNode<T> {
         let item_idx = self.content.len();
         self.content.push(component);
         graph.refcounts[self.index].push(0);
-        NodePosition {
+
+        AnyNode {
             layer_idx: self.index,
             item_idx,
         }
+        .typed()
     }
 
-    pub fn get(&self, pos: NodePosition) -> Option<&T> {
-        if pos.layer_idx == self.index {
-            self.content.get(pos.item_idx)
+    pub fn get(&self, node: TypedNode<T>) -> Option<&T> {
+        if node.node.layer_idx == self.index {
+            self.content.get(node.node.item_idx)
         } else {
             None
         }
     }
 
-    pub fn get_mut(&mut self, pos: NodePosition) -> Option<&mut T> {
-        if pos.layer_idx == self.index {
-            self.content.get_mut(pos.item_idx)
+    pub fn get_mut(&mut self, node: TypedNode<T>) -> Option<&mut T> {
+        if node.node.layer_idx == self.index {
+            self.content.get_mut(node.node.item_idx)
         } else {
             None
         }
@@ -229,10 +281,11 @@ impl<'a, T> Iterator for LayerIter<'a, T> {
         if self.refcounts[item_idx] > 0 {
             Some((
                 item,
-                NodePosition {
+                AnyNode {
                     item_idx,
                     layer_idx: self.layer_idx,
-                },
+                }
+                .typed(),
             ))
         } else {
             self.next()
@@ -250,10 +303,11 @@ impl<'a, T> Iterator for LayerIterMut<'a, T> {
         let (item_idx, item) = self.iter.next()?;
         Some((
             item,
-            NodePosition {
+            AnyNode {
                 item_idx,
                 layer_idx: self.layer_idx,
-            },
+            }
+            .typed(),
         ))
     }
 }

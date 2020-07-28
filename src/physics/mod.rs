@@ -43,10 +43,10 @@ impl Velocity {
 }
 
 /// Events produced by the physics system when two physics objects collide.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct ContactEvent {
-    pub source_body: graph::NodePosition,
-    pub other_body: graph::NodePosition,
+    pub source_body: graph::TypedNode<RigidBody>,
+    pub other_body: graph::TypedNode<RigidBody>,
     pub info: ContactInfo,
 }
 
@@ -415,16 +415,16 @@ impl ImpulseCache {
 pub struct BodyRef<'a> {
     pub tr: graph::NodeRef<'a, Transform>,
     pub coll: graph::NodeRef<'a, Collider>,
-    pub(crate) rb_pos: graph::NodePosition,
+    pub(crate) rb_pos: graph::TypedNode<RigidBody>,
 }
 
 /// A non-reference version of `BodyRef`, to allow for multiple mutable references
 /// from the same graph layer during one iteration.
 #[derive(Clone, Copy, Debug)]
 pub struct BodyNodes {
-    pub(crate) tr: graph::NodePosition,
-    pub(crate) coll: graph::NodePosition,
-    pub(crate) rb: graph::NodePosition,
+    pub(crate) tr: graph::TypedNode<Transform>,
+    pub(crate) coll: graph::TypedNode<Collider>,
+    pub(crate) rb: graph::TypedNode<RigidBody>,
 }
 impl From<&BodyRef<'_>> for BodyNodes {
     fn from(br: &BodyRef<'_>) -> Self {
@@ -455,6 +455,6 @@ impl BodyNodes {
     }
 
     fn cache_id(&self, other: BodyNodes) -> [usize; 2] {
-        [self.rb.item_idx, other.rb.item_idx]
+        [self.rb.node.item_idx, other.rb.node.item_idx]
     }
 }
