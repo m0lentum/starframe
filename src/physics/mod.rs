@@ -43,7 +43,7 @@ impl Velocity {
 }
 
 /// Events produced by the physics system when two physics objects collide.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ContactEvent {
     pub source_body: graph::TypedNode<RigidBody>,
     pub other_body: graph::TypedNode<RigidBody>,
@@ -150,7 +150,7 @@ impl PhysicsSolver {
 
         // apply environment forces (gravity, usually)
         if let Some(ff) = forcefield {
-            for (rb, rb_pos) in l_body.iter_mut() {
+            for (rb, rb_pos) in l_body.iter_mut(graph) {
                 if let (Some((tr, _)), Some(vel)) =
                     (graph.get_neighbor(rb_pos, &l_transform), rb.velocity_mut())
                 {

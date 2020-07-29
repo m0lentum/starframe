@@ -257,10 +257,11 @@ impl<T> Layer<T> {
         }
     }
 
-    pub fn iter_mut(&mut self) -> LayerIterMut<'_, T> {
+    pub fn iter_mut<'s, 'g: 's>(&'s mut self, graph: &'g Graph) -> LayerIterMut<'s, T> {
         LayerIterMut {
             iter: self.content.iter_mut().enumerate(),
             layer_idx: self.index,
+            refcounts: &graph.edge_counts[self.index],
         }
     }
 }
@@ -297,19 +298,24 @@ impl<'a, T> Iterator for LayerIter<'a, T> {
 pub struct LayerIterMut<'a, T> {
     iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
     layer_idx: LayerIdx,
+    refcounts: &'a Vec<EdgeCount>,
 }
 impl<'a, T> Iterator for LayerIterMut<'a, T> {
     type Item = NodeRefMut<'a, T>;
     fn next(&mut self) -> Option<Self::Item> {
         let (item_idx, item) = self.iter.next()?;
-        Some((
-            item,
-            AnyNode {
-                item_idx,
-                layer_idx: self.layer_idx,
-            }
-            .typed(),
-        ))
+        if self.refcounts[item_idx] > 0 {
+            Some((
+                item,
+                AnyNode {
+                    item_idx,
+                    layer_idx: self.layer_idx,
+                }
+                .typed(),
+            ))
+        } else {
+            self.next()
+        }
     }
 }
 
@@ -420,7 +426,7 @@ mod tests {
 
         let mut match_count = 0; // not including shape
         let mut full_match_count = 0; // including shape
-        for (mut rb, rb_pos) in rbs.iter_mut() {
+        for (mut rb, rb_pos) in rbs.iter_mut(&graph) {
             let (tr, tr_pos) = match graph.get_neighbor(rb_pos, &trs) {
                 Some(tr) => tr,
                 None => continue,

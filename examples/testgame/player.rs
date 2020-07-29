@@ -91,7 +91,7 @@ impl PlayerController {
         };
 
         let mut bullet_queue: Vec<(m::Transform, phys::Velocity)> = Vec::new();
-        for (mut player, player_pos) in g.l_player.iter_mut() {
+        for (mut player, player_pos) in g.l_player.iter_mut(&g.graph) {
             let (player_body, _) = g.graph.get_neighbor_mut(player_pos, &mut g.l_body).unwrap();
             let (mut player_tr, _) = g
                 .graph
