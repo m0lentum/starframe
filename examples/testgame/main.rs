@@ -6,6 +6,7 @@ extern crate microprofile;
 use rand::{distributions as distr, distributions::Distribution};
 
 use starframe::{
+    self as sf,
     core::{
         game::{self, Game},
         graph,
@@ -78,6 +79,7 @@ pub struct MyGraph {
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
     l_player: graph::Layer<player::Player>,
+    l_evt_sink: sf::core::EventSinkLayer<MyGraph>,
 }
 impl MyGraph {
     pub fn new() -> Self {
@@ -87,6 +89,7 @@ impl MyGraph {
         let l_body = graph.create_layer();
         let l_shape = graph.create_layer();
         let l_player = graph.create_layer();
+        let l_evt_sinks = graph.create_layer();
         MyGraph {
             graph,
             l_transform,
@@ -94,6 +97,7 @@ impl MyGraph {
             l_body,
             l_shape,
             l_player,
+            l_evt_sink: l_evt_sinks,
         }
     }
 
@@ -174,11 +178,12 @@ impl game::GameState for State {
                 {
                     microprofile::scope!("update", "physics");
                     let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
-                    let _contact_evts = self.physics.tick(
+                    self.physics.tick(
                         &self.graph.graph,
                         &mut self.graph.l_transform,
                         &mut self.graph.l_body,
                         &self.graph.l_collider,
+                        &mut self.graph.l_evt_sink,
                         dt,
                         Some(&grav),
                     );
@@ -187,6 +192,8 @@ impl game::GameState for State {
                     microprofile::scope!("update", "player");
                     self.player.tick(&mut self.graph, &game.input);
                 }
+
+                self.graph.l_evt_sink.flush(&self.graph.graph)(&mut self.graph);
 
                 Some(())
             }

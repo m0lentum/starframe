@@ -45,7 +45,6 @@ impl Velocity {
 /// Events produced by the physics system when two physics objects collide.
 #[derive(Clone, Copy, Debug)]
 pub struct ContactEvent {
-    pub source_body: graph::TypedNode<RigidBody>,
     pub other_body: graph::TypedNode<RigidBody>,
     pub info: ContactInfo,
 }
@@ -98,15 +97,16 @@ impl PhysicsSolver {
 
     /// Detect collisions, solve constraint forces and move bodies.
     /// Call this once in your `FeatureSet`'s `tick` function.
-    pub fn tick(
+    pub fn tick<EvtParams>(
         &mut self,
         graph: &graph::Graph,
         l_transform: &mut graph::Layer<Transform>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
+        l_evt_sink: &mut crate::core::EventSinkLayer<EvtParams>,
         dt: f32,
         forcefield: Option<&impl ForceField>,
-    ) -> Vec<ContactEvent> {
+    ) {
         //
         // Detect collisions
         //
@@ -290,26 +290,29 @@ impl PhysicsSolver {
         //
 
         // push events
-        let mut events = Vec::new();
         for acc in &accumulators {
-            events.push(ContactEvent {
-                source_body: acc.constraint.nodes[0].rb,
-                other_body: acc.constraint.nodes[1].rb,
-                info: ContactInfo {
-                    point: acc.constraint.point,
-                    normal: -acc.constraint.normal,
-                    impulse: acc.total_impulse,
-                },
-            });
-            events.push(ContactEvent {
-                source_body: acc.constraint.nodes[1].rb,
-                other_body: acc.constraint.nodes[0].rb,
-                info: ContactInfo {
-                    point: acc.constraint.point,
-                    normal: acc.constraint.normal,
-                    impulse: acc.total_impulse,
-                },
-            });
+            if let Some((sink, _)) = graph.get_neighbor_mut(acc.constraint.nodes[0].rb, l_evt_sink)
+            {
+                sink.push(crate::core::Event::Contact(ContactEvent {
+                    other_body: acc.constraint.nodes[1].rb,
+                    info: ContactInfo {
+                        point: acc.constraint.point,
+                        normal: -acc.constraint.normal,
+                        impulse: acc.total_impulse,
+                    },
+                }));
+            }
+            if let Some((sink, _)) = graph.get_neighbor_mut(acc.constraint.nodes[1].rb, l_evt_sink)
+            {
+                sink.push(crate::core::Event::Contact(ContactEvent {
+                    other_body: acc.constraint.nodes[0].rb,
+                    info: ContactInfo {
+                        point: acc.constraint.point,
+                        normal: acc.constraint.normal,
+                        impulse: acc.total_impulse,
+                    },
+                }));
+            }
         }
         // store impulses for next frame's warm start
         self.impulse_cache.replace(&accumulators);
@@ -327,8 +330,6 @@ impl PhysicsSolver {
                 tr.append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
             }
         }
-
-        events
     }
 }
 

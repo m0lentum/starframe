@@ -1,5 +1,8 @@
 pub mod graph;
 
+mod event;
+pub use event::*;
+
 pub mod game;
 pub use game::Game;
 

@@ -1,5 +1,6 @@
 use crate::MyGraph;
 use starframe::{
+    self as sf,
     core::{
         self,
         inputcache::{Key, KeyAxisState},
@@ -134,12 +135,12 @@ impl PlayerController {
                     m::TransformBuilder::new()
                         .with_position(
                             player_tr.isometry.translation.vector
-                                + player.facing.orient_vec(m::Vec2::new(0.15, 0.0)),
+                                + player.facing.orient_vec(m::Vec2::new(0.2, 0.0)),
                         )
                         .build(),
                     phys::Velocity {
                         angular: 0.0,
-                        linear: player.facing.orient_vec(m::Vec2::new(15.0, 0.0)),
+                        linear: player.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
                     },
                 ));
             }
@@ -150,24 +151,39 @@ impl PlayerController {
         }
     }
 
-    fn spawn_bullet(tr: m::Transform, vel: phys::Velocity, graph: &mut MyGraph) {
+    fn spawn_bullet(tr: m::Transform, vel: phys::Velocity, g: &mut MyGraph) {
         const R: f32 = 0.05;
-        let tr_node = graph.l_transform.insert(tr, &mut graph.graph);
-        let shape_node = graph.l_shape.insert(
+        let tr_node = g.l_transform.insert(tr, &mut g.graph);
+        let shape_node = g.l_shape.insert(
             gx::Shape::Circle {
                 r: R,
                 points: 5,
                 color: [1.0; 4],
             },
-            &mut graph.graph,
+            &mut g.graph,
         );
         let coll = phys::Collider::new_circle(R);
         let body = phys::RigidBody::new_dynamic_const_mass(&coll, 1.0).with_velocity(vel);
-        let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
-        let body_node = graph.l_body.insert(body, &mut graph.graph);
+        let coll_node = g.l_collider.insert(coll, &mut g.graph);
+        let body_node = g.l_body.insert(body, &mut g.graph);
 
-        graph.graph.connect(tr_node, body_node);
-        graph.graph.connect(body_node, coll_node);
-        graph.graph.connect(tr_node, shape_node);
+        let evt_sink_node = g.l_evt_sink.insert(
+            sf::core::EventSink::new(|g: &mut MyGraph, node, evt| match evt {
+                sf::core::Event::Contact(contact) => {
+                    println!(
+                        "Bullet hit with {}",
+                        contact.info.impulse * *contact.info.normal
+                    );
+                    g.graph.delete(node);
+                }
+                _ => (),
+            }),
+            &mut g.graph,
+        );
+
+        g.graph.connect(tr_node, body_node);
+        g.graph.connect(body_node, coll_node);
+        g.graph.connect(tr_node, shape_node);
+        g.graph.connect(body_node, evt_sink_node);
     }
 }
