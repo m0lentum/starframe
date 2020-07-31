@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 
 //
@@ -66,11 +67,15 @@ pub struct Graph {
     /// * 2nd dimension is the target layer
     /// * 3rd dimension is the component on the starting layer
     /// * and the stored value is the index of the component on the ending layer
+    /// used to connect nodes
     edge_layers: Vec<Vec<Vec<Option<ComponentIdx>>>>,
     /// 2D array:
     /// * 1st dimension is the layer
     /// * 2nd dimension is the component
+    /// used to determine if an object is dead or alive
     edge_counts: Vec<Vec<EdgeCount>>,
+    /// FIFO queue for slot reuse
+    vacant_slots: Vec<VecDeque<ComponentIdx>>,
 }
 
 impl Graph {
@@ -78,6 +83,7 @@ impl Graph {
         Self {
             edge_layers: Vec::new(),
             edge_counts: Vec::new(),
+            vacant_slots: Vec::new(),
         }
     }
 
@@ -92,8 +98,9 @@ impl Graph {
         let targets = vec![Vec::new(); next_idx + 1];
         self.edge_layers.push(targets);
 
-        // add refcounts for the layer
+        // add refcounts and vacant slot queues for the layer
         self.edge_counts.push(Vec::new());
+        self.vacant_slots.push(VecDeque::new());
 
         Layer {
             index: next_idx,
@@ -183,12 +190,34 @@ impl Graph {
 
     pub fn delete(&mut self, root: impl Into<AnyNode>) {
         let root = root.into();
+        // check if the node is already considered deleted before doing anything
+        if self.edge_counts[root.layer_idx][root.item_idx] <= 0 {
+            return;
+        }
         let mut visited = Vec::new();
         self.recursive_delete(root, &mut visited);
+
+        for node in visited {
+            if self.edge_counts[node.layer_idx][node.item_idx] <= 0 {
+                debug_assert!(
+                    self.vacant_slots[node.layer_idx]
+                        .iter()
+                        .find(|&&idx| idx == node.item_idx)
+                        .is_none(),
+                    format!("Same slot marked vacant twice ({:?})", node),
+                );
+                self.vacant_slots[node.layer_idx].push_back(node.item_idx);
+            }
+        }
     }
 
     fn recursive_delete(&mut self, node: AnyNode, visited: &mut Vec<AnyNode>) {
         visited.push(node);
+
+        // early out if the node has no more connections
+        if self.edge_counts[node.layer_idx][node.item_idx] <= 0 {
+            return;
+        }
 
         for other_layer_idx in 0..self.edge_layers.len() {
             let edges_to_other = &mut self.edge_layers[node.layer_idx][other_layer_idx];
@@ -215,6 +244,7 @@ impl Graph {
 // Layer
 //
 
+#[derive(Debug)]
 pub struct Layer<T> {
     index: LayerIdx,
     content: Vec<T>,
@@ -222,9 +252,14 @@ pub struct Layer<T> {
 
 impl<T> Layer<T> {
     pub fn insert(&mut self, component: T, graph: &mut Graph) -> TypedNode<T> {
-        let item_idx = self.content.len();
-        self.content.push(component);
-        graph.edge_counts[self.index].push(0);
+        let item_idx = if let Some(vacant_slot) = graph.vacant_slots[self.index].pop_front() {
+            self.content[vacant_slot] = component;
+            vacant_slot
+        } else {
+            self.content.push(component);
+            graph.edge_counts[self.index].push(0);
+            self.content.len() - 1
+        };
 
         AnyNode {
             layer_idx: self.index,
@@ -517,5 +552,89 @@ mod tests {
         assert_eq!(trs.iter(&graph).count(), 0);
         assert_eq!(vels.iter(&graph).count(), 0);
         assert_eq!(rbs.iter(&graph).count(), 0);
+
+        // check that edges were all cleared too
+        for (layer_idx, edge) in
+            graph
+                .edge_layers
+                .iter()
+                .enumerate()
+                .flat_map(|(layer_idx, from_l)| {
+                    from_l
+                        .iter()
+                        .flat_map(move |to_l| to_l.iter().map(move |e| (layer_idx, e)))
+                })
+        {
+            assert!(
+                edge.is_none(),
+                format!("Layer {} had a non-empty edge", layer_idx),
+            );
+        }
+    }
+
+    #[test]
+    fn reuse_deleted_slots() {
+        let mut graph = Graph::new();
+        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut vels: Layer<Velocity> = graph.create_layer();
+        let mut rbs: Layer<RigidBody> = graph.create_layer();
+        let mut shapes: Layer<Shape> = graph.create_layer();
+        // TODO: pinning API built into Graph
+        let mut pins: Layer<()> = graph.create_layer();
+
+        let everyones_shape = shapes.insert(Shape(69), &mut graph);
+        let shape_pin = pins.insert((), &mut graph);
+        graph.connect_oneway(shape_pin, everyones_shape);
+
+        // delete and respawn stuff a few times to hopefully see if things get connected wrong at some point
+        // (this doesn't prove things won't go wrong over a long enough time but fingers crossed)
+        for i in 0..5 {
+            for tr_node in trs
+                .iter(&graph)
+                // delete half of everything that was placed,
+                // so every new iteration we should be reusing slots for half and pushing new for half
+                .take(5)
+                .map(|(_, n)| n)
+                .collect::<Vec<_>>()
+            {
+                graph.delete(tr_node);
+            }
+            for j in 0..10 {
+                let id = i * 20 + j;
+                let tr_node = trs.insert(Transform(id), &mut graph);
+                let vel_node = vels.insert(Velocity(id), &mut graph);
+                let rb_node = rbs.insert(RigidBody(id), &mut graph);
+                graph.connect(tr_node, vel_node);
+                graph.connect(vel_node, rb_node);
+                graph.connect_oneway(tr_node, everyones_shape);
+                // delete and replace every other
+                if i % 2 == 0 {
+                    let tr_len_before = trs.content.len();
+
+                    graph.delete(tr_node);
+                    // delete twice to make sure we don't create garbage on the second go
+                    graph.delete(tr_node);
+
+                    let tr_node = trs.insert(Transform(100), &mut graph);
+                    let vel_node = vels.insert(Velocity(100), &mut graph);
+                    graph.connect(tr_node, vel_node);
+                    if i % 4 == 0 {
+                        let rb_node = rbs.insert(RigidBody(100), &mut graph);
+                        graph.connect(rb_node, tr_node);
+                    }
+
+                    let tr_len_after = trs.content.len();
+                    // reused the slot that was left behind by delete
+                    assert_eq!(tr_len_before, tr_len_after);
+                }
+            }
+        }
+
+        println!("trs.content: {:?}", trs.content);
+        println!("vels.content: {:?}", vels.content);
+        println!("rbs.content: {:?}", rbs.content);
+
+        assert_eq!(trs.content.len(), 30);
+        assert_eq!(vels.content.len(), 30);
     }
 }

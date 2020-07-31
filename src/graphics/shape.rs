@@ -9,6 +9,7 @@ type Color = [f32; 4];
 /// A flat-colored convex polygon shape.
 ///
 /// Concavity will not result in an error but will be rendered incorrectly.
+#[derive(Clone, Debug)]
 pub enum Shape {
     Circle {
         r: f32,
