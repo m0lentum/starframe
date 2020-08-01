@@ -1,4 +1,4 @@
-# What the heck is even that?
+# What
 
 In disc golf, a starframe occurs when every player in a group scores a birdie on the same hole.
 
@@ -8,8 +8,7 @@ but its core building blocks should generalize to other styles of game quite wel
 
 # Current features
 
-- Entity-Component-System inspired object model
-  - **a big rewrite is currently in progress**
+- Novel graph-based object model inspired by [froggy](https://github.com/kvark/froggy)
 - 2D rigid body physics
   - narrow phase collision detection
   - rudimentary collision impulse solver
@@ -27,7 +26,8 @@ until then, stay tuned.
 
 # Running the test game
 
-There's not much to show here, but should you wish to check out my tiny test game, here's how:
+There's not much to show here, but should you wish to check out my tiny test game
+where you bump physics blocks around, here's how:
 
 **The manual way**
 
@@ -42,16 +42,20 @@ There's not much to show here, but should you wish to check out my tiny test gam
 2. `nix-shell`
 3. `cargo run --example testgame`
 
-### Testgame keybindings
+### Keybindings
 
 Disclaimer: these might be out of date - the test game changes in quick and dirty ways
 
 ```
 Arrows  - move the player
 LShift  - jump
+Z       - shoot
 Space   - pause
 Enter   - reload level
 Esc     - close the game
 S       - spawn a box
 T       - spawn a ball
+
+Mouse drag  - move the camera
+Mouse wheel - zoom the camera
 ```
