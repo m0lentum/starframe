@@ -3,8 +3,8 @@ use super::{Collider, Velocity};
 /// A rigid body can collide with other rigid bodies and respond to physical forces.
 #[derive(Clone, Copy, Debug)]
 pub struct RigidBody {
-    body: BodyType,
-    material: SurfaceMaterial,
+    pub(crate) body: BodyType,
+    pub(crate) material: SurfaceMaterial,
 }
 
 /// The type of a rigid body determines how it is treated in physics updates.

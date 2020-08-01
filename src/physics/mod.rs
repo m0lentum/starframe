@@ -150,11 +150,11 @@ impl PhysicsSolver {
 
         // apply environment forces (gravity, usually)
         if let Some(ff) = forcefield {
-            for (rb, rb_pos) in l_body.iter_mut(graph) {
-                if let (Some((tr, _)), Some(vel)) =
-                    (graph.get_neighbor(rb_pos, &l_transform), rb.velocity_mut())
+            for (rb, rb_node) in l_body.iter_mut(graph) {
+                if let (Some((tr, _)), rigidbody::BodyType::Dynamic { velocity, .. }) =
+                    (graph.get_neighbor(rb_node, &l_transform), &mut rb.body)
                 {
-                    vel.linear += ff.value_at(tr.isometry.translation.vector.into()) * dt;
+                    velocity.linear += ff.value_at(tr.isometry.translation.vector.into()) * dt;
                 }
             }
         }
