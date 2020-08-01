@@ -1,12 +1,8 @@
 use crate::MyGraph;
 use starframe::{
-    self as sf,
-    core::{
-        self,
-        inputcache::{Key, KeyAxisState},
-        math as m,
-    },
-    graphics as gx, physics as phys,
+    self as sf, graphics as gx,
+    input::{Key, KeyAxisState},
+    math as m, physics as phys,
 };
 
 use nalgebra as na;
@@ -84,7 +80,7 @@ impl PlayerController {
         }
     }
 
-    pub fn tick(&mut self, g: &mut MyGraph, input: &core::InputCache) {
+    pub fn tick(&mut self, g: &mut MyGraph, input: &sf::InputCache) {
         let (target_facing, target_hdir) = match input.get_key_axis_state(Key::Right, Key::Left) {
             KeyAxisState::Zero => (None, 0.0),
             KeyAxisState::Pos => (Some(Facing::Right), 1.0),
@@ -168,8 +164,8 @@ impl PlayerController {
         let body_node = g.l_body.insert(body, &mut g.graph);
 
         let evt_sink_node = g.l_evt_sink.insert(
-            sf::core::EventSink::new(|g: &mut MyGraph, node, evt| match evt {
-                sf::core::Event::Contact(contact) => {
+            sf::EventSink::new(|g: &mut MyGraph, node, evt| match evt {
+                sf::Event::Contact(contact) => {
                     println!(
                         "Bullet hit with {}",
                         contact.info.impulse * *contact.info.normal

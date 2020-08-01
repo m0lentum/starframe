@@ -7,13 +7,10 @@ use rand::{distributions as distr, distributions::Distribution};
 
 use starframe::{
     self as sf,
-    core::{
-        game::{self, Game},
-        graph,
-        inputcache::{Key, MouseButton},
-        math as m,
-    },
-    graphics as gx, physics as phys,
+    game::{self, Game},
+    graph, graphics as gx,
+    input::{Key, MouseButton},
+    math as m, physics as phys,
 };
 
 mod player;
@@ -79,7 +76,7 @@ pub struct MyGraph {
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
     l_player: graph::Layer<player::Player>,
-    l_evt_sink: sf::core::EventSinkLayer<MyGraph>,
+    l_evt_sink: sf::EventSinkLayer<MyGraph>,
 }
 impl MyGraph {
     pub fn new() -> Self {

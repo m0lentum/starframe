@@ -1,6 +1,6 @@
 //! Utilities for communicating with the GPU.
 
-use crate::core::math as m;
+use crate::math as m;
 use zerocopy::{AsBytes, FromBytes};
 
 /// Utility type to convert transform matrices to a form that can

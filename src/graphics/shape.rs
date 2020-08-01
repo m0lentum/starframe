@@ -1,6 +1,6 @@
 use crate::{
-    core::{graph, math as m, Transform},
     graphics::{self as gx, util::GlslMat3},
+    {graph, math as m},
 };
 
 use zerocopy::{AsBytes, FromBytes};
@@ -45,9 +45,9 @@ impl Shape {
         }
     }
 
-    pub(self) fn verts(&self, tr: &Transform) -> Vec<Vertex> {
+    pub(self) fn verts(&self, tr: &m::Transform) -> Vec<Vertex> {
         // generate a triangle mesh
-        fn as_verts(pts: &[m::Point2], tr: &Transform, color: Color) -> Vec<Vertex> {
+        fn as_verts(pts: &[m::Point2], tr: &m::Transform, color: Color) -> Vec<Vertex> {
             let mut iter = pts.iter().map(|p| tr * *p).peekable();
             let first = match iter.next() {
                 Some(p) => Vertex {
@@ -240,7 +240,7 @@ impl ShapeRenderer {
     pub fn draw(
         &mut self,
         shapes: &graph::Layer<Shape>,
-        transforms: &graph::Layer<Transform>,
+        transforms: &graph::Layer<m::Transform>,
         graph: &graph::Graph,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,

@@ -8,7 +8,7 @@ use winit::{
 
 /// A Game manages the global resources a game needs like a window and a graphics renderer.
 pub struct Game {
-    pub input: crate::core::InputCache,
+    pub input: crate::InputCache,
     pub window: Window,
     pub renderer: crate::graphics::Renderer,
     // awkwardly moving the event loop around for the sake of clean API
@@ -25,7 +25,7 @@ impl Game {
 
         let renderer = futures::executor::block_on(crate::graphics::Renderer::init(&window));
         Game {
-            input: crate::core::InputCache::new(),
+            input: crate::InputCache::new(),
             window,
             events: Some(events),
             renderer,

@@ -1,5 +1,7 @@
-use crate::core::{graph, Transform};
+use crate::{graph, math as m};
 use std::collections::HashMap;
+
+use nalgebra as na;
 
 //
 
@@ -13,9 +15,6 @@ pub mod rigidbody;
 pub use rigidbody::RigidBody;
 
 //
-
-use crate::core::math as m;
-use nalgebra as na;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Velocity {
@@ -100,10 +99,10 @@ impl PhysicsSolver {
     pub fn tick<EvtParams>(
         &mut self,
         graph: &graph::Graph,
-        l_transform: &mut graph::Layer<Transform>,
+        l_transform: &mut graph::Layer<m::Transform>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
-        l_evt_sink: &mut crate::core::EventSinkLayer<EvtParams>,
+        l_evt_sink: &mut crate::EventSinkLayer<EvtParams>,
         dt: f32,
         forcefield: Option<&impl ForceField>,
     ) {
@@ -293,7 +292,7 @@ impl PhysicsSolver {
         for acc in &accumulators {
             if let Some((sink, _)) = graph.get_neighbor_mut(acc.constraint.nodes[0].rb, l_evt_sink)
             {
-                sink.push(crate::core::Event::Contact(ContactEvent {
+                sink.push(crate::Event::Contact(ContactEvent {
                     other_body: acc.constraint.nodes[1].rb,
                     info: ContactInfo {
                         point: acc.constraint.point,
@@ -304,7 +303,7 @@ impl PhysicsSolver {
             }
             if let Some((sink, _)) = graph.get_neighbor_mut(acc.constraint.nodes[1].rb, l_evt_sink)
             {
-                sink.push(crate::core::Event::Contact(ContactEvent {
+                sink.push(crate::Event::Contact(ContactEvent {
                     other_body: acc.constraint.nodes[0].rb,
                     info: ContactInfo {
                         point: acc.constraint.point,
@@ -414,7 +413,7 @@ impl ImpulseCache {
 /// References to the parts of a body that we need to find out if it collides with anything.
 /// Used internally in collisiion detection, exposed to allow custom broad phase algorithms.
 pub struct BodyRef<'a> {
-    pub tr: graph::NodeRef<'a, Transform>,
+    pub tr: graph::NodeRef<'a, m::Transform>,
     pub coll: graph::NodeRef<'a, Collider>,
     pub(crate) rb_pos: graph::TypedNode<RigidBody>,
 }
@@ -423,7 +422,7 @@ pub struct BodyRef<'a> {
 /// from the same graph layer during one iteration.
 #[derive(Clone, Copy, Debug)]
 pub struct BodyNodes {
-    pub(crate) tr: graph::TypedNode<Transform>,
+    pub(crate) tr: graph::TypedNode<m::Transform>,
     pub(crate) coll: graph::TypedNode<Collider>,
     pub(crate) rb: graph::TypedNode<RigidBody>,
 }
@@ -439,7 +438,7 @@ impl From<&BodyRef<'_>> for BodyNodes {
 impl BodyNodes {
     fn upgrade<'a>(
         self,
-        l_tr: &'a graph::Layer<Transform>,
+        l_tr: &'a graph::Layer<m::Transform>,
         l_coll: &'a graph::Layer<Collider>,
     ) -> BodyRef<'a> {
         BodyRef {

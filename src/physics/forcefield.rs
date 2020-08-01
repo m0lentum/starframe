@@ -1,4 +1,4 @@
-use crate::core::math as m;
+use crate::math as m;
 
 /// A (possibly) position-dependent force that is typically
 /// fed to a physics solver and applied to all rigid bodies each frame.

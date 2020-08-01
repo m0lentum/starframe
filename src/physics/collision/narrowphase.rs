@@ -1,5 +1,5 @@
 use super::collider::ColliderShape;
-use crate::core::math as m;
+use crate::math as m;
 use crate::physics::BodyRef;
 
 use nalgebra as na;

@@ -1,4 +1,4 @@
-use starframe::{core::math as m, graphics as gx, physics as phys};
+use starframe::{graphics as gx, math as m, physics as phys};
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 pub enum Recipe {

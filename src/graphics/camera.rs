@@ -1,6 +1,6 @@
-use crate::core::{
-    inputcache::{DragState, InputCache},
-    math as m, Transform,
+use crate::{
+    input::{DragState, InputCache},
+    math as m,
 };
 
 use nalgebra as na;
@@ -43,18 +43,18 @@ impl ScalingStrategy {
 
 pub struct MouseDragCamera {
     pub scaling_strategy: ScalingStrategy,
-    pub transform: Transform,
+    pub transform: m::Transform,
     pub zoom_speed: f32,
     pub min_zoom_out: f32,
     pub max_zoom_out: f32,
-    drag_start: Option<Transform>,
+    drag_start: Option<m::Transform>,
 }
 
 impl MouseDragCamera {
     pub fn new(scaling_strategy: ScalingStrategy) -> Self {
         MouseDragCamera {
             scaling_strategy,
-            transform: Transform::identity(),
+            transform: m::Transform::identity(),
             zoom_speed: 0.01,
             min_zoom_out: 0.1,
             max_zoom_out: 10.0,
