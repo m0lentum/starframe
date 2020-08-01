@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 type ComponentIdx = usize;
 type LayerIdx = usize;
-type EdgeCount = usize;
+type Refcount = usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnyNode {
@@ -73,7 +73,7 @@ pub struct Graph {
     /// * 1st dimension is the layer
     /// * 2nd dimension is the component
     /// used to determine if an object is dead or alive
-    edge_counts: Vec<Vec<EdgeCount>>,
+    refcounts: Vec<Vec<Refcount>>,
     /// FIFO queue for slot reuse
     vacant_slots: Vec<VecDeque<ComponentIdx>>,
 }
@@ -82,7 +82,7 @@ impl Graph {
     pub fn new() -> Self {
         Self {
             edge_layers: Vec::new(),
-            edge_counts: Vec::new(),
+            refcounts: Vec::new(),
             vacant_slots: Vec::new(),
         }
     }
@@ -99,7 +99,7 @@ impl Graph {
         self.edge_layers.push(targets);
 
         // add refcounts and vacant slot queues for the layer
-        self.edge_counts.push(Vec::new());
+        self.refcounts.push(Vec::new());
         self.vacant_slots.push(VecDeque::new());
 
         Layer {
@@ -135,8 +135,7 @@ impl Graph {
             );
         }
 
-        self.edge_counts[start.layer_idx][start.item_idx] += 1;
-        self.edge_counts[end.layer_idx][end.item_idx] += 1;
+        self.refcounts[end.layer_idx][end.item_idx] += 1;
     }
 
     pub fn get_neighbor<'to, To>(
@@ -183,22 +182,37 @@ impl Graph {
         }
     }
 
-    pub fn get_edge_count(&self, node: impl Into<AnyNode>) -> EdgeCount {
+    pub fn get_refcount(&self, node: impl Into<AnyNode>) -> Refcount {
         let node = node.into();
-        self.edge_counts[node.layer_idx][node.item_idx]
+        self.refcounts[node.layer_idx][node.item_idx]
     }
 
     pub fn delete(&mut self, root: impl Into<AnyNode>) {
         let root = root.into();
         // check if the node is already considered deleted before doing anything
-        if self.edge_counts[root.layer_idx][root.item_idx] <= 0 {
+        if self.refcounts[root.layer_idx][root.item_idx] <= 0 {
             return;
         }
-        let mut visited = Vec::new();
-        self.recursive_delete(root, &mut visited);
+        let mut visited = vec![VisitedNode {
+            node: root,
+            visit_count: 0,
+            all_refs_visited: false,
+            visited_on_delete: false,
+        }];
 
-        for node in visited {
-            if self.edge_counts[node.layer_idx][node.item_idx] <= 0 {
+        self.visit_all(root, &mut visited);
+
+        for vis in visited.iter_mut() {
+            if self.refcounts[vis.node.layer_idx][vis.node.item_idx] == vis.visit_count {
+                vis.all_refs_visited = true;
+            }
+        }
+
+        self.delete_owned(0, &mut visited);
+
+        for vis_node in visited {
+            let node = vis_node.node;
+            if self.refcounts[node.layer_idx][node.item_idx] <= 0 {
                 debug_assert!(
                     self.vacant_slots[node.layer_idx]
                         .iter()
@@ -211,33 +225,69 @@ impl Graph {
         }
     }
 
-    fn recursive_delete(&mut self, node: AnyNode, visited: &mut Vec<AnyNode>) {
-        visited.push(node);
-
-        // early out if the node has no more connections
-        if self.edge_counts[node.layer_idx][node.item_idx] <= 0 {
-            return;
-        }
-
+    fn visit_all(&self, curr_node: AnyNode, visited: &mut Vec<VisitedNode>) {
         for other_layer_idx in 0..self.edge_layers.len() {
-            let edges_to_other = &mut self.edge_layers[node.layer_idx][other_layer_idx];
-            if node.item_idx < edges_to_other.len() {
-                if let Some(other_item_idx) = edges_to_other[node.item_idx] {
-                    edges_to_other[node.item_idx] = None;
-                    self.edge_counts[other_layer_idx][other_item_idx] -= 1;
-                    self.edge_counts[node.layer_idx][node.item_idx] -= 1;
-
+            let edges_to_other = &self.edge_layers[curr_node.layer_idx][other_layer_idx];
+            if curr_node.item_idx < edges_to_other.len() {
+                if let Some(other_item_idx) = edges_to_other[curr_node.item_idx] {
                     let next_node = AnyNode {
                         layer_idx: other_layer_idx,
                         item_idx: other_item_idx,
                     };
-                    if !visited.iter().any(|seen_node| *seen_node == next_node) {
-                        self.recursive_delete(next_node, visited);
+                    if let Some(already_seen) = visited.iter_mut().find(|n| n.node == next_node) {
+                        already_seen.visit_count += 1;
+                    } else {
+                        visited.push(VisitedNode {
+                            node: next_node,
+                            visit_count: 1,
+                            all_refs_visited: false,
+                            visited_on_delete: false,
+                        });
+                        self.visit_all(next_node, visited);
                     }
                 }
             }
         }
     }
+
+    fn delete_owned(&mut self, curr_visited_idx: usize, visited: &mut Vec<VisitedNode>) {
+        if visited[curr_visited_idx].visited_on_delete {
+            // we already went over this one
+            return;
+        }
+        visited[curr_visited_idx].visited_on_delete = true;
+
+        if !visited[curr_visited_idx].all_refs_visited {
+            // this node is shared, don't delete anything after it
+            return;
+        }
+
+        let node = visited[curr_visited_idx].node;
+        for other_layer_idx in 0..self.edge_layers.len() {
+            let edges_to_other = &mut self.edge_layers[node.layer_idx][other_layer_idx];
+            if node.item_idx < edges_to_other.len() {
+                if let Some(other_item_idx) = edges_to_other[node.item_idx] {
+                    edges_to_other[node.item_idx] = None;
+                    self.refcounts[other_layer_idx][other_item_idx] -= 1;
+
+                    let next_node = AnyNode {
+                        layer_idx: other_layer_idx,
+                        item_idx: other_item_idx,
+                    };
+                    // unwrap because visited contains every connected node
+                    let visited_next = visited.iter().position(|v| v.node == next_node).unwrap();
+                    self.delete_owned(visited_next, visited);
+                }
+            }
+        }
+    }
+}
+#[derive(Debug)]
+struct VisitedNode {
+    node: AnyNode,
+    visit_count: Refcount,
+    all_refs_visited: bool,
+    visited_on_delete: bool,
 }
 
 //
@@ -257,7 +307,7 @@ impl<T> Layer<T> {
             vacant_slot
         } else {
             self.content.push(component);
-            graph.edge_counts[self.index].push(0);
+            graph.refcounts[self.index].push(0);
             self.content.len() - 1
         };
 
@@ -288,7 +338,7 @@ impl<T> Layer<T> {
         LayerIter {
             iter: self.content.iter().enumerate(),
             layer_idx: self.index,
-            refcounts: &graph.edge_counts[self.index],
+            refcounts: &graph.refcounts[self.index],
         }
     }
 
@@ -296,7 +346,7 @@ impl<T> Layer<T> {
         LayerIterMut {
             iter: self.content.iter_mut().enumerate(),
             layer_idx: self.index,
-            refcounts: &graph.edge_counts[self.index],
+            refcounts: &graph.refcounts[self.index],
         }
     }
 }
@@ -309,7 +359,7 @@ impl<T> Layer<T> {
 pub struct LayerIter<'a, T> {
     iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
     layer_idx: LayerIdx,
-    refcounts: &'a Vec<EdgeCount>,
+    refcounts: &'a Vec<Refcount>,
 }
 impl<'a, T> Iterator for LayerIter<'a, T> {
     type Item = NodeRef<'a, T>;
@@ -333,7 +383,7 @@ impl<'a, T> Iterator for LayerIter<'a, T> {
 pub struct LayerIterMut<'a, T> {
     iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
     layer_idx: LayerIdx,
-    refcounts: &'a Vec<EdgeCount>,
+    refcounts: &'a Vec<Refcount>,
 }
 impl<'a, T> Iterator for LayerIterMut<'a, T> {
     type Item = NodeRefMut<'a, T>;
@@ -418,10 +468,10 @@ mod tests {
                 Some(&RigidBody(i))
             );
             assert!(graph.get_neighbor(tr_node, &shapes).is_none());
-            // check edge counts
-            assert_eq!(graph.get_edge_count(tr_node), 4);
-            assert_eq!(graph.get_edge_count(rb_node), 5);
-            assert_eq!(graph.get_edge_count(everyones_shape), i + 1);
+            // check refcounts
+            assert_eq!(graph.get_refcount(tr_node), 2);
+            assert_eq!(graph.get_refcount(rb_node), 2);
+            assert_eq!(graph.get_refcount(everyones_shape), i + 1);
 
             // spawn something with different connections in between
             let tr_node_ = trs.insert(Transform(42 + i), &mut graph);
@@ -510,8 +560,11 @@ mod tests {
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
+        let mut sub_shapes: Layer<Shape> = graph.create_layer();
 
         let everyones_shape = shapes.insert(Shape(69), &mut graph);
+        let shape_owns_thing = sub_shapes.insert(Shape(42), &mut graph);
+        graph.connect(everyones_shape, shape_owns_thing);
 
         for i in 0..10 {
             let tr_node = trs.insert(Transform(i), &mut graph);
@@ -528,23 +581,28 @@ mod tests {
             }
         }
 
-        println!("Edge counts after creations {:?}", graph.edge_counts);
+        println!("Refcounts after creations {:?}", graph.refcounts);
 
         assert_eq!(vels.iter(&graph).count(), 10);
         for vel_to_del in vels.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
+            println!("delete");
             graph.delete(vel_to_del);
+            println!("refcounts {:?}", graph.refcounts);
         }
         // all vels deleted (== have 0 referrers)
         assert_eq!(vels.iter(&graph).count(), 0);
         // half of trs had vels attached and have also been deleted
         assert_eq!(trs.iter(&graph).count(), 5);
 
-        println!("Edge counts after first deletions {:?}", graph.edge_counts);
+        println!("Refcounts after first deletions {:?}", graph.refcounts);
 
         // rbs are connected to everything so deleting all of them should delete everything
         for rb_to_del in rbs.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
-            // everyones_shape should live until the last rb is deleted
+            // everyones_shape and its subcomponent should live until the last rb is deleted
+            // BECAUSE the last rb is connected to it
+            // (remember this if changing the iteration counts!)
             assert_eq!(shapes.iter(&graph).count(), 1);
+            assert_eq!(sub_shapes.iter(&graph).count(), 1);
 
             graph.delete(rb_to_del);
         }
@@ -636,5 +694,7 @@ mod tests {
 
         assert_eq!(trs.content.len(), 30);
         assert_eq!(vels.content.len(), 30);
+        // everyones_shape was never deleted
+        assert_eq!(shapes.content.len(), 1);
     }
 }
