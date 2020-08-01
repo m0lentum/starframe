@@ -2,10 +2,7 @@
 use nalgebra as na;
 use std::f32::consts::PI;
 
-use crate::core::{storage, Container};
-
 pub type Transform = na::Similarity2<f32>;
-pub type TransformFeature = Container<storage::VecStorage<Transform>>;
 pub type Vec2 = na::Vector2<f32>;
 pub type Point2 = na::Point2<f32>;
 pub type Mat3 = na::Matrix3<f32>;

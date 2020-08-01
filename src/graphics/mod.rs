@@ -6,4 +6,4 @@ pub mod util;
 pub mod camera;
 
 pub mod shape;
-pub use shape::{Shape, ShapeFeature};
+pub use shape::{Shape, ShapeRenderer};

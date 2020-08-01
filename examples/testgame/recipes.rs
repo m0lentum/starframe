@@ -1,90 +1,107 @@
-use starframe::{
-    core::{self, math as m, space::CreationId},
-    graphics as gx, physics as phys,
-};
+use starframe::{core::math as m, graphics as gx, physics as phys};
 
-use super::MainSpaceFeatures;
-
-starframe::core::recipes! {
-    MainSpaceFeatures,
-    Player,
-    StaticBlock,
-    DynamicBlock,
-    Ball,
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+pub enum Recipe {
+    Player(crate::player::PlayerRecipe),
+    StaticBlock(Block),
+    DynamicBlock(Block),
+    Ball { radius: f32, position: [f32; 2] },
 }
 
-pub type Player = crate::player::PlayerRecipe;
-
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
-pub struct StaticBlock {
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+pub struct Block {
     pub width: f32,
     pub height: f32,
     pub transform: m::TransformBuilder,
 }
 
-impl core::Recipe<MainSpaceFeatures> for StaticBlock {
-    fn spawn_vars(&self, id: CreationId, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(id, self.transform.into());
-        feat.physics.add_body(
-            id,
-            phys::RigidBody::new_static(),
-            phys::Collider::new_rect(self.width, self.height),
-        );
-        feat.shape.add(
-            id,
-            gx::Shape::Rect {
-                w: self.width,
-                h: self.height,
-                color: [0.5; 4],
-            },
-        );
+impl Recipe {
+    pub fn spawn(&self, graph: &mut crate::MyGraph) {
+        use Recipe::*;
+        match self {
+            Player(p_rec) => p_rec.spawn(graph),
+            StaticBlock(block) => {
+                let tr_node = graph
+                    .l_transform
+                    .insert(block.transform.into(), &mut graph.graph);
+                let coll = phys::Collider::new_rect(block.width, block.height);
+                let body = phys::RigidBody::new_static();
+                let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
+                let body_node = graph.l_body.insert(body, &mut graph.graph);
+                let shape_node = graph.l_shape.insert(
+                    gx::Shape::Rect {
+                        w: block.width,
+                        h: block.height,
+                        color: [0.5; 4],
+                    },
+                    &mut graph.graph,
+                );
+                // TODO: helper to create this graph pattern in the starframe::physics module
+                graph.graph.connect(tr_node, body_node);
+                graph.graph.connect(body_node, coll_node);
+                graph.graph.connect(tr_node, shape_node);
+            }
+            DynamicBlock(block) => {
+                let tr_node = graph
+                    .l_transform
+                    .insert(block.transform.into(), &mut graph.graph);
+                let coll = phys::Collider::new_rect(block.width, block.height);
+                let body = phys::RigidBody::new_dynamic(&coll, 1.0);
+                let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
+                let body_node = graph.l_body.insert(body, &mut graph.graph);
+                let shape_node = graph.l_shape.insert(
+                    gx::Shape::Rect {
+                        w: block.width,
+                        h: block.height,
+                        color: [1.0; 4],
+                    },
+                    &mut graph.graph,
+                );
+                graph.graph.connect(tr_node, body_node);
+                graph.graph.connect(body_node, coll_node);
+                graph.graph.connect(tr_node, shape_node);
+            }
+            Ball { radius, position } => {
+                let tr_node = graph.l_transform.insert(
+                    m::TransformBuilder::from(*position).into(),
+                    &mut graph.graph,
+                );
+                let coll = phys::Collider::new_circle(*radius);
+                let body = phys::RigidBody::new_dynamic(&coll, 0.5);
+                let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
+                let body_node = graph.l_body.insert(body, &mut graph.graph);
+                let shape_node = graph.l_shape.insert(
+                    gx::Shape::Circle {
+                        r: *radius,
+                        points: 24,
+                        color: [1.0; 4],
+                    },
+                    &mut graph.graph,
+                );
+                graph.graph.connect(tr_node, body_node);
+                graph.graph.connect(body_node, coll_node);
+                graph.graph.connect(tr_node, shape_node);
+            }
+        }
     }
-}
 
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
-pub struct DynamicBlock {
-    pub width: f32,
-    pub height: f32,
-    pub transform: m::TransformBuilder,
-}
+    pub fn read_from_file(
+        file: std::fs::File,
+        graph: &mut crate::MyGraph,
+    ) -> Result<(), ron::de::Error> {
+        use serde::Deserialize;
+        use std::io::Read;
 
-impl core::Recipe<MainSpaceFeatures> for DynamicBlock {
-    fn spawn_vars(&self, id: CreationId, feat: &mut MainSpaceFeatures) {
-        feat.tr.insert(id, self.transform.into());
-        let collider = phys::Collider::new_rect(self.width, self.height);
-        feat.physics
-            .add_body(id, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
-        feat.shape.add(
-            id,
-            gx::Shape::Rect {
-                w: self.width,
-                h: self.height,
-                color: [1.0; 4],
-            },
-        );
-    }
-}
+        let mut reader = std::io::BufReader::new(file);
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
 
-#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
-pub struct Ball {
-    pub radius: f32,
-    pub position: [f32; 2],
-}
+        let mut deser = ron::de::Deserializer::from_bytes(bytes.as_slice())?;
+        let file_content = Vec::<Recipe>::deserialize(&mut deser)?;
+        for recipe in file_content {
+            recipe.spawn(graph);
+        }
 
-impl core::Recipe<MainSpaceFeatures> for Ball {
-    fn spawn_vars(&self, id: CreationId, feat: &mut MainSpaceFeatures) {
-        feat.tr
-            .insert(id, m::TransformBuilder::from(self.position).into());
-        let collider = phys::Collider::new_circle(self.radius);
-        feat.physics
-            .add_body(id, phys::RigidBody::new_dynamic(&collider, 1.0), collider);
-        feat.shape.add(
-            id,
-            gx::Shape::Circle {
-                r: self.radius,
-                points: 24,
-                color: [1.0; 4],
-            },
-        );
+        Ok(())
     }
 }

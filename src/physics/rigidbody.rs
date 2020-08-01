@@ -1,14 +1,14 @@
 use super::{Collider, Velocity};
 
 /// A rigid body can collide with other rigid bodies and respond to physical forces.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct RigidBody {
     body: BodyType,
     material: SurfaceMaterial,
 }
 
 /// The type of a rigid body determines how it is treated in physics updates.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum BodyType {
     /// Does not respond to collision forces and cannot move.
     Static,
@@ -24,7 +24,7 @@ pub enum BodyType {
 
 /// Determines how the surface of a body responds to collisions.
 /// NOTE: work in progress, does not actually do anything at the moment!
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SurfaceMaterial {
     /// How "bouncy" a body is, i.e. how much energy is preserved in collisions.
     pub restitution: f32,
@@ -77,6 +77,11 @@ impl RigidBody {
             body: BodyType::Static,
             material: SurfaceMaterial::default(),
         }
+    }
+
+    pub fn with_velocity(mut self, vel: Velocity) -> Self {
+        self.velocity_mut().map(|v| *v = vel);
+        self
     }
 
     /// Restitution determines how much energy is preserved in collisions
@@ -154,7 +159,7 @@ impl RigidBody {
 
 /// This stores both a mass value and its inverse, because calculating inverse mass
 /// is expensive and needed a lot in physics calculations.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Mass {
     mass: f32,
     inverse: f32,
