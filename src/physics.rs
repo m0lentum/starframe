@@ -1,4 +1,7 @@
-use crate::{graph, math as m};
+use crate::{
+    graph::{self, UnsafeNode},
+    math as m,
+};
 use std::collections::HashMap;
 
 use nalgebra as na;
@@ -44,7 +47,7 @@ impl Velocity {
 /// Events produced by the physics system when two physics objects collide.
 #[derive(Clone, Copy, Debug)]
 pub struct ContactEvent {
-    pub other_body: graph::TypedNode<RigidBody>,
+    pub other_body: graph::Node<RigidBody>,
     pub info: ContactInfo,
 }
 
@@ -64,8 +67,6 @@ pub struct PhysicsSolver {
     stabilisation_coef: f32,
     loop_condition: SolverLoopCondition,
 }
-
-const BAD_NODE_ERR: &'static str = "Broad phase returned a graph node that does not exist";
 
 impl PhysicsSolver {
     pub fn new() -> Self {
@@ -110,18 +111,22 @@ impl PhysicsSolver {
         // Detect collisions
         //
 
-        let body_ref_iter = l_body.iter(graph).filter_map(|(_, rb_pos)| {
-            let coll = graph.get_neighbor(rb_pos, &l_collider)?;
-            let tr = graph.get_neighbor(rb_pos, &l_transform)?;
-            Some(BodyRef { tr, coll, rb_pos })
+        let body_ref_iter = l_body.iter(graph).filter_map(|rb| {
+            let coll = graph.get_neighbor(&rb, &l_collider)?;
+            let tr = graph.get_neighbor(&rb, &l_transform)?;
+            Some(BodyRef {
+                tr,
+                coll,
+                rb_pos: rb.pos(),
+            })
         });
 
         use collision::BroadPhase;
         let pairs = collision::broadphase::BruteForce::pairs(body_ref_iter);
         let mut contact_constraints = Vec::new();
         for pair in pairs {
-            if (l_body.get(pair[0].rb).expect(BAD_NODE_ERR)).responds_to_collisions()
-                || (l_body.get(pair[1].rb).expect(BAD_NODE_ERR)).responds_to_collisions()
+            if (l_body.get_unchecked(pair[0].rb).item).responds_to_collisions()
+                || (l_body.get_unchecked(pair[1].rb).item).responds_to_collisions()
             {
                 let contacts = collision::narrowphase::intersection_check(
                     pair[0].upgrade(l_transform, l_collider),
@@ -149,11 +154,11 @@ impl PhysicsSolver {
 
         // apply environment forces (gravity, usually)
         if let Some(ff) = forcefield {
-            for (rb, rb_node) in l_body.iter_mut(graph) {
-                if let (Some((tr, _)), rigidbody::BodyType::Dynamic { velocity, .. }) =
-                    (graph.get_neighbor(rb_node, &l_transform), &mut rb.body)
+            for rb in l_body.iter_mut(graph) {
+                if let (Some(ref tr), rigidbody::BodyType::Dynamic { velocity, .. }) =
+                    (graph.get_neighbor(&rb, &l_transform), &mut rb.item.body)
                 {
-                    velocity.linear += ff.value_at(tr.isometry.translation.vector.into()) * dt;
+                    velocity.linear += ff.value_at(tr.item.isometry.translation.vector.into()) * dt;
                 }
             }
         }
@@ -170,7 +175,7 @@ impl PhysicsSolver {
                 "bug: paired a body with itself"
             );
 
-            let bodies = map_array_2(&constraint.nodes, |n| l_body.get(n.rb).expect(BAD_NODE_ERR));
+            let bodies = map_array_2(&constraint.nodes, |n| l_body.get_unchecked(n.rb).item);
             // begin accumulator construction
             let offsets_cross_normals = map_array_2(&constraint.offsets, |offset| {
                 offset[0] * constraint.normal[1] - constraint.normal[0] * offset[1]
@@ -188,16 +193,16 @@ impl PhysicsSolver {
                 .get(constraint.nodes[0].cache_id(constraint.nodes[1]))
             {
                 if let Some(vel) = l_body
-                    .get_mut(constraint.nodes[0].rb)
-                    .expect(BAD_NODE_ERR)
+                    .get_mut_unchecked(constraint.nodes[0].rb)
+                    .item
                     .velocity_mut()
                 {
                     vel.linear -= inv_masses[0] * prev_impulse * (*constraint.normal);
                     vel.angular -= inv_mom_inertias[0] * prev_impulse * offsets_cross_normals[0];
                 }
                 if let Some(vel) = l_body
-                    .get_mut(constraint.nodes[1].rb)
-                    .expect(BAD_NODE_ERR)
+                    .get_mut_unchecked(constraint.nodes[1].rb)
+                    .item
                     .velocity_mut()
                 {
                     vel.linear += inv_masses[1] * prev_impulse * (*constraint.normal);
@@ -228,9 +233,8 @@ impl PhysicsSolver {
             biggest_change = 0.0;
 
             for acc in accumulators.iter_mut() {
-                let bodies = map_array_2(&acc.constraint.nodes, |n| {
-                    l_body.get(n.rb).expect(BAD_NODE_ERR)
-                });
+                let bodies =
+                    map_array_2(&acc.constraint.nodes, |n| l_body.get_unchecked(n.rb).item);
                 let vels = map_array_2(&bodies, |rb| rb.velocity_or_zero());
                 // TODO: this part is the actual constraint function and should be generalized
                 let normal_vels = [
@@ -264,8 +268,8 @@ impl PhysicsSolver {
 
                 // apply the impulse
                 if let Some(vel) = l_body
-                    .get_mut(acc.constraint.nodes[0].rb)
-                    .expect(BAD_NODE_ERR)
+                    .get_mut_unchecked(acc.constraint.nodes[0].rb)
+                    .item
                     .velocity_mut()
                 {
                     vel.linear -= acc.inv_masses[0] * clamped_impulse * (*acc.constraint.normal);
@@ -273,8 +277,8 @@ impl PhysicsSolver {
                         acc.inv_mom_inertias[0] * clamped_impulse * acc.offsets_cross_normals[0];
                 }
                 if let Some(vel) = l_body
-                    .get_mut(acc.constraint.nodes[1].rb)
-                    .expect(BAD_NODE_ERR)
+                    .get_mut_unchecked(acc.constraint.nodes[1].rb)
+                    .item
                     .velocity_mut()
                 {
                     vel.linear += acc.inv_masses[1] * clamped_impulse * (*acc.constraint.normal);
@@ -290,10 +294,11 @@ impl PhysicsSolver {
 
         // push events
         for acc in &accumulators {
-            if let Some((sink, _)) = graph.get_neighbor_mut(acc.constraint.nodes[0].rb, l_evt_sink)
+            if let Some(sink) =
+                graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[0].rb, l_evt_sink)
             {
-                sink.push(crate::Event::Contact(ContactEvent {
-                    other_body: acc.constraint.nodes[1].rb,
+                sink.item.push(crate::Event::Contact(ContactEvent {
+                    other_body: l_body.get_unchecked(acc.constraint.nodes[1].rb).node(graph),
                     info: ContactInfo {
                         point: acc.constraint.point,
                         normal: -acc.constraint.normal,
@@ -301,10 +306,11 @@ impl PhysicsSolver {
                     },
                 }));
             }
-            if let Some((sink, _)) = graph.get_neighbor_mut(acc.constraint.nodes[1].rb, l_evt_sink)
+            if let Some(sink) =
+                graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[1].rb, l_evt_sink)
             {
-                sink.push(crate::Event::Contact(ContactEvent {
-                    other_body: acc.constraint.nodes[0].rb,
+                sink.item.push(crate::Event::Contact(ContactEvent {
+                    other_body: l_body.get_unchecked(acc.constraint.nodes[0].rb).node(graph),
                     info: ContactInfo {
                         point: acc.constraint.point,
                         normal: acc.constraint.normal,
@@ -321,12 +327,13 @@ impl PhysicsSolver {
         //
 
         // semi-implicit Euler integration: use velocities at the end of the time step
-        for (rb, rb_pos) in l_body.iter(graph) {
-            if let (Some((tr, _)), Some(vel)) =
-                (graph.get_neighbor_mut(rb_pos, l_transform), rb.velocity())
+        for rb in l_body.iter(graph) {
+            if let (Some(tr), Some(vel)) =
+                (graph.get_neighbor_mut(&rb, l_transform), rb.item.velocity())
             {
-                tr.append_translation_mut(&(dt * vel.linear).into());
-                tr.append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
+                tr.item.append_translation_mut(&(dt * vel.linear).into());
+                tr.item
+                    .append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
             }
         }
     }
@@ -415,22 +422,26 @@ impl ImpulseCache {
 pub struct BodyRef<'a> {
     pub tr: graph::NodeRef<'a, m::Transform>,
     pub coll: graph::NodeRef<'a, Collider>,
-    pub(crate) rb_pos: graph::TypedNode<RigidBody>,
+    pub(crate) rb_pos: graph::NodePosition,
 }
 
 /// A non-reference version of `BodyRef`, to allow for multiple mutable references
 /// from the same graph layer during one iteration.
+///
+/// It's a very important invariant that these don't live longer than a single physics tick!
+/// We skip generation checks for efficiency when repeatedly reading the same objects,
+/// but things can be deleted between frames, invalidating these node positions.
 #[derive(Clone, Copy, Debug)]
 pub struct BodyNodes {
-    pub(crate) tr: graph::TypedNode<m::Transform>,
-    pub(crate) coll: graph::TypedNode<Collider>,
-    pub(crate) rb: graph::TypedNode<RigidBody>,
+    pub(crate) tr: graph::NodePosition,
+    pub(crate) coll: graph::NodePosition,
+    pub(crate) rb: graph::NodePosition,
 }
 impl From<&BodyRef<'_>> for BodyNodes {
     fn from(br: &BodyRef<'_>) -> Self {
         BodyNodes {
-            tr: br.tr.1,
-            coll: br.coll.1,
+            tr: br.tr.pos(),
+            coll: br.coll.pos(),
             rb: br.rb_pos,
         }
     }
@@ -442,19 +453,13 @@ impl BodyNodes {
         l_coll: &'a graph::Layer<Collider>,
     ) -> BodyRef<'a> {
         BodyRef {
-            tr: (
-                l_tr.get(self.tr).expect("A BodyNodes was malformed"),
-                self.tr,
-            ),
-            coll: (
-                l_coll.get(self.coll).expect("A BodyNodes was malformed"),
-                self.coll,
-            ),
+            tr: l_tr.get_unchecked(self.tr),
+            coll: l_coll.get_unchecked(self.coll),
             rb_pos: self.rb,
         }
     }
 
     fn cache_id(&self, other: BodyNodes) -> [usize; 2] {
-        [self.rb.node.item_idx, other.rb.node.item_idx]
+        [self.rb.item_idx, other.rb.item_idx]
     }
 }

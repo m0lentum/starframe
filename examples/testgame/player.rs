@@ -59,12 +59,12 @@ impl PlayerRecipe {
         let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
         let body_node = graph.l_body.insert(body, &mut graph.graph);
         let tag_node = graph.l_player.insert(Player::new(), &mut graph.graph);
-        graph.graph.connect(tr_node, body_node);
-        graph.graph.connect(body_node, coll_node);
-        graph.graph.connect(tr_node, shape_node);
+        graph.graph.connect(&tr_node, &body_node);
+        graph.graph.connect(&body_node, &coll_node);
+        graph.graph.connect(&tr_node, &shape_node);
 
-        graph.graph.connect(tag_node, tr_node);
-        graph.graph.connect(tag_node, body_node);
+        graph.graph.connect(&tag_node, &tr_node);
+        graph.graph.connect(&tag_node, &body_node);
     }
 }
 
@@ -88,23 +88,23 @@ impl PlayerController {
         };
 
         let mut bullet_queue: Vec<(m::Transform, phys::Velocity)> = Vec::new();
-        for (mut player, player_pos) in g.l_player.iter_mut(&g.graph) {
-            let (player_body, _) = g.graph.get_neighbor_mut(player_pos, &mut g.l_body).unwrap();
-            let (mut player_tr, _) = g
+        for mut player in g.l_player.iter_mut(&g.graph) {
+            let player_body = g.graph.get_neighbor_mut(&player, &mut g.l_body).unwrap();
+            let mut player_tr = g
                 .graph
-                .get_neighbor_mut(player_pos, &mut g.l_transform)
+                .get_neighbor_mut(&player, &mut g.l_transform)
                 .unwrap();
 
             // move and orient
 
             if let Some(facing) = target_facing {
-                player.facing = facing;
+                player.item.facing = facing;
             }
 
             let move_speed = self.base_move_speed;
 
             let target_hvel = target_hdir * move_speed;
-            let player_vel = match player_body.velocity_mut() {
+            let player_vel = match player_body.item.velocity_mut() {
                 Some(vel) => vel,
                 None => continue,
             };
@@ -115,7 +115,7 @@ impl PlayerController {
             // hacked up rotation locking
 
             player_vel.angular = 0.0;
-            player_tr.isometry.rotation = na::UnitComplex::new(0.0);
+            player_tr.item.isometry.rotation = na::UnitComplex::new(0.0);
 
             // jump
 
@@ -130,13 +130,13 @@ impl PlayerController {
                 bullet_queue.push((
                     m::TransformBuilder::new()
                         .with_position(
-                            player_tr.isometry.translation.vector
-                                + player.facing.orient_vec(m::Vec2::new(0.2, 0.0)),
+                            player_tr.item.isometry.translation.vector
+                                + player.item.facing.orient_vec(m::Vec2::new(0.2, 0.0)),
                         )
                         .build(),
                     phys::Velocity {
                         angular: 0.0,
-                        linear: player.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
+                        linear: player.item.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
                     },
                 ));
             }
@@ -170,16 +170,18 @@ impl PlayerController {
                         "Bullet hit with {}",
                         contact.info.impulse * *contact.info.normal
                     );
-                    g.graph.delete(node);
+                    if let Some(checked) = node.check(&g.graph) {
+                        g.graph.delete(checked);
+                    }
                 }
                 _ => (),
             }),
             &mut g.graph,
         );
 
-        g.graph.connect(tr_node, body_node);
-        g.graph.connect(body_node, coll_node);
-        g.graph.connect(tr_node, shape_node);
-        g.graph.connect(body_node, evt_sink_node);
+        g.graph.connect(&tr_node, &body_node);
+        g.graph.connect(&body_node, &coll_node);
+        g.graph.connect(&tr_node, &shape_node);
+        g.graph.connect(&body_node, &evt_sink_node);
     }
 }

@@ -5,7 +5,7 @@ pub enum Event {
     Contact(crate::physics::ContactEvent),
 }
 
-type Response<Params> = fn(&mut Params, g::TypedNode<EventSink<Params>>, Event);
+type Response<Params> = fn(&mut Params, g::Node<EventSink<Params>>, Event);
 
 /// A component that gathers events that occur to the components it's connected to.
 /// See `Event` for which connections produce which types of event.
@@ -35,17 +35,14 @@ impl<Params> EventSinkLayer<Params> {
     /// from within their responders.
     /// TODOC: explain with an example
     pub fn flush(&mut self, graph: &g::Graph) -> impl FnOnce(&mut Params) {
-        let mut evts_with_responders: Vec<(
-            Event,
-            g::TypedNode<EventSink<Params>>,
-            Response<Params>,
-        )> = self
-            .iter_mut(graph)
-            .flat_map(|(sink, sink_node)| {
-                let resp = sink.response;
-                sink.events.drain(..).map(move |evt| (evt, sink_node, resp))
-            })
-            .collect();
+        let mut evts_with_responders: Vec<(Event, g::Node<EventSink<Params>>, Response<Params>)> =
+            self.iter_mut(graph)
+                .flat_map(|sink_ref| {
+                    let node = sink_ref.node(graph);
+                    let resp = sink_ref.item.response;
+                    (sink_ref.item.events.drain(..)).map(move |evt| (evt, node, resp))
+                })
+                .collect();
 
         move |params: &mut Params| {
             for (evt, node, resp) in evts_with_responders.drain(..) {

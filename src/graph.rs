@@ -7,54 +7,129 @@ use std::marker::PhantomData;
 
 type ComponentIdx = usize;
 type LayerIdx = usize;
+type GenerationIdx = usize;
 type Refcount = usize;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AnyNode {
-    pub(crate) item_idx: ComponentIdx,
-    layer_idx: LayerIdx,
+pub trait UnsafeNode {
+    fn pos(&self) -> NodePosition;
 }
-impl AnyNode {
-    pub(self) fn typed<T>(self) -> TypedNode<T> {
-        TypedNode {
-            node: self,
-            _marker: PhantomData,
+
+pub trait SafeNode: UnsafeNode {}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NodePosition {
+    pub(crate) layer_idx: LayerIdx,
+    pub(crate) item_idx: ComponentIdx,
+}
+impl UnsafeNode for NodePosition {
+    fn pos(&self) -> NodePosition {
+        *self
+    }
+}
+
+pub struct Node<T> {
+    pos: NodePosition,
+    gen: GenerationIdx,
+    _marker: PhantomData<*const T>,
+}
+impl<T> Node<T> {
+    pub fn check(&self, graph: &Graph) -> Option<CheckedNode<'_, T>> {
+        if graph.generations[self.pos.layer_idx][self.pos.item_idx] == self.gen {
+            Some(CheckedNode { node: self })
+        } else {
+            None
         }
     }
 }
-pub struct TypedNode<T> {
-    pub(crate) node: AnyNode,
-    _marker: PhantomData<*const T>,
-}
-impl<T> Into<AnyNode> for TypedNode<T> {
-    fn into(self) -> AnyNode {
-        self.node
+impl<T> UnsafeNode for Node<T> {
+    fn pos(&self) -> NodePosition {
+        self.pos
     }
 }
 // blanket impls required because derive restricts type of T
-impl<T> Clone for TypedNode<T> {
+impl<T> Clone for Node<T> {
     fn clone(&self) -> Self {
-        TypedNode {
-            node: self.node,
+        Node {
+            pos: self.pos,
+            gen: self.gen,
             _marker: PhantomData,
         }
     }
 }
-impl<T> Copy for TypedNode<T> {}
-impl<T> std::fmt::Debug for TypedNode<T> {
+impl<T> Copy for Node<T> {}
+impl<T> std::fmt::Debug for Node<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.node.fmt(f)
+        f.write_fmt(format_args!(
+            "Node {{\n pos: {:?},\n gen: {},\n}}",
+            self.pos, self.gen
+        ))
     }
 }
-impl<T> PartialEq for TypedNode<T> {
+impl<T> PartialEq for Node<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.node == other.node
+        self.pos == other.pos && self.gen == other.gen
     }
 }
-impl<T> Eq for TypedNode<T> {}
+impl<T> Eq for Node<T> {}
 
-pub type NodeRef<'a, T> = (&'a T, TypedNode<T>);
-pub type NodeRefMut<'a, T> = (&'a mut T, TypedNode<T>);
+// ///////////////////// /////////////////// IMPORTANT: it is currently possible to:
+// 1. get a NodeRef
+// 2. get a Node from it
+// 3. check the Node
+// 4. delete the node with either the NodeRef or the CheckedNode
+// 5. you now have a SafeNode impling type that refers to a dead component
+// This seems pretty bad! Need to think about it next time it's not 12am and my brain actually works
+
+#[derive(Debug)]
+pub struct CheckedNode<'a, T> {
+    node: &'a Node<T>,
+}
+impl<'a, T> UnsafeNode for CheckedNode<'a, T> {
+    fn pos(&self) -> NodePosition {
+        self.node.pos
+    }
+}
+impl<'a, T> SafeNode for CheckedNode<'a, T> {}
+
+pub struct NodeRef<'a, T> {
+    pub item: &'a T,
+    pos: NodePosition,
+}
+impl<'a, T> UnsafeNode for NodeRef<'a, T> {
+    fn pos(&self) -> NodePosition {
+        self.pos
+    }
+}
+impl<'a, T> SafeNode for NodeRef<'a, T> {}
+impl<'a, T> NodeRef<'a, T> {
+    pub fn node(&self, graph: &Graph) -> Node<T> {
+        Node {
+            pos: self.pos,
+            gen: graph.generations[self.pos.layer_idx][self.pos.item_idx],
+            _marker: PhantomData,
+        }
+    }
+}
+
+pub struct NodeRefMut<'a, T> {
+    pub item: &'a mut T,
+    pos: NodePosition,
+}
+impl<'a, T> UnsafeNode for NodeRefMut<'a, T> {
+    fn pos(&self) -> NodePosition {
+        self.pos
+    }
+}
+impl<'a, T> SafeNode for NodeRefMut<'a, T> {}
+impl<'a, T> NodeRefMut<'a, T> {
+    pub fn node(&self, graph: &Graph) -> Node<T> {
+        Node {
+            pos: self.pos,
+            gen: graph.generations[self.pos.layer_idx][self.pos.item_idx],
+            _marker: PhantomData,
+        }
+    }
+}
 
 //
 // Graph
@@ -74,6 +149,9 @@ pub struct Graph {
     /// * 2nd dimension is the component
     /// used to determine if an object is dead or alive
     refcounts: Vec<Vec<Refcount>>,
+    /// Same structure as above,
+    /// used to invalidate slots that have been deleted and maybe recycled
+    generations: Vec<Vec<GenerationIdx>>,
     /// FIFO queue for slot reuse
     vacant_slots: Vec<VecDeque<ComponentIdx>>,
 }
@@ -83,6 +161,7 @@ impl Graph {
         Self {
             edge_layers: Vec::new(),
             refcounts: Vec::new(),
+            generations: Vec::new(),
             vacant_slots: Vec::new(),
         }
     }
@@ -98,8 +177,9 @@ impl Graph {
         let targets = vec![Vec::new(); next_idx + 1];
         self.edge_layers.push(targets);
 
-        // add refcounts and vacant slot queues for the layer
+        // add refcounts, generation indices and vacant slot queues for the layer
         self.refcounts.push(Vec::new());
+        self.generations.push(Vec::new());
         self.vacant_slots.push(VecDeque::new());
 
         Layer {
@@ -108,16 +188,14 @@ impl Graph {
         }
     }
 
-    pub fn connect(&mut self, node1: impl Into<AnyNode>, node2: impl Into<AnyNode>) {
-        let node1 = node1.into();
-        let node2 = node2.into();
+    pub fn connect(&mut self, node1: &impl SafeNode, node2: &impl SafeNode) {
         self.connect_oneway(node1, node2);
         self.connect_oneway(node2, node1);
     }
 
-    pub fn connect_oneway(&mut self, start: impl Into<AnyNode>, end: impl Into<AnyNode>) {
-        let start = start.into();
-        let end = end.into();
+    pub fn connect_oneway(&mut self, start: &impl SafeNode, end: &impl SafeNode) {
+        let start = start.pos();
+        let end = end.pos();
         let edge_vec = &mut self.edge_layers[start.layer_idx][end.layer_idx];
         // extend the edge vec when adding an edge past its current end.
         // we don't allocate all the space at the start because it's likely to not get used
@@ -140,55 +218,73 @@ impl Graph {
 
     pub fn get_neighbor<'to, To>(
         &self,
-        node: impl Into<AnyNode>,
+        node: &impl SafeNode,
         to_layer: &'to Layer<To>,
     ) -> Option<NodeRef<'to, To>> {
-        let node = node.into();
+        self.get_neighbor_unchecked(node, to_layer)
+    }
+
+    pub fn get_neighbor_unchecked<'to, To>(
+        &self,
+        node: &impl UnsafeNode,
+        to_layer: &'to Layer<To>,
+    ) -> Option<NodeRef<'to, To>> {
+        let node = node.pos();
         let edge_layer = &self.edge_layers[node.layer_idx][to_layer.index];
         if edge_layer.len() <= node.item_idx {
             None
         } else {
             let to_id = edge_layer[node.item_idx]?;
-            Some((
-                &to_layer.content[to_id],
-                AnyNode {
+            Some(NodeRef {
+                item: &to_layer.content[to_id],
+                pos: NodePosition {
                     item_idx: to_id,
                     layer_idx: to_layer.index,
-                }
-                .typed(),
-            ))
+                },
+            })
         }
     }
 
     pub fn get_neighbor_mut<'to, To>(
         &self,
-        node: impl Into<AnyNode>,
+        node: &impl SafeNode,
         to_layer: &'to mut Layer<To>,
     ) -> Option<NodeRefMut<'to, To>> {
-        let node = node.into();
+        self.get_neighbor_mut_unchecked(node, to_layer)
+    }
+
+    pub fn get_neighbor_mut_unchecked<'to, To>(
+        &self,
+        node: &impl UnsafeNode,
+        to_layer: &'to mut Layer<To>,
+    ) -> Option<NodeRefMut<'to, To>> {
+        let node = node.pos();
         let edge_layer = &self.edge_layers[node.layer_idx][to_layer.index];
         if edge_layer.len() <= node.item_idx {
             None
         } else {
             let to_id = edge_layer[node.item_idx]?;
-            Some((
-                &mut to_layer.content[to_id],
-                AnyNode {
+            Some(NodeRefMut {
+                item: &mut to_layer.content[to_id],
+                pos: NodePosition {
                     item_idx: to_id,
                     layer_idx: to_layer.index,
-                }
-                .typed(),
-            ))
+                },
+            })
         }
     }
 
-    pub fn get_refcount(&self, node: impl Into<AnyNode>) -> Refcount {
-        let node = node.into();
+    pub fn get_refcount(&self, node: &impl SafeNode) -> Refcount {
+        self.get_refcount_unchecked(node)
+    }
+
+    pub fn get_refcount_unchecked(&self, node: &impl UnsafeNode) -> Refcount {
+        let node = node.pos();
         self.refcounts[node.layer_idx][node.item_idx]
     }
 
-    pub fn delete(&mut self, root: impl Into<AnyNode>) {
-        let root = root.into();
+    pub fn delete(&mut self, root: impl SafeNode) {
+        let root = root.pos();
         // check if the node is already considered deleted before doing anything
         if self.refcounts[root.layer_idx][root.item_idx] <= 0 {
             return;
@@ -221,16 +317,17 @@ impl Graph {
                     format!("Same slot marked vacant twice ({:?})", node),
                 );
                 self.vacant_slots[node.layer_idx].push_back(node.item_idx);
+                self.generations[node.layer_idx][node.item_idx] += 1;
             }
         }
     }
 
-    fn visit_all(&self, curr_node: AnyNode, visited: &mut Vec<VisitedNode>) {
+    fn visit_all(&self, curr_node: NodePosition, visited: &mut Vec<VisitedNode>) {
         for other_layer_idx in 0..self.edge_layers.len() {
             let edges_to_other = &self.edge_layers[curr_node.layer_idx][other_layer_idx];
             if curr_node.item_idx < edges_to_other.len() {
                 if let Some(other_item_idx) = edges_to_other[curr_node.item_idx] {
-                    let next_node = AnyNode {
+                    let next_node = NodePosition {
                         layer_idx: other_layer_idx,
                         item_idx: other_item_idx,
                     };
@@ -270,7 +367,7 @@ impl Graph {
                     edges_to_other[node.item_idx] = None;
                     self.refcounts[other_layer_idx][other_item_idx] -= 1;
 
-                    let next_node = AnyNode {
+                    let next_node = NodePosition {
                         layer_idx: other_layer_idx,
                         item_idx: other_item_idx,
                     };
@@ -284,7 +381,7 @@ impl Graph {
 }
 #[derive(Debug)]
 struct VisitedNode {
-    node: AnyNode,
+    node: NodePosition,
     visit_count: Refcount,
     all_refs_visited: bool,
     visited_on_delete: bool,
@@ -301,36 +398,47 @@ pub struct Layer<T> {
 }
 
 impl<T> Layer<T> {
-    pub fn insert(&mut self, component: T, graph: &mut Graph) -> TypedNode<T> {
+    pub fn insert(&mut self, component: T, graph: &mut Graph) -> NodeRef<'_, T> {
         let item_idx = if let Some(vacant_slot) = graph.vacant_slots[self.index].pop_front() {
             self.content[vacant_slot] = component;
             vacant_slot
         } else {
             self.content.push(component);
             graph.refcounts[self.index].push(0);
+            graph.generations[self.index].push(0);
             self.content.len() - 1
         };
 
-        AnyNode {
-            layer_idx: self.index,
-            item_idx,
-        }
-        .typed()
-    }
-
-    pub fn get(&self, node: TypedNode<T>) -> Option<&T> {
-        if node.node.layer_idx == self.index {
-            self.content.get(node.node.item_idx)
-        } else {
-            None
+        NodeRef {
+            item: &self.content[item_idx],
+            pos: NodePosition {
+                layer_idx: self.index,
+                item_idx,
+            },
         }
     }
 
-    pub fn get_mut(&mut self, node: TypedNode<T>) -> Option<&mut T> {
-        if node.node.layer_idx == self.index {
-            self.content.get_mut(node.node.item_idx)
-        } else {
-            None
+    pub fn get(&self, node: CheckedNode<'_, T>) -> NodeRef<'_, T> {
+        let pos = node.pos();
+        self.get_unchecked(pos)
+    }
+
+    pub fn get_unchecked(&self, pos: NodePosition) -> NodeRef<'_, T> {
+        NodeRef {
+            item: &self.content[pos.item_idx],
+            pos,
+        }
+    }
+
+    pub fn get_mut(&mut self, node: CheckedNode<'_, T>) -> NodeRefMut<'_, T> {
+        let pos = node.pos();
+        self.get_mut_unchecked(pos)
+    }
+
+    pub fn get_mut_unchecked(&mut self, pos: NodePosition) -> NodeRefMut<'_, T> {
+        NodeRefMut {
+            item: &mut self.content[pos.item_idx],
+            pos,
         }
     }
 
@@ -366,14 +474,13 @@ impl<'a, T> Iterator for LayerIter<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let (item_idx, item) = self.iter.next()?;
         if self.refcounts[item_idx] > 0 {
-            Some((
+            Some(NodeRef {
                 item,
-                AnyNode {
+                pos: NodePosition {
                     item_idx,
                     layer_idx: self.layer_idx,
-                }
-                .typed(),
-            ))
+                },
+            })
         } else {
             self.next()
         }
@@ -390,14 +497,13 @@ impl<'a, T> Iterator for LayerIterMut<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let (item_idx, item) = self.iter.next()?;
         if self.refcounts[item_idx] > 0 {
-            Some((
+            Some(NodeRefMut {
                 item,
-                AnyNode {
+                pos: NodePosition {
                     item_idx,
                     layer_idx: self.layer_idx,
-                }
-                .typed(),
-            ))
+                },
+            })
         } else {
             self.next()
         }
@@ -449,37 +555,41 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        let everyones_shape = shapes.insert(Shape(69), &mut graph);
+        // TODO: make this a pinned node instead once pinning is a thing
+        let everyones_shape = shapes.insert(Shape(69), &mut graph).node(&graph);
+        let everyones_shape = everyones_shape.check(&graph).unwrap();
+
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
             let tr_node = trs.insert(Transform(i), &mut graph);
             let vel_node = vels.insert(Velocity(i), &mut graph);
             let rb_node = rbs.insert(RigidBody(i), &mut graph);
-            graph.connect(vel_node, tr_node);
-            graph.connect(rb_node, tr_node);
-            graph.connect(rb_node, vel_node);
-            graph.connect_oneway(rb_node, everyones_shape);
+            graph.connect(&vel_node, &tr_node);
+            graph.connect(&rb_node, &tr_node);
+            graph.connect(&rb_node, &vel_node);
+            graph.connect_oneway(&rb_node, &everyones_shape);
+            // refcounts
+            assert_eq!(graph.get_refcount(&tr_node), 2);
+            assert_eq!(graph.get_refcount(&rb_node), 2);
+            assert_eq!(graph.get_refcount(&everyones_shape), i + 1);
+            // neighbors are found
             assert_eq!(
-                graph.get_neighbor(rb_node, &shapes).map(|(n, _)| n),
-                Some(&Shape(69))
+                graph.get_neighbor(&rb_node, &shapes).unwrap().item,
+                &Shape(69)
             );
             assert_eq!(
-                graph.get_neighbor(tr_node, &rbs).map(|(n, _)| n),
-                Some(&RigidBody(i))
+                graph.get_neighbor(&tr_node, &rbs).unwrap().item,
+                &RigidBody(i)
             );
-            assert!(graph.get_neighbor(tr_node, &shapes).is_none());
-            // check refcounts
-            assert_eq!(graph.get_refcount(tr_node), 2);
-            assert_eq!(graph.get_refcount(rb_node), 2);
-            assert_eq!(graph.get_refcount(everyones_shape), i + 1);
+            assert!(graph.get_neighbor(&tr_node, &shapes).is_none());
 
             // spawn something with different connections in between
             let tr_node_ = trs.insert(Transform(42 + i), &mut graph);
             let shape_node_ = shapes.insert(Shape(i), &mut graph);
-            graph.connect(tr_node_, shape_node_);
+            graph.connect(&tr_node_, &shape_node_);
             assert_eq!(
-                graph.get_neighbor(tr_node_, &shapes).map(|(n, _)| n),
-                Some(&Shape(i))
+                graph.get_neighbor(&tr_node_, &shapes).unwrap().item,
+                &Shape(i)
             );
         }
     }
@@ -492,18 +602,20 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        let everyones_shape = shapes.insert(Shape(69), &mut graph);
+        // TODO: make this a pinned node instead once pinning is a thing
+        let everyones_shape = shapes.insert(Shape(69), &mut graph).node(&graph);
+        let everyones_shape = everyones_shape.check(&graph).unwrap();
 
         for i in 0..10 {
             let tr_node = trs.insert(Transform(i), &mut graph);
             let vel_node = vels.insert(Velocity(i), &mut graph);
             let rb_node = rbs.insert(RigidBody(0), &mut graph);
-            graph.connect(rb_node, tr_node);
+            graph.connect(&rb_node, &tr_node);
             if i % 2 == 0 {
-                graph.connect(tr_node, vel_node);
+                graph.connect(&tr_node, &vel_node);
             }
             if i % 4 == 0 {
-                graph.connect_oneway(rb_node, everyones_shape);
+                graph.connect_oneway(&rb_node, &everyones_shape);
             }
         }
 
@@ -511,44 +623,50 @@ mod tests {
 
         let mut match_count = 0; // not including shape
         let mut full_match_count = 0; // including shape
-        for (mut rb, rb_pos) in rbs.iter_mut(&graph) {
-            let (tr, tr_pos) = match graph.get_neighbor(rb_pos, &trs) {
+        for mut rb in rbs.iter_mut(&graph) {
+            let tr = match graph.get_neighbor(&rb, &trs) {
                 Some(tr) => tr,
                 None => continue,
             };
-            let (vel, _) = match graph.get_neighbor(tr_pos, &vels) {
+            let vel = match graph.get_neighbor(&tr, &vels) {
                 Some(vel) => vel,
                 None => continue,
             };
             match_count += 1;
-            rb.0 = 42;
+            rb.item.0 = 42;
 
-            let mut shape = graph.get_neighbor_mut(rb_pos, &mut shapes);
-            if let Some((shape, _)) = &mut shape {
+            let mut shape = graph.get_neighbor_mut(&rb, &mut shapes);
+            if let Some(shape) = &mut shape {
                 full_match_count += 1;
-                shape.0 += 1;
+                shape.item.0 += 1;
             }
 
             // test that only real connections were followed
-            assert_eq!(vel.0 % 2, 0);
+            assert_eq!(vel.item.0 % 2, 0);
 
-            println!("{:?}, {:?}, {:?}, {:?}", rb, tr, vel, shape);
+            println!(
+                "{:?}, {:?}, {:?}, {:?}",
+                rb.item,
+                tr.item,
+                vel.item,
+                shape.map(|s| s.item)
+            );
         }
         assert_eq!(match_count, 5);
         assert_eq!(full_match_count, 3);
-        assert_eq!(shapes.get(everyones_shape).unwrap(), &Shape(72));
+        assert_eq!(shapes.get_unchecked(everyones_shape.pos()).item, &Shape(72));
 
         println!("All rbs: {:?}", rbs.content);
 
-        for (rb, rb_pos) in rbs.iter(&graph) {
+        for rb in rbs.iter(&graph) {
             if graph
-                .get_neighbor(rb_pos, &trs)
-                .and_then(|(_, tr_pos)| graph.get_neighbor(tr_pos, &vels))
+                .get_neighbor(&rb, &trs)
+                .and_then(|tr| graph.get_neighbor(&tr, &vels))
                 .is_none()
             {
-                assert_eq!(rb.0, 0);
+                assert_eq!(rb.item.0, 0);
             } else {
-                assert_eq!(rb.0, 42);
+                assert_eq!(rb.item.0, 42);
             }
         }
     }
@@ -564,29 +682,29 @@ mod tests {
 
         let everyones_shape = shapes.insert(Shape(69), &mut graph);
         let shape_owns_thing = sub_shapes.insert(Shape(42), &mut graph);
-        graph.connect(everyones_shape, shape_owns_thing);
+        graph.connect(&everyones_shape, &shape_owns_thing);
 
         for i in 0..10 {
             let tr_node = trs.insert(Transform(i), &mut graph);
             let vel_node = vels.insert(Velocity(i), &mut graph);
             let rb_node = rbs.insert(RigidBody(0), &mut graph);
-            graph.connect(rb_node, tr_node);
+            graph.connect(&rb_node, &tr_node);
             if i % 2 == 0 {
-                graph.connect(tr_node, vel_node);
+                graph.connect(&tr_node, &vel_node);
             } else {
-                graph.connect_oneway(vel_node, vel_node); // connect vel to itself to "keep it alive"
+                graph.connect_oneway(&vel_node, &vel_node); // connect vel to itself to "keep it alive"
             }
             if i % 3 == 0 {
-                graph.connect_oneway(rb_node, everyones_shape);
+                graph.connect_oneway(&rb_node, &everyones_shape);
             }
         }
 
         println!("Refcounts after creations {:?}", graph.refcounts);
 
         assert_eq!(vels.iter(&graph).count(), 10);
-        for vel_to_del in vels.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
+        for vel_to_del in vels.iter(&graph).map(|v| v.pos()).collect::<Vec<_>>() {
             println!("delete");
-            graph.delete(vel_to_del);
+            graph.delete(vels.get_unchecked(vel_to_del));
             println!("refcounts {:?}", graph.refcounts);
         }
         // all vels deleted (== have 0 referrers)
@@ -597,14 +715,14 @@ mod tests {
         println!("Refcounts after first deletions {:?}", graph.refcounts);
 
         // rbs are connected to everything so deleting all of them should delete everything
-        for rb_to_del in rbs.iter(&graph).map(|(_, p)| p).collect::<Vec<_>>() {
+        for rb_to_del in rbs.iter(&graph).map(|rb| rb.pos()).collect::<Vec<_>>() {
             // everyones_shape and its subcomponent should live until the last rb is deleted
             // BECAUSE the last rb is connected to it
             // (remember this if changing the iteration counts!)
             assert_eq!(shapes.iter(&graph).count(), 1);
             assert_eq!(sub_shapes.iter(&graph).count(), 1);
 
-            graph.delete(rb_to_del);
+            graph.delete(rbs.get_unchecked(rb_to_del));
         }
         assert_eq!(shapes.iter(&graph).count(), 0);
         assert_eq!(trs.iter(&graph).count(), 0);
@@ -642,7 +760,7 @@ mod tests {
 
         let everyones_shape = shapes.insert(Shape(69), &mut graph);
         let shape_pin = pins.insert((), &mut graph);
-        graph.connect_oneway(shape_pin, everyones_shape);
+        graph.connect_oneway(&shape_pin, &everyones_shape);
 
         // delete and respawn stuff a few times to hopefully see if things get connected wrong at some point
         // (this doesn't prove things won't go wrong over a long enough time but fingers crossed)
@@ -652,33 +770,43 @@ mod tests {
                 // delete half of everything that was placed,
                 // so every new iteration we should be reusing slots for half and pushing new for half
                 .take(5)
-                .map(|(_, n)| n)
+                .map(|tr| tr.pos())
                 .collect::<Vec<_>>()
             {
-                graph.delete(tr_node);
+                graph.delete(trs.get_unchecked(tr_node));
             }
             for j in 0..10 {
                 let id = i * 20 + j;
                 let tr_node = trs.insert(Transform(id), &mut graph);
                 let vel_node = vels.insert(Velocity(id), &mut graph);
                 let rb_node = rbs.insert(RigidBody(id), &mut graph);
-                graph.connect(tr_node, vel_node);
-                graph.connect(vel_node, rb_node);
-                graph.connect_oneway(tr_node, everyones_shape);
+                graph.connect(&tr_node, &vel_node);
+                graph.connect(&vel_node, &rb_node);
+                graph.connect_oneway(&tr_node, &everyones_shape);
                 // delete and replace every other
                 if i % 2 == 0 {
+                    let tr_node = tr_node.node(&graph); // drop the ref to the layer
+
                     let tr_len_before = trs.content.len();
 
-                    graph.delete(tr_node);
-                    // delete twice to make sure we don't create garbage on the second go
-                    graph.delete(tr_node);
+                    graph.delete(
+                        trs.get(
+                            tr_node
+                                .check(&graph)
+                                .expect("tr_node wasn't deleted yet so it should be there"),
+                        ),
+                    );
+                    assert!(
+                        tr_node.check(&graph).is_none(),
+                        "tr_node was deleted so checking it should now give None"
+                    );
 
                     let tr_node = trs.insert(Transform(100), &mut graph);
                     let vel_node = vels.insert(Velocity(100), &mut graph);
-                    graph.connect(tr_node, vel_node);
+                    graph.connect(&tr_node, &vel_node);
                     if i % 4 == 0 {
                         let rb_node = rbs.insert(RigidBody(100), &mut graph);
-                        graph.connect(rb_node, tr_node);
+                        graph.connect(&rb_node, &tr_node);
                     }
 
                     let tr_len_after = trs.content.len();

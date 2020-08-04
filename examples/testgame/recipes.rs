@@ -37,9 +37,9 @@ impl Recipe {
                     &mut graph.graph,
                 );
                 // TODO: helper to create this graph pattern in the starframe::physics module
-                graph.graph.connect(tr_node, body_node);
-                graph.graph.connect(body_node, coll_node);
-                graph.graph.connect(tr_node, shape_node);
+                graph.graph.connect(&tr_node, &body_node);
+                graph.graph.connect(&body_node, &coll_node);
+                graph.graph.connect(&tr_node, &shape_node);
             }
             DynamicBlock(block) => {
                 let tr_node = graph
@@ -57,9 +57,9 @@ impl Recipe {
                     },
                     &mut graph.graph,
                 );
-                graph.graph.connect(tr_node, body_node);
-                graph.graph.connect(body_node, coll_node);
-                graph.graph.connect(tr_node, shape_node);
+                graph.graph.connect(&tr_node, &body_node);
+                graph.graph.connect(&body_node, &coll_node);
+                graph.graph.connect(&tr_node, &shape_node);
             }
             Ball { radius, position } => {
                 let tr_node = graph.l_transform.insert(
@@ -78,9 +78,9 @@ impl Recipe {
                     },
                     &mut graph.graph,
                 );
-                graph.graph.connect(tr_node, body_node);
-                graph.graph.connect(body_node, coll_node);
-                graph.graph.connect(tr_node, shape_node);
+                graph.graph.connect(&tr_node, &body_node);
+                graph.graph.connect(&body_node, &coll_node);
+                graph.graph.connect(&tr_node, &shape_node);
             }
         }
     }
