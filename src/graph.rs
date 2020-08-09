@@ -14,7 +14,12 @@ pub trait UnsafeNode {
     fn pos(&self) -> NodePosition;
 }
 
-pub trait SafeNode: UnsafeNode {}
+pub trait SafeNode: UnsafeNode + Sized {
+    type MarkerType;
+    fn pin(&self, graph: &mut Graph) -> PinnedNode<Self::MarkerType> {
+        graph.pin(self)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodePosition {
@@ -72,14 +77,6 @@ impl<T> PartialEq for Node<T> {
 }
 impl<T> Eq for Node<T> {}
 
-// ///////////////////// /////////////////// IMPORTANT: it is currently possible to:
-// 1. get a NodeRef
-// 2. get a Node from it
-// 3. check the Node
-// 4. delete the node with either the NodeRef or the CheckedNode
-// 5. you now have a SafeNode impling type that refers to a dead component
-// This seems pretty bad! Need to think about it next time it's not 12am and my brain actually works
-
 #[derive(Debug)]
 pub struct CheckedNode<'a, T> {
     node: &'a Node<T>,
@@ -89,7 +86,22 @@ impl<'a, T> UnsafeNode for CheckedNode<'a, T> {
         self.node.pos
     }
 }
-impl<'a, T> SafeNode for CheckedNode<'a, T> {}
+impl<'a, T> SafeNode for CheckedNode<'a, T> {
+    type MarkerType = T;
+}
+
+pub struct PinnedNode<T> {
+    pos: NodePosition,
+    _marker: PhantomData<*const T>,
+}
+impl<T> UnsafeNode for PinnedNode<T> {
+    fn pos(&self) -> NodePosition {
+        self.pos
+    }
+}
+impl<T> SafeNode for PinnedNode<T> {
+    type MarkerType = T;
+}
 
 pub struct NodeRef<'a, T> {
     pub item: &'a T,
@@ -100,7 +112,9 @@ impl<'a, T> UnsafeNode for NodeRef<'a, T> {
         self.pos
     }
 }
-impl<'a, T> SafeNode for NodeRef<'a, T> {}
+impl<'a, T> SafeNode for NodeRef<'a, T> {
+    type MarkerType = T;
+}
 impl<'a, T> NodeRef<'a, T> {
     pub fn node(&self, graph: &Graph) -> Node<T> {
         Node {
@@ -120,7 +134,9 @@ impl<'a, T> UnsafeNode for NodeRefMut<'a, T> {
         self.pos
     }
 }
-impl<'a, T> SafeNode for NodeRefMut<'a, T> {}
+impl<'a, T> SafeNode for NodeRefMut<'a, T> {
+    type MarkerType = T;
+}
 impl<'a, T> NodeRefMut<'a, T> {
     pub fn node(&self, graph: &Graph) -> Node<T> {
         Node {
@@ -274,6 +290,21 @@ impl Graph {
         }
     }
 
+    pub fn pin<N: SafeNode>(&mut self, node: &N) -> PinnedNode<N::MarkerType> {
+        let pos = node.pos();
+        // we don't need a whole layer for pins because nothing ever needs to connect to a pin source.
+        // so we just increment refcount by 1 when we pin to ensure it always stays above 0
+        self.refcounts[pos.layer_idx][pos.item_idx] += 1;
+        PinnedNode {
+            pos,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn unpin<T>(&mut self, pin: PinnedNode<T>) {
+        self.refcounts[pin.pos.layer_idx][pin.pos.item_idx] -= 1;
+    }
+
     pub fn get_refcount(&self, node: &impl SafeNode) -> Refcount {
         self.get_refcount_unchecked(node)
     }
@@ -356,6 +387,11 @@ impl Graph {
 
         if !visited[curr_visited_idx].all_refs_visited {
             // this node is shared, don't delete anything after it
+            if curr_visited_idx == 0 {
+                eprintln!(
+                    "Warning: failed to delete a node due to references from outside or pinning"
+                );
+            }
             return;
         }
 
@@ -418,7 +454,7 @@ impl<T> Layer<T> {
         }
     }
 
-    pub fn get(&self, node: CheckedNode<'_, T>) -> NodeRef<'_, T> {
+    pub fn get(&self, node: impl SafeNode) -> NodeRef<'_, T> {
         let pos = node.pos();
         self.get_unchecked(pos)
     }
@@ -430,7 +466,7 @@ impl<T> Layer<T> {
         }
     }
 
-    pub fn get_mut(&mut self, node: CheckedNode<'_, T>) -> NodeRefMut<'_, T> {
+    pub fn get_mut(&mut self, node: impl SafeNode) -> NodeRefMut<'_, T> {
         let pos = node.pos();
         self.get_mut_unchecked(pos)
     }
@@ -602,9 +638,7 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        // TODO: make this a pinned node instead once pinning is a thing
-        let everyones_shape = shapes.insert(Shape(69), &mut graph).node(&graph);
-        let everyones_shape = everyones_shape.check(&graph).unwrap();
+        let everyones_shape = shapes.insert(Shape(69), &mut graph).pin(&mut graph);
 
         for i in 0..10 {
             let tr_node = trs.insert(Transform(i), &mut graph);
@@ -755,12 +789,8 @@ mod tests {
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
-        // TODO: pinning API built into Graph
-        let mut pins: Layer<()> = graph.create_layer();
 
-        let everyones_shape = shapes.insert(Shape(69), &mut graph);
-        let shape_pin = pins.insert((), &mut graph);
-        graph.connect_oneway(&shape_pin, &everyones_shape);
+        let everyones_shape = shapes.insert(Shape(69), &mut graph).pin(&mut graph);
 
         // delete and respawn stuff a few times to hopefully see if things get connected wrong at some point
         // (this doesn't prove things won't go wrong over a long enough time but fingers crossed)
@@ -824,5 +854,42 @@ mod tests {
         assert_eq!(vels.content.len(), 30);
         // everyones_shape was never deleted
         assert_eq!(shapes.content.len(), 1);
+    }
+
+    #[test]
+    fn pin() {
+        let mut graph = Graph::new();
+        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut vels: Layer<Velocity> = graph.create_layer();
+        let mut rbs: Layer<RigidBody> = graph.create_layer();
+
+        let tr = trs.insert(Transform(0), &mut graph);
+        let tr_pin = tr.pin(&mut graph);
+        let tr = tr.node(&graph); // just to be able to delete and still have the pinned node
+                                  // should appear in the iterator even though it's not connected to anything
+        assert_eq!(trs.iter(&graph).count(), 1);
+
+        // awkward way to drop the reference to `vels` but this is unlikely to be needed in an actual spawning function
+        let vel = vels.insert(Velocity(0), &mut graph).node(&graph);
+        let vel_check = vel.check(&graph).unwrap();
+        let rb = rbs.insert(RigidBody(0), &mut graph).node(&graph);
+        let rb_check = rb.check(&graph).unwrap();
+
+        graph.connect(&tr_pin, &vel_check);
+        graph.connect_oneway(&tr_pin, &rb_check);
+        graph.connect_oneway(&vel_check, &rb_check);
+
+        // this should not delete anything because the root node of deletion is pinned
+        graph.delete(tr.check(&graph).unwrap());
+        assert!(graph.get_neighbor(&tr_pin, &vels).is_some());
+        assert!(graph.get_neighbor(&tr_pin, &rbs).is_some());
+        assert!(graph.get_neighbor(&vel_check, &rbs).is_some());
+
+        // unpinning and then deleting should delete everything
+        graph.unpin(tr_pin);
+        graph.delete(tr.check(&graph).unwrap());
+        assert!(tr.check(&graph).is_none());
+        assert!(vel.check(&graph).is_none());
+        assert!(rb.check(&graph).is_none());
     }
 }
