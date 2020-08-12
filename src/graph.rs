@@ -303,6 +303,11 @@ impl Graph {
 
     pub fn unpin<T>(&mut self, pin: PinnedNode<T>) {
         self.refcounts[pin.pos.layer_idx][pin.pos.item_idx] -= 1;
+
+        if self.refcounts[pin.pos.layer_idx][pin.pos.item_idx] == 0 {
+            self.vacant_slots[pin.pos.layer_idx].push_back(pin.pos.item_idx);
+            self.generations[pin.pos.layer_idx][pin.pos.item_idx] += 1;
+        }
     }
 
     pub fn get_refcount(&self, node: &impl SafeNode) -> Refcount {
