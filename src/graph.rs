@@ -1,3 +1,32 @@
+//! Tools for representing, storing, and connecting game objects.
+//!
+//! A game object in Starframe is a _directed graph_ of components.
+//! Conceptually, one may look something like this:
+//! ```text
+//! Transform <----> RigidBody <----> Collider
+//!    ^                ^
+//!    |                |
+//!    v                v
+//!  Sprite         EventSink
+//!    |
+//!    |
+//!    v
+//! Texture
+//! ```
+//! Most edges (connections between nodes) should go both ways, but because the graph is directed, one-directional edges
+//! such as from Sprite to Texture in the above diagram can also be made.
+//! This is important to the way object boundaries are determined by the deletion algorithm
+//! (see `Graph::delete` for details).
+//! This comes into play, for example, when sharing one component between multiple objects.
+//!
+//! Edges are stored in the `Graph`, while components themselves are stored in `Layer`s.
+//! This separation allows general graph algorithms to be used on the `Graph`
+//! without knowing anything about the types of the components.
+//!
+//! Similarly to how systems in ECS iterate over specific sets of components,
+//! systems using the graph iterate over specific patterns of connected nodes.
+//! This is detailed in the `Iter` documentation.
+
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 
@@ -10,10 +39,21 @@ type LayerIdx = usize;
 type GenerationIdx = usize;
 type Refcount = usize;
 
+/// Implemented by all node types that can be used to query the graph.
+///
+/// Types that can be stored between frames, and therefore don't know if the node they point to has been deleted,
+/// only implement this and not `SafeNode`.
 pub trait UnsafeNode {
     fn pos(&self) -> NodePosition;
 }
 
+/// Implemented by node types that know the node they point to has not been deleted.
+///
+/// Note that the above is not currently strictly true.
+/// For instance, you can clone a `Node`, get a `CheckedNode` from both, delete one,
+/// and the other will now point to a deleted node.
+/// However, the consequences of this aren't severe and it takes some strange moves to happen at all,
+/// so I'm willing to live with this API for now.
 pub trait SafeNode: UnsafeNode + Sized {
     type MarkerType;
     fn pin(&self, graph: &mut Graph) -> PinnedNode<Self::MarkerType> {
@@ -21,6 +61,7 @@ pub trait SafeNode: UnsafeNode + Sized {
     }
 }
 
+/// The position in the graph of a node of any type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodePosition {
     pub(crate) layer_idx: LayerIdx,
@@ -32,12 +73,21 @@ impl UnsafeNode for NodePosition {
     }
 }
 
+/// An index to a graph node that is safe to keep across frame boundaries.
+/// Can be used to retrieve the component it represents from the corresponding `Layer`.
+///
+/// A Node contains the position of the node, a type marker of the component's type to prevent use with a wrong layer,
+/// and a generation index to check that the node hasn't been deleted.
+/// An example use case could be to use them as a kind of "weak pointer" connecting together different objects
+/// where you don't want both to be deleted if one is.
 pub struct Node<T> {
     pos: NodePosition,
     gen: GenerationIdx,
     _marker: PhantomData<*const T>,
 }
 impl<T> Node<T> {
+    /// Returns a `CheckedNode`, which implements `SafeNode` and can be used in graph operations,
+    /// or `None` if the node has been deleted from the graph.
     pub fn check(&self, graph: &Graph) -> Option<CheckedNode<'_, T>> {
         if graph.generations[self.pos.layer_idx][self.pos.item_idx] == self.gen {
             Some(CheckedNode { node: self })
@@ -77,6 +127,7 @@ impl<T> PartialEq for Node<T> {
 }
 impl<T> Eq for Node<T> {}
 
+/// A `Node` that is known to be alive.
 #[derive(Debug)]
 pub struct CheckedNode<'a, T> {
     node: &'a Node<T>,
@@ -90,6 +141,11 @@ impl<'a, T> SafeNode for CheckedNode<'a, T> {
     type MarkerType = T;
 }
 
+/// A variant of `Node` that cannot be deleted.
+///
+/// If you drop this without calling `Graph::unpin`, the node it represents can never be deleted.
+/// After unpinning, the node will once again be deleted normally if all connections to it are deleted.
+/// If all connections are already gone when you call unpin, the node will immediately be deleted.
 pub struct PinnedNode<T> {
     pos: NodePosition,
     _marker: PhantomData<*const T>,
@@ -103,7 +159,10 @@ impl<T> SafeNode for PinnedNode<T> {
     type MarkerType = T;
 }
 
+/// A reference to a component in a `Layer`
+/// that knows its position in the graph and can be used in graph operations.
 pub struct NodeRef<'a, T> {
+    /// The component.
     pub item: &'a T,
     pos: NodePosition,
 }
@@ -125,7 +184,10 @@ impl<'a, T> NodeRef<'a, T> {
     }
 }
 
+/// A mutable reference to a component in a `Layer`
+/// that knows its position in the graph and can be used in graph operations.
 pub struct NodeRefMut<'a, T> {
+    /// The component.
     pub item: &'a mut T,
     pos: NodePosition,
 }
@@ -151,6 +213,39 @@ impl<'a, T> NodeRefMut<'a, T> {
 // Graph
 //
 
+/// The heart of the Starframe game object representation.
+/// Contains connections between components stored in `Layer`s.
+///
+/// The usual way to use this is to define a struct containing a `Graph` and a `Layer` for each component type:
+/// ```
+/// # use starframe::graph::{Graph, Layer};
+/// # use starframe::physics::{Collider, RigidBody};
+/// # use starframe::math::Transform;
+/// struct MyGraph {
+///     graph: Graph,
+///     l_transform: Layer<Transform>,
+///     l_collider: Layer<Collider>,
+///     l_body: Layer<RigidBody>,
+///     // etc.
+/// }
+/// impl MyGraph {
+///     pub fn new() -> Self {
+///         let mut graph = Graph::new();
+///         let l_transform = graph.create_layer();
+///         let l_collider = graph.create_layer();
+///         let l_body = graph.create_layer();
+///         MyGraph {
+///             graph,
+///             l_transform,
+///             l_collider,
+///             l_body,
+///         }
+///     }
+/// }
+/// ```
+/// If multiple instances of `Graph` exist in one program,
+/// care must be taken not to mix nodes or layers from different instances.
+/// Doing so will either panic or cause strange behavior depending on what's in the two graphs.
 #[derive(Debug)]
 pub struct Graph {
     /// 3D array:
@@ -173,6 +268,7 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// Create an empty graph.
     pub fn new() -> Self {
         Self {
             edge_layers: Vec::new(),
@@ -182,6 +278,7 @@ impl Graph {
         }
     }
 
+    /// Create a new `Layer` in this graph.
     pub fn create_layer<T>(&mut self) -> Layer<T> {
         let next_idx = self.edge_layers.len();
 
@@ -204,11 +301,36 @@ impl Graph {
         }
     }
 
+    /// Create two edges, one in both directions, between two nodes.
+    ///
+    /// This makes both nodes hierarchically equal parts of the same object.
+    /// Both nodes can find each other with `Graph::get_neighbor`,
+    /// and both will (in most cases) be deleted if `Graph::delete` is called on either one.
+    ///
+    /// Internally this calls `connect_oneway` twice, so all the same caveats apply.
+    ///
+    /// # Panics
+    /// Panics if either edge this creates would make `connect_oneway` panic.
     pub fn connect(&mut self, node1: &impl SafeNode, node2: &impl SafeNode) {
         self.connect_oneway(node1, node2);
         self.connect_oneway(node2, node1);
     }
 
+    /// Create an edge from one node to another.
+    ///
+    /// This makes the second node hierarchically lower than the first, in a sense.
+    /// It can be used to share one node between multiple objects in such a way that the shared node
+    /// is only deleted when the last object referring to it is deleted.
+    ///
+    /// Edges are stored in `Vec`s in the same order as components in `Layer`s.
+    /// Thus, an allocation may be triggered here if the starting node is the last one on its layer
+    /// to have an edge to the target layer.
+    ///
+    /// # Panics
+    /// The current graph implementation is limited to one edge from one node to one layer.
+    /// Therefore, you cannot do things like pointing from one `Transform` directly to two `Shape`s.
+    /// If an edge from one of the nodes to the other's layer already exists, this function will panic,
+    /// because this signals that you're creating a malformed object that won't work the way you expect.
     pub fn connect_oneway(&mut self, start: &impl SafeNode, end: &impl SafeNode) {
         let start = start.pos();
         let end = end.pos();
@@ -232,6 +354,9 @@ impl Graph {
         self.refcounts[end.layer_idx][end.item_idx] += 1;
     }
 
+    /// If an edge from the given node to the target layer exists, returns the node it points to.
+    /// This method takes a node type that implements `SafeNode`, meaning it knows it's currently alive.
+    /// See the docs for `SafeNode` and the available node types.
     pub fn get_neighbor<'to, To>(
         &self,
         node: &impl SafeNode,
@@ -240,6 +365,11 @@ impl Graph {
         self.get_neighbor_unchecked(node, to_layer)
     }
 
+    /// Unchecked variant of `get_neighbor`.
+    /// This method takes any node type, including ones that don't know for sure they're alive.
+    ///
+    /// All `Graph` methods that take nodes follow this convention —
+    /// a `SafeNode` variant without a prefix and an `UnsafeNode` variant called `<name>-unchecked`.
     pub fn get_neighbor_unchecked<'to, To>(
         &self,
         node: &impl UnsafeNode,
@@ -290,6 +420,7 @@ impl Graph {
         }
     }
 
+    /// Pin a node, guaranteeing that it won't be deleted. See `PinnedNode`.
     pub fn pin<N: SafeNode>(&mut self, node: &N) -> PinnedNode<N::MarkerType> {
         let pos = node.pos();
         // we don't need a whole layer for pins because nothing ever needs to connect to a pin source.
@@ -301,6 +432,7 @@ impl Graph {
         }
     }
 
+    /// Unpin a pinned node, making it able to be deleted again.
     pub fn unpin<T>(&mut self, pin: PinnedNode<T>) {
         self.refcounts[pin.pos.layer_idx][pin.pos.item_idx] -= 1;
 
@@ -310,6 +442,7 @@ impl Graph {
         }
     }
 
+    /// Get the number of edges pointing towards the given node.
     pub fn get_refcount(&self, node: &impl SafeNode) -> Refcount {
         self.get_refcount_unchecked(node)
     }
@@ -319,6 +452,41 @@ impl Graph {
         self.refcounts[node.layer_idx][node.item_idx]
     }
 
+    /// Delete a whole _object_ from the graph, beginning from the given node.
+    ///
+    /// What constitutes a single object in the graph isn't quite straightforward due to the
+    /// number of ways in which nodes can be connected.
+    /// The deletion algorithm traverses every node it can find by recursively following edges from the starting node,
+    /// deleting edges along the way.
+    ///
+    /// A node is considered deleted once it no longer has any edges pointing to it.
+    /// At this point, any `Node`s referring to it become invalidated (will not pass `check`)
+    /// and the node is marked to be reused by a new component later.
+    /// If there are edges from outside of the deletion traversal's path pointing to a node that is traversed,
+    /// that node and everything traversed after it will remain alive until all pointing nodes are deleted first.
+    ///
+    /// Illustrated example:
+    /// ```text
+    /// O<->(O)<->O-->O<--O<->O
+    ///               ^
+    ///               L->O
+    /// Delete edges, starting from (O) (note how it stops on the "shared" node)
+    /// O   (O)   O   O<--O<->O
+    ///               ^
+    ///               L->O
+    /// Mark nodes without any more edges for reuse
+    /// O<--O<->[O]
+    /// ^
+    /// L->O
+    /// Delete edges, starting from [0]
+    /// O   O   O
+    ///
+    ///    O
+    /// Everything is now deleted
+    /// ```
+    /// There are a lot of nuances to this depending on object structure, but the vast majority of the time
+    /// objects will just be their own islands in the graph where everything is connected with bidirectional edges.
+    /// In these cases, the whole island will be deleted regardless of which node you start on.
     pub fn delete(&mut self, root: impl SafeNode) {
         let root = root.pos();
         // check if the node is already considered deleted before doing anything
@@ -432,6 +600,9 @@ struct VisitedNode {
 // Layer
 //
 
+/// A layer of a graph, responsible for concrete storage of the components.
+///
+/// Components are stored contiguously in a Vec<T>.
 #[derive(Debug)]
 pub struct Layer<T> {
     index: LayerIdx,
@@ -439,6 +610,9 @@ pub struct Layer<T> {
 }
 
 impl<T> Layer<T> {
+    /// Insert a component into the `Layer`'s storage and create some tracking information in the `Graph`.
+    ///
+    /// If a component has been previously deleted from the layer, its slot will be reused instead of pushing to the back.
     pub fn insert(&mut self, component: T, graph: &mut Graph) -> NodeRef<'_, T> {
         let item_idx = if let Some(vacant_slot) = graph.vacant_slots[self.index].pop_front() {
             self.content[vacant_slot] = component;
@@ -459,11 +633,13 @@ impl<T> Layer<T> {
         }
     }
 
+    /// Get a reference to the component represented by the given node.
     pub fn get(&self, node: impl SafeNode) -> NodeRef<'_, T> {
         let pos = node.pos();
         self.get_unchecked(pos)
     }
 
+    /// Unchecked variant of `get`, in the same sense as the unchecked methods of `Graph`.
     pub fn get_unchecked(&self, pos: NodePosition) -> NodeRef<'_, T> {
         NodeRef {
             item: &self.content[pos.item_idx],
@@ -471,6 +647,7 @@ impl<T> Layer<T> {
         }
     }
 
+    /// Get a mutable reference to the component represented by the given node.
     pub fn get_mut(&mut self, node: impl SafeNode) -> NodeRefMut<'_, T> {
         let pos = node.pos();
         self.get_mut_unchecked(pos)
@@ -483,6 +660,28 @@ impl<T> Layer<T> {
         }
     }
 
+    /// Get an iterator over the components stored in this `Layer`
+    /// that are alive, that is, have at least one edge pointing to them.
+    ///
+    /// You can use this with `Graph::get_neighbor` to iterate over patterns in the graph:
+    /// ```
+    /// # use starframe::{math::Transform, physics::{Collider, RigidBody}, graph::{Graph, Layer}};
+    /// # let mut graph = Graph::new();
+    /// # let l_rigidbody: Layer<RigidBody> = graph.create_layer();
+    /// # let l_transform: Layer<Transform> = graph.create_layer();
+    /// # let l_collider: Layer<Collider> = graph.create_layer();
+    /// for body in l_rigidbody.iter(&graph) {
+    ///     let tr = match graph.get_neighbor(&body, &l_transform) {
+    ///         Some(tr) => tr,
+    ///         None => continue,
+    ///     };
+    ///     let coll = match graph.get_neighbor(&body, &l_collider) {
+    ///         Some(coll) => coll,
+    ///         None => continue,
+    ///     };
+    ///     // do stuff with body, tr and coll...
+    /// }
+    /// ```
     pub fn iter<'s, 'g: 's>(&'s self, graph: &'g Graph) -> LayerIter<'s, T> {
         LayerIter {
             iter: self.content.iter().enumerate(),
@@ -504,6 +703,7 @@ impl<T> Layer<T> {
 // Iterators
 //
 
+/// An iterator over the components stored in a `Layer` that have at least one edge pointing to them.
 #[derive(Clone, Debug)]
 pub struct LayerIter<'a, T> {
     iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
@@ -528,6 +728,7 @@ impl<'a, T> Iterator for LayerIter<'a, T> {
     }
 }
 
+/// Mutable variant of `LayerIter`.
 pub struct LayerIterMut<'a, T> {
     iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
     layer_idx: LayerIdx,
@@ -596,9 +797,7 @@ mod tests {
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
 
-        // TODO: make this a pinned node instead once pinning is a thing
-        let everyones_shape = shapes.insert(Shape(69), &mut graph).node(&graph);
-        let everyones_shape = everyones_shape.check(&graph).unwrap();
+        let everyones_shape = shapes.insert(Shape(69), &mut graph).pin(&mut graph);
 
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
@@ -612,7 +811,8 @@ mod tests {
             // refcounts
             assert_eq!(graph.get_refcount(&tr_node), 2);
             assert_eq!(graph.get_refcount(&rb_node), 2);
-            assert_eq!(graph.get_refcount(&everyones_shape), i + 1);
+            // 1 extra from the pin
+            assert_eq!(graph.get_refcount(&everyones_shape), i + 2);
             // neighbors are found
             assert_eq!(
                 graph.get_neighbor(&rb_node, &shapes).unwrap().item,
