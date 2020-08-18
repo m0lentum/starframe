@@ -1,3 +1,5 @@
+//! Tools for creating a window and starting a managed game loop.
+
 use std::time::{Duration, Instant};
 
 use winit::{
@@ -7,9 +9,29 @@ use winit::{
 };
 
 /// A Game manages the global resources a game needs like a window and a graphics renderer.
+///
+/// # Example
+/// ```
+/// # use starframe::game::{LockstepLoop, Game, GameState};
+/// # struct MyState;
+/// # impl MyState {
+/// #    fn init() -> Self { Self }
+/// # }
+/// # impl GameState for MyState {
+/// #   fn tick(&mut self, dt: f32, game: &Game) -> Option<()> { None }
+/// #   fn draw(&mut self, renderer: &mut starframe::graphics::Renderer) {}
+/// # }
+/// let game = Game::init(winit::window::WindowBuilder::new());
+/// let game_loop = LockstepLoop::from_fps(60);
+/// let state = MyState::init();
+/// game.run(game_loop, state);
+/// ```
 pub struct Game {
+    /// A global input cache that is automatically updated once per tick.
     pub input: crate::InputCache,
+    /// The window the game draws to.
     pub window: Window,
+    /// A renderer that can draw to the game's window.
     pub renderer: crate::graphics::Renderer,
     // awkwardly moving the event loop around for the sake of clean API
     events: Option<EventLoop<()>>,
@@ -64,10 +86,6 @@ const SNAP_THRESHOLD: u128 = 200_000;
 const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 
 /// A loop that runs both simulation and rendering at a fixed framerate.
-///
-/// ```ignore
-/// LockstepLoop::from_fps(60).run(MyState::init());
-/// ```
 pub struct LockstepLoop {
     nanos_per_frame: u128,
     dt: f32,
