@@ -10,7 +10,7 @@ let
     sha256 = "1m4wvrrcvif198ssqbdw897c8h84l0cy7q75lyfzdsz9khm1y2n1";
   }) { overlays = [ moz-overlay ]; };
 
-  rust = pkgs.latest.rustChannels.stable.rust.override {
+  rust = (pkgs.rustChannelOf { channel = "1.45.0"; }).rust.override {
     extensions = [ "rust-src" ];
   };
 in
