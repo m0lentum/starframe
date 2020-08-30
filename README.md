@@ -9,20 +9,18 @@ but its core building blocks should generalize to other styles of game quite wel
 # Current features
 
 - Novel graph-based object model inspired by [froggy](https://github.com/kvark/froggy)
+  - [related blog post](https://moletrooper.github.io/blog/2020/08/starframe-1-architecture/)
 - 2D rigid body physics
   - narrow phase collision detection
   - rudimentary collision impulse solver
 - Graphics
   - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
 
-See the [kanban](https://github.com/MoleTrooper/starframe/projects/1) for the most up-to-date goings-on.
+See my [kanban](https://github.com/MoleTrooper/starframe/projects/1) for the most up-to-date and fine-grained goings-on.
 
 # Blog
 
-There used to be a blog link here, but
-progress on this project has been slow and I've put it on ice for now.
-I plan to get back to it in the fall of 2020 as I begin my master's degree studies;
-until then, stay tuned.
+You can find some writing about this project on [my website](https://moletrooper.github.io/blog/).
 
 # Running the test game
 
