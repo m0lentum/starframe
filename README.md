@@ -3,14 +3,16 @@
 In disc golf, a starframe occurs when every player in a group scores a birdie on the same hole.
 
 This starframe, however, is a 2D game engine written in Rust as a solo hobby project.
-Its design is driven by sidescrolling action games and cool physics tools for them.
+Its design is driven by sidescrolling action games with physics elements.
 
 # Current features
 
-- Novel graph-based object model inspired by [froggy](https://github.com/kvark/froggy)
+![Current state of graphics and physics](demo.gif)
+
+- Novel graph-based entity system inspired by [froggy](https://github.com/kvark/froggy)
   - [related blog post](https://moletrooper.github.io/blog/2020/08/starframe-1-architecture/)
 - 2D rigid body physics
-  - narrow phase collision detection
+  - narrow phase (unoptimized) collision detection
   - rudimentary collision impulse solver
 - Graphics
   - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
