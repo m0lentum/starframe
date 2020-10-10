@@ -29,7 +29,7 @@ struct Contact_ {
 }
 
 /// Checks two transformed colliders for intersection.
-pub fn intersection_check<'a>(obj1: BodyRef<'a>, obj2: BodyRef<'a>) -> Vec<Contact> {
+pub fn intersection_check(obj1: &BodyRef<'_>, obj2: &BodyRef<'_>) -> Vec<Contact> {
     let complete = |cs: Vec<Contact_>| {
         cs.iter()
             .map(|c| Contact {

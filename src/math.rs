@@ -109,3 +109,13 @@ impl From<Angle> for TransformBuilder {
         TransformBuilder::new().with_rotation(angle)
     }
 }
+
+// Vec2 utils
+
+pub fn left_normal(v: &Vec2) -> Vec2 {
+    Vec2::new(-v[1], v[0])
+}
+
+pub fn right_normal(v: &Vec2) -> Vec2 {
+    Vec2::new(v[1], -v[0])
+}

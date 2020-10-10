@@ -2,14 +2,18 @@ use crate::{
     graph::{self, UnsafeNode},
     math as m,
 };
-use std::collections::HashMap;
 
+use itertools::izip;
 use nalgebra as na;
 
 //
 
 pub mod collision;
 pub use collision::{Collider, ColliderShape};
+
+pub mod constraint;
+pub use constraint::{Constraint, SolverConvergence, SolverParams};
+use constraint::{ConstraintType, WorkingConstraint};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
@@ -44,6 +48,21 @@ impl Velocity {
     }
 }
 
+impl std::ops::Add for Velocity {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self {
+            linear: self.linear + other.linear,
+            angular: self.angular + other.angular,
+        }
+    }
+}
+impl std::ops::AddAssign for Velocity {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
 /// Events produced by the physics system when two physics objects collide.
 #[derive(Clone, Copy, Debug)]
 pub struct ContactEvent {
@@ -62,20 +81,18 @@ pub struct ContactInfo {
     pub impulse: f32,
 }
 
-pub struct PhysicsSolver {
-    impulse_cache: ImpulseCache,
+pub struct Physics {
     stabilisation_coef: f32,
-    loop_condition: SolverLoopCondition,
+    solver_params: SolverParams,
 }
 
-impl PhysicsSolver {
+impl Physics {
     pub fn new() -> Self {
-        PhysicsSolver {
-            impulse_cache: ImpulseCache::new(),
+        Physics {
             stabilisation_coef: 0.1,
-            loop_condition: SolverLoopCondition {
-                max_loops: 10,
-                convergence_threshold: 0.05,
+            solver_params: SolverParams {
+                max_iterations: 10,
+                convergence: SolverConvergence::AllElements(0.02),
             },
         }
     }
@@ -89,14 +106,13 @@ impl PhysicsSolver {
         self
     }
 
-    /// Replace the default condition to stop the constraint solver loop.
-    pub fn with_loop_condition(mut self, cond: SolverLoopCondition) -> Self {
-        self.loop_condition = cond;
+    /// Replace the default parameters for the constraint solver.
+    pub fn with_solver_params(mut self, params: SolverParams) -> Self {
+        self.solver_params = params;
         self
     }
 
     /// Detect collisions, solve constraint forces and move bodies.
-    /// Call this once in your `FeatureSet`'s `tick` function.
     pub fn tick<EvtParams>(
         &mut self,
         graph: &graph::Graph,
@@ -107,51 +123,7 @@ impl PhysicsSolver {
         dt: f32,
         forcefield: Option<&impl ForceField>,
     ) {
-        //
-        // Detect collisions
-        //
-
-        let body_ref_iter = l_body.iter(graph).filter_map(|rb| {
-            let coll = graph.get_neighbor(&rb, &l_collider)?;
-            let tr = graph.get_neighbor(&rb, &l_transform)?;
-            Some(BodyRef {
-                tr,
-                coll,
-                rb_pos: rb.pos(),
-            })
-        });
-
-        use collision::BroadPhase;
-        let pairs = collision::broadphase::BruteForce::pairs(body_ref_iter);
-        let mut contact_constraints = Vec::new();
-        for pair in pairs {
-            if (l_body.get_unchecked(pair[0].rb).item).responds_to_collisions()
-                || (l_body.get_unchecked(pair[1].rb).item).responds_to_collisions()
-            {
-                let contacts = collision::narrowphase::intersection_check(
-                    pair[0].upgrade(l_transform, l_collider),
-                    pair[1].upgrade(l_transform, l_collider),
-                );
-                for contact in contacts {
-                    contact_constraints.push(WorkingConstraint {
-                        nodes: pair,
-                        normal: contact.normal,
-                        point: contact.point,
-                        offsets: contact.offsets,
-                        impulse_bounds: (Some(0.0), None),
-                        bias: contact.depth * (1.0 / dt) * self.stabilisation_coef,
-                    });
-                }
-            }
-        }
-
-        //
-        // Solve constraints
-        //
-
-        // TODO: also allow other constraints in the world
-        let constraints = contact_constraints;
-
+        let inv_dt = 1.0 / dt;
         // apply environment forces (gravity, usually)
         if let Some(ff) = forcefield {
             for rb in l_body.iter_mut(graph) {
@@ -163,168 +135,132 @@ impl PhysicsSolver {
             }
         }
 
-        fn map_array_2<T, R>(arr: &[T; 2], mut f: impl FnMut(&T) -> R) -> [R; 2] {
-            [f(&arr[0]), f(&arr[1])]
+        let body_refs: Vec<BodyRef> = l_body
+            .iter(graph)
+            .filter_map(|rb| {
+                let coll = graph.get_neighbor(&rb, &l_collider)?;
+                let tr = graph.get_neighbor(&rb, &l_transform)?;
+                Some(BodyRef { tr, coll, rb })
+            })
+            .collect();
+
+        let velocities: Vec<Velocity> = body_refs
+            .iter()
+            .map(|br| br.rb.item.velocity_or_zero())
+            .collect();
+        let inv_masses: Vec<m::Vec2> = body_refs
+            .iter()
+            .map(|br| {
+                m::Vec2::new(
+                    br.rb.item.inverse_mass(),
+                    br.rb.item.inverse_moment_of_inertia(),
+                )
+            })
+            .collect();
+
+        // detect collisions, produce contact constraints
+        use collision::BroadPhase;
+        let pairs = collision::broadphase::BruteForce::pairs(&body_refs);
+        let mut contact_constraints = Vec::new();
+        for pair in pairs {
+            if body_refs[pair[0]].rb.item.responds_to_collisions()
+                || body_refs[pair[1]].rb.item.responds_to_collisions()
+            {
+                let contacts = collision::narrowphase::intersection_check(
+                    &body_refs[pair[0]],
+                    &body_refs[pair[1]],
+                );
+                for contact in contacts {
+                    let ct = ConstraintType::Nonpenetration { contact };
+
+                    contact_constraints.push(WorkingConstraint {
+                        body_indices: pair,
+                        jacobian_row: ct.jacobian(),
+                        bias: -ct.value([body_refs[pair[0]].tr.item, body_refs[pair[1]].tr.item])
+                            * self.stabilisation_coef
+                            * inv_dt,
+                        bounds: (None, Some(0.0)),
+                        // TODO: bring caching back
+                        first_guess: 0.0,
+                    });
+                }
+            }
         }
 
-        let mut accumulators = Vec::new();
-        // Initialize accumulators
-        for constraint in constraints {
-            assert!(
-                constraint.nodes[0].rb != constraint.nodes[1].rb,
-                "bug: paired a body with itself"
+        // TODO: also allow other constraints in the world
+        let constraints = contact_constraints;
+
+        // solve
+        if constraints.len() != 0 {
+            let impulses = constraint::solve_pgs(
+                self.solver_params,
+                dt,
+                &constraints,
+                &velocities,
+                &inv_masses,
             );
 
-            let bodies = map_array_2(&constraint.nodes, |n| l_body.get_unchecked(n.rb).item);
-            // begin accumulator construction
-            let offsets_cross_normals = map_array_2(&constraint.offsets, |offset| {
-                offset[0] * constraint.normal[1] - constraint.normal[0] * offset[1]
-            });
-            let inv_masses = map_array_2(&bodies, |rb| rb.inverse_mass());
-            let inv_mom_inertias = map_array_2(&bodies, |rb| rb.inverse_moment_of_inertia());
-            let inv_masses_sum = inv_masses[0]
-                + (inv_mom_inertias[0] * offsets_cross_normals[0] * offsets_cross_normals[0])
-                + inv_masses[1]
-                + (inv_mom_inertias[1] * offsets_cross_normals[1] * offsets_cross_normals[1]);
+            // // push events
+            // for acc in &accumulators {
+            //     if let Some(sink) =
+            //         graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[0].rb, l_evt_sink)
+            //     {
+            //         sink.item.push(crate::Event::Contact(ContactEvent {
+            //             other_body: l_body.get_unchecked(acc.constraint.nodes[1].rb).node(graph),
+            //             info: ContactInfo {
+            //                 point: acc.constraint.point,
+            //                 normal: -acc.constraint.normal,
+            //                 impulse: acc.total_impulse,
+            //             },
+            //         }));
+            //     }
+            //     if let Some(sink) =
+            //         graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[1].rb, l_evt_sink)
+            //     {
+            //         sink.item.push(crate::Event::Contact(ContactEvent {
+            //             other_body: l_body.get_unchecked(acc.constraint.nodes[0].rb).node(graph),
+            //             info: ContactInfo {
+            //                 point: acc.constraint.point,
+            //                 normal: acc.constraint.normal,
+            //                 impulse: acc.total_impulse,
+            //             },
+            //         }));
+            //     }
+            // }
+            // // store impulses for next frame's warm start
+            // self.impulse_cache.replace(&accumulators);
 
-            // warm start
-            let initial_impulse = if let Some(prev_impulse) = self
-                .impulse_cache
-                .get(constraint.nodes[0].cache_id(constraint.nodes[1]))
-            {
-                if let Some(vel) = l_body
-                    .get_mut_unchecked(constraint.nodes[0].rb)
-                    .item
-                    .velocity_mut()
-                {
-                    vel.linear -= inv_masses[0] * prev_impulse * (*constraint.normal);
-                    vel.angular -= inv_mom_inertias[0] * prev_impulse * offsets_cross_normals[0];
-                }
-                if let Some(vel) = l_body
-                    .get_mut_unchecked(constraint.nodes[1].rb)
-                    .item
-                    .velocity_mut()
-                {
-                    vel.linear += inv_masses[1] * prev_impulse * (*constraint.normal);
-                    vel.angular += inv_mom_inertias[1] * prev_impulse * offsets_cross_normals[1];
-                }
-                *prev_impulse
-            } else {
-                0.0
-            };
+            // integrate
 
-            accumulators.push(ConstraintAccumulator {
-                constraint,
-                inv_masses,
-                inv_mom_inertias,
-                inv_masses_sum,
-                offsets_cross_normals,
-                total_impulse: initial_impulse,
-            });
-        }
+            // drop body_refs so we can get mutable references for applying the physics
+            let body_nodes: Vec<BodyNodes> =
+                body_refs.into_iter().map(|br| br.downgrade()).collect();
 
-        // iterative impulse accumulation
-        let mut biggest_change = std::f32::MAX;
-        let mut loop_count = 0;
-        while biggest_change > self.loop_condition.convergence_threshold
-            && loop_count < self.loop_condition.max_loops
-        {
-            loop_count += 1;
-            biggest_change = 0.0;
-
-            for acc in accumulators.iter_mut() {
-                let bodies =
-                    map_array_2(&acc.constraint.nodes, |n| l_body.get_unchecked(n.rb).item);
-                let vels = map_array_2(&bodies, |rb| rb.velocity_or_zero());
-                // TODO: this part is the actual constraint function and should be generalized
-                let normal_vels = [
-                    vels[0].linear.dot(&acc.constraint.normal)
-                        + (acc.offsets_cross_normals[0] * vels[0].angular),
-                    vels[1].linear.dot(&acc.constraint.normal)
-                        + (acc.offsets_cross_normals[1] * vels[1].angular),
+            for (constraint, impulse) in izip!(constraints, impulses) {
+                let bodies = [
+                    body_nodes[constraint.body_indices[0]],
+                    body_nodes[constraint.body_indices[1]],
                 ];
-
-                let relative_normal_vel = normal_vels[0] - normal_vels[1] + acc.constraint.bias;
-
-                let impulse_magnitude = relative_normal_vel / acc.inv_masses_sum;
-                biggest_change = biggest_change.max(impulse_magnitude.abs());
-
-                // clamp total accumulated to the constraint's bounds
-                let new_total = acc.total_impulse + impulse_magnitude;
-                let clamped_impulse = match acc.constraint.impulse_bounds {
-                    (Some(lo), _) if new_total < lo => {
-                        acc.total_impulse = lo;
-                        impulse_magnitude - new_total
-                    }
-                    (_, Some(hi)) if new_total > hi => {
-                        acc.total_impulse = hi;
-                        impulse_magnitude - new_total
-                    }
-                    _ => {
-                        acc.total_impulse = new_total;
-                        impulse_magnitude
-                    }
-                };
-
-                // apply the impulse
-                if let Some(vel) = l_body
-                    .get_mut_unchecked(acc.constraint.nodes[0].rb)
-                    .item
-                    .velocity_mut()
                 {
-                    vel.linear -= acc.inv_masses[0] * clamped_impulse * (*acc.constraint.normal);
-                    vel.angular -=
-                        acc.inv_mom_inertias[0] * clamped_impulse * acc.offsets_cross_normals[0];
+                    let rb1 = l_body.get_mut_unchecked(bodies[0].rb).item;
+                    let rb1_inv_mass = rb1.inverse_mass();
+                    let rb1_inv_mi = rb1.inverse_moment_of_inertia();
+                    if let Some(vel1) = rb1.velocity_mut() {
+                        vel1.linear += rb1_inv_mass * constraint.jacobian_row.v1 * impulse * dt;
+                        vel1.angular += rb1_inv_mi * constraint.jacobian_row.w1 * impulse * dt;
+                    }
                 }
-                if let Some(vel) = l_body
-                    .get_mut_unchecked(acc.constraint.nodes[1].rb)
-                    .item
-                    .velocity_mut()
                 {
-                    vel.linear += acc.inv_masses[1] * clamped_impulse * (*acc.constraint.normal);
-                    vel.angular +=
-                        acc.inv_mom_inertias[1] * clamped_impulse * acc.offsets_cross_normals[1];
+                    let rb2 = l_body.get_mut_unchecked(bodies[1].rb).item;
+                    let rb2_inv_mass = rb2.inverse_mass();
+                    let rb2_inv_mi = rb2.inverse_moment_of_inertia();
+                    if let Some(vel2) = rb2.velocity_mut() {
+                        vel2.linear += rb2_inv_mass * constraint.jacobian_row.v2 * impulse * dt;
+                        vel2.angular += rb2_inv_mi * constraint.jacobian_row.w2 * impulse * dt;
+                    }
                 }
             }
         }
-
-        //
-        // Post-solve bookkeeping
-        //
-
-        // push events
-        for acc in &accumulators {
-            if let Some(sink) =
-                graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[0].rb, l_evt_sink)
-            {
-                sink.item.push(crate::Event::Contact(ContactEvent {
-                    other_body: l_body.get_unchecked(acc.constraint.nodes[1].rb).node(graph),
-                    info: ContactInfo {
-                        point: acc.constraint.point,
-                        normal: -acc.constraint.normal,
-                        impulse: acc.total_impulse,
-                    },
-                }));
-            }
-            if let Some(sink) =
-                graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[1].rb, l_evt_sink)
-            {
-                sink.item.push(crate::Event::Contact(ContactEvent {
-                    other_body: l_body.get_unchecked(acc.constraint.nodes[0].rb).node(graph),
-                    info: ContactInfo {
-                        point: acc.constraint.point,
-                        normal: acc.constraint.normal,
-                        impulse: acc.total_impulse,
-                    },
-                }));
-            }
-        }
-        // store impulses for next frame's warm start
-        self.impulse_cache.replace(&accumulators);
-
-        //
-        // Apply movement
-        //
 
         // semi-implicit Euler integration: use velocities at the end of the time step
         for rb in l_body.iter(graph) {
@@ -339,90 +275,22 @@ impl PhysicsSolver {
     }
 }
 
-// TODO: WorkingConstraint and ConstraintAccumulator should be one and the same
-// and we should have another Constraint type that's a general constraint that can be added manually.
-#[derive(Clone, Copy, Debug)]
-struct WorkingConstraint {
-    nodes: [BodyNodes; 2],
-    normal: na::Unit<m::Vec2>,
-    point: m::Point2,
-    offsets: [m::Vec2; 2],
-    impulse_bounds: (Option<f32>, Option<f32>),
-    bias: f32,
-}
-
-#[derive(Debug)]
-struct ConstraintAccumulator {
-    constraint: WorkingConstraint,
-    inv_masses: [f32; 2],
-    inv_mom_inertias: [f32; 2],
-    inv_masses_sum: f32,
-    offsets_cross_normals: [f32; 2],
-    total_impulse: f32,
-}
-
-/// Condition to stop iterating on the collision solver.
-/// Ends either when converging close enough to the actual solution (`convergence_threshold`)
-/// or after the given maximum number of loops, whichever comes first.
-#[derive(Clone, Copy)]
-pub struct SolverLoopCondition {
-    pub convergence_threshold: f32,
-    pub max_loops: usize,
-}
-
-impl SolverLoopCondition {
-    /// Create a loop condition and set the converge threshold to zero.
-    /// Effectively means `max_loops` number of loops every update.
-    pub fn from_max_loops(max_loops: usize) -> Self {
-        SolverLoopCondition {
-            convergence_threshold: 0.0,
-            max_loops,
-        }
-    }
-}
-
-/// A container to store impulses across updates,
-/// used for warm starting the solver algorithm.
-pub struct ImpulseCache(HashMap<[usize; 2], f32>);
-
-impl ImpulseCache {
-    pub fn new() -> Self {
-        ImpulseCache(HashMap::new())
-    }
-
-    pub(self) fn get(&self, ids: [usize; 2]) -> Option<&f32> {
-        if ids[0] < ids[1] {
-            self.0.get(&ids)
-        } else {
-            self.0.get(&[ids[1], ids[0]])
-        }
-    }
-
-    pub(self) fn replace<'a>(
-        &mut self,
-        items: impl IntoIterator<Item = &'a ConstraintAccumulator>,
-    ) {
-        self.0 = items
-            .into_iter()
-            .map(|acc| {
-                let ids = acc.constraint.nodes[0].cache_id(acc.constraint.nodes[1]);
-                let ids = if ids[0] < ids[1] {
-                    ids
-                } else {
-                    [ids[1], ids[0]]
-                };
-                (ids, acc.total_impulse)
-            })
-            .collect();
-    }
-}
-
 /// References to the parts of a body that we need to find out if it collides with anything.
-/// Used internally in collisiion detection, exposed to allow custom broad phase algorithms.
+/// Used internally in collision detection, exposed to allow custom broad phase algorithms.
 pub struct BodyRef<'a> {
     pub tr: graph::NodeRef<'a, m::Transform>,
     pub coll: graph::NodeRef<'a, Collider>,
-    pub(crate) rb_pos: graph::NodePosition,
+    pub rb: graph::NodeRef<'a, RigidBody>,
+}
+
+impl<'a> BodyRef<'a> {
+    fn downgrade(&self) -> BodyNodes {
+        BodyNodes {
+            tr: self.tr.pos(),
+            coll: self.coll.pos(),
+            rb: self.rb.pos(),
+        }
+    }
 }
 
 /// A non-reference version of `BodyRef`, to allow for multiple mutable references
@@ -432,30 +300,22 @@ pub struct BodyRef<'a> {
 /// We skip generation checks for efficiency when repeatedly reading the same objects,
 /// but things can be deleted between frames, invalidating these node positions.
 #[derive(Clone, Copy, Debug)]
-pub struct BodyNodes {
-    pub(crate) tr: graph::NodePosition,
-    pub(crate) coll: graph::NodePosition,
-    pub(crate) rb: graph::NodePosition,
-}
-impl From<&BodyRef<'_>> for BodyNodes {
-    fn from(br: &BodyRef<'_>) -> Self {
-        BodyNodes {
-            tr: br.tr.pos(),
-            coll: br.coll.pos(),
-            rb: br.rb_pos,
-        }
-    }
+struct BodyNodes {
+    tr: graph::NodePosition,
+    coll: graph::NodePosition,
+    rb: graph::NodePosition,
 }
 impl BodyNodes {
     fn upgrade<'a>(
         self,
         l_tr: &'a graph::Layer<m::Transform>,
         l_coll: &'a graph::Layer<Collider>,
+        l_rb: &'a graph::Layer<RigidBody>,
     ) -> BodyRef<'a> {
         BodyRef {
             tr: l_tr.get_unchecked(self.tr),
             coll: l_coll.get_unchecked(self.coll),
-            rb_pos: self.rb,
+            rb: l_rb.get_unchecked(self.rb),
         }
     }
 

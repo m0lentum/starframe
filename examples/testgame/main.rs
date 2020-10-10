@@ -47,7 +47,7 @@ pub struct State {
     state: StateEnum,
     graph: MyGraph,
     player: player::PlayerController,
-    physics: phys::PhysicsSolver,
+    physics: phys::Physics,
     camera: gx::camera::MouseDragCamera,
     shape_renderer: gx::ShapeRenderer,
 }
@@ -57,7 +57,7 @@ impl State {
             state: StateEnum::Playing,
             graph: MyGraph::load_file(),
             player: player::PlayerController::new(),
-            physics: phys::PhysicsSolver::new(),
+            physics: phys::Physics::new(),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 8.0,
