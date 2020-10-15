@@ -9,7 +9,7 @@ use nalgebra as na;
 //
 
 pub mod collision;
-pub use collision::{Collider, ColliderShape};
+pub use collision::{Collider, ColliderShape, Contact};
 
 pub mod constraint;
 pub use constraint::{Constraint, SolverConvergence, SolverParams};
@@ -161,19 +161,23 @@ impl Physics {
         // detect collisions, produce contact constraints
         use collision::BroadPhase;
         let pairs = collision::broadphase::BruteForce::pairs(&body_refs);
-        let mut contact_constraints = Vec::new();
+        let mut contacts: Vec<Contact> = Vec::new();
+        let mut penetration_constraints: Vec<WorkingConstraint> = Vec::new();
         for pair in pairs {
             if body_refs[pair[0]].rb.item.responds_to_collisions()
                 || body_refs[pair[1]].rb.item.responds_to_collisions()
             {
-                let contacts = collision::narrowphase::intersection_check(
+                let coll_contacts = collision::narrowphase::intersection_check(
                     &body_refs[pair[0]],
                     &body_refs[pair[1]],
                 );
-                for contact in contacts {
+                for contact in coll_contacts {
+                    // store the contacts themselves to generate events later
+                    contacts.push(contact);
+
                     let ct = ConstraintType::Nonpenetration { contact };
 
-                    contact_constraints.push(WorkingConstraint {
+                    penetration_constraints.push(WorkingConstraint {
                         body_indices: pair,
                         jacobian_row: ct.jacobian(),
                         bias: -ct.value([body_refs[pair[0]].tr.item, body_refs[pair[1]].tr.item])
@@ -187,8 +191,11 @@ impl Physics {
             }
         }
 
-        // TODO: also allow other constraints in the world
-        let constraints = contact_constraints;
+        // contacts will fire events, but we want to compute impulse first to include it in the event.
+        // this lets us find which constraints were collisions later
+        let pen_constraint_range = 0..penetration_constraints.len();
+
+        let constraints = penetration_constraints;
 
         // solve
         if constraints.len() != 0 {
@@ -200,33 +207,37 @@ impl Physics {
                 &inv_masses,
             );
 
-            // // push events
-            // for acc in &accumulators {
-            //     if let Some(sink) =
-            //         graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[0].rb, l_evt_sink)
-            //     {
-            //         sink.item.push(crate::Event::Contact(ContactEvent {
-            //             other_body: l_body.get_unchecked(acc.constraint.nodes[1].rb).node(graph),
-            //             info: ContactInfo {
-            //                 point: acc.constraint.point,
-            //                 normal: -acc.constraint.normal,
-            //                 impulse: acc.total_impulse,
-            //             },
-            //         }));
-            //     }
-            //     if let Some(sink) =
-            //         graph.get_neighbor_mut_unchecked(&acc.constraint.nodes[1].rb, l_evt_sink)
-            //     {
-            //         sink.item.push(crate::Event::Contact(ContactEvent {
-            //             other_body: l_body.get_unchecked(acc.constraint.nodes[0].rb).node(graph),
-            //             info: ContactInfo {
-            //                 point: acc.constraint.point,
-            //                 normal: acc.constraint.normal,
-            //                 impulse: acc.total_impulse,
-            //             },
-            //         }));
-            //     }
-            // }
+            // push events
+            for contact_idx in pen_constraint_range {
+                let constraint = &constraints[contact_idx];
+                let bodies = &constraint.body_indices;
+                let contact = &contacts[contact_idx];
+                let impulse = impulses[contact_idx];
+                if let Some(sink) =
+                    graph.get_neighbor_mut_unchecked(&body_refs[bodies[0]].rb, l_evt_sink)
+                {
+                    sink.item.push(crate::Event::Contact(ContactEvent {
+                        other_body: body_refs[bodies[1]].rb.node(graph),
+                        info: ContactInfo {
+                            point: contact.point,
+                            normal: -contact.normal,
+                            impulse,
+                        },
+                    }));
+                }
+                if let Some(sink) =
+                    graph.get_neighbor_mut_unchecked(&body_refs[bodies[1]].rb, l_evt_sink)
+                {
+                    sink.item.push(crate::Event::Contact(ContactEvent {
+                        other_body: body_refs[bodies[0]].rb.node(graph),
+                        info: ContactInfo {
+                            point: contact.point,
+                            normal: contact.normal,
+                            impulse,
+                        },
+                    }));
+                }
+            }
             // // store impulses for next frame's warm start
             // self.impulse_cache.replace(&accumulators);
 
