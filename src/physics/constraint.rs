@@ -1,7 +1,8 @@
-use super::{collision::narrowphase::Contact, RigidBody, Velocity};
+use super::{RigidBody, Velocity};
 use crate::{graph, math as m};
 
 use itertools::izip;
+use nalgebra as na;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
@@ -13,25 +14,21 @@ pub struct Constraint {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ConstraintType {
-    Nonpenetration { contact: Contact },
+    Normal {
+        normal: na::Unit<m::Vec2>,
+        offsets: [m::Vec2; 2],
+    },
 }
 
 impl ConstraintType {
-    pub(crate) fn value(&self, trs: [&m::Transform; 2]) -> f32 {
+    pub(crate) fn gradient(&self) -> Vec6 {
         use ConstraintType::*;
         match self {
-            Nonpenetration { contact } => contact.depth,
-        }
-    }
-
-    pub(crate) fn jacobian(&self) -> Vec6 {
-        use ConstraintType::*;
-        match self {
-            Nonpenetration { contact } => Vec6 {
-                v1: *contact.normal,
-                w1: m::left_normal(&contact.offsets[0]).dot(&contact.normal),
-                v2: -*contact.normal,
-                w2: m::right_normal(&contact.offsets[1]).dot(&contact.normal),
+            Normal { normal, offsets } => Vec6 {
+                v1: **normal,
+                w1: m::left_normal(&offsets[0]).dot(&normal),
+                v2: -**normal,
+                w2: m::right_normal(&offsets[1]).dot(&normal),
             },
         }
     }
@@ -46,15 +43,18 @@ pub(crate) struct Vec6 {
 }
 
 impl Vec6 {
-    fn derivative(&self, vels: [Velocity; 2]) -> f32 {
-        self.v1.dot(&vels[0].linear)
-            + self.w1 * vels[0].angular
-            + self.v2.dot(&vels[1].linear)
-            + self.w2 * vels[1].angular
-    }
-
     fn dot(&self, other: &Vec6) -> f32 {
         self.v1.dot(&other.v1) + self.w1 * other.w1 + self.v2.dot(&other.v2) + self.w2 * other.w2
+    }
+}
+impl From<[Velocity; 2]> for Vec6 {
+    fn from(v: [Velocity; 2]) -> Self {
+        Self {
+            v1: v[0].linear,
+            w1: v[0].angular,
+            v2: v[1].linear,
+            w2: v[1].angular,
+        }
     }
 }
 
@@ -83,11 +83,24 @@ pub enum SolverConvergence {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct WorkingConstraint {
     // indices in `velocities` and `inv_masses`
-    pub(crate) body_indices: [usize; 2],
-    pub(crate) jacobian_row: Vec6,
-    pub(crate) bias: f32,
-    pub(crate) bounds: (Option<f32>, Option<f32>),
-    pub(crate) first_guess: f32,
+    pub body_indices: [usize; 2],
+    pub jacobian_row: Vec6,
+    pub bias: f32,
+    pub bounds: ImpulseBounds,
+    pub first_guess: f32,
+}
+
+/// Friction needs to know about the normal force to set its bounds.
+/// Internal use only, doesn't seem useful to an end user
+///
+/// REMEMBER: friction must come after normal for this to get the latest normal force!
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ImpulseBounds {
+    Constant(Option<f32>, Option<f32>),
+    Depends {
+        constraint_idx: usize,
+        coefficient: f32,
+    },
 }
 
 pub(crate) fn solve_pgs(
@@ -101,13 +114,13 @@ pub(crate) fn solve_pgs(
     let body_map: Vec<[usize; 2]> = constraints.iter().map(|c| c.body_indices).collect();
 
     let jacobian: Vec<Vec6> = constraints.iter().map(|c| c.jacobian_row).collect();
-    let bounds: Vec<(Option<f32>, Option<f32>)> = constraints.iter().map(|c| c.bounds).collect();
+    let bounds: Vec<ImpulseBounds> = constraints.iter().map(|c| c.bounds).collect();
     // `eta` in Cat05
     // length of constraints
     let rhs: Vec<f32> = izip!(constraints, &body_map)
         .map(|(c, bodies)| {
             let vels = map_array_2(bodies, |&b| velocities[b]);
-            inv_dt * (c.bias - c.jacobian_row.derivative(vels))
+            inv_dt * (c.bias - c.jacobian_row.dot(&vels.into()))
         })
         .collect();
     // `B` in Cat05
@@ -155,7 +168,7 @@ pub(crate) fn solve_pgs(
 
     for _i in 0..user_params.max_iterations {
         // PGS step
-        for (bodies, jac, im_x_j, bounds, diag, rhs_elem, delta_ans, ans) in izip!(
+        for (curr_idx, (bodies, jac, im_x_j, bounds, diag, rhs_elem, delta_ans)) in izip!(
             &body_map,
             &jacobian,
             &inv_mass_x_jacobian,
@@ -163,8 +176,9 @@ pub(crate) fn solve_pgs(
             &j_x_imxj_diag,
             &rhs,
             &mut delta_answer,
-            &mut answer
-        ) {
+        )
+        .enumerate()
+        {
             let a_1 = imxj_x_answer[bodies[0]];
             let a_2 = imxj_x_answer[bodies[1]];
             // normal Gauss-Seidel step
@@ -174,12 +188,31 @@ pub(crate) fn solve_pgs(
                 - jac.v2.dot(&a_2.linear)
                 - jac.w2 * a_2.angular)
                 / diag;
+
             // clamping total impulse (projection)
+            // check if the bounds depend on another constraint (friction).
+            // not totally sure how numerically robust this is,
+            // but seems to work pretty well in practice
+            let actual_bounds = match bounds {
+                ImpulseBounds::Constant(l, r) => (*l, *r),
+                ImpulseBounds::Depends {
+                    constraint_idx,
+                    coefficient,
+                } => {
+                    let b = (answer[*constraint_idx] * coefficient).abs();
+                    (Some(-b), Some(b))
+                }
+            };
+
+            // answer not borrowed by iterator because we need to index into it in the dependency check above
+            let ans = &mut answer[curr_idx];
+
             let prev_ans = *ans;
             let unprojected_a = *ans + unprojected_delta_ans;
-            match bounds {
-                (Some(lower), _) if *lower > unprojected_a => *ans = *lower,
-                (_, Some(upper)) if *upper < unprojected_a => *ans = *upper,
+
+            match actual_bounds {
+                (Some(lower), _) if lower > unprojected_a => *ans = lower,
+                (_, Some(upper)) if upper < unprojected_a => *ans = upper,
                 _ => *ans = unprojected_a,
             }
             *delta_ans = *ans - prev_ans;

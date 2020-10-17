@@ -23,21 +23,17 @@ pub enum BodyType {
 }
 
 /// Determines how the surface of a body responds to collisions.
-/// NOTE: work in progress, does not actually do anything at the moment!
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceMaterial {
-    /// How "bouncy" a body is, i.e. how much energy is preserved in collisions.
-    pub restitution: f32,
-    /// How much the body resists motion parallel to its surface.
+    /// Simplified friction model where each material contributes some amount of "slipperiness".
+    /// Friction coefficients from both bodies are multiplied together.
+    /// Thus, zero means no friction with anything.
     pub friction: f32,
 }
 
 impl Default for SurfaceMaterial {
     fn default() -> Self {
-        SurfaceMaterial {
-            restitution: 0.2,
-            friction: 0.1,
-        }
+        SurfaceMaterial { friction: 0.3 }
     }
 }
 
@@ -54,8 +50,8 @@ impl RigidBody {
         RigidBody {
             body: BodyType::Dynamic {
                 velocity: Velocity::default(),
-                mass: Mass::mass(mass),
-                moment_of_inertia: Mass::mass(collider.moment_of_inertia_coef() * mass),
+                mass: Mass::new(mass),
+                moment_of_inertia: Mass::new(collider.moment_of_inertia_coef() * mass),
             },
             material: SurfaceMaterial::default(),
         }
@@ -81,13 +77,6 @@ impl RigidBody {
 
     pub fn with_velocity(mut self, vel: Velocity) -> Self {
         self.velocity_mut().map(|v| *v = vel);
-        self
-    }
-
-    /// Restitution determines how much energy is preserved in collisions
-    /// (0 = none, 1 = all).
-    pub fn with_restitution(mut self, e: f32) -> Self {
-        self.material.restitution = e;
         self
     }
 
@@ -139,10 +128,30 @@ impl RigidBody {
         }
     }
 
+    /// Returns the mass of the body if finite, otherwise None.
+    pub fn mass(&self) -> Option<f32> {
+        match self.body {
+            BodyType::Dynamic { mass: m, .. } => Some(m.mass()),
+            _ => None,
+        }
+    }
+
+    /// Returns the inverse mass of the body, which is zero if the mass is infinite.
     pub fn inverse_mass(&self) -> f32 {
         match self.body {
             BodyType::Dynamic { mass: m, .. } => m.inv(),
             _ => 0.0,
+        }
+    }
+
+    /// Returns the moment of inertia of the body if finite, otherwise None.
+    pub fn moment_of_inertia(&self) -> Option<f32> {
+        match self.body {
+            BodyType::Dynamic {
+                moment_of_inertia: m,
+                ..
+            } => Some(m.mass()),
+            _ => None,
         }
     }
 
@@ -166,7 +175,7 @@ pub struct Mass {
 }
 
 impl Mass {
-    pub fn mass(mass: f32) -> Self {
+    pub fn new(mass: f32) -> Self {
         Mass {
             mass,
             inverse: 1.0 / mass,
@@ -180,11 +189,11 @@ impl Mass {
         }
     }
 
-    pub fn get(self) -> f32 {
+    pub fn mass(&self) -> f32 {
         self.mass
     }
 
-    pub fn inv(self) -> f32 {
+    pub fn inv(&self) -> f32 {
         self.inverse
     }
 }

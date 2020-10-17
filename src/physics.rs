@@ -13,7 +13,7 @@ pub use collision::{Collider, ColliderShape, Contact};
 
 pub mod constraint;
 pub use constraint::{Constraint, SolverConvergence, SolverParams};
-use constraint::{ConstraintType, WorkingConstraint};
+use constraint::{ConstraintType, ImpulseBounds, WorkingConstraint};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
@@ -163,6 +163,7 @@ impl Physics {
         let pairs = collision::broadphase::BruteForce::pairs(&body_refs);
         let mut contacts: Vec<Contact> = Vec::new();
         let mut penetration_constraints: Vec<WorkingConstraint> = Vec::new();
+        let mut friction_constraints: Vec<WorkingConstraint> = Vec::new();
         for pair in pairs {
             if body_refs[pair[0]].rb.item.responds_to_collisions()
                 || body_refs[pair[1]].rb.item.responds_to_collisions()
@@ -175,16 +176,36 @@ impl Physics {
                     // store the contacts themselves to generate events later
                     contacts.push(contact);
 
-                    let ct = ConstraintType::Nonpenetration { contact };
+                    let normal_cr = ConstraintType::Normal {
+                        normal: contact.normal,
+                        offsets: contact.offsets,
+                    };
+                    let tangent_cr = ConstraintType::Normal {
+                        normal: na::Unit::new_unchecked(m::left_normal(&*contact.normal)),
+                        offsets: contact.offsets,
+                    };
+                    // simplified friction, actually this would depend on the specific pair of materials
+                    // and couldn't be stored within a single material
+                    let friction_coef = body_refs[pair[0]].rb.item.material.friction
+                        * body_refs[pair[1]].rb.item.material.friction;
+                    let next_idx = penetration_constraints.len();
 
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: pair,
-                        jacobian_row: ct.jacobian(),
-                        bias: -ct.value([body_refs[pair[0]].tr.item, body_refs[pair[1]].tr.item])
-                            * self.stabilisation_coef
-                            * inv_dt,
-                        bounds: (None, Some(0.0)),
+                        jacobian_row: normal_cr.gradient(),
+                        bias: -contact.depth * self.stabilisation_coef * inv_dt,
+                        bounds: ImpulseBounds::Constant(None, Some(0.0)),
                         // TODO: bring caching back
+                        first_guess: 0.0,
+                    });
+                    friction_constraints.push(WorkingConstraint {
+                        body_indices: pair,
+                        jacobian_row: tangent_cr.gradient(),
+                        bias: 0.0,
+                        bounds: ImpulseBounds::Depends {
+                            constraint_idx: next_idx,
+                            coefficient: friction_coef,
+                        },
                         first_guess: 0.0,
                     });
                 }
@@ -195,7 +216,7 @@ impl Physics {
         // this lets us find which constraints were collisions later
         let pen_constraint_range = 0..penetration_constraints.len();
 
-        let constraints = penetration_constraints;
+        let constraints = itertools::concat(vec![penetration_constraints, friction_constraints]);
 
         // solve
         if constraints.len() != 0 {
@@ -306,10 +327,6 @@ impl<'a> BodyRef<'a> {
 
 /// A non-reference version of `BodyRef`, to allow for multiple mutable references
 /// from the same graph layer during one iteration.
-///
-/// It's a very important invariant that these don't live longer than a single physics tick!
-/// We skip generation checks for efficiency when repeatedly reading the same objects,
-/// but things can be deleted between frames, invalidating these node positions.
 #[derive(Clone, Copy, Debug)]
 struct BodyNodes {
     tr: graph::NodePosition,
