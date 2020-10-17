@@ -13,7 +13,10 @@ pub use collision::{Collider, ColliderShape, Contact};
 
 pub mod constraint;
 pub use constraint::{Constraint, SolverConvergence, SolverParams};
-use constraint::{ConstraintType, ImpulseBounds, WorkingConstraint};
+use constraint::{
+    ConstraintId, ConstraintType, DynamicConstraintId, ImpulseBounds, ImpulseCache,
+    WorkingConstraint,
+};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
@@ -84,6 +87,7 @@ pub struct ContactInfo {
 pub struct Physics {
     stabilisation_coef: f32,
     solver_params: SolverParams,
+    impulse_cache: ImpulseCache,
 }
 
 impl Physics {
@@ -91,9 +95,10 @@ impl Physics {
         Physics {
             stabilisation_coef: 0.1,
             solver_params: SolverParams {
-                max_iterations: 10,
+                max_iterations: 20,
                 convergence: SolverConvergence::AllElements(0.02),
             },
+            impulse_cache: ImpulseCache::new(),
         }
     }
 
@@ -172,41 +177,62 @@ impl Physics {
                     &body_refs[pair[0]],
                     &body_refs[pair[1]],
                 );
-                for contact in coll_contacts {
+                for (contact_idx, contact) in coll_contacts.iter().enumerate() {
                     // store the contacts themselves to generate events later
-                    contacts.push(contact);
+                    contacts.push(*contact);
 
-                    let normal_cr = ConstraintType::Normal {
+                    let body_indices = ordered_positions(&body_refs[pair[0]], &body_refs[pair[1]]);
+
+                    let normal_constr = ConstraintType::Normal {
                         normal: contact.normal,
                         offsets: contact.offsets,
                     };
-                    let tangent_cr = ConstraintType::Normal {
-                        normal: na::Unit::new_unchecked(m::left_normal(&*contact.normal)),
-                        offsets: contact.offsets,
-                    };
-                    // simplified friction, actually this would depend on the specific pair of materials
+
+                    // constraint index for friction to depend on
+                    let next_constr_idx = penetration_constraints.len();
+                    penetration_constraints.push(WorkingConstraint {
+                        body_indices: pair,
+                        jacobian_row: normal_constr.gradient(),
+                        bias: -contact.depth * self.stabilisation_coef * inv_dt,
+                        bounds: ImpulseBounds::Constant(None, Some(0.0)),
+                        cache_id: ConstraintId::Dynamic {
+                            body_indices,
+                            constr_id: if contact_idx == 0 {
+                                DynamicConstraintId::FirstContact
+                            } else {
+                                DynamicConstraintId::SecondContact
+                            },
+                        },
+                    });
+
+                    // friction
+
+                    // simplified coefficient model, actually this would depend on the specific pair of materials
                     // and couldn't be stored within a single material
                     let friction_coef = body_refs[pair[0]].rb.item.material.friction
                         * body_refs[pair[1]].rb.item.material.friction;
-                    let next_idx = penetration_constraints.len();
 
-                    penetration_constraints.push(WorkingConstraint {
-                        body_indices: pair,
-                        jacobian_row: normal_cr.gradient(),
-                        bias: -contact.depth * self.stabilisation_coef * inv_dt,
-                        bounds: ImpulseBounds::Constant(None, Some(0.0)),
-                        // TODO: bring caching back
-                        first_guess: 0.0,
-                    });
+                    let tangent_constr = ConstraintType::Normal {
+                        normal: na::Unit::new_unchecked(m::left_normal(&*contact.normal)),
+                        offsets: contact.offsets,
+                    };
+
                     friction_constraints.push(WorkingConstraint {
                         body_indices: pair,
-                        jacobian_row: tangent_cr.gradient(),
+                        jacobian_row: tangent_constr.gradient(),
                         bias: 0.0,
                         bounds: ImpulseBounds::Depends {
-                            constraint_idx: next_idx,
+                            constraint_idx: next_constr_idx,
                             coefficient: friction_coef,
                         },
-                        first_guess: 0.0,
+                        cache_id: ConstraintId::Dynamic {
+                            body_indices,
+                            constr_id: if contact_idx == 0 {
+                                DynamicConstraintId::FirstFriction
+                            } else {
+                                DynamicConstraintId::SecondFriction
+                            },
+                        },
                     });
                 }
             }
@@ -218,14 +244,15 @@ impl Physics {
 
         let constraints = itertools::concat(vec![penetration_constraints, friction_constraints]);
 
-        // solve
         if constraints.len() != 0 {
+            // solve
             let impulses = constraint::solve_pgs(
                 self.solver_params,
                 dt,
                 &constraints,
                 &velocities,
                 &inv_masses,
+                &mut self.impulse_cache,
             );
 
             // push events
@@ -325,6 +352,16 @@ impl<'a> BodyRef<'a> {
     }
 }
 
+fn ordered_positions(b1: &BodyRef<'_>, b2: &BodyRef<'_>) -> [usize; 2] {
+    let i1 = b1.rb.pos().item_idx;
+    let i2 = b2.rb.pos().item_idx;
+    if i1 < i2 {
+        [i1, i2]
+    } else {
+        [i2, i1]
+    }
+}
+
 /// A non-reference version of `BodyRef`, to allow for multiple mutable references
 /// from the same graph layer during one iteration.
 #[derive(Clone, Copy, Debug)]
@@ -332,22 +369,4 @@ struct BodyNodes {
     tr: graph::NodePosition,
     coll: graph::NodePosition,
     rb: graph::NodePosition,
-}
-impl BodyNodes {
-    fn upgrade<'a>(
-        self,
-        l_tr: &'a graph::Layer<m::Transform>,
-        l_coll: &'a graph::Layer<Collider>,
-        l_rb: &'a graph::Layer<RigidBody>,
-    ) -> BodyRef<'a> {
-        BodyRef {
-            tr: l_tr.get_unchecked(self.tr),
-            coll: l_coll.get_unchecked(self.coll),
-            rb: l_rb.get_unchecked(self.rb),
-        }
-    }
-
-    fn cache_id(&self, other: BodyNodes) -> [usize; 2] {
-        [self.rb.item_idx, other.rb.item_idx]
-    }
 }

@@ -3,6 +3,7 @@ use crate::{graph, math as m};
 
 use itertools::izip;
 use nalgebra as na;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
@@ -87,13 +88,35 @@ pub(crate) struct WorkingConstraint {
     pub jacobian_row: Vec6,
     pub bias: f32,
     pub bounds: ImpulseBounds,
-    pub first_guess: f32,
+    pub cache_id: ConstraintId,
+}
+
+pub(crate) type ImpulseCache = HashMap<ConstraintId, f32>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ConstraintId {
+    Dynamic {
+        body_indices: [usize; 2],
+        constr_id: DynamicConstraintId,
+    },
+    UserDefined(graph::Node<Constraint>),
+}
+
+/// An identifier for which constraint out of possible multiple between one pair.
+/// There are max. two contact points, and they come out of the collision detection
+/// in a temporally coherent order, so this should work
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(crate) enum DynamicConstraintId {
+    FirstContact,
+    FirstFriction,
+    SecondContact,
+    SecondFriction,
 }
 
 /// Friction needs to know about the normal force to set its bounds.
 /// Internal use only, doesn't seem useful to an end user
 ///
-/// REMEMBER: friction must come after normal for this to get the latest normal force!
+/// NOTE: friction must come after normal for this to get the latest normal force!
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ImpulseBounds {
     Constant(Option<f32>, Option<f32>),
@@ -109,6 +132,7 @@ pub(crate) fn solve_pgs(
     constraints: &[WorkingConstraint],
     velocities: &[Velocity],
     inv_masses: &[m::Vec2],
+    impulse_cache: &mut ImpulseCache,
 ) -> Vec<f32> {
     let inv_dt = 1.0 / dt;
     let body_map: Vec<[usize; 2]> = constraints.iter().map(|c| c.body_indices).collect();
@@ -144,7 +168,10 @@ pub(crate) fn solve_pgs(
 
     // `lambda` in Cat05
     // length of constraints
-    let mut answer: Vec<f32> = constraints.iter().map(|c| c.first_guess).collect();
+    let mut answer: Vec<f32> = constraints
+        .iter()
+        .map(|c| *impulse_cache.get(&c.cache_id).unwrap_or(&0.0))
+        .collect();
     // change between iterations, separated to check for convergence
     let mut delta_answer: Vec<f32> = vec![0.0; answer.len()];
 
@@ -239,6 +266,12 @@ pub(crate) fn solve_pgs(
         } {
             break;
         }
+    }
+
+    // replace cache
+    impulse_cache.clear();
+    for (ans, c) in izip!(&answer, constraints) {
+        impulse_cache.insert(c.cache_id, *ans);
     }
 
     answer

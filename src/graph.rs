@@ -62,7 +62,7 @@ pub trait SafeNode: UnsafeNode + Sized {
 }
 
 /// The position in the graph of a node of any type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct NodePosition {
     pub(crate) layer_idx: LayerIdx,
     pub(crate) item_idx: ComponentIdx,
@@ -126,6 +126,11 @@ impl<T> PartialEq for Node<T> {
     }
 }
 impl<T> Eq for Node<T> {}
+impl<T> std::hash::Hash for Node<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.pos.hash(state);
+    }
+}
 
 /// A `Node` that is known to be alive.
 #[derive(Debug)]
