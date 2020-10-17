@@ -1,5 +1,7 @@
 use starframe::{graphics as gx, math as m, physics as phys};
 
+use rand::{distributions as distr, distributions::Distribution};
+
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 pub enum Recipe {
     Player(crate::player::PlayerRecipe),
@@ -9,10 +11,21 @@ pub enum Recipe {
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
 pub struct Block {
     pub width: f32,
     pub height: f32,
     pub transform: m::TransformBuilder,
+}
+
+impl Default for Block {
+    fn default() -> Self {
+        Self {
+            width: 1.0,
+            height: 1.0,
+            transform: Default::default(),
+        }
+    }
 }
 
 impl Recipe {
@@ -53,7 +66,7 @@ impl Recipe {
                     gx::Shape::Rect {
                         w: block.width,
                         h: block.height,
-                        color: [1.0; 4],
+                        color: random_color(),
                     },
                     &mut graph.graph,
                 );
@@ -73,8 +86,8 @@ impl Recipe {
                 let shape_node = graph.l_shape.insert(
                     gx::Shape::Circle {
                         r: *radius,
-                        points: 24,
-                        color: [1.0; 4],
+                        points: 16,
+                        color: random_color(),
                     },
                     &mut graph.graph,
                 );
@@ -104,4 +117,14 @@ impl Recipe {
 
         Ok(())
     }
+}
+
+fn random_color() -> [f32; 4] {
+    let mut rng = rand::thread_rng();
+    [
+        distr::Uniform::from(0.4..1.0).sample(&mut rng),
+        distr::Uniform::from(0.4..1.0).sample(&mut rng),
+        distr::Uniform::from(0.4..1.0).sample(&mut rng),
+        1.0,
+    ]
 }

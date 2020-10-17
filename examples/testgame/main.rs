@@ -60,8 +60,8 @@ impl State {
             physics: phys::Physics::new(),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
-                    width: 8.0,
-                    height: 6.0,
+                    width: 20.0,
+                    height: 10.0,
                 },
             ),
             shape_renderer: gx::ShapeRenderer::new(device),
@@ -102,7 +102,9 @@ impl MyGraph {
         let mut graph = Self::new();
         let dir = "./examples/testgame/scenes";
         let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
-        Recipe::read_from_file(file, &mut graph).expect("Failed to parse file");
+        Recipe::read_from_file(file, &mut graph).unwrap_or_else(|err| {
+            println!("Failed to parse file: {}", err);
+        });
         graph
     }
 }
@@ -144,8 +146,8 @@ impl game::GameState for State {
                 let random_pos = || {
                     let mut rng = rand::thread_rng();
                     m::Vec2::new(
-                        distr::Uniform::from(-3.0..3.0).sample(&mut rng),
-                        distr::Uniform::from(0.0..2.0).sample(&mut rng),
+                        distr::Uniform::from(-5.0..5.0).sample(&mut rng),
+                        distr::Uniform::from(1.0..4.0).sample(&mut rng),
                     )
                 };
                 let random_angle = || {
@@ -158,7 +160,7 @@ impl game::GameState for State {
                             .with_position(random_pos())
                             .with_rotation(random_angle()),
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                        height: distr::Uniform::from(0.3..0.8).sample(&mut rng),
+                        height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
                     })
                     .spawn(&mut self.graph);
                 }

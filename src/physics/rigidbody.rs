@@ -33,7 +33,7 @@ pub struct SurfaceMaterial {
 
 impl Default for SurfaceMaterial {
     fn default() -> Self {
-        SurfaceMaterial { friction: 0.3 }
+        SurfaceMaterial { friction: 0.7 }
     }
 }
 
