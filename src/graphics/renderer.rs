@@ -14,26 +14,28 @@ impl Renderer {
     /// Most users won't need to create one of these manually;
     /// the `Game`/`GameLoop` API handles it for you.
     pub async fn init(window: &winit::window::Window) -> Self {
-        let surface = wgpu::Surface::create(window);
+        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
+        let surface = unsafe { instance.create_surface(window) };
 
-        let adapter = wgpu::Adapter::request(
-            &wgpu::RequestAdapterOptions {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::Default,
                 compatible_surface: Some(&surface),
-            },
-            wgpu::BackendBit::PRIMARY,
-        )
-        .await
-        .expect("Renderer init failed: failed to create adapter");
+            })
+            .await
+            .expect("Renderer init failed: failed to create adapter");
 
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                extensions: wgpu::Extensions {
-                    anisotropic_filtering: false,
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    features: wgpu::Features::empty(),
+                    limits: wgpu::Limits::default(),
+                    shader_validation: true,
                 },
-                limits: wgpu::Limits::default(),
-            })
-            .await;
+                None,
+            )
+            .await
+            .expect("Failed to create wgpu device");
 
         let window_size = window.inner_size();
         let swap_chain_descriptor = wgpu::SwapChainDescriptor {
@@ -83,8 +85,9 @@ impl Renderer {
     pub fn draw_to_window(&mut self) -> RenderContext {
         let frame = self
             .swap_chain
-            .get_next_texture()
-            .expect("Failed to get next swap chain texture");
+            .get_current_frame()
+            .expect("Failed to get next swap chain texture")
+            .output;
         let encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -102,7 +105,7 @@ impl Renderer {
 }
 
 enum RenderTarget {
-    Window(wgpu::SwapChainOutput),
+    Window(wgpu::SwapChainTexture),
     Texture(wgpu::TextureView),
 }
 impl RenderTarget {
@@ -121,7 +124,7 @@ pub struct RenderContext<'a> {
     target: RenderTarget,
     pub encoder: wgpu::CommandEncoder,
     pub device: &'a wgpu::Device,
-    queue: &'a mut wgpu::Queue,
+    pub queue: &'a mut wgpu::Queue,
     pub target_size: (u32, u32),
 }
 
@@ -132,9 +135,10 @@ impl<'a> RenderContext<'a> {
             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: self.target.view(),
                 resolve_target: None,
-                load_op: wgpu::LoadOp::Clear,
-                store_op: wgpu::StoreOp::Store,
-                clear_color: color,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(color),
+                    store: true,
+                },
             }],
             depth_stencil_attachment: None,
         });
@@ -148,9 +152,10 @@ impl<'a> RenderContext<'a> {
             color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                 attachment: self.target.view(),
                 resolve_target: None,
-                load_op: wgpu::LoadOp::Load,
-                store_op: wgpu::StoreOp::Store,
-                clear_color: wgpu::Color::TRANSPARENT,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: true,
+                },
             }],
             depth_stencil_attachment: None,
         })
@@ -158,7 +163,6 @@ impl<'a> RenderContext<'a> {
 
     /// Submit the commands made through this context to the GPU.
     pub fn submit(self) {
-        let commands = self.encoder.finish();
-        self.queue.submit(&[commands]);
+        self.queue.submit(Some(self.encoder.finish()));
     }
 }

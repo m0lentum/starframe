@@ -133,14 +133,10 @@ impl ShapeRenderer {
     pub fn new(device: &wgpu::Device) -> Self {
         // shaders
 
-        let shader_v = include_bytes!("shaders/shape.vert.spv");
-        let shader_v_mod = device.create_shader_module(
-            &wgpu::read_spirv(std::io::Cursor::new(&shader_v[..])).expect("Failed to read shader"),
-        );
-        let shader_f = include_bytes!("shaders/shape.frag.spv");
-        let shader_f_mod = device.create_shader_module(
-            &wgpu::read_spirv(std::io::Cursor::new(&shader_f[..])).expect("Failed to read shader"),
-        );
+        let vert_module =
+            device.create_shader_module(wgpu::include_spirv!("shaders/shape.vert.spv"));
+        let frag_module =
+            device.create_shader_module(wgpu::include_spirv!("shaders/shape.frag.spv"));
 
         // bind group & buffers
 
@@ -149,24 +145,28 @@ impl ShapeRenderer {
             size: uniform_buf_size,
             usage: wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
             label: Some("shape uniforms"),
+            mapped_at_creation: false,
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            bindings: &[wgpu::BindGroupLayoutEntry {
+            entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0, // view matrix
                 visibility: wgpu::ShaderStage::VERTEX,
-                ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+                ty: wgpu::BindingType::UniformBuffer {
+                    dynamic: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<GlobalUniforms>() as _
+                    ),
+                },
+                count: None,
             }],
             label: Some("shape"),
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
-            bindings: &[wgpu::Binding {
+            entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::Buffer {
-                    buffer: &uniform_buf,
-                    range: 0..uniform_buf_size,
-                },
+                resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
             }],
             label: Some("shape"),
         });
@@ -174,16 +174,19 @@ impl ShapeRenderer {
         // pipeline
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("shape"),
             bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            layout: &pipeline_layout,
+            label: Some("shape"),
+            layout: Some(&pipeline_layout),
             vertex_stage: wgpu::ProgrammableStageDescriptor {
-                module: &shader_v_mod,
+                module: &vert_module,
                 entry_point: "main",
             },
             fragment_stage: Some(wgpu::ProgrammableStageDescriptor {
-                module: &shader_f_mod,
+                module: &frag_module,
                 entry_point: "main",
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
@@ -192,6 +195,7 @@ impl ShapeRenderer {
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
+                clamp_depth: device.features().contains(wgpu::Features::DEPTH_CLAMPING),
             }),
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[wgpu::ColorStateDescriptor {
@@ -252,16 +256,8 @@ impl ShapeRenderer {
         let uniforms = GlobalUniforms {
             view: camera.view_matrix(ctx.target_size).into(),
         };
-        let temp_uniform_buf = ctx
-            .device
-            .create_buffer_with_data(uniforms.as_bytes(), wgpu::BufferUsage::COPY_SRC);
-        ctx.encoder.copy_buffer_to_buffer(
-            &temp_uniform_buf,
-            0,
-            &self.uniform_buf,
-            0,
-            std::mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress,
-        );
+        ctx.queue
+            .write_buffer(&self.uniform_buf, 0, uniforms.as_bytes());
 
         //
         // Update the vertex buffer
@@ -282,32 +278,23 @@ impl ShapeRenderer {
         let active_verts_len = verts.len() as u32;
         let active_verts_size = active_verts_len as u64 * std::mem::size_of::<Vertex>() as u64;
 
-        let temp_vert_buf = ctx
-            .device
-            .create_buffer_with_data(verts.as_bytes(), wgpu::BufferUsage::COPY_SRC);
-
         // Allocate a new buffer if we don't have room for everything
         //
         // TODO: currently this grows on every frame that new shapes have been added,
         // it should reserve some extra space to avoid this
-        if self.vert_buf == None || self.vert_buf_len < active_verts_len {
+        if self.vert_buf.is_none() || self.vert_buf_len < active_verts_len {
             self.vert_buf = Some(ctx.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("shape"),
                 size: active_verts_size,
                 usage: wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
+                mapped_at_creation: false,
             }));
             self.vert_buf_len = active_verts_len;
         }
 
         // past this point the vertex buffer always exists
         let vert_buf = self.vert_buf.as_ref().unwrap();
-        ctx.encoder.copy_buffer_to_buffer(
-            &temp_vert_buf,
-            0 as wgpu::BufferAddress,
-            vert_buf,
-            0 as wgpu::BufferAddress,
-            active_verts_size,
-        );
+        ctx.queue.write_buffer(vert_buf, 0, verts.as_bytes());
 
         //
         // Render
@@ -316,7 +303,7 @@ impl ShapeRenderer {
             let mut pass = ctx.pass();
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, vert_buf, 0, 0);
+            pass.set_vertex_buffer(0, vert_buf.slice(..));
             pass.draw(0..active_verts_len, 0..1);
         }
     }

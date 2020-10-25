@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 winit = "0.23.0"
-wgpu = "0.5.0"
+wgpu = "0.6.0"
 zerocopy = "0.3.0"
 futures = "0.3.7"
 nalgebra = "0.22.1"
