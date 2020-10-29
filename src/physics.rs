@@ -5,6 +5,8 @@ use crate::{
 
 use itertools::izip;
 use nalgebra as na;
+use slotmap as sm;
+use std::collections::HashMap;
 
 //
 
@@ -14,8 +16,8 @@ pub use collision::{Collider, ColliderShape, Contact};
 pub mod constraint;
 pub use constraint::{Constraint, SolverConvergence, SolverParams};
 use constraint::{
-    ConstraintId, ConstraintType, DynamicConstraintId, ImpulseBounds, ImpulseCache,
-    WorkingConstraint,
+    ConstraintId, ConstraintType, DynamicConstraintId, DynamicConstraintType, ImpulseBounds,
+    ImpulseCache, WorkingConstraint,
 };
 
 pub mod forcefield;
@@ -84,10 +86,15 @@ pub struct ContactInfo {
     pub impulse: f32,
 }
 
+sm::new_key_type! {
+    pub struct ConstraintHandle;
+}
+
 pub struct Physics {
     stabilisation_coef: f32,
     solver_params: SolverParams,
     impulse_cache: ImpulseCache,
+    user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
 }
 
 impl Physics {
@@ -99,6 +106,7 @@ impl Physics {
                 convergence: SolverConvergence::AllElements(0.02),
             },
             impulse_cache: ImpulseCache::new(),
+            user_constraints: sm::DenseSlotMap::with_key(),
         }
     }
 
@@ -115,6 +123,20 @@ impl Physics {
     pub fn with_solver_params(mut self, params: SolverParams) -> Self {
         self.solver_params = params;
         self
+    }
+
+    /// Add a user-defined constraint to the system. Returns a handle that can be used to remove it later.
+    pub fn add_constraint(&mut self, constraint: Constraint) -> ConstraintHandle {
+        self.user_constraints.insert(constraint)
+    }
+
+    /// Remove a constraint from the system. Returns the constraint if it still existed.
+    ///
+    /// Constraints can also disappear on their own if the objects they're associated with
+    /// are destroyed, so it's not guaranteed the constraint will exist
+    /// even if it hasn't been explicitly removed before.
+    pub fn remove_constraint(&mut self, handle: ConstraintHandle) -> Option<Constraint> {
+        self.user_constraints.remove(handle)
     }
 
     /// Detect collisions, solve constraint forces and move bodies.
@@ -147,6 +169,12 @@ impl Physics {
                 let tr = graph.get_neighbor(&rb, &l_transform)?;
                 Some(BodyRef { tr, coll, rb })
             })
+            .collect();
+        // map from the position of a node in the layer to the position of a node in body_refs
+        let node_ref_map: HashMap<usize, usize> = body_refs
+            .iter()
+            .enumerate()
+            .map(|(idx, br)| (br.rb.pos().item_idx, idx))
             .collect();
 
         let velocities: Vec<Velocity> = body_refs
@@ -191,18 +219,18 @@ impl Physics {
                     // constraint index for friction to depend on
                     let next_constr_idx = penetration_constraints.len();
                     penetration_constraints.push(WorkingConstraint {
-                        body_indices: pair,
+                        body_indices: (pair[0], Some(pair[1])),
                         jacobian_row: normal_constr.gradient(),
                         bias: -contact.depth * self.stabilisation_coef * inv_dt,
                         bounds: ImpulseBounds::Constant(None, Some(0.0)),
-                        cache_id: ConstraintId::Dynamic {
+                        cache_id: ConstraintId::Dynamic(DynamicConstraintId {
                             body_indices,
                             constr_id: if contact_idx == 0 {
-                                DynamicConstraintId::FirstContact
+                                DynamicConstraintType::FirstContact
                             } else {
-                                DynamicConstraintId::SecondContact
+                                DynamicConstraintType::SecondContact
                             },
-                        },
+                        }),
                     });
 
                     // friction
@@ -218,31 +246,73 @@ impl Physics {
                     };
 
                     friction_constraints.push(WorkingConstraint {
-                        body_indices: pair,
+                        body_indices: (pair[0], Some(pair[1])),
                         jacobian_row: tangent_constr.gradient(),
                         bias: 0.0,
                         bounds: ImpulseBounds::Depends {
                             constraint_idx: next_constr_idx,
                             coefficient: friction_coef,
                         },
-                        cache_id: ConstraintId::Dynamic {
+                        cache_id: ConstraintId::Dynamic(DynamicConstraintId {
                             body_indices,
                             constr_id: if contact_idx == 0 {
-                                DynamicConstraintId::FirstFriction
+                                DynamicConstraintType::FirstFriction
                             } else {
-                                DynamicConstraintId::SecondFriction
+                                DynamicConstraintType::SecondFriction
                             },
-                        },
+                        }),
                     });
                 }
             }
+        }
+
+        let mut user_constraints: Vec<WorkingConstraint> =
+            Vec::with_capacity(self.user_constraints.len());
+        // we remove any constraints that point to bodies we haven't seen
+        let mut stale_constraints: Vec<ConstraintHandle> = Vec::new();
+        for (key, user_ctr) in self.user_constraints.iter() {
+            let ref_idx_1 = match node_ref_map.get(&user_ctr.owner.pos().item_idx) {
+                Some(node) => *node,
+                None => {
+                    stale_constraints.push(key);
+                    continue;
+                }
+            };
+            let ref_idx_2 = if let Some(target) = user_ctr.target {
+                match node_ref_map.get(&target.pos().item_idx) {
+                    Some(node) => Some(*node),
+                    None => {
+                        stale_constraints.push(key);
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
+            user_constraints.push(WorkingConstraint {
+                body_indices: (ref_idx_1, ref_idx_2),
+                jacobian_row: user_ctr.ty.gradient(),
+                bias: 0.0, // TODO: bias from position constraint value
+                bounds: ImpulseBounds::Constant(
+                    user_ctr.impulse_bounds.0,
+                    user_ctr.impulse_bounds.1,
+                ),
+                cache_id: ConstraintId::UserDefined(key),
+            })
+        }
+        for stale_handle in stale_constraints {
+            self.user_constraints.remove(stale_handle);
         }
 
         // contacts will fire events, but we want to compute impulse first to include it in the event.
         // this lets us find which constraints were collisions later
         let pen_constraint_range = 0..penetration_constraints.len();
 
-        let constraints = itertools::concat(vec![penetration_constraints, friction_constraints]);
+        let constraints = itertools::concat(vec![
+            penetration_constraints,
+            friction_constraints,
+            user_constraints,
+        ]);
 
         if constraints.len() != 0 {
             // solve
@@ -262,10 +332,11 @@ impl Physics {
                 let contact = &contacts[contact_idx];
                 let impulse = impulses[contact_idx];
                 if let Some(sink) =
-                    graph.get_neighbor_mut_unchecked(&body_refs[bodies[0]].rb, l_evt_sink)
+                    graph.get_neighbor_mut_unchecked(&body_refs[bodies.0].rb, l_evt_sink)
                 {
                     sink.item.push(crate::Event::Contact(ContactEvent {
-                        other_body: body_refs[bodies[1]].rb.node(graph),
+                        // unwrap because all contact constraints have a target body
+                        other_body: body_refs[bodies.1.unwrap()].rb.node(graph),
                         info: ContactInfo {
                             point: contact.point,
                             normal: -contact.normal,
@@ -274,10 +345,10 @@ impl Physics {
                     }));
                 }
                 if let Some(sink) =
-                    graph.get_neighbor_mut_unchecked(&body_refs[bodies[1]].rb, l_evt_sink)
+                    graph.get_neighbor_mut_unchecked(&body_refs[bodies.1.unwrap()].rb, l_evt_sink)
                 {
                     sink.item.push(crate::Event::Contact(ContactEvent {
-                        other_body: body_refs[bodies[0]].rb.node(graph),
+                        other_body: body_refs[bodies.0].rb.node(graph),
                         info: ContactInfo {
                             point: contact.point,
                             normal: contact.normal,
@@ -296,12 +367,9 @@ impl Physics {
                 body_refs.into_iter().map(|br| br.downgrade()).collect();
 
             for (constraint, impulse) in izip!(constraints, impulses) {
-                let bodies = [
-                    body_nodes[constraint.body_indices[0]],
-                    body_nodes[constraint.body_indices[1]],
-                ];
                 {
-                    let rb1 = l_body.get_mut_unchecked(bodies[0].rb).item;
+                    let body1 = body_nodes[constraint.body_indices.0];
+                    let rb1 = l_body.get_mut_unchecked(body1.rb).item;
                     let rb1_inv_mass = rb1.inverse_mass();
                     let rb1_inv_mi = rb1.inverse_moment_of_inertia();
                     if let Some(vel1) = rb1.velocity_mut() {
@@ -309,8 +377,9 @@ impl Physics {
                         vel1.angular += rb1_inv_mi * constraint.jacobian_row.w1 * impulse * dt;
                     }
                 }
-                {
-                    let rb2 = l_body.get_mut_unchecked(bodies[1].rb).item;
+                if let Some(body2_idx) = constraint.body_indices.1 {
+                    let body2 = body_nodes[body2_idx];
+                    let rb2 = l_body.get_mut_unchecked(body2.rb).item;
                     let rb2_inv_mass = rb2.inverse_mass();
                     let rb2_inv_mi = rb2.inverse_moment_of_inertia();
                     if let Some(vel2) = rb2.velocity_mut() {
