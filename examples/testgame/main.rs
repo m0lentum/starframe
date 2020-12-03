@@ -55,7 +55,7 @@ impl State {
     fn init(device: &wgpu::Device) -> Self {
         State {
             state: StateEnum::Playing,
-            graph: MyGraph::load_file(),
+            graph: MyGraph::new(),
             player: player::PlayerController::new(),
             physics: phys::Physics::new(),
             camera: gx::camera::MouseDragCamera::new(
@@ -66,6 +66,17 @@ impl State {
             ),
             shape_renderer: gx::ShapeRenderer::new(device),
         }
+    }
+
+    fn reset_from_file(&mut self) {
+        self.physics.reset();
+
+        self.graph = MyGraph::new();
+        let dir = "./examples/testgame/scenes";
+        let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
+        Recipe::read_from_file(file, &mut self.graph, &mut self.physics).unwrap_or_else(|err| {
+            println!("Failed to parse file: {}", err);
+        });
     }
 }
 
@@ -97,16 +108,6 @@ impl MyGraph {
             l_evt_sink: l_evt_sinks,
         }
     }
-
-    pub fn load_file() -> Self {
-        let mut graph = Self::new();
-        let dir = "./examples/testgame/scenes";
-        let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
-        Recipe::read_from_file(file, &mut graph).unwrap_or_else(|err| {
-            println!("Failed to parse file: {}", err);
-        });
-        graph
-    }
 }
 
 impl game::GameState for State {
@@ -129,6 +130,12 @@ impl game::GameState for State {
             self.camera.transform = m::Transform::identity();
         }
 
+        // reload
+
+        if game.input.is_key_pressed(Key::Return, Some(0)) {
+            self.reset_from_file();
+        }
+
         match self.state {
             //
             // Playing
@@ -137,10 +144,6 @@ impl game::GameState for State {
                 if game.input.is_key_pressed(Key::Space, Some(0)) {
                     self.state = StateEnum::Paused;
                     return Some(());
-                }
-
-                if game.input.is_key_pressed(Key::Return, Some(0)) {
-                    self.graph = MyGraph::load_file();
                 }
 
                 let random_pos = || {
@@ -162,14 +165,14 @@ impl game::GameState for State {
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
                         height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
                     })
-                    .spawn(&mut self.graph);
+                    .spawn(&mut self.graph, &mut self.physics);
                 }
                 if game.input.is_key_pressed(Key::T, Some(0)) {
                     Recipe::Ball {
                         position: random_pos().into(),
                         radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
                     }
-                    .spawn(&mut self.graph);
+                    .spawn(&mut self.graph, &mut self.physics);
                 }
 
                 //

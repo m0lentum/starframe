@@ -6,26 +6,76 @@ use nalgebra as na;
 use slotmap as sm;
 use std::collections::HashMap;
 
+/// A constraint restricts the relative motion of two bodies,
+/// or the motion of a single body in the world.
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
     pub(crate) owner: graph::Node<RigidBody>,
     pub(crate) target: Option<graph::Node<RigidBody>>,
     pub(crate) impulse_bounds: (Option<f32>, Option<f32>),
-    pub(crate) bias_coef: Option<f32>,
-    pub(crate) ty: ConstraintType,
+    pub(crate) func: ConstraintFunction,
+}
+
+impl Constraint {
+    /// An exact distance constraint keeps the anchor points a fixed distance
+    /// away from each other.
+    pub fn new_exact_distance(
+        owner: graph::Node<RigidBody>,
+        target: Option<graph::Node<RigidBody>>,
+        distance: f32,
+        offsets: [m::Vec2; 2],
+    ) -> Self {
+        Constraint {
+            owner,
+            target,
+            impulse_bounds: (None, None),
+            func: ConstraintFunction::Distance {
+                distance_squared: distance * distance,
+                offsets,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum ConstraintType {
+pub(crate) enum ConstraintFunction {
     Normal {
         normal: na::Unit<m::Vec2>,
         offsets: [m::Vec2; 2],
     },
+    Distance {
+        distance_squared: f32,
+        offsets: [m::Vec2; 2],
+    },
 }
 
-impl ConstraintType {
-    pub(crate) fn gradient(&self) -> Vec6 {
-        use ConstraintType::*;
+impl ConstraintFunction {
+    pub(crate) fn value(&self, tr1: m::Transform, tr2: Option<m::Transform>) -> f32 {
+        let tr2 = tr2.unwrap_or(m::Transform::identity());
+        use ConstraintFunction::*;
+        match self {
+            Normal { .. } => {
+                // we've already computed the value in collision detection
+                // and we set the bias for this type of constraint separately in the solver
+                0.0
+            }
+            Distance {
+                distance_squared,
+                offsets,
+            } => {
+                let actual_dist_sq = (tr2 * m::Point2::from(offsets[1])
+                    - tr1 * m::Point2::from(offsets[0]))
+                .norm_squared();
+
+                // divide by 2 to make the gradient the jacobian match the derivative of this
+                (actual_dist_sq - distance_squared) / 2.0
+            }
+        }
+    }
+
+    pub(crate) fn jacobian(&self, tr1: m::Transform, tr2: Option<m::Transform>) -> Vec6 {
+        let tr2 = tr2.unwrap_or(m::Transform::identity());
+        use ConstraintFunction::*;
         match self {
             Normal { normal, offsets } => Vec6 {
                 v1: **normal,
@@ -33,6 +83,22 @@ impl ConstraintType {
                 v2: -**normal,
                 w2: m::right_normal(&offsets[1]).dot(&normal),
             },
+            Distance { offsets, .. } => {
+                let dist_v = tr2 * m::Point2::from(offsets[1]) - tr1 * m::Point2::from(offsets[0]);
+                let dist_v = if dist_v[0] == 0.0 && dist_v[1] == 0.0 {
+                    // return the downwards direction if the points overlap perfectly,
+                    // else this would cause a NaN to enter the system and cause a crash
+                    *m::Vec2::y_axis()
+                } else {
+                    dist_v
+                };
+                Vec6 {
+                    v1: -dist_v,
+                    w1: m::right_normal(&(tr1 * offsets[0])).dot(&dist_v),
+                    v2: dist_v,
+                    w2: m::left_normal(&(tr2 * offsets[1])).dot(&dist_v),
+                }
+            }
         }
     }
 }
@@ -125,7 +191,7 @@ impl ImpulseCache {
         }
     }
 
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.dynamic.clear();
         self.user_defined.clear();
     }

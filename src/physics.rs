@@ -16,7 +16,7 @@ pub use collision::{Collider, ColliderShape, Contact};
 pub mod constraint;
 pub use constraint::{Constraint, SolverConvergence, SolverParams};
 use constraint::{
-    ConstraintId, ConstraintType, DynamicConstraintId, DynamicConstraintType, ImpulseBounds,
+    ConstraintFunction, ConstraintId, DynamicConstraintId, DynamicConstraintType, ImpulseBounds,
     ImpulseCache, WorkingConstraint,
 };
 
@@ -139,6 +139,12 @@ impl Physics {
         self.user_constraints.remove(handle)
     }
 
+    /// Remove all constraints and state.
+    pub fn reset(&mut self) {
+        self.impulse_cache.clear();
+        self.user_constraints.clear();
+    }
+
     /// Detect collisions, solve constraint forces and move bodies.
     pub fn tick<EvtParams>(
         &mut self,
@@ -211,7 +217,7 @@ impl Physics {
 
                     let body_indices = ordered_positions(&body_refs[pair[0]], &body_refs[pair[1]]);
 
-                    let normal_constr = ConstraintType::Normal {
+                    let normal_constr = ConstraintFunction::Normal {
                         normal: contact.normal,
                         offsets: contact.offsets,
                     };
@@ -220,7 +226,10 @@ impl Physics {
                     let next_constr_idx = penetration_constraints.len();
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
-                        jacobian_row: normal_constr.gradient(),
+                        jacobian_row: normal_constr.jacobian(
+                            *body_refs[pair[0]].tr.item,
+                            Some(*body_refs[pair[1]].tr.item),
+                        ),
                         bias: -contact.depth * self.stabilisation_coef * inv_dt,
                         bounds: ImpulseBounds::Constant(None, Some(0.0)),
                         cache_id: ConstraintId::Dynamic(DynamicConstraintId {
@@ -240,14 +249,17 @@ impl Physics {
                     let friction_coef = body_refs[pair[0]].rb.item.material.friction
                         * body_refs[pair[1]].rb.item.material.friction;
 
-                    let tangent_constr = ConstraintType::Normal {
+                    let tangent_constr = ConstraintFunction::Normal {
                         normal: na::Unit::new_unchecked(m::left_normal(&*contact.normal)),
                         offsets: contact.offsets,
                     };
 
                     friction_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
-                        jacobian_row: tangent_constr.gradient(),
+                        jacobian_row: tangent_constr.jacobian(
+                            *body_refs[pair[0]].tr.item,
+                            Some(*body_refs[pair[1]].tr.item),
+                        ),
                         bias: 0.0,
                         bounds: ImpulseBounds::Depends {
                             constraint_idx: next_constr_idx,
@@ -289,10 +301,12 @@ impl Physics {
             } else {
                 None
             };
+            let tr1 = *body_refs[ref_idx_1].tr.item;
+            let tr2 = ref_idx_2.map(|b2| *body_refs[b2].tr.item);
             user_constraints.push(WorkingConstraint {
                 body_indices: (ref_idx_1, ref_idx_2),
-                jacobian_row: user_ctr.ty.gradient(),
-                bias: 0.0, // TODO: bias from position constraint value
+                jacobian_row: user_ctr.func.jacobian(tr1, tr2),
+                bias: -user_ctr.func.value(tr1, tr2) * self.stabilisation_coef * inv_dt,
                 bounds: ImpulseBounds::Constant(
                     user_ctr.impulse_bounds.0,
                     user_ctr.impulse_bounds.1,

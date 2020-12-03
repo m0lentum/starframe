@@ -246,7 +246,7 @@ fn rect_rect(
         .zip(depths.iter())
         .min_by(|(_, d1), (_, d2)| {
             d1.partial_cmp(d2)
-                .expect("Something went wrong comparing floats")
+                .expect("There was a NaN in a transform somewhere")
         })
         .unwrap();
 

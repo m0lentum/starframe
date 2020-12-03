@@ -1,13 +1,23 @@
-use starframe::{graphics as gx, math as m, physics as phys};
+use starframe::{self as sf, graphics as gx, math as m, physics as phys};
 
 use rand::{distributions as distr, distributions::Distribution};
 
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Deserialize)]
 pub enum Recipe {
     Player(crate::player::PlayerRecipe),
     StaticBlock(Block),
     DynamicBlock(Block),
-    Ball { radius: f32, position: [f32; 2] },
+    Ball {
+        radius: f32,
+        position: [f32; 2],
+    },
+    Blockchain {
+        width: f32,
+        spacing: f32,
+        links: Vec<[f32; 2]>,
+        anchored_start: bool,
+        anchored_end: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -28,51 +38,48 @@ impl Default for Block {
     }
 }
 
+fn spawn_block(
+    block: Block,
+    color: [f32; 4],
+    is_static: bool,
+    graph: &mut crate::MyGraph,
+) -> sf::graph::Node<phys::RigidBody> {
+    let tr_node = graph
+        .l_transform
+        .insert(block.transform.into(), &mut graph.graph);
+    let coll = phys::Collider::new_rect(block.width, block.height);
+    let body = if is_static {
+        phys::RigidBody::new_static()
+    } else {
+        phys::RigidBody::new_dynamic(&coll, 0.5)
+    };
+    let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
+    let body_node = graph.l_body.insert(body, &mut graph.graph);
+    let shape_node = graph.l_shape.insert(
+        gx::Shape::Rect {
+            w: block.width,
+            h: block.height,
+            color,
+        },
+        &mut graph.graph,
+    );
+    graph.graph.connect(&tr_node, &body_node);
+    graph.graph.connect(&body_node, &coll_node);
+    graph.graph.connect(&tr_node, &shape_node);
+
+    body_node.node(&graph.graph)
+}
+
 impl Recipe {
-    pub fn spawn(&self, graph: &mut crate::MyGraph) {
+    pub fn spawn(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
         use Recipe::*;
         match self {
             Player(p_rec) => p_rec.spawn(graph),
             StaticBlock(block) => {
-                let tr_node = graph
-                    .l_transform
-                    .insert(block.transform.into(), &mut graph.graph);
-                let coll = phys::Collider::new_rect(block.width, block.height);
-                let body = phys::RigidBody::new_static();
-                let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
-                let body_node = graph.l_body.insert(body, &mut graph.graph);
-                let shape_node = graph.l_shape.insert(
-                    gx::Shape::Rect {
-                        w: block.width,
-                        h: block.height,
-                        color: [0.5; 4],
-                    },
-                    &mut graph.graph,
-                );
-                // TODO: helper to create this graph pattern in the starframe::physics module
-                graph.graph.connect(&tr_node, &body_node);
-                graph.graph.connect(&body_node, &coll_node);
-                graph.graph.connect(&tr_node, &shape_node);
+                spawn_block(*block, [0.5; 4], true, graph);
             }
             DynamicBlock(block) => {
-                let tr_node = graph
-                    .l_transform
-                    .insert(block.transform.into(), &mut graph.graph);
-                let coll = phys::Collider::new_rect(block.width, block.height);
-                let body = phys::RigidBody::new_dynamic(&coll, 1.0);
-                let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
-                let body_node = graph.l_body.insert(body, &mut graph.graph);
-                let shape_node = graph.l_shape.insert(
-                    gx::Shape::Rect {
-                        w: block.width,
-                        h: block.height,
-                        color: random_color(),
-                    },
-                    &mut graph.graph,
-                );
-                graph.graph.connect(&tr_node, &body_node);
-                graph.graph.connect(&body_node, &coll_node);
-                graph.graph.connect(&tr_node, &shape_node);
+                spawn_block(*block, random_color(), false, graph);
             }
             Ball { radius, position } => {
                 let tr_node = graph.l_transform.insert(
@@ -95,12 +102,90 @@ impl Recipe {
                 graph.graph.connect(&body_node, &coll_node);
                 graph.graph.connect(&tr_node, &shape_node);
             }
+            Blockchain {
+                width,
+                spacing,
+                links,
+                anchored_start,
+                anchored_end,
+            } => {
+                if links.len() < 2 {
+                    println!("Too few links in a chain");
+                    return;
+                }
+
+                let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
+
+                // to connect another block to it
+                let mut prev_block: Option<(sf::graph::Node<phys::RigidBody>, f32)> = None;
+                while let (Some(link1), Some(link2)) = (links_iter.next(), links_iter.peek()) {
+                    let distance = link2 - link1;
+                    let dist_norm = distance.norm();
+                    let center = (link1 + link2) / 2.0;
+                    let orientation = (distance[0] / dist_norm).acos() * distance[1].signum();
+
+                    let block_length = dist_norm - spacing;
+                    let block = spawn_block(
+                        Block {
+                            width: block_length,
+                            height: *width, // a bit weird but makes sense with the orientation calculations
+                            transform: m::TransformBuilder::new()
+                                .with_position(center)
+                                .with_rotation(m::Angle::Rad(orientation)),
+                        },
+                        random_color(),
+                        false,
+                        graph,
+                    );
+                    let block_length_half = block_length / 2.0;
+                    if let Some((prev_block, prev_block_offset)) = prev_block {
+                        physics.add_constraint(phys::Constraint::new_exact_distance(
+                            block,
+                            Some(prev_block),
+                            *spacing,
+                            [
+                                m::Vec2::new(-block_length_half, 0.0),
+                                m::Vec2::new(prev_block_offset, 0.0),
+                            ],
+                        ));
+                    } else if *anchored_start {
+                        physics.add_constraint(phys::Constraint::new_exact_distance(
+                            block,
+                            None,
+                            0.0,
+                            [
+                                m::Vec2::new(-block_length_half - (spacing / 2.0), 0.0),
+                                link1,
+                            ],
+                        ));
+                    }
+                    prev_block = Some((block, block_length_half));
+                }
+
+                if *anchored_end {
+                    let (prev_block, prev_block_offset) = prev_block.unwrap();
+                    physics.add_constraint(phys::Constraint::new_exact_distance(
+                        prev_block,
+                        None,
+                        0.0,
+                        [
+                            m::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0),
+                            links
+                                .iter()
+                                .map(|p| m::Vec2::new(p[0], p[1]))
+                                .last()
+                                .unwrap(),
+                        ],
+                    ));
+                }
+            }
         }
     }
 
     pub fn read_from_file(
         file: std::fs::File,
         graph: &mut crate::MyGraph,
+        physics: &mut phys::Physics,
     ) -> Result<(), ron::de::Error> {
         use serde::Deserialize;
         use std::io::Read;
@@ -112,7 +197,7 @@ impl Recipe {
         let mut deser = ron::de::Deserializer::from_bytes(bytes.as_slice())?;
         let file_content = Vec::<Recipe>::deserialize(&mut deser)?;
         for recipe in file_content {
-            recipe.spawn(graph);
+            recipe.spawn(graph, physics);
         }
 
         Ok(())
