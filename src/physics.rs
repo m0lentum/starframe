@@ -14,7 +14,7 @@ pub mod collision;
 pub use collision::{Collider, ColliderShape, Contact};
 
 pub mod constraint;
-pub use constraint::{Constraint, SolverConvergence, SolverParams};
+pub use constraint::{Constraint, ConstraintBuilder, SolverConvergence, SolverParams};
 use constraint::{
     ConstraintFunction, ConstraintId, DynamicConstraintId, DynamicConstraintType, ImpulseBounds,
     ImpulseCache, WorkingConstraint,

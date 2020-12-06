@@ -16,23 +16,98 @@ pub struct Constraint {
     pub(crate) func: ConstraintFunction,
 }
 
-impl Constraint {
-    /// An exact distance constraint keeps the anchor points a fixed distance
-    /// away from each other.
-    pub fn new_exact_distance(
-        owner: graph::Node<RigidBody>,
-        target: Option<graph::Node<RigidBody>>,
-        distance: f32,
-        offsets: [m::Vec2; 2],
-    ) -> Self {
-        Constraint {
+/// A builder that allows ergonomic construction of different constraints.
+#[derive(Clone, Copy, Debug)]
+pub struct ConstraintBuilder {
+    owner: graph::Node<RigidBody>,
+    owner_origin: m::Vec2,
+    target: Option<graph::Node<RigidBody>>,
+    target_origin: m::Vec2,
+    impulse_bounds: (Option<f32>, Option<f32>),
+}
+
+impl ConstraintBuilder {
+    /// Start building a constraint. An owning body is required.
+    ///
+    /// If you don't connect the constraint to another body with
+    /// `with_target`, it will be connected to ground, i.e. the world origin.
+    pub fn new(owner: graph::Node<RigidBody>) -> Self {
+        Self {
             owner,
-            target,
+            owner_origin: m::Vec2::zeros(),
+            target: None,
+            target_origin: m::Vec2::zeros(),
             impulse_bounds: (None, None),
-            func: ConstraintFunction::Distance {
-                distance_squared: distance * distance,
-                offsets,
-            },
+        }
+    }
+
+    /// Attach the constraint to another body.
+    pub fn with_target(mut self, target: graph::Node<RigidBody>) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    /// Set the origin point of the constraint on the owning body.
+    ///
+    /// Note that this does not have an effect on all constraint types,
+    /// but it's so common it's included in the generic builder nonetheless.
+    pub fn with_origin(mut self, point: m::Vec2) -> Self {
+        self.owner_origin = point;
+        self
+    }
+
+    /// Set the origin point of the constraint on the target body,
+    /// or in the world if the target is None.
+    ///
+    /// Note that this does not have an effect on all constraint types,
+    /// but it's so common it's included in the generic builder nonetheless.
+    pub fn with_target_origin(mut self, point: m::Vec2) -> Self {
+        self.target_origin = point;
+        self
+    }
+
+    /// Allow constraint function values above zero.
+    pub fn inequality_gt(mut self) -> Self {
+        self.impulse_bounds.0 = Some(0.0);
+        self
+    }
+
+    /// Allow constraint function values below zero.
+    pub fn inequality_lt(mut self) -> Self {
+        self.impulse_bounds.1 = Some(0.0);
+        self
+    }
+
+    /// Limit the maximum impulse of the constraint,
+    /// creating a sort of spring effect.
+    ///
+    /// Note that this is not a realistic spring.
+    ///
+    /// TODO: implement soft constraints and add more sophisticated controls here
+    pub fn with_max_impulse(mut self, max_impulse: f32) -> Self {
+        let (lb, rb) = self.impulse_bounds;
+        self.impulse_bounds = (
+            lb.map(|lb| lb.max(-max_impulse)).or(Some(-max_impulse)),
+            rb.map(|rb| rb.min(max_impulse)).or(Some(max_impulse)),
+        );
+        self
+    }
+
+    /// Build a distance constraint.
+    pub fn build_distance(self, distance: f32) -> Constraint {
+        let func = ConstraintFunction::Distance {
+            distance_squared: distance * distance,
+            offsets: [self.owner_origin, self.target_origin],
+        };
+        self.build(func)
+    }
+
+    fn build(self, func: ConstraintFunction) -> Constraint {
+        Constraint {
+            owner: self.owner,
+            target: self.target,
+            impulse_bounds: self.impulse_bounds,
+            func,
         }
     }
 }

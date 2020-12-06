@@ -139,44 +139,43 @@ impl Recipe {
                     );
                     let block_length_half = block_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
-                        physics.add_constraint(phys::Constraint::new_exact_distance(
-                            block,
-                            Some(prev_block),
-                            *spacing,
-                            [
-                                m::Vec2::new(-block_length_half, 0.0),
-                                m::Vec2::new(prev_block_offset, 0.0),
-                            ],
-                        ));
+                        physics.add_constraint(
+                            phys::ConstraintBuilder::new(block)
+                                .with_target(prev_block)
+                                .with_origin(m::Vec2::new(-block_length_half, 0.0))
+                                .with_target_origin(m::Vec2::new(prev_block_offset, 0.0))
+                                .inequality_lt()
+                                .with_max_impulse(100.0)
+                                .build_distance(*spacing),
+                        );
                     } else if *anchored_start {
-                        physics.add_constraint(phys::Constraint::new_exact_distance(
-                            block,
-                            None,
-                            0.0,
-                            [
-                                m::Vec2::new(-block_length_half - (spacing / 2.0), 0.0),
-                                link1,
-                            ],
-                        ));
+                        physics.add_constraint(
+                            phys::ConstraintBuilder::new(block)
+                                .with_origin(m::Vec2::new(
+                                    -block_length_half - (spacing / 2.0),
+                                    0.0,
+                                ))
+                                .with_target_origin(link1)
+                                .build_distance(0.0),
+                        );
                     }
                     prev_block = Some((block, block_length_half));
                 }
 
                 if *anchored_end {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
-                    physics.add_constraint(phys::Constraint::new_exact_distance(
-                        prev_block,
-                        None,
-                        0.0,
-                        [
-                            m::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0),
-                            links
-                                .iter()
-                                .map(|p| m::Vec2::new(p[0], p[1]))
-                                .last()
-                                .unwrap(),
-                        ],
-                    ));
+                    physics.add_constraint(
+                        phys::ConstraintBuilder::new(prev_block)
+                            .with_origin(m::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
+                            .with_target_origin(
+                                links
+                                    .iter()
+                                    .map(|p| m::Vec2::new(p[0], p[1]))
+                                    .last()
+                                    .unwrap(),
+                            )
+                            .build_distance(0.0),
+                    );
                 }
             }
         }
