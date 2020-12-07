@@ -9,7 +9,7 @@ pub use ev::VirtualKeyCode as Key;
 
 /// Track the state of input devices so that they can be looked up from a single location
 /// instead of moving window events around.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InputCache {
     keyboard: HashMap<Key, AgedState>,
     mouse_buttons: MouseButtonState,
@@ -243,7 +243,7 @@ impl Default for InputCache {
 
 /// The state of a button (keyboard key or mouse button)
 /// and time in number of ticks since last state change.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct AgedState {
     pub state: ElementState,
     pub age: u32,
@@ -272,7 +272,7 @@ pub enum KeyAxisState {
 
 /// Cursor position taking into account whether it's in the window or not.
 /// Usually you don't want to do anything if you're outside the window.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum CursorPosition {
     InWindow(PhysicalPosition<f64>),
     OutOfWindow(PhysicalPosition<f64>),
@@ -303,7 +303,7 @@ impl CursorPosition {
 
 //
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 struct MouseButtonState {
     left: AgedState,
     middle: AgedState,
@@ -332,7 +332,7 @@ impl MouseButtonState {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum DragState {
     InProgress {
         start: PhysicalPosition<f64>,
