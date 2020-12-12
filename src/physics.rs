@@ -89,6 +89,10 @@ sm::new_key_type! {
     pub struct ConstraintHandle;
 }
 
+/// Allows a small amount of error on constraints so that objects don't
+/// e.g. shake on the ground due to being pushed out and back in constantly
+const SLOP_LIMIT: f32 = 0.002;
+
 pub struct Physics {
     stabilisation_coef: f32,
     solver_params: SolverParams,
@@ -223,13 +227,19 @@ impl Physics {
 
                     // constraint index for friction to depend on
                     let next_constr_idx = penetration_constraints.len();
+                    let bias_unscaled = -contact.depth * self.stabilisation_coef;
+                    let bias_unscaled = if bias_unscaled.abs() < SLOP_LIMIT {
+                        0.0
+                    } else {
+                        bias_unscaled
+                    };
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
                         jacobian_row: normal_constr.jacobian(
                             *body_refs[pair[0]].tr.item,
                             Some(*body_refs[pair[1]].tr.item),
                         ),
-                        bias: -contact.depth * self.stabilisation_coef * inv_dt,
+                        bias: bias_unscaled * inv_dt,
                         bounds: ImpulseBounds::Constant(None, Some(0.0)),
                         cache_id: ConstraintId::Dynamic(DynamicConstraintId {
                             body_indices,
@@ -302,10 +312,16 @@ impl Physics {
             };
             let tr1 = *body_refs[ref_idx_1].tr.item;
             let tr2 = ref_idx_2.map(|b2| *body_refs[b2].tr.item);
+            let bias_unscaled = -user_ctr.func.value(tr1, tr2) * self.stabilisation_coef;
+            let bias_unscaled = if bias_unscaled.abs() < SLOP_LIMIT {
+                0.0
+            } else {
+                bias_unscaled
+            };
             user_constraints.push(WorkingConstraint {
                 body_indices: (ref_idx_1, ref_idx_2),
                 jacobian_row: user_ctr.func.jacobian(tr1, tr2),
-                bias: -user_ctr.func.value(tr1, tr2) * self.stabilisation_coef * inv_dt,
+                bias: bias_unscaled * inv_dt,
                 bounds: ImpulseBounds::Constant(
                     user_ctr.impulse_bounds.0,
                     user_ctr.impulse_bounds.1,
