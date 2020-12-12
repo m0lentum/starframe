@@ -1,10 +1,9 @@
 use crate::{
     graph::{self, UnsafeNode},
-    math as m,
+    math::{self, uv, Angle, Unit},
 };
 
 use itertools::izip;
-use nalgebra as na;
 use slotmap as sm;
 use std::collections::HashMap;
 
@@ -31,7 +30,7 @@ pub use rigidbody::RigidBody;
 #[derive(Copy, Clone, Debug)]
 pub struct Velocity {
     /// Linear velocity in metres per second.
-    pub linear: m::Vec2,
+    pub linear: uv::Vec2,
     /// Angular velocity in radians per second.
     pub angular: f32,
 }
@@ -39,7 +38,7 @@ pub struct Velocity {
 impl Default for Velocity {
     fn default() -> Self {
         Velocity {
-            linear: m::Vec2::zeros(),
+            linear: uv::Vec2::zero(),
             angular: 0.0,
         }
     }
@@ -47,8 +46,8 @@ impl Default for Velocity {
 
 impl Velocity {
     /// Get the linear velocity of a point offset from the center of mass.
-    pub fn point_velocity(&self, offset: m::Vec2) -> m::Vec2 {
-        let tangent = m::Vec2::new(-offset[1], offset[0]) * self.angular;
+    pub fn point_velocity(&self, offset: uv::Vec2) -> uv::Vec2 {
+        let tangent = uv::Vec2::new(-offset[1], offset[0]) * self.angular;
         self.linear + tangent
     }
 }
@@ -79,9 +78,9 @@ pub struct ContactEvent {
 #[derive(Clone, Copy, Debug)]
 pub struct ContactInfo {
     /// The point in world space where the collision occurred.
-    pub point: m::Point2,
+    pub point: uv::Vec2,
     /// The normal of the colliding plane, facing towards this object.
-    pub normal: na::Unit<m::Vec2>,
+    pub normal: Unit<uv::Vec2>,
     /// The strength of the impulse caused by the contact.
     pub impulse: f32,
 }
@@ -149,7 +148,7 @@ impl Physics {
     pub fn tick<EvtParams>(
         &mut self,
         graph: &graph::Graph,
-        l_transform: &mut graph::Layer<m::Transform>,
+        l_transform: &mut graph::Layer<uv::Isometry2>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
         l_evt_sink: &mut crate::EventSinkLayer<EvtParams>,
@@ -163,7 +162,7 @@ impl Physics {
                 if let (Some(ref tr), rigidbody::BodyType::Dynamic { velocity, .. }) =
                     (graph.get_neighbor(&rb, &l_transform), &mut rb.item.body)
                 {
-                    velocity.linear += ff.value_at(tr.item.isometry.translation.vector.into()) * dt;
+                    velocity.linear += ff.value_at(tr.item.translation) * dt;
                 }
             }
         }
@@ -187,10 +186,10 @@ impl Physics {
             .iter()
             .map(|br| br.rb.item.velocity_or_zero())
             .collect();
-        let inv_masses: Vec<m::Vec2> = body_refs
+        let inv_masses: Vec<uv::Vec2> = body_refs
             .iter()
             .map(|br| {
-                m::Vec2::new(
+                uv::Vec2::new(
                     br.rb.item.inverse_mass(),
                     br.rb.item.inverse_moment_of_inertia(),
                 )
@@ -250,7 +249,7 @@ impl Physics {
                         * body_refs[pair[1]].rb.item.material.friction;
 
                     let tangent_constr = ConstraintFunction::Normal {
-                        normal: na::Unit::new_unchecked(m::left_normal(&*contact.normal)),
+                        normal: Unit::new_unchecked(math::left_normal(*contact.normal)),
                         offsets: contact.offsets,
                     };
 
@@ -409,9 +408,9 @@ impl Physics {
             if let (Some(tr), Some(vel)) =
                 (graph.get_neighbor_mut(&rb, l_transform), rb.item.velocity())
             {
-                tr.item.append_translation_mut(&(dt * vel.linear).into());
+                tr.item.append_translation(dt * vel.linear);
                 tr.item
-                    .append_rotation_wrt_center_mut(&m::Angle::Rad(dt * vel.angular).into());
+                    .prepend_rotation(Angle::Rad(dt * vel.angular).into());
             }
         }
     }
@@ -420,7 +419,7 @@ impl Physics {
 /// References to the parts of a body that we need to find out if it collides with anything.
 /// Used internally in collision detection, exposed to allow custom broad phase algorithms.
 pub struct BodyRef<'a> {
-    pub tr: graph::NodeRef<'a, m::Transform>,
+    pub tr: graph::NodeRef<'a, uv::Isometry2>,
     pub coll: graph::NodeRef<'a, Collider>,
     pub rb: graph::NodeRef<'a, RigidBody>,
 }

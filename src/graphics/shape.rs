@@ -1,6 +1,6 @@
 use crate::{
     graphics::{self as gx, util::GlslMat3},
-    {graph, math as m},
+    {graph, math::uv},
 };
 
 use zerocopy::{AsBytes, FromBytes};
@@ -11,20 +11,9 @@ type Color = [f32; 4];
 /// Concavity will not result in an error but will be rendered incorrectly.
 #[derive(Clone, Debug)]
 pub enum Shape {
-    Circle {
-        r: f32,
-        points: usize,
-        color: Color,
-    },
-    Rect {
-        w: f32,
-        h: f32,
-        color: Color,
-    },
-    Poly {
-        points: Vec<m::Point2>,
-        color: Color,
-    },
+    Circle { r: f32, points: usize, color: Color },
+    Rect { w: f32, h: f32, color: Color },
+    Poly { points: Vec<uv::Vec2>, color: Color },
 }
 
 impl Shape {
@@ -45,10 +34,10 @@ impl Shape {
         }
     }
 
-    pub(self) fn verts(&self, tr: &m::Transform) -> Vec<Vertex> {
+    pub(self) fn verts(&self, tr: &uv::Isometry2) -> Vec<Vertex> {
         // generate a triangle mesh
-        fn as_verts(pts: &[m::Point2], tr: &m::Transform, color: Color) -> Vec<Vertex> {
-            let mut iter = pts.iter().map(|p| tr * *p).peekable();
+        fn as_verts(pts: &[uv::Vec2], tr: &uv::Isometry2, color: Color) -> Vec<Vertex> {
+            let mut iter = pts.iter().map(|p| *tr * *p).peekable();
             let first = match iter.next() {
                 Some(p) => Vertex {
                     position: [p.x, p.y],
@@ -77,10 +66,10 @@ impl Shape {
         match self {
             Shape::Circle { r, points, color } => {
                 let angle_incr = 2.0 * std::f32::consts::PI / *points as f32;
-                let verts: Vec<m::Point2> = (0..*points)
+                let verts: Vec<uv::Vec2> = (0..*points)
                     .map(|i| {
                         let angle = angle_incr * i as f32;
-                        m::Point2::new(r * angle.cos(), r * angle.sin())
+                        uv::Vec2::new(r * angle.cos(), r * angle.sin())
                     })
                     .collect();
                 as_verts(verts.as_slice(), tr, *color)
@@ -90,10 +79,10 @@ impl Shape {
                 let hh = 0.5 * h;
                 as_verts(
                     &[
-                        m::Point2::new(hw, hh),
-                        m::Point2::new(-hw, hh),
-                        m::Point2::new(-hw, -hh),
-                        m::Point2::new(hw, -hh),
+                        uv::Vec2::new(hw, hh),
+                        uv::Vec2::new(-hw, hh),
+                        uv::Vec2::new(-hw, -hh),
+                        uv::Vec2::new(hw, -hh),
                     ],
                     tr,
                     *color,
@@ -244,7 +233,7 @@ impl ShapeRenderer {
     pub fn draw(
         &mut self,
         shapes: &graph::Layer<Shape>,
-        transforms: &graph::Layer<m::Transform>,
+        transforms: &graph::Layer<uv::Isometry2>,
         graph: &graph::Graph,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,

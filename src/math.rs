@@ -1,11 +1,6 @@
-//! Types, aliases and helper operations for doing math with `nalgebra`.
-use nalgebra as na;
+//! Types, aliases and helper operations for doing math with `ultraviolet`.
 use std::f32::consts::PI;
-
-pub type Transform = na::Similarity2<f32>;
-pub type Vec2 = na::Vector2<f32>;
-pub type Point2 = na::Point2<f32>;
-pub type Mat3 = na::Matrix3<f32>;
+pub use ultraviolet as uv;
 
 /// An angle in either degrees or radians.
 /// Default conversion from f32 is in degrees.
@@ -36,27 +31,73 @@ impl Default for Angle {
         Angle::Rad(0.0)
     }
 }
-impl Into<na::UnitComplex<f32>> for Angle {
-    fn into(self) -> na::UnitComplex<f32> {
-        na::UnitComplex::from_angle(self.rad())
+impl Into<uv::Rotor2> for Angle {
+    fn into(self) -> uv::Rotor2 {
+        uv::Rotor2::from_angle(self.rad())
     }
 }
 
-/// An intermediate struct that makes it easier to create a Transform,
-/// as well as to write a deserializable one in a RON file.
+/// A wrapper type to indicate a vector should always be normalized.
+#[derive(Clone, Copy, Debug)]
+pub struct Unit<T>(T);
+
+impl Unit<uv::Vec2> {
+    pub fn new_normalize(v: uv::Vec2) -> Self {
+        Unit(v.normalized())
+    }
+
+    pub fn new_unchecked(v: uv::Vec2) -> Self {
+        Unit(v)
+    }
+
+    pub fn unit_x() -> Self {
+        Unit(uv::Vec2::unit_x())
+    }
+
+    pub fn unit_y() -> Self {
+        Unit(uv::Vec2::unit_y())
+    }
+}
+
+impl std::ops::Mul<Unit<uv::Vec2>> for uv::Rotor2 {
+    type Output = Unit<uv::Vec2>;
+
+    fn mul(self, rhs: Unit<uv::Vec2>) -> Self::Output {
+        Unit(self * rhs.0)
+    }
+}
+
+impl<T> std::ops::Deref for Unit<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> std::ops::Neg for Unit<T>
+where
+    T: std::ops::Neg,
+{
+    type Output = Unit<<T as std::ops::Neg>::Output>;
+
+    fn neg(self) -> Self::Output {
+        Unit(-self.0)
+    }
+}
+
+/// A builder useful for deserializing isometries from RON files.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct TransformBuilder {
+pub struct IsometryBuilder {
     position: [f32; 2],
     rotation: Angle,
-    scale: f32,
 }
-impl TransformBuilder {
+impl IsometryBuilder {
     pub fn new() -> Self {
-        TransformBuilder {
+        IsometryBuilder {
             position: [0.0, 0.0],
             rotation: Angle::default(),
-            scale: 1.0,
         }
     }
     pub fn with_position(mut self, pos: impl Into<[f32; 2]>) -> Self {
@@ -67,55 +108,45 @@ impl TransformBuilder {
         self.rotation = angle;
         self
     }
-    pub fn with_scaling(mut self, scale: f32) -> Self {
-        self.scale = scale;
-        self
-    }
-    pub fn build(self) -> Transform {
-        Transform::from_parts(
-            Vec2::new(self.position[0], self.position[1]).into(),
+    pub fn build(self) -> uv::Isometry2 {
+        uv::Isometry2::new(
+            uv::Vec2::new(self.position[0], self.position[1]),
             self.rotation.into(),
-            self.scale,
         )
     }
 }
-impl Default for TransformBuilder {
+impl Default for IsometryBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
-impl Into<Transform> for TransformBuilder {
-    fn into(self) -> Transform {
+impl Into<uv::Isometry2> for IsometryBuilder {
+    fn into(self) -> uv::Isometry2 {
         self.build()
     }
 }
-impl From<[f32; 2]> for TransformBuilder {
+impl From<[f32; 2]> for IsometryBuilder {
     fn from(vec: [f32; 2]) -> Self {
-        TransformBuilder::new().with_position(vec)
+        IsometryBuilder::new().with_position(vec)
     }
 }
-impl From<Vec2> for TransformBuilder {
-    fn from(vec: Vec2) -> Self {
-        TransformBuilder::new().with_position(vec)
+impl From<uv::Vec2> for IsometryBuilder {
+    fn from(vec: uv::Vec2) -> Self {
+        IsometryBuilder::new().with_position(vec)
     }
 }
-impl From<Point2> for TransformBuilder {
-    fn from(pt: Point2) -> Self {
-        TransformBuilder::new().with_position(pt.coords)
-    }
-}
-impl From<Angle> for TransformBuilder {
+impl From<Angle> for IsometryBuilder {
     fn from(angle: Angle) -> Self {
-        TransformBuilder::new().with_rotation(angle)
+        IsometryBuilder::new().with_rotation(angle)
     }
 }
 
 // Vec2 utils
 
-pub fn left_normal(v: &Vec2) -> Vec2 {
-    Vec2::new(-v[1], v[0])
+pub fn left_normal(v: uv::Vec2) -> uv::Vec2 {
+    uv::Vec2::new(-v.y, v.x)
 }
 
-pub fn right_normal(v: &Vec2) -> Vec2 {
-    Vec2::new(v[1], -v[0])
+pub fn right_normal(v: uv::Vec2) -> uv::Vec2 {
+    uv::Vec2::new(v.y, -v.x)
 }

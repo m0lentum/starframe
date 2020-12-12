@@ -1,6 +1,6 @@
 //! Utilities for communicating with the GPU.
 
-use crate::math as m;
+use crate::math::uv;
 use zerocopy::{AsBytes, FromBytes};
 
 /// Utility type to convert transform matrices to a form that can
@@ -11,8 +11,13 @@ use zerocopy::{AsBytes, FromBytes};
 #[repr(transparent)]
 pub struct GlslMat3([[f32; 4]; 3]);
 
-impl From<m::Mat3> for GlslMat3 {
-    fn from(mat: m::Mat3) -> Self {
-        GlslMat3(mat.insert_row(3, 0.0).into())
+impl From<uv::Mat3> for GlslMat3 {
+    fn from(mat: uv::Mat3) -> Self {
+        let ma = mat.as_array();
+        GlslMat3([
+            [ma[0], ma[1], ma[2], 0.0],
+            [ma[3], ma[4], ma[5], 0.0],
+            [ma[6], ma[7], ma[8], 0.0],
+        ])
     }
 }

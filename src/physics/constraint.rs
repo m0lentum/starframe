@@ -1,8 +1,10 @@
 use super::{RigidBody, Velocity};
-use crate::{graph, math as m};
+use crate::{
+    graph,
+    math::{self, uv},
+};
 
 use itertools::izip;
-use nalgebra as na;
 use slotmap as sm;
 use std::collections::HashMap;
 
@@ -20,9 +22,9 @@ pub struct Constraint {
 #[derive(Clone, Copy, Debug)]
 pub struct ConstraintBuilder {
     owner: graph::Node<RigidBody>,
-    owner_origin: m::Vec2,
+    owner_origin: uv::Vec2,
     target: Option<graph::Node<RigidBody>>,
-    target_origin: m::Vec2,
+    target_origin: uv::Vec2,
     impulse_bounds: (Option<f32>, Option<f32>),
 }
 
@@ -34,9 +36,9 @@ impl ConstraintBuilder {
     pub fn new(owner: graph::Node<RigidBody>) -> Self {
         Self {
             owner,
-            owner_origin: m::Vec2::zeros(),
+            owner_origin: uv::Vec2::zero(),
             target: None,
-            target_origin: m::Vec2::zeros(),
+            target_origin: uv::Vec2::zero(),
             impulse_bounds: (None, None),
         }
     }
@@ -51,7 +53,7 @@ impl ConstraintBuilder {
     ///
     /// Note that this does not have an effect on all constraint types,
     /// but it's so common it's included in the generic builder nonetheless.
-    pub fn with_origin(mut self, point: m::Vec2) -> Self {
+    pub fn with_origin(mut self, point: uv::Vec2) -> Self {
         self.owner_origin = point;
         self
     }
@@ -61,7 +63,7 @@ impl ConstraintBuilder {
     ///
     /// Note that this does not have an effect on all constraint types,
     /// but it's so common it's included in the generic builder nonetheless.
-    pub fn with_target_origin(mut self, point: m::Vec2) -> Self {
+    pub fn with_target_origin(mut self, point: uv::Vec2) -> Self {
         self.target_origin = point;
         self
     }
@@ -115,18 +117,18 @@ impl ConstraintBuilder {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ConstraintFunction {
     Normal {
-        normal: na::Unit<m::Vec2>,
-        offsets: [m::Vec2; 2],
+        normal: math::Unit<uv::Vec2>,
+        offsets: [uv::Vec2; 2],
     },
     Distance {
         distance_squared: f32,
-        offsets: [m::Vec2; 2],
+        offsets: [uv::Vec2; 2],
     },
 }
 
 impl ConstraintFunction {
-    pub(crate) fn value(&self, tr1: m::Transform, tr2: Option<m::Transform>) -> f32 {
-        let tr2 = tr2.unwrap_or(m::Transform::identity());
+    pub(crate) fn value(&self, tr1: uv::Isometry2, tr2: Option<uv::Isometry2>) -> f32 {
+        let tr2 = tr2.unwrap_or(uv::Isometry2::identity());
         use ConstraintFunction::*;
         match self {
             Normal { .. } => {
@@ -138,9 +140,7 @@ impl ConstraintFunction {
                 distance_squared,
                 offsets,
             } => {
-                let actual_dist_sq = (tr2 * m::Point2::from(offsets[1])
-                    - tr1 * m::Point2::from(offsets[0]))
-                .norm_squared();
+                let actual_dist_sq = (tr2 * offsets[1] - tr1 * offsets[0]).mag_sq();
 
                 // divide by 2 to make the gradient the jacobian match the derivative of this
                 (actual_dist_sq - distance_squared) / 2.0
@@ -148,30 +148,30 @@ impl ConstraintFunction {
         }
     }
 
-    pub(crate) fn jacobian(&self, tr1: m::Transform, tr2: Option<m::Transform>) -> Vec6 {
-        let tr2 = tr2.unwrap_or(m::Transform::identity());
+    pub(crate) fn jacobian(&self, tr1: uv::Isometry2, tr2: Option<uv::Isometry2>) -> Vec6 {
+        let tr2 = tr2.unwrap_or(uv::Isometry2::identity());
         use ConstraintFunction::*;
         match self {
             Normal { normal, offsets } => Vec6 {
                 v1: **normal,
-                w1: m::left_normal(&offsets[0]).dot(&normal),
+                w1: math::left_normal(offsets[0]).dot(**normal),
                 v2: -**normal,
-                w2: m::right_normal(&offsets[1]).dot(&normal),
+                w2: -math::left_normal(offsets[1]).dot(**normal),
             },
             Distance { offsets, .. } => {
-                let dist_v = tr2 * m::Point2::from(offsets[1]) - tr1 * m::Point2::from(offsets[0]);
-                let dist_v = if dist_v[0] == 0.0 && dist_v[1] == 0.0 {
+                let dist_v = tr2 * offsets[1] - tr1 * offsets[0];
+                let dist_v = if dist_v.x == 0.0 && dist_v.y == 0.0 {
                     // return the downwards direction if the points overlap perfectly,
                     // else this would cause a NaN to enter the system and cause a crash
-                    *m::Vec2::y_axis()
+                    -uv::Vec2::unit_y()
                 } else {
                     dist_v
                 };
                 Vec6 {
                     v1: -dist_v,
-                    w1: m::right_normal(&(tr1 * offsets[0])).dot(&dist_v),
+                    w1: -math::left_normal(tr1.rotation * offsets[0]).dot(dist_v),
                     v2: dist_v,
-                    w2: m::left_normal(&(tr2 * offsets[1])).dot(&dist_v),
+                    w2: math::left_normal(tr2.rotation * offsets[1]).dot(dist_v),
                 }
             }
         }
@@ -180,15 +180,15 @@ impl ConstraintFunction {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Vec6 {
-    pub(crate) v1: m::Vec2,
+    pub(crate) v1: uv::Vec2,
     pub(crate) w1: f32,
-    pub(crate) v2: m::Vec2,
+    pub(crate) v2: uv::Vec2,
     pub(crate) w2: f32,
 }
 
 impl Vec6 {
     fn dot(&self, other: &Vec6) -> f32 {
-        self.v1.dot(&other.v1) + self.w1 * other.w1 + self.v2.dot(&other.v2) + self.w2 * other.w2
+        self.v1.dot(other.v1) + self.w1 * other.w1 + self.v2.dot(other.v2) + self.w2 * other.w2
     }
 }
 impl From<[Velocity; 2]> for Vec6 {
@@ -317,7 +317,7 @@ pub(crate) fn solve_pgs(
     dt: f32,
     constraints: &[WorkingConstraint],
     velocities: &[Velocity],
-    inv_masses: &[m::Vec2],
+    inv_masses: &[uv::Vec2],
     impulse_cache: &mut ImpulseCache,
 ) -> Vec<f32> {
     let inv_dt = 1.0 / dt;
@@ -346,7 +346,7 @@ pub(crate) fn solve_pgs(
                 bodies
                     .1
                     .map(|b1| inv_masses[b1])
-                    .unwrap_or(m::Vec2::zeros()),
+                    .unwrap_or(uv::Vec2::zero()),
             ];
             Vec6 {
                 v1: inv_masses[0][0] * j.v1,
@@ -407,13 +407,13 @@ pub(crate) fn solve_pgs(
             let a_2_dot_jac = match bodies.1 {
                 Some(b1) => {
                     let a_2 = imxj_x_answer[b1];
-                    jac.v2.dot(&a_2.linear) + jac.w2 * a_2.angular
+                    jac.v2.dot(a_2.linear) + jac.w2 * a_2.angular
                 }
                 None => 0.0,
             };
             // normal Gauss-Seidel step
             let unprojected_delta_ans =
-                (rhs_elem - jac.v1.dot(&a_1.linear) - jac.w1 * a_1.angular - a_2_dot_jac) / diag;
+                (rhs_elem - jac.v1.dot(a_1.linear) - jac.w1 * a_1.angular - a_2_dot_jac) / diag;
 
             // clamping total impulse (projection)
             // check if the bounds depend on another constraint (friction).

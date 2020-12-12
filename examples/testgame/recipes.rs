@@ -1,4 +1,8 @@
-use starframe::{self as sf, graphics as gx, math as m, physics as phys};
+use starframe::{
+    self as sf, graphics as gx,
+    math::{self as m, uv},
+    physics as phys,
+};
 
 use rand::{distributions as distr, distributions::Distribution};
 
@@ -25,7 +29,7 @@ pub enum Recipe {
 pub struct Block {
     pub width: f32,
     pub height: f32,
-    pub transform: m::TransformBuilder,
+    pub transform: m::IsometryBuilder,
 }
 
 impl Default for Block {
@@ -83,7 +87,7 @@ impl Recipe {
             }
             Ball { radius, position } => {
                 let tr_node = graph.l_transform.insert(
-                    m::TransformBuilder::from(*position).into(),
+                    uv::Isometry2::new(position.into(), uv::Rotor2::identity()),
                     &mut graph.graph,
                 );
                 let coll = phys::Collider::new_circle(*radius);
@@ -114,14 +118,14 @@ impl Recipe {
                     return;
                 }
 
-                let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
+                let mut links_iter = links.iter().map(|p| uv::Vec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
                 let mut prev_block: Option<(sf::graph::Node<phys::RigidBody>, f32)> = None;
                 while let (Some(link1), Some(link2)) = (links_iter.next(), links_iter.peek()) {
-                    let distance = link2 - link1;
-                    let dist_norm = distance.norm();
-                    let center = (link1 + link2) / 2.0;
+                    let distance = *link2 - link1;
+                    let dist_norm = distance.mag();
+                    let center = (link1 + *link2) / 2.0;
                     let orientation = (distance[0] / dist_norm).acos() * distance[1].signum();
 
                     let block_length = dist_norm - spacing;
@@ -129,7 +133,7 @@ impl Recipe {
                         Block {
                             width: block_length,
                             height: *width, // a bit weird but makes sense with the orientation calculations
-                            transform: m::TransformBuilder::new()
+                            transform: m::IsometryBuilder::new()
                                 .with_position(center)
                                 .with_rotation(m::Angle::Rad(orientation)),
                         },
@@ -142,8 +146,8 @@ impl Recipe {
                         physics.add_constraint(
                             phys::ConstraintBuilder::new(block)
                                 .with_target(prev_block)
-                                .with_origin(m::Vec2::new(-block_length_half, 0.0))
-                                .with_target_origin(m::Vec2::new(prev_block_offset, 0.0))
+                                .with_origin(uv::Vec2::new(-block_length_half, 0.0))
+                                .with_target_origin(uv::Vec2::new(prev_block_offset, 0.0))
                                 .inequality_lt()
                                 .with_max_impulse(100.0)
                                 .build_distance(*spacing),
@@ -151,7 +155,7 @@ impl Recipe {
                     } else if *anchored_start {
                         physics.add_constraint(
                             phys::ConstraintBuilder::new(block)
-                                .with_origin(m::Vec2::new(
+                                .with_origin(uv::Vec2::new(
                                     -block_length_half - (spacing / 2.0),
                                     0.0,
                                 ))
@@ -166,11 +170,11 @@ impl Recipe {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
                     physics.add_constraint(
                         phys::ConstraintBuilder::new(prev_block)
-                            .with_origin(m::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
+                            .with_origin(uv::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
                             .with_target_origin(
                                 links
                                     .iter()
-                                    .map(|p| m::Vec2::new(p[0], p[1]))
+                                    .map(|p| uv::Vec2::new(p[0], p[1]))
                                     .last()
                                     .unwrap(),
                             )

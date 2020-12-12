@@ -10,7 +10,8 @@ use starframe::{
     game::{self, Game},
     graph, graphics as gx,
     input::{Key, MouseButton},
-    math as m, physics as phys,
+    math::{self, uv},
+    physics as phys,
 };
 
 mod player;
@@ -82,7 +83,7 @@ impl State {
 
 pub struct MyGraph {
     graph: graph::Graph,
-    l_transform: graph::Layer<m::Transform>,
+    l_transform: graph::Layer<uv::Isometry2>,
     l_collider: graph::Layer<phys::Collider>,
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
@@ -127,7 +128,7 @@ impl game::GameState for State {
         self.camera
             .update(&game.input, game.renderer.window_size().into());
         if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
-            self.camera.transform = m::Transform::identity();
+            self.camera.transform = uv::Similarity2::identity();
         }
 
         // reload
@@ -148,18 +149,20 @@ impl game::GameState for State {
 
                 let random_pos = || {
                     let mut rng = rand::thread_rng();
-                    m::Vec2::new(
+                    uv::Vec2::new(
                         distr::Uniform::from(-5.0..5.0).sample(&mut rng),
                         distr::Uniform::from(1.0..4.0).sample(&mut rng),
                     )
                 };
                 let random_angle = || {
-                    m::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()))
+                    math::Angle::Deg(
+                        distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()),
+                    )
                 };
                 let mut rng = rand::thread_rng();
                 if game.input.is_key_pressed(Key::S, Some(0)) {
                     Recipe::DynamicBlock(recipes::Block {
-                        transform: m::TransformBuilder::new()
+                        transform: math::IsometryBuilder::new()
                             .with_position(random_pos())
                             .with_rotation(random_angle()),
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
@@ -179,7 +182,7 @@ impl game::GameState for State {
 
                 {
                     microprofile::scope!("update", "physics");
-                    let grav = phys::forcefield::Gravity(m::Vec2::new(0.0, -9.81));
+                    let grav = phys::forcefield::Gravity(uv::Vec2::new(0.0, -9.81));
                     self.physics.tick(
                         &self.graph.graph,
                         &mut self.graph.l_transform,
