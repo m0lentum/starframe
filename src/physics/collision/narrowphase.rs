@@ -89,7 +89,7 @@ fn circle_circle(tr1: &uv::Isometry2, r1: f32, tr2: &uv::Isometry2, r2: f32) -> 
     if dist_sq < 0.001 {
         // same position, consider penetration to be on x axis
         depth = r1 + r2;
-        normal = Unit::new_unchecked(uv::Vec2::unit_x());
+        normal = Unit::unit_x();
     } else if dist_sq < (r1 + r2) * (r1 + r2) {
         // normal collision
         depth = (r1 + r2) - dist.mag();
@@ -158,10 +158,11 @@ fn rect_circle(
     }
 
     vec![Contact_ {
-        normal: Unit::new_unchecked(
-            tr_rect.rotation
-                * uv::Vec2::new(dist_signums.x * normal_abs.x, dist_signums.y * normal_abs.y),
-        ),
+        normal: tr_rect.rotation
+            * Unit::new_unchecked(uv::Vec2::new(
+                dist_signums.x * normal_abs.x,
+                dist_signums.y * normal_abs.y,
+            )),
         depth,
         point: *tr_rect * uv::Vec2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
     }]
@@ -206,10 +207,10 @@ fn rect_rect(
     let x2_axis = tr2_wrt_tr1.rotation * Unit::unit_x();
     let hw2_v = hw2 * (*x2_axis);
 
-    let y2_axis = Unit::new_unchecked(uv::Vec2::new(-x2_axis.y, x2_axis.x));
+    let y2_axis = Unit::new_unchecked(math::left_normal(*x2_axis));
     let hh2_v = hh2 * (*y2_axis);
 
-    let axes = [Unit::unit_y(), Unit::unit_y(), x2_axis, y2_axis];
+    let axes = [Unit::unit_x(), Unit::unit_y(), x2_axis, y2_axis];
 
     // penetration
     let x1_pen = hw1 + hw2_v.x.abs() + hh2_v.x.abs() - dist.x.abs();
@@ -244,13 +245,12 @@ fn rect_rect(
 
     // orient axis of penetration towards obj2
     let axis = Unit::new_unchecked(dist.dot(**axis).signum() * **axis);
+    // transform normal to world space
     let normal = tr1.rotation * axis;
 
     if axis_i <= 1 {
         // axis is on obj1, penetrating point is on obj2
-        let point = uv::Vec2::from(
-            dist - (axis.dot(hw2_v).signum() * hw2_v) - (axis.dot(hh2_v).signum() * hh2_v),
-        );
+        let point = dist - (axis.dot(hw2_v).signum() * hw2_v) - (axis.dot(hh2_v).signum() * hh2_v);
         vec![Contact_ {
             normal,
             depth,
