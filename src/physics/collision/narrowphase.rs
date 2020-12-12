@@ -2,11 +2,6 @@ use super::collider::ColliderShape;
 use crate::math::{self, uv, Unit};
 use crate::physics::BodyRef;
 
-use std::f32::consts::PI;
-
-/// determines how close to parallel two surfaces need to be to generate two contacts
-const FLAT_COLLISION_ANGLE_THRESHOLD: f32 = 0.005;
-
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
@@ -21,6 +16,7 @@ pub struct Contact {
 }
 
 // Intermediate structure so we don't have to carry everything around through the worker functions
+#[derive(Clone, Copy, Debug)]
 struct Contact_ {
     normal: Unit<uv::Vec2>,
     depth: f32,
@@ -181,29 +177,6 @@ fn rect_rect(
     // obj1 is axis-aligned at origin, these are obj2's values
     let dist = tr2_wrt_tr1.translation;
 
-    // aligned special cases
-    // TODO: this isn't robust, clip the incident edges instead
-
-    let rot_ang = (tr2_wrt_tr1.rotation * uv::Vec2::unit_x()).x.acos();
-
-    if rot_ang.abs() < FLAT_COLLISION_ANGLE_THRESHOLD
-        || (rot_ang.abs() - PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
-    {
-        return aabb_aabb(dist, hw1, hh1, hw2, hh2)
-            .into_iter()
-            .map(|cont| transform_contact(&tr1, cont))
-            .collect();
-    } else if (rot_ang - 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
-        || (rot_ang + 0.5 * PI).abs() < FLAT_COLLISION_ANGLE_THRESHOLD
-    {
-        return aabb_aabb(dist, hw1, hh1, hh2, hw2)
-            .into_iter()
-            .map(|cont| transform_contact(&tr1, cont))
-            .collect();
-    }
-
-    // unaligned general case with one collision point
-
     let x2_axis = tr2_wrt_tr1.rotation * Unit::unit_x();
     let hw2_v = hw2 * (*x2_axis);
 
@@ -248,79 +221,236 @@ fn rect_rect(
     // transform normal to world space
     let normal = tr1.rotation * axis;
 
+    let mut contacts: Vec<Contact_> = Vec::with_capacity(1);
     if axis_i <= 1 {
-        // axis is on obj1, penetrating point is on obj2
-        let point = dist - (axis.dot(hw2_v).signum() * hw2_v) - (axis.dot(hh2_v).signum() * hh2_v);
-        vec![Contact_ {
-            normal,
-            depth,
-            point: *tr1 * (point + depth * (*axis)),
-        }]
+        // axis is on obj1, penetrating point(s) are on obj2
+        let axis_dot_x2 = axis.dot(*x2_axis);
+        let axis_dot_y2 = axis.dot(*y2_axis);
+        let x2_axis_facing_point = Unit::new_unchecked(-axis_dot_x2.signum() * *x2_axis);
+        let y2_axis_facing_point = Unit::new_unchecked(-axis_dot_y2.signum() * *y2_axis);
+        // this can be outside both objects! we need to clip on both edges later
+        let farthest_point = dist + (*x2_axis_facing_point * hw2) + (*y2_axis_facing_point * hh2);
+        // clip incident edges to find possible second contact point
+        let incident_edge = if axis_dot_x2.abs() < axis_dot_y2.abs() {
+            Edge {
+                start: farthest_point,
+                dir: -x2_axis_facing_point,
+                length: hw2 * 2.0,
+            }
+        } else {
+            Edge {
+                start: farthest_point,
+                dir: -y2_axis_facing_point,
+                length: hh2 * 2.0,
+            }
+        };
+        let owning_edge = if axis_i == 1 {
+            Edge {
+                start: uv::Vec2::new(-hw1, axis.y.signum() * hh1),
+                dir: Unit::unit_x(),
+                length: hw1 * 2.0,
+            }
+        } else {
+            Edge {
+                start: uv::Vec2::new(axis.x.signum() * hw1, -hh1),
+                dir: Unit::unit_y(),
+                length: hh1 * 2.0,
+            }
+        };
+        match clip_edge(owning_edge, incident_edge) {
+            EdgeClipResult::Intersects => {
+                contacts.push(Contact_ {
+                    normal,
+                    depth,
+                    // point on object 1's surface
+                    point: *tr1 * (farthest_point + depth * *axis),
+                });
+            }
+            EdgeClipResult::Passes { enters, exits } => {
+                let edge_dot_axis = incident_edge.dir.dot(*axis);
+                let enter_depth = depth - enters * edge_dot_axis;
+                contacts.push(Contact_ {
+                    normal,
+                    depth: enter_depth,
+                    point: *tr1
+                        * (farthest_point + (enters * *incident_edge.dir) + (enter_depth * *axis)),
+                });
+                let exit_depth = depth - exits * edge_dot_axis;
+                contacts.push(Contact_ {
+                    normal,
+                    depth: exit_depth,
+                    point: *tr1
+                        * (farthest_point + (exits * *incident_edge.dir) + (exit_depth * *axis)),
+                });
+            }
+        }
     } else {
-        // axis is on obj2, penetrating point is on obj1
-        let point = uv::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
-        vec![Contact_ {
-            normal,
-            depth,
-            point: *tr1 * point,
-        }]
+        // copy-paste-modified from above, if there's a bug it's probably here
+        // axis is on obj2, penetrating point(s) are on obj1
+        let x1_axis_facing_point = Unit::new_unchecked(axis.x.signum() * uv::Vec2::unit_x());
+        let y1_axis_facing_point = Unit::new_unchecked(axis.y.signum() * uv::Vec2::unit_y());
+        let farthest_point = uv::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
+        let incident_edge = if axis.x.abs() < axis.y.abs() {
+            Edge {
+                start: farthest_point,
+                dir: -x1_axis_facing_point,
+                length: hw1 * 2.0,
+            }
+        } else {
+            Edge {
+                start: farthest_point,
+                dir: -y1_axis_facing_point,
+                length: hh1 * 2.0,
+            }
+        };
+        let owning_edge = if axis_i == 3 {
+            Edge {
+                // remember axis is oriented towards body 2
+                start: dist - *axis * hh2 - *axes[2] * hw2,
+                dir: axes[2],
+                length: hw2 * 2.0,
+            }
+        } else {
+            Edge {
+                start: dist - *axis * hw2 - *axes[3] * hh2,
+                dir: axes[3],
+                length: hh2 * 2.0,
+            }
+        };
+        match clip_edge(owning_edge, incident_edge) {
+            EdgeClipResult::Intersects => {
+                contacts.push(Contact_ {
+                    normal,
+                    depth,
+                    point: *tr1 * farthest_point,
+                });
+            }
+            EdgeClipResult::Passes { enters, exits } => {
+                let edge_dot_axis = incident_edge.dir.dot(*axis);
+                let enter_depth = depth - enters * edge_dot_axis;
+                contacts.push(Contact_ {
+                    normal,
+                    depth: enter_depth,
+                    // same as above but minus adding the depth because we're already on body 1's surface
+                    point: *tr1 * (farthest_point + (enters * *incident_edge.dir)),
+                });
+                let exit_depth = depth - exits * edge_dot_axis;
+                contacts.push(Contact_ {
+                    normal,
+                    depth: exit_depth,
+                    point: *tr1 * (farthest_point + (exits * *incident_edge.dir)),
+                });
+            }
+        }
+    }
+
+    contacts
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Edge {
+    start: uv::Vec2,
+    dir: Unit<uv::Vec2>,
+    length: f32,
+}
+
+enum EdgeClipResult {
+    /// If edges intersect, we don't care about anything else
+    /// as this means a single contact point at an already known location
+    Intersects,
+    /// If they don't intersect, we want the distances at which edge 1 intersects
+    /// with the lines perpendicular to edge 2 going through edge 2's endpoints.
+    Passes { enters: f32, exits: f32 },
+}
+
+fn clip_edge(target: Edge, edge: Edge) -> EdgeClipResult {
+    let start_dist = target.start - edge.start;
+    // cramer's rule solution for t in At = b
+    // where A = [dir1, -dir2] and b = start_dist.
+    // this is NaN if dir1 and dir2 are parallel, but this is ok because the following
+    // comparison is still true in that case and the value isn't used later
+    let denom = edge.dir.x * (-target.dir.y) - (-target.dir.x) * edge.dir.y;
+    let t = [
+        (start_dist.x * (-target.dir.y) - (-target.dir.x) * start_dist.y) / denom,
+        (edge.dir.x * start_dist.y - start_dist.x * edge.dir.y) / denom,
+    ];
+    if t[0] >= 0.0 && t[0] <= edge.length && t[1] >= 0.0 && t[1] <= target.length {
+        EdgeClipResult::Intersects
+    } else {
+        let dist_dot_dir2 = start_dist.dot(*target.dir);
+        let dirs_dot = edge.dir.dot(*target.dir);
+        let start_clip_t = dist_dot_dir2 / dirs_dot;
+        let end_clip_t = (target.length + dist_dot_dir2) / dirs_dot;
+        let (enters, exits) = if start_clip_t < end_clip_t {
+            (start_clip_t.max(0.0), end_clip_t.min(edge.length))
+        } else {
+            (end_clip_t.max(0.0), start_clip_t.min(edge.length))
+        };
+        EdgeClipResult::Passes { enters, exits }
     }
 }
 
-fn transform_contact(tr: &uv::Isometry2, cont: Contact_) -> Contact_ {
-    Contact_ {
-        normal: tr.rotation * cont.normal,
-        depth: cont.depth,
-        point: *tr * cont.point,
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::PI;
 
-fn aabb_aabb(dist: uv::Vec2, hw1: f32, hh1: f32, hw2: f32, hh2: f32) -> Vec<Contact_> {
-    let x_pen = hw1 + hw2 - dist.x.abs();
-    if x_pen <= 0.0 {
-        return vec![];
-    }
-    let y_pen = hh1 + hh2 - dist.y.abs();
-    if y_pen <= 0.0 {
-        return vec![];
-    }
-
-    let x_dir = dist.x.signum();
-    let y_dir = dist.y.signum();
-
-    if x_pen < y_pen {
-        let x1 = x_dir * hw1;
-        let y1 = (-hh1).max(dist.y - hh2);
-        let y2 = hh1.min(dist.y + hh2);
-
-        vec![
-            Contact_ {
-                normal: Unit::new_unchecked(uv::Vec2::new(x_dir, 0.0)),
-                depth: x_pen,
-                point: uv::Vec2::new(x1, y1),
+    #[test]
+    fn clip_various_edges() {
+        // intersection
+        match clip_edge(
+            Edge {
+                start: uv::Vec2::new(1.0, 1.0),
+                dir: Unit::unit_x(),
+                length: 2.0,
             },
-            Contact_ {
-                normal: Unit::new_unchecked(uv::Vec2::new(x_dir, 0.0)),
-                depth: x_pen,
-                point: uv::Vec2::new(x1, y2),
+            Edge {
+                start: uv::Vec2::new(1.0, 0.0),
+                dir: Unit::new_normalize(uv::Vec2::new(1.0, 1.0)),
+                length: 2.0,
             },
-        ]
-    } else {
-        let y1 = y_dir * hh1;
-        let x1 = (-hw1).max(dist.x - hw2);
-        let x2 = hw1.min(dist.x + hw2);
-
-        vec![
-            Contact_ {
-                normal: Unit::new_unchecked(uv::Vec2::new(0.0, y_dir)),
-                depth: y_pen,
-                point: uv::Vec2::new(x1, y1),
+        ) {
+            EdgeClipResult::Intersects => (),
+            _ => panic!("Didn't intersect"),
+        }
+        // miss that starts at 0
+        match clip_edge(
+            Edge {
+                start: uv::Vec2::new(1.0, 1.0),
+                dir: Unit::unit_x(),
+                length: 2.0,
             },
-            Contact_ {
-                normal: Unit::new_unchecked(uv::Vec2::new(0.0, y_dir)),
-                depth: y_pen,
-                point: uv::Vec2::new(x2, y1),
+            Edge {
+                start: uv::Vec2::new(2.0, 0.0),
+                dir: uv::Rotor2::from_angle(PI / 6.0) * Unit::unit_x(),
+                length: 2.0,
             },
-        ]
+        ) {
+            EdgeClipResult::Passes { enters, exits } => {
+                assert_eq!(enters, 0.0);
+                assert!((exits - 1.0 / (PI / 6.0).cos()).abs() < 0.001);
+            }
+            _ => panic!("Intersected but shouldn't have"),
+        }
+        // miss that starts before 0 but ends at length
+        // and also starts at the end of the other one
+        match clip_edge(
+            Edge {
+                start: uv::Vec2::new(1.0, 1.0),
+                dir: Unit::unit_x(),
+                length: 2.0,
+            },
+            Edge {
+                start: uv::Vec2::new(4.0, 0.0),
+                dir: uv::Rotor2::from_angle(7.0 * PI / 8.0) * Unit::unit_x(),
+                length: 2.0,
+            },
+        ) {
+            EdgeClipResult::Passes { enters, exits } => {
+                assert!((enters - 1.0 / (PI / 8.0).cos()).abs() < 0.001);
+                assert_eq!(exits, 2.0);
+            }
+            _ => panic!("Intersected but shouldn't have"),
+        }
     }
 }
