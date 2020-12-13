@@ -91,7 +91,7 @@ sm::new_key_type! {
 
 /// Allows a small amount of error on constraints so that objects don't
 /// e.g. shake on the ground due to being pushed out and back in constantly
-const SLOP_LIMIT: f32 = 0.002;
+const SLOP_LIMIT: f32 = 0.0002;
 
 pub struct Physics {
     stabilisation_coef: f32,
@@ -231,7 +231,7 @@ impl Physics {
                     let bias_unscaled = if bias_unscaled.abs() < SLOP_LIMIT {
                         0.0
                     } else {
-                        bias_unscaled
+                        bias_unscaled - bias_unscaled.signum() * SLOP_LIMIT
                     };
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
@@ -316,7 +316,7 @@ impl Physics {
             let bias_unscaled = if bias_unscaled.abs() < SLOP_LIMIT {
                 0.0
             } else {
-                bias_unscaled
+                bias_unscaled - bias_unscaled.signum() * SLOP_LIMIT
             };
             user_constraints.push(WorkingConstraint {
                 body_indices: (ref_idx_1, ref_idx_2),
