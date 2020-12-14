@@ -367,8 +367,8 @@ fn clip_edge(target: Edge, edge: Edge) -> EdgeClipResult {
     let start_dist = target.start - edge.start;
     // cramer's rule solution for t in At = b
     // where A = [dir1, -dir2] and b = start_dist.
-    // this is NaN if dir1 and dir2 are parallel, but this is ok because the following
-    // comparison is still true in that case and the value isn't used later
+    // denom is 0 and t is NaN if dir1 and dir2 are parallel, but this is ok because the following
+    // comparison correctly evaluates to false and t isn't used after that.
     let denom = edge.dir.x * (-target.dir.y) - (-target.dir.x) * edge.dir.y;
     let t = [
         (start_dist.x * (-target.dir.y) - (-target.dir.x) * start_dist.y) / denom,
