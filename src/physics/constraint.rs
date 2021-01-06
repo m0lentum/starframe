@@ -1,3 +1,13 @@
+//! Types of physical constraints and tools for creating and solving them.
+//!
+//! Major sources:
+//! [Cat05] Catto, E. (2005). Iterative Dynamics With Temporal Coherence.
+//!     https://www.gamedevs.org/uploads/iterative-dynamics-with-temporal-coherence.pdf
+//! [Cat11] Catto, E. (2011). Soft Constraints.
+//!     https://box2d.org/files/ErinCatto_SoftConstraints_GDC2011.pdf
+//! [Tam15] Tamis, M. (2015). 3D Constraint Derivations for Impulse Solvers.
+//!     http://www.mft-spirit.nl/files/MTamis_Constraints.pdf
+
 use super::{RigidBody, Velocity};
 use crate::{
     graph,
@@ -15,7 +25,22 @@ pub struct Constraint {
     pub(crate) owner: graph::Node<RigidBody>,
     pub(crate) target: Option<graph::Node<RigidBody>>,
     pub(crate) impulse_bounds: (Option<f32>, Option<f32>),
+    pub(crate) softness: Option<OscillatorParams>,
     pub(crate) func: ConstraintFunction,
+}
+
+/// Designer-friendly parameters for tuning soft constraints.
+#[derive(Clone, Copy, Debug)]
+pub struct OscillatorParams {
+    /// Oscillations per second.
+    pub frequency: f32,
+    /// Damping ratio.
+    ///
+    /// If == 0, allows indefinite oscillation.  
+    /// If < 1, decays to zero with some oscillation.  
+    /// If == 1, decays smoothly to zero.  
+    /// If > 1, decays smoothly to zero but slower.
+    pub damping: f32,
 }
 
 /// A builder that allows ergonomic construction of different constraints.
@@ -26,6 +51,7 @@ pub struct ConstraintBuilder {
     target: Option<graph::Node<RigidBody>>,
     target_origin: uv::Vec2,
     impulse_bounds: (Option<f32>, Option<f32>),
+    softness: Option<OscillatorParams>,
 }
 
 impl ConstraintBuilder {
@@ -40,6 +66,7 @@ impl ConstraintBuilder {
             target: None,
             target_origin: uv::Vec2::zero(),
             impulse_bounds: (None, None),
+            softness: None,
         }
     }
 
@@ -80,12 +107,16 @@ impl ConstraintBuilder {
         self
     }
 
-    /// Limit the maximum impulse of the constraint,
-    /// creating a sort of spring effect.
+    /// Make the constraint soft. This makes it equivalent to a spring.
     ///
-    /// Note that this is not a realistic spring.
-    ///
-    /// TODO: implement soft constraints and add more sophisticated controls here
+    /// See [`SpringParams`](self::SpringParams) for details.
+    pub fn soft(mut self, params: OscillatorParams) -> Self {
+        self.softness = Some(params);
+        self
+    }
+
+    /// Limit the maximum impulse of the constraint.
+    /// This can be useful to e.g. limit the torque of a motor.
     pub fn with_max_impulse(mut self, max_impulse: f32) -> Self {
         let (lb, rb) = self.impulse_bounds;
         self.impulse_bounds = (
@@ -109,6 +140,7 @@ impl ConstraintBuilder {
             owner: self.owner,
             target: self.target,
             impulse_bounds: self.impulse_bounds,
+            softness: self.softness,
             func,
         }
     }
@@ -142,7 +174,7 @@ impl ConstraintFunction {
             } => {
                 let actual_dist_sq = (tr2 * offsets[1] - tr1 * offsets[0]).mag_sq();
 
-                // divide by 2 to make the gradient the jacobian match the derivative of this
+                // divide by 2 to make the jacobian match the derivative of this
                 (actual_dist_sq - distance_squared) / 2.0
             }
         }
@@ -190,6 +222,22 @@ impl Vec6 {
     fn dot(&self, other: &Vec6) -> f32 {
         self.v1.dot(other.v1) + self.w1 * other.w1 + self.v2.dot(other.v2) + self.w2 * other.w2
     }
+
+    /// Multiply the first three elements with a scalar and return the result as a Velocity.
+    fn mul_first(&self, magnitude: f32) -> Velocity {
+        Velocity {
+            linear: self.v1 * magnitude,
+            angular: self.w1 * magnitude,
+        }
+    }
+
+    /// Multiply the last three elements with a scalar and return the result as a Velocity.
+    fn mul_second(&self, magnitude: f32) -> Velocity {
+        Velocity {
+            linear: self.v2 * magnitude,
+            angular: self.w2 * magnitude,
+        }
+    }
 }
 impl From<[Velocity; 2]> for Vec6 {
     fn from(v: [Velocity; 2]) -> Self {
@@ -202,17 +250,29 @@ impl From<[Velocity; 2]> for Vec6 {
     }
 }
 
+/// Parameters to control aspects of the constraint solver.
 #[derive(Clone, Copy, Debug)]
 pub struct SolverParams {
+    /// Maximum number of iterations to run before stopping.
+    ///
+    /// Higher values increase accuracy at a linear performance cost.
     pub max_iterations: u32,
+    /// Condition to stop early if an accurate solution is found before `max_iterations`.
     pub convergence: SolverConvergence,
+    /// Whether and how much to apply a warm start impulse.
+    ///
+    /// If a value is provided, the solver will apply the previous frame's impulses at the start,
+    /// multiplied by the given value (which should be between 0 and 1).
+    /// This is likely to improve accuracy, but can cause jitter if set too high.
+    pub warm_start: Option<f32>,
 }
 
 impl Default for SolverParams {
     fn default() -> Self {
         Self {
-            max_iterations: 10,
+            max_iterations: 20,
             convergence: SolverConvergence::FixedCount,
+            warm_start: Some(0.25),
         }
     }
 }
@@ -229,9 +289,16 @@ pub(crate) struct WorkingConstraint {
     // indices in `velocities` and `inv_masses`
     pub body_indices: (usize, Option<usize>),
     pub jacobian_row: Vec6,
-    pub bias: f32,
+    pub softness: ConstraintSoftnessType,
+    pub pos_error: f32,
     pub bounds: ImpulseBounds,
     pub cache_id: ConstraintId,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum ConstraintSoftnessType {
+    Hard { correction_coef: f32 },
+    SoftOscillator(OscillatorParams),
 }
 
 /// Stores the impulses caused by each constraint.
@@ -248,14 +315,14 @@ impl ImpulseCache {
         }
     }
 
-    fn get(&self, id: ConstraintId) -> Option<f32> {
+    pub fn get(&self, id: ConstraintId) -> Option<f32> {
         match id {
             ConstraintId::Dynamic(dyn_id) => self.dynamic.get(&dyn_id).map(|v| *v),
             ConstraintId::UserDefined(handle) => self.user_defined.get(handle).map(|v| *v),
         }
     }
 
-    fn insert(&mut self, id: ConstraintId, val: f32) {
+    pub(self) fn insert(&mut self, id: ConstraintId, val: f32) {
         match id {
             ConstraintId::Dynamic(dyn_id) => {
                 self.dynamic.insert(dyn_id, val);
@@ -312,11 +379,11 @@ pub(crate) enum ImpulseBounds {
     },
 }
 
-pub(crate) fn solve_pgs(
+pub(crate) fn solve(
     user_params: SolverParams,
     dt: f32,
     constraints: &[WorkingConstraint],
-    velocities: &[Velocity],
+    velocities: &mut [Velocity],
     inv_masses: &[uv::Vec2],
     impulse_cache: &mut ImpulseCache,
 ) -> Vec<f32> {
@@ -326,19 +393,7 @@ pub(crate) fn solve_pgs(
 
     let jacobian: Vec<Vec6> = constraints.iter().map(|c| c.jacobian_row).collect();
     let bounds: Vec<ImpulseBounds> = constraints.iter().map(|c| c.bounds).collect();
-    // `eta` in Cat05
-    // length of constraints
-    let rhs: Vec<f32> = izip!(constraints, &body_map)
-        .map(|(c, bodies)| {
-            let vels = [
-                velocities[bodies.0],
-                bodies.1.map(|b1| velocities[b1]).unwrap_or_default(),
-            ];
-            inv_dt * (c.bias - c.jacobian_row.dot(&vels.into()))
-        })
-        .collect();
-    // `B` in Cat05
-    // length of constraints
+    // `B` in [Cat05]
     let inv_mass_x_jacobian: Vec<Vec6> = izip!(&jacobian, &body_map)
         .map(|(j, bodies)| {
             let inv_masses = [
@@ -356,64 +411,90 @@ pub(crate) fn solve_pgs(
             }
         })
         .collect();
-    // `d` in Cat05
+
+    // `d` in [Cat05], diagonal elements of J(M^-1)(J^t)
     // length of constraints
-    let j_x_imxj_diag: Vec<f32> = izip!(&jacobian, &inv_mass_x_jacobian)
+    let effective_inv_mass: Vec<f32> = izip!(&jacobian, &inv_mass_x_jacobian)
         .map(|(j, bj)| j.dot(bj))
+        .collect();
+
+    // softness and stabilisation parameters
+    #[derive(Clone, Copy, Debug)]
+    struct Params {
+        pos_correct_coef: f32,
+        softness_feedback_coef: f32,
+        pos_error: f32,
+    }
+    let params: Vec<Params> = izip!(constraints, &effective_inv_mass)
+        .map(|(c, eff_inv_m)| {
+            match c.softness {
+                ConstraintSoftnessType::Hard {
+                    correction_coef: bias,
+                } => Params {
+                    pos_correct_coef: bias,
+                    softness_feedback_coef: 0.0,
+                    pos_error: c.pos_error,
+                },
+                ConstraintSoftnessType::SoftOscillator(osc_params) => {
+                    // See [Cat11] for the derivation of this
+                    let eff_mass = 1.0 / eff_inv_m;
+                    // `k` in the spring equation
+                    let stiffness = eff_mass * osc_params.frequency * osc_params.frequency;
+                    let stiffness_x_dt = stiffness * dt;
+                    // `c` in the spring equation
+                    let damping = 2.0 * eff_mass * osc_params.damping * osc_params.frequency;
+
+                    Params {
+                        pos_correct_coef: stiffness_x_dt / (damping + stiffness_x_dt),
+                        softness_feedback_coef: 1.0 / (damping + stiffness_x_dt),
+                        pos_error: c.pos_error,
+                    }
+                }
+            }
+        })
         .collect();
 
     // `lambda` in Cat05
     // length of constraints
-    let mut answer: Vec<f32> = constraints
-        .iter()
-        .map(|c| impulse_cache.get(c.cache_id).unwrap_or(0.0))
-        .collect();
-    // change between iterations, separated to check for convergence
-    let mut delta_answer: Vec<f32> = vec![0.0; answer.len()];
-
-    // `a` in Cat05
-    // length of velocities
-    let mut imxj_x_answer: Vec<Velocity> = {
-        let mut w = vec![Velocity::default(); velocities.len()];
-        for (imxj, &ans, bodies) in izip!(&inv_mass_x_jacobian, &answer, &body_map) {
-            w[bodies.0] += Velocity {
-                linear: ans * imxj.v1,
-                angular: ans * imxj.w1,
-            };
-            if let Some(b1) = bodies.1 {
-                w[b1] += Velocity {
-                    linear: ans * imxj.v2,
-                    angular: ans * imxj.w2,
-                };
-            }
-        }
-        w
+    let mut accumulated_impulses: Vec<f32> = match user_params.warm_start {
+        None => vec![0.0; constraints.len()],
+        Some(amount) => constraints
+            .iter()
+            .map(|c| impulse_cache.get(c.cache_id).unwrap_or(0.0) * amount)
+            .collect(),
     };
+    // change between iterations, stored to check for convergence
+    let mut delta_impulses: Vec<f32> = vec![0.0; accumulated_impulses.len()];
+
+    // apply the warm-start impulse
+    for (bodies, imxj, impulse) in izip!(&body_map, &inv_mass_x_jacobian, &accumulated_impulses) {
+        velocities[bodies.0] += imxj.mul_first(*impulse);
+        if let Some(b1) = bodies.1 {
+            velocities[b1] += imxj.mul_second(*impulse);
+        }
+    }
 
     for _i in 0..user_params.max_iterations {
-        // PGS step
-        for (curr_idx, (bodies, jac, im_x_j, bounds, diag, rhs_elem, delta_ans)) in izip!(
+        for (curr_idx, (bodies, jac, bounds, imxj, eff_inv_mass, params, delta_imp)) in izip!(
             &body_map,
             &jacobian,
-            &inv_mass_x_jacobian,
             &bounds,
-            &j_x_imxj_diag,
-            &rhs,
-            &mut delta_answer,
+            &inv_mass_x_jacobian,
+            &effective_inv_mass,
+            &params,
+            &mut delta_impulses,
         )
         .enumerate()
         {
-            let a_1 = imxj_x_answer[bodies.0];
-            let a_2_dot_jac = match bodies.1 {
-                Some(b1) => {
-                    let a_2 = imxj_x_answer[b1];
-                    jac.v2.dot(a_2.linear) + jac.w2 * a_2.angular
-                }
-                None => 0.0,
-            };
-            // normal Gauss-Seidel step
-            let unprojected_delta_ans =
-                (rhs_elem - jac.v1.dot(a_1.linear) - jac.w1 * a_1.angular - a_2_dot_jac) / diag;
+            let vels = [
+                velocities[bodies.0],
+                bodies.1.map(|b1| velocities[b1]).unwrap_or_default(),
+            ];
+
+            let unprojected_delta_imp = (-jac.dot(&vels.into())
+                - (accumulated_impulses[curr_idx] * params.softness_feedback_coef)
+                - (params.pos_correct_coef * inv_dt * params.pos_error))
+                / (eff_inv_mass + params.softness_feedback_coef);
 
             // clamping total impulse (projection)
             // check if the bounds depend on another constraint (friction).
@@ -425,33 +506,27 @@ pub(crate) fn solve_pgs(
                     constraint_idx,
                     coefficient,
                 } => {
-                    let b = (answer[*constraint_idx] * coefficient).abs();
+                    let b = (accumulated_impulses[*constraint_idx] * coefficient).abs();
                     (Some(-b), Some(b))
                 }
             };
 
-            // answer not borrowed by iterator because we need to index into it in the dependency check above
-            let ans = &mut answer[curr_idx];
+            // impulse not borrowed by iterator because we need to index into it in the dependency check above
+            let impulse = &mut accumulated_impulses[curr_idx];
 
-            let prev_ans = *ans;
-            let unprojected_a = *ans + unprojected_delta_ans;
+            let prev_impulse = *impulse;
+            let unprojected_impulse = *impulse + unprojected_delta_imp;
 
             match actual_bounds {
-                (Some(lower), _) if lower > unprojected_a => *ans = lower,
-                (_, Some(upper)) if upper < unprojected_a => *ans = upper,
-                _ => *ans = unprojected_a,
+                (Some(lower), _) if lower > unprojected_impulse => *impulse = lower,
+                (_, Some(upper)) if upper < unprojected_impulse => *impulse = upper,
+                _ => *impulse = unprojected_impulse,
             }
-            *delta_ans = *ans - prev_ans;
+            *delta_imp = *impulse - prev_impulse;
 
-            imxj_x_answer[bodies.0] += Velocity {
-                linear: *delta_ans * im_x_j.v1,
-                angular: *delta_ans * im_x_j.w1,
-            };
+            velocities[bodies.0] += imxj.mul_first(*delta_imp);
             if let Some(b1) = bodies.1 {
-                imxj_x_answer[b1] += Velocity {
-                    linear: *delta_ans * im_x_j.v2,
-                    angular: *delta_ans * im_x_j.w2,
-                };
+                velocities[b1] += imxj.mul_second(*delta_imp);
             }
         }
 
@@ -460,9 +535,9 @@ pub(crate) fn solve_pgs(
         use SolverConvergence::*;
         if match user_params.convergence {
             FixedCount => false,
-            AllElements(limit) => delta_answer.iter().all(|&x| x.abs() <= limit),
+            AllElements(limit) => delta_impulses.iter().all(|&x| x.abs() <= limit),
             VectorNorm(limit) => {
-                delta_answer.iter().fold(0.0, |acc, x| acc + x * x) < limit * limit
+                delta_impulses.iter().fold(0.0, |acc, x| acc + x * x) < limit * limit
             }
         } {
             break;
@@ -471,9 +546,10 @@ pub(crate) fn solve_pgs(
 
     // replace cache
     impulse_cache.clear();
-    for (ans, c) in izip!(&answer, constraints) {
+    for (ans, c) in izip!(&accumulated_impulses, constraints) {
         impulse_cache.insert(c.cache_id, *ans);
     }
 
-    answer
+    // return accumulated impulses so we can include them in events
+    accumulated_impulses
 }

@@ -1,0 +1,4 @@
+[
+    Oscillator ( position: (0.0, 4.0), target_length: 2.0, begin_length: 3.0, frequency: 1.0, damping: 0.0 ),
+    Oscillator ( position: (0.0, 2.0), target_length: 3.0, begin_length: 2.0, frequency: 0.5, damping: 0.0 ),
+]

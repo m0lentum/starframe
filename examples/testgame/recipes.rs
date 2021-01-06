@@ -22,6 +22,13 @@ pub enum Recipe {
         anchored_start: bool,
         anchored_end: bool,
     },
+    Oscillator {
+        position: [f32; 2],
+        begin_length: f32,
+        target_length: f32,
+        frequency: f32,
+        damping: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -149,7 +156,10 @@ impl Recipe {
                                 .with_origin(uv::Vec2::new(-block_length_half, 0.0))
                                 .with_target_origin(uv::Vec2::new(prev_block_offset, 0.0))
                                 .inequality_lt()
-                                .with_max_impulse(100.0)
+                                .soft(phys::OscillatorParams {
+                                    frequency: 20.0,
+                                    damping: 1.0,
+                                })
                                 .build_distance(*spacing),
                         );
                     } else if *anchored_start {
@@ -181,6 +191,45 @@ impl Recipe {
                             .build_distance(0.0),
                     );
                 }
+            }
+            Oscillator {
+                position,
+                begin_length,
+                target_length,
+                frequency,
+                damping,
+            } => {
+                let position: uv::Vec2 = position.into();
+                let offset = uv::Vec2::new(begin_length / 2.0, 0.0);
+                let b1 = spawn_block(
+                    Block {
+                        width: 1.0,
+                        height: 1.0,
+                        transform: m::IsometryBuilder::new().with_position(position + offset),
+                    },
+                    random_color(),
+                    false,
+                    graph,
+                );
+                let b2 = spawn_block(
+                    Block {
+                        width: 1.0,
+                        height: 1.0,
+                        transform: m::IsometryBuilder::new().with_position(position - offset),
+                    },
+                    random_color(),
+                    false,
+                    graph,
+                );
+                physics.add_constraint(
+                    phys::ConstraintBuilder::new(b1)
+                        .with_target(b2)
+                        .soft(phys::OscillatorParams {
+                            frequency: *frequency,
+                            damping: *damping,
+                        })
+                        .build_distance(*target_length),
+                );
             }
         }
     }

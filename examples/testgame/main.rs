@@ -74,6 +74,7 @@ impl State {
 
         self.graph = MyGraph::new();
         let dir = "./examples/testgame/scenes";
+        // TODO: support multiple scenes
         let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
         Recipe::read_from_file(file, &mut self.graph, &mut self.physics).unwrap_or_else(|err| {
             println!("Failed to parse file: {}", err);
@@ -182,6 +183,8 @@ impl game::GameState for State {
 
                 {
                     microprofile::scope!("update", "physics");
+                    // TODO: instead of Option<ForceField>, take a ForceField and add a NoneField type
+                    // (passing None into this requires type annotations and sucks)
                     let grav = phys::forcefield::Gravity(uv::Vec2::new(0.0, -9.81));
                     self.physics.tick(
                         &self.graph.graph,

@@ -13,10 +13,12 @@ pub mod collision;
 pub use collision::{Collider, ColliderShape, Contact};
 
 pub mod constraint;
-pub use constraint::{Constraint, ConstraintBuilder, SolverConvergence, SolverParams};
+pub use constraint::{
+    Constraint, ConstraintBuilder, OscillatorParams, SolverConvergence, SolverParams,
+};
 use constraint::{
-    ConstraintFunction, ConstraintId, DynamicConstraintId, DynamicConstraintType, ImpulseBounds,
-    ImpulseCache, WorkingConstraint,
+    ConstraintFunction, ConstraintId, ConstraintSoftnessType, DynamicConstraintId,
+    DynamicConstraintType, ImpulseBounds, ImpulseCache, WorkingConstraint,
 };
 
 pub mod forcefield;
@@ -89,9 +91,9 @@ sm::new_key_type! {
     pub struct ConstraintHandle;
 }
 
-/// Allows a small amount of error on constraints so that objects don't
+/// Allows a small amount of position error on constraints so that objects don't
 /// e.g. shake on the ground due to being pushed out and back in constantly
-const SLOP_LIMIT: f32 = 0.0002;
+const SLOP_LIMIT: f32 = 0.01;
 
 pub struct Physics {
     stabilisation_coef: f32,
@@ -104,10 +106,7 @@ impl Physics {
     pub fn new() -> Self {
         Physics {
             stabilisation_coef: 0.1,
-            solver_params: SolverParams {
-                max_iterations: 20,
-                convergence: SolverConvergence::AllElements(0.02),
-            },
+            solver_params: SolverParams::default(),
             impulse_cache: ImpulseCache::new(),
             user_constraints: sm::DenseSlotMap::with_key(),
         }
@@ -159,7 +158,6 @@ impl Physics {
         dt: f32,
         forcefield: Option<&impl ForceField>,
     ) {
-        let inv_dt = 1.0 / dt;
         // apply environment forces (gravity, usually)
         if let Some(ff) = forcefield {
             for rb in l_body.iter_mut(graph) {
@@ -186,7 +184,8 @@ impl Physics {
             .map(|(idx, br)| (br.rb.pos().item_idx, idx))
             .collect();
 
-        let velocities: Vec<Velocity> = body_refs
+        // this will be modified directly by the solver and we will map the changes back to the originals at the end
+        let mut velocities: Vec<Velocity> = body_refs
             .iter()
             .map(|br| br.rb.item.velocity_or_zero())
             .collect();
@@ -227,11 +226,10 @@ impl Physics {
 
                     // constraint index for friction to depend on
                     let next_constr_idx = penetration_constraints.len();
-                    let bias_unscaled = -contact.depth * self.stabilisation_coef;
-                    let bias_unscaled = if bias_unscaled.abs() < SLOP_LIMIT {
+                    let depth_with_slop = if contact.depth.abs() < SLOP_LIMIT {
                         0.0
                     } else {
-                        bias_unscaled - bias_unscaled.signum() * SLOP_LIMIT
+                        contact.depth - contact.depth.signum() * SLOP_LIMIT
                     };
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
@@ -239,7 +237,10 @@ impl Physics {
                             *body_refs[pair[0]].tr.item,
                             Some(*body_refs[pair[1]].tr.item),
                         ),
-                        bias: bias_unscaled * inv_dt,
+                        softness: ConstraintSoftnessType::Hard {
+                            correction_coef: self.stabilisation_coef,
+                        },
+                        pos_error: depth_with_slop,
                         bounds: ImpulseBounds::Constant(None, Some(0.0)),
                         cache_id: ConstraintId::Dynamic(DynamicConstraintId {
                             body_indices,
@@ -269,7 +270,10 @@ impl Physics {
                             *body_refs[pair[0]].tr.item,
                             Some(*body_refs[pair[1]].tr.item),
                         ),
-                        bias: 0.0,
+                        softness: ConstraintSoftnessType::Hard {
+                            correction_coef: 0.0,
+                        },
+                        pos_error: 0.0,
                         bounds: ImpulseBounds::Depends {
                             constraint_idx: next_constr_idx,
                             coefficient: friction_coef,
@@ -312,21 +316,29 @@ impl Physics {
             };
             let tr1 = *body_refs[ref_idx_1].tr.item;
             let tr2 = ref_idx_2.map(|b2| *body_refs[b2].tr.item);
-            let bias_unscaled = -user_ctr.func.value(tr1, tr2) * self.stabilisation_coef;
-            let bias_unscaled = if bias_unscaled.abs() < SLOP_LIMIT {
+            let cache_id = ConstraintId::UserDefined(key);
+            let softness = match user_ctr.softness {
+                None => ConstraintSoftnessType::Hard {
+                    correction_coef: self.stabilisation_coef,
+                },
+                Some(osc_params) => ConstraintSoftnessType::SoftOscillator(osc_params),
+            };
+            let pos_error = user_ctr.func.value(tr1, tr2);
+            let error_with_slop = if pos_error.abs() < SLOP_LIMIT {
                 0.0
             } else {
-                bias_unscaled - bias_unscaled.signum() * SLOP_LIMIT
+                pos_error - pos_error.signum() * SLOP_LIMIT
             };
             user_constraints.push(WorkingConstraint {
                 body_indices: (ref_idx_1, ref_idx_2),
                 jacobian_row: user_ctr.func.jacobian(tr1, tr2),
-                bias: bias_unscaled * inv_dt,
+                softness,
+                pos_error: error_with_slop,
                 bounds: ImpulseBounds::Constant(
                     user_ctr.impulse_bounds.0,
                     user_ctr.impulse_bounds.1,
                 ),
-                cache_id: ConstraintId::UserDefined(key),
+                cache_id,
             })
         }
         for stale_handle in stale_constraints {
@@ -345,11 +357,11 @@ impl Physics {
 
         if constraints.len() != 0 {
             // solve
-            let impulses = constraint::solve_pgs(
+            let impulses = constraint::solve(
                 self.solver_params,
                 dt,
                 &constraints,
-                &velocities,
+                &mut velocities,
                 &inv_masses,
                 &mut self.impulse_cache,
             );
@@ -386,8 +398,6 @@ impl Physics {
                     }));
                 }
             }
-            // // store impulses for next frame's warm start
-            // self.impulse_cache.replace(&accumulators);
 
             // integrate
 
@@ -395,26 +405,11 @@ impl Physics {
             let body_nodes: Vec<BodyNodes> =
                 body_refs.into_iter().map(|br| br.downgrade()).collect();
 
-            for (constraint, impulse) in izip!(constraints, impulses) {
-                {
-                    let body1 = body_nodes[constraint.body_indices.0];
-                    let rb1 = l_body.get_mut_unchecked(body1.rb).item;
-                    let rb1_inv_mass = rb1.inverse_mass();
-                    let rb1_inv_mi = rb1.inverse_moment_of_inertia();
-                    if let Some(vel1) = rb1.velocity_mut() {
-                        vel1.linear += rb1_inv_mass * constraint.jacobian_row.v1 * impulse * dt;
-                        vel1.angular += rb1_inv_mi * constraint.jacobian_row.w1 * impulse * dt;
-                    }
-                }
-                if let Some(body2_idx) = constraint.body_indices.1 {
-                    let body2 = body_nodes[body2_idx];
-                    let rb2 = l_body.get_mut_unchecked(body2.rb).item;
-                    let rb2_inv_mass = rb2.inverse_mass();
-                    let rb2_inv_mi = rb2.inverse_moment_of_inertia();
-                    if let Some(vel2) = rb2.velocity_mut() {
-                        vel2.linear += rb2_inv_mass * constraint.jacobian_row.v2 * impulse * dt;
-                        vel2.angular += rb2_inv_mi * constraint.jacobian_row.w2 * impulse * dt;
-                    }
+            // apply the velocities updated by the solver back to the actual bodies
+            for (body, new_vel) in izip!(body_nodes, velocities) {
+                let rb = l_body.get_mut_unchecked(body.rb).item;
+                if let Some(body_vel) = rb.velocity_mut() {
+                    *body_vel = new_vel;
                 }
             }
         }
