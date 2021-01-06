@@ -13,12 +13,13 @@ pub mod collision;
 pub use collision::{Collider, ColliderShape, Contact};
 
 pub mod constraint;
+use constraint::{
+    cache::{ConstraintId, DynamicConstraintId, DynamicConstraintType, ImpulseCache},
+    func::ConstraintFunction,
+    ConstraintSoftnessType, ImpulseBounds, WorkingConstraint,
+};
 pub use constraint::{
     Constraint, ConstraintBuilder, OscillatorParams, SolverConvergence, SolverParams,
-};
-use constraint::{
-    ConstraintFunction, ConstraintId, ConstraintSoftnessType, DynamicConstraintId,
-    DynamicConstraintType, ImpulseBounds, ImpulseCache, WorkingConstraint,
 };
 
 pub mod forcefield;
