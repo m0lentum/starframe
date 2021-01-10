@@ -233,27 +233,6 @@ impl Recipe {
             }
         }
     }
-
-    pub fn read_from_file(
-        file: std::fs::File,
-        graph: &mut crate::MyGraph,
-        physics: &mut phys::Physics,
-    ) -> Result<(), ron::de::Error> {
-        use serde::Deserialize;
-        use std::io::Read;
-
-        let mut reader = std::io::BufReader::new(file);
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes)?;
-
-        let mut deser = ron::de::Deserializer::from_bytes(bytes.as_slice())?;
-        let file_content = Vec::<Recipe>::deserialize(&mut deser)?;
-        for recipe in file_content {
-            recipe.spawn(graph, physics);
-        }
-
-        Ok(())
-    }
 }
 
 fn random_color() -> [f32; 4] {

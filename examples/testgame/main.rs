@@ -45,6 +45,7 @@ pub enum StateEnum {
     Paused,
 }
 pub struct State {
+    scene: Scene,
     state: StateEnum,
     graph: MyGraph,
     player: player::PlayerController,
@@ -55,6 +56,7 @@ pub struct State {
 impl State {
     fn init(device: &wgpu::Device) -> Self {
         State {
+            scene: Scene::default(),
             state: StateEnum::Playing,
             graph: MyGraph::new(),
             player: player::PlayerController::new(),
@@ -69,19 +71,76 @@ impl State {
         }
     }
 
-    fn reset_from_file(&mut self) {
+    fn reset(&mut self) {
         self.physics.reset();
-
         self.graph = MyGraph::new();
-        let dir = "./examples/testgame/scenes";
-        // TODO: support multiple scenes
-        let file = std::fs::File::open(format!("{}/test.ron", dir)).expect("Failed to open file");
-        Recipe::read_from_file(file, &mut self.graph, &mut self.physics).unwrap_or_else(|err| {
-            println!("Failed to parse file: {}", err);
-        });
+    }
+
+    fn read_scene(&mut self, file_idx: usize) {
+        let dir = std::fs::read_dir("./examples/testgame/scenes");
+        match dir {
+            Err(err) => eprintln!("Scenes dir not found: {}", err),
+            Ok(mut dir) => {
+                if let Some(Ok(entry)) = dir.nth(file_idx) {
+                    let file = std::fs::File::open(entry.path());
+                    match file {
+                        Ok(file) => {
+                            let scene = Scene::read_from_file(file);
+                            match scene {
+                                Err(err) => eprintln!("Failed to parse file: {}", err),
+                                Ok(scene) => self.scene = scene,
+                            }
+                        }
+                        Err(err) => eprintln!("Failed to open file: {}", err),
+                    }
+                }
+            }
+        }
+    }
+
+    fn instantiate_scene(&mut self) {
+        self.scene.instantiate(&mut self.graph, &mut self.physics);
     }
 }
 
+/// The recipes in a scene plus some adjustable parameters.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct Scene {
+    gravity: [f32; 2],
+    recipes: Vec<Recipe>,
+}
+
+impl Default for Scene {
+    fn default() -> Self {
+        Self {
+            gravity: [0.0, -9.81],
+            recipes: vec![],
+        }
+    }
+}
+
+impl Scene {
+    pub fn read_from_file(file: std::fs::File) -> Result<Self, ron::de::Error> {
+        use serde::Deserialize;
+        use std::io::Read;
+
+        let mut reader = std::io::BufReader::new(file);
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes)?;
+
+        let mut deser = ron::de::Deserializer::from_bytes(bytes.as_slice())?;
+        Scene::deserialize(&mut deser)
+    }
+
+    pub fn instantiate(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
+        for recipe in &self.recipes {
+            recipe.spawn(graph, physics);
+        }
+    }
+}
+
+/// The entity graph.
 pub struct MyGraph {
     graph: graph::Graph,
     l_transform: graph::Layer<uv::Isometry2>,
@@ -112,6 +171,10 @@ impl MyGraph {
     }
 }
 
+//
+// State updates
+//
+
 impl game::GameState for State {
     fn tick(&mut self, dt: f32, game: &Game) -> Option<()> {
         microprofile::flip();
@@ -134,8 +197,30 @@ impl game::GameState for State {
 
         // reload
 
+        for (idx, num_key) in [
+            Key::Key1,
+            Key::Key2,
+            Key::Key3,
+            Key::Key4,
+            Key::Key5,
+            Key::Key6,
+            Key::Key7,
+            Key::Key8,
+            Key::Key9,
+        ]
+        .iter()
+        .enumerate()
+        {
+            if game.input.is_key_pressed(*num_key, Some(0)) {
+                self.reset();
+                self.read_scene(idx);
+                self.instantiate_scene();
+            }
+        }
+        // reload current scene
         if game.input.is_key_pressed(Key::Return, Some(0)) {
-            self.reset_from_file();
+            self.reset();
+            self.instantiate_scene();
         }
 
         match self.state {
@@ -185,7 +270,7 @@ impl game::GameState for State {
                     microprofile::scope!("update", "physics");
                     // TODO: instead of Option<ForceField>, take a ForceField and add a NoneField type
                     // (passing None into this requires type annotations and sucks)
-                    let grav = phys::forcefield::Gravity(uv::Vec2::new(0.0, -9.81));
+                    let grav = phys::forcefield::Gravity(self.scene.gravity.into());
                     self.physics.tick(
                         &self.graph.graph,
                         &mut self.graph.l_transform,

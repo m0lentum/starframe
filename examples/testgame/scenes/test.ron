@@ -1,82 +1,84 @@
-[
-    Player ((
-        transform: ( position: (-7, -4.5) ),
-    )),
-    // "curtain"
-    Blockchain (
-        width: 0.2,
-        spacing: 0.05,
-        links: [
-            (3.0, 3.0),
-            (3.0, 2.5),
-            (3.0, 2.0),
-            (3.0, 1.5),
-            (3.0, 1.0),
-            (3.0, 0.5),
-            (3.0, 0.0),
-            (3.0, -0.5),
-            (3.0, -1.0),
-        ],
-        anchored_start: true,
-        anchored_end: false,
-    ),
-    // little basket
-    Blockchain (
-        width: 0.2,
-        spacing: 0.1,
-        links: [
-            (-9.0, 0.0),
-            (-8.8, -0.8),
-            (-8.0, -1.0),
-            (-7.0, -1.0),
-            (-6.2, -0.8),
-            (-6.0, 0.0),
-        ],
-        anchored_start: true,
-        anchored_end: true,
-    ),
-    // stack of blocks
-    DynamicBlock (( transform: ( position: (-3, 3.5) ))),
-    DynamicBlock (( transform: ( position: (-3, 2.5) ))),
-    DynamicBlock (( transform: ( position: (-3, 1.5) ))),
-    DynamicBlock (( transform: ( position: (-3, 0.5) ))),
-    DynamicBlock (( transform: ( position: (-3, -0.5) ))),
-    DynamicBlock (( transform: ( position: (-3, -1.5) ))),
-    DynamicBlock (( transform: ( position: (-3, -2.5) ))),
-    DynamicBlock (( transform: ( position: (-3, -3.5) ))),
-    // ramp to test static friction
-    StaticBlock ((
-        width: 8, height: 0.2, transform: ( position: ( 6.5, -0 ), rotation: Deg(20) ),
-    )),
-    // "bridge" down from the ramp
-    Blockchain (
-        width: 0.2,
-        spacing: 0.1,
-        links: [
-            (2.6, -1.4),
-            (1.6, -1.9),
-            (0.6, -2.4),
-            (-0.4, -2.9),
-            (-1.4, -3.4),
-        ],
-        anchored_start: true,
-        anchored_end: true,
-    ),
-    DynamicBlock (( transform: ( position: (5, -0), rotation: Deg(20) ))),
-    Ball ( radius: 0.4, position: ( 7, 1 ) ),
-    Ball ( radius: 0.5, position: ( 8, 1.5 ) ),
-    Ball ( radius: 0.6, position: ( 9, 2 ) ),
-    // walls
-    StaticBlock (( 
-        width: 20, height: 0.2, transform: ( position: (0, 5) ),
-    )),
-    StaticBlock ((
-        width: 20, height: 0.2, transform: ( position: (0, -5) ),
-    )),
-    StaticBlock ((
-        width: 0.2, height: 10, transform: ( position: (10, 0) ),
-    )),
-    StaticBlock ((
-        width: 0.2, height: 10, transform: ( position: (-10, 0) ),
-    )),
-]
+(
+    recipes: [
+        Player ((
+            transform: ( position: (-7, -4.5) ),
+        )),
+        // "curtain"
+        Blockchain (
+            width: 0.2,
+            spacing: 0.05,
+            links: [
+                (3.0, 3.0),
+                (3.0, 2.5),
+                (3.0, 2.0),
+                (3.0, 1.5),
+                (3.0, 1.0),
+                (3.0, 0.5),
+                (3.0, 0.0),
+                (3.0, -0.5),
+                (3.0, -1.0),
+            ],
+            anchored_start: true,
+            anchored_end: false,
+        ),
+        // little basket
+        Blockchain (
+            width: 0.2,
+            spacing: 0.1,
+            links: [
+                (-9.0, 0.0),
+                (-8.8, -0.8),
+                (-8.0, -1.0),
+                (-7.0, -1.0),
+                (-6.2, -0.8),
+                (-6.0, 0.0),
+            ],
+            anchored_start: true,
+            anchored_end: true,
+        ),
+        // stack of blocks
+        DynamicBlock (( transform: ( position: (-3, 3.5) ))),
+        DynamicBlock (( transform: ( position: (-3, 2.5) ))),
+        DynamicBlock (( transform: ( position: (-3, 1.5) ))),
+        DynamicBlock (( transform: ( position: (-3, 0.5) ))),
+        DynamicBlock (( transform: ( position: (-3, -0.5) ))),
+        DynamicBlock (( transform: ( position: (-3, -1.5) ))),
+        DynamicBlock (( transform: ( position: (-3, -2.5) ))),
+        DynamicBlock (( transform: ( position: (-3, -3.5) ))),
+        // ramp to test static friction
+        StaticBlock ((
+            width: 8, height: 0.2, transform: ( position: ( 6.5, -0 ), rotation: Deg(20) ),
+        )),
+        // "bridge" down from the ramp
+        Blockchain (
+            width: 0.2,
+            spacing: 0.1,
+            links: [
+                (2.6, -1.4),
+                (1.6, -1.9),
+                (0.6, -2.4),
+                (-0.4, -2.9),
+                (-1.4, -3.4),
+            ],
+            anchored_start: true,
+            anchored_end: true,
+        ),
+        DynamicBlock (( transform: ( position: (5, -0), rotation: Deg(20) ))),
+        Ball ( radius: 0.4, position: ( 7, 1 ) ),
+        Ball ( radius: 0.5, position: ( 8, 1.5 ) ),
+        Ball ( radius: 0.6, position: ( 9, 2 ) ),
+        // walls
+        StaticBlock (( 
+            width: 20, height: 0.2, transform: ( position: (0, 5) ),
+        )),
+        StaticBlock ((
+            width: 20, height: 0.2, transform: ( position: (0, -5) ),
+        )),
+        StaticBlock ((
+            width: 0.2, height: 10, transform: ( position: (10, 0) ),
+        )),
+        StaticBlock ((
+            width: 0.2, height: 10, transform: ( position: (-10, 0) ),
+        )),
+    ]
+)
