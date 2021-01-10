@@ -268,8 +268,6 @@ impl game::GameState for State {
 
                 {
                     microprofile::scope!("update", "physics");
-                    // TODO: instead of Option<ForceField>, take a ForceField and add a NoneField type
-                    // (passing None into this requires type annotations and sucks)
                     let grav = phys::forcefield::Gravity(self.scene.gravity.into());
                     self.physics.tick(
                         &self.graph.graph,
@@ -278,7 +276,7 @@ impl game::GameState for State {
                         &self.graph.l_collider,
                         &mut self.graph.l_evt_sink,
                         dt,
-                        Some(&grav),
+                        &grav,
                     );
                 }
                 {

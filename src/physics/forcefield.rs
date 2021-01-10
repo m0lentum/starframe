@@ -6,6 +6,13 @@ pub trait ForceField {
     fn value_at(&self, position: uv::Vec2) -> uv::Vec2;
 }
 
+pub struct NoneField;
+impl ForceField for NoneField {
+    fn value_at(&self, _: uv::Vec2) -> uv::Vec2 {
+        uv::Vec2::zero()
+    }
+}
+
 /// A combination of two different force fields.
 pub struct Sum<F1: ForceField, F2: ForceField>(pub F1, pub F2);
 impl<F1: ForceField, F2: ForceField> ForceField for Sum<F1, F2> {

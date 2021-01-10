@@ -157,16 +157,14 @@ impl Physics {
         l_collider: &graph::Layer<Collider>,
         l_evt_sink: &mut crate::EventSinkLayer<EvtParams>,
         dt: f32,
-        forcefield: Option<&impl ForceField>,
+        forcefield: &impl ForceField,
     ) {
         // apply environment forces (gravity, usually)
-        if let Some(ff) = forcefield {
-            for rb in l_body.iter_mut(graph) {
-                if let (Some(ref tr), rigidbody::BodyType::Dynamic { velocity, .. }) =
-                    (graph.get_neighbor(&rb, &l_transform), &mut rb.item.body)
-                {
-                    velocity.linear += ff.value_at(tr.item.translation) * dt;
-                }
+        for rb in l_body.iter_mut(graph) {
+            if let (Some(ref tr), rigidbody::BodyType::Dynamic { velocity, .. }) =
+                (graph.get_neighbor(&rb, &l_transform), &mut rb.item.body)
+            {
+                velocity.linear += forcefield.value_at(tr.item.translation) * dt;
             }
         }
 
