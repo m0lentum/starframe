@@ -34,7 +34,7 @@ impl Facing {
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct PlayerRecipe {
-    pub transform: math::IsometryBuilder,
+    pub pose: math::IsometryBuilder,
 }
 
 impl PlayerRecipe {
@@ -42,9 +42,7 @@ impl PlayerRecipe {
         const WIDTH: f32 = 0.2;
         const HEIGHT: f32 = 0.4;
 
-        let tr_node = graph
-            .l_transform
-            .insert(self.transform.into(), &mut graph.graph);
+        let pose_node = graph.l_transform.insert(self.pose.into(), &mut graph.graph);
         let shape_node = graph.l_shape.insert(
             gx::Shape::Rect {
                 w: WIDTH,
@@ -58,11 +56,11 @@ impl PlayerRecipe {
         let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
         let body_node = graph.l_body.insert(body, &mut graph.graph);
         let tag_node = graph.l_player.insert(Player::new(), &mut graph.graph);
-        graph.graph.connect(&tr_node, &body_node);
+        graph.graph.connect(&pose_node, &body_node);
         graph.graph.connect(&body_node, &coll_node);
-        graph.graph.connect(&tr_node, &shape_node);
+        graph.graph.connect(&pose_node, &shape_node);
 
-        graph.graph.connect(&tag_node, &tr_node);
+        graph.graph.connect(&tag_node, &pose_node);
         graph.graph.connect(&tag_node, &body_node);
     }
 }
@@ -148,7 +146,7 @@ impl PlayerController {
 
     fn spawn_bullet(tr: uv::Isometry2, vel: phys::Velocity, g: &mut MyGraph) {
         const R: f32 = 0.05;
-        let tr_node = g.l_transform.insert(tr, &mut g.graph);
+        let pose_node = g.l_transform.insert(tr, &mut g.graph);
         let shape_node = g.l_shape.insert(
             gx::Shape::Circle {
                 r: R,
@@ -178,9 +176,9 @@ impl PlayerController {
             &mut g.graph,
         );
 
-        g.graph.connect(&tr_node, &body_node);
+        g.graph.connect(&pose_node, &body_node);
         g.graph.connect(&body_node, &coll_node);
-        g.graph.connect(&tr_node, &shape_node);
+        g.graph.connect(&pose_node, &shape_node);
         g.graph.connect(&body_node, &evt_sink_node);
     }
 }

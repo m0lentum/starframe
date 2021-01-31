@@ -1,7 +1,7 @@
 (
     recipes: [
         Player ((
-            transform: ( position: (-7, -4.5) ),
+            pose: ( position: (-7, -4.5) ),
         )),
         // "curtain"
         Blockchain (
@@ -37,17 +37,17 @@
             anchored_end: true,
         ),
         // stack of blocks
-        DynamicBlock (( transform: ( position: (-3, 3.5) ))),
-        DynamicBlock (( transform: ( position: (-3, 2.5) ))),
-        DynamicBlock (( transform: ( position: (-3, 1.5) ))),
-        DynamicBlock (( transform: ( position: (-3, 0.5) ))),
-        DynamicBlock (( transform: ( position: (-3, -0.5) ))),
-        DynamicBlock (( transform: ( position: (-3, -1.5) ))),
-        DynamicBlock (( transform: ( position: (-3, -2.5) ))),
-        DynamicBlock (( transform: ( position: (-3, -3.5) ))),
+        DynamicBlock (( pose: ( position: (-3, 3.5) ))),
+        DynamicBlock (( pose: ( position: (-3, 2.5) ))),
+        DynamicBlock (( pose: ( position: (-3, 1.5) ))),
+        DynamicBlock (( pose: ( position: (-3, 0.5) ))),
+        DynamicBlock (( pose: ( position: (-3, -0.5) ))),
+        DynamicBlock (( pose: ( position: (-3, -1.5) ))),
+        DynamicBlock (( pose: ( position: (-3, -2.5) ))),
+        DynamicBlock (( pose: ( position: (-3, -3.5) ))),
         // ramp to test static friction
         StaticBlock ((
-            width: 8, height: 0.2, transform: ( position: ( 6.5, -0 ), rotation: Deg(20) ),
+            width: 8, height: 0.2, pose: ( position: ( 6.5, -0 ), rotation: Deg(20) ),
         )),
         // "bridge" down from the ramp
         Blockchain (
@@ -63,22 +63,22 @@
             anchored_start: true,
             anchored_end: true,
         ),
-        DynamicBlock (( transform: ( position: (5, -0), rotation: Deg(20) ))),
+        DynamicBlock (( pose: ( position: (5, -0), rotation: Deg(20) ))),
         Ball ( radius: 0.4, position: ( 7, 1 ) ),
         Ball ( radius: 0.5, position: ( 8, 1.5 ) ),
         Ball ( radius: 0.6, position: ( 9, 2 ) ),
         // walls
         StaticBlock (( 
-            width: 20, height: 0.2, transform: ( position: (0, 5) ),
+            width: 20, height: 0.2, pose: ( position: (0, 5) ),
         )),
         StaticBlock ((
-            width: 20, height: 0.2, transform: ( position: (0, -5) ),
+            width: 20, height: 0.2, pose: ( position: (0, -5) ),
         )),
         StaticBlock ((
-            width: 0.2, height: 10, transform: ( position: (10, 0) ),
+            width: 0.2, height: 10, pose: ( position: (10, 0) ),
         )),
         StaticBlock ((
-            width: 0.2, height: 10, transform: ( position: (-10, 0) ),
+            width: 0.2, height: 10, pose: ( position: (-10, 0) ),
         )),
     ]
 )

@@ -161,10 +161,10 @@ impl Physics {
     ) {
         // apply environment forces (gravity, usually)
         for mut rb in l_body.iter_mut(graph) {
-            if let (Some(ref tr), rigidbody::BodyType::Dynamic { velocity, .. }) =
+            if let (Some(ref pose), rigidbody::BodyType::Dynamic { velocity, .. }) =
                 (graph.get_neighbor(&rb, &l_transform), &mut rb.body)
             {
-                velocity.linear += forcefield.value_at(tr.translation) * dt;
+                velocity.linear += forcefield.value_at(pose.translation) * dt;
             }
         }
 
@@ -172,8 +172,8 @@ impl Physics {
             .iter(graph)
             .filter_map(|rb| {
                 let coll = graph.get_neighbor(&rb, &l_collider)?;
-                let tr = graph.get_neighbor(&rb, &l_transform)?;
-                Some(BodyRef { tr, coll, rb })
+                let pose = graph.get_neighbor(&rb, &l_transform)?;
+                Some(BodyRef { pose, coll, rb })
             })
             .collect();
         // map from the position of a node in the layer to the position of a node in body_refs
@@ -228,7 +228,7 @@ impl Physics {
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
                         jacobian_row: normal_constr
-                            .jacobian(*body_refs[pair[0]].tr, Some(*body_refs[pair[1]].tr)),
+                            .jacobian(*body_refs[pair[0]].pose, Some(*body_refs[pair[1]].pose)),
                         softness: ConstraintSoftnessType::Hard {
                             correction_coef: self.stabilisation_coef,
                         },
@@ -259,7 +259,7 @@ impl Physics {
                     friction_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
                         jacobian_row: tangent_constr
-                            .jacobian(*body_refs[pair[0]].tr, Some(*body_refs[pair[1]].tr)),
+                            .jacobian(*body_refs[pair[0]].pose, Some(*body_refs[pair[1]].pose)),
                         softness: ConstraintSoftnessType::Hard {
                             correction_coef: 0.0,
                         },
@@ -304,8 +304,8 @@ impl Physics {
             } else {
                 None
             };
-            let tr1 = *body_refs[ref_idx_1].tr;
-            let tr2 = ref_idx_2.map(|b2| *body_refs[b2].tr);
+            let pose1 = *body_refs[ref_idx_1].pose;
+            let pose2 = ref_idx_2.map(|b2| *body_refs[b2].pose);
             let cache_id = ConstraintId::UserDefined(key);
             let softness = match user_ctr.softness {
                 None => ConstraintSoftnessType::Hard {
@@ -313,7 +313,7 @@ impl Physics {
                 },
                 Some(osc_params) => ConstraintSoftnessType::SoftOscillator(osc_params),
             };
-            let pos_error = user_ctr.func.value(tr1, tr2);
+            let pos_error = user_ctr.func.value(pose1, pose2);
             let error_with_slop = if pos_error.abs() < SLOP_LIMIT {
                 0.0
             } else {
@@ -321,7 +321,7 @@ impl Physics {
             };
             user_constraints.push(WorkingConstraint {
                 body_indices: (ref_idx_1, ref_idx_2),
-                jacobian_row: user_ctr.func.jacobian(tr1, tr2),
+                jacobian_row: user_ctr.func.jacobian(pose1, pose2),
                 softness,
                 pos_error: error_with_slop,
                 bounds: ImpulseBounds::Constant(
@@ -406,11 +406,11 @@ impl Physics {
 
         // semi-implicit Euler integration: use velocities at the end of the time step
         for rb in l_body.iter(graph) {
-            if let (Some(mut tr), Some(vel)) =
+            if let (Some(mut pose), Some(vel)) =
                 (graph.get_neighbor_mut(&rb, l_transform), rb.velocity())
             {
-                tr.append_translation(dt * vel.linear);
-                tr.prepend_rotation(Angle::Rad(dt * vel.angular).into());
+                pose.append_translation(dt * vel.linear);
+                pose.prepend_rotation(Angle::Rad(dt * vel.angular).into());
             }
         }
     }
@@ -419,7 +419,7 @@ impl Physics {
 /// References to the parts of a body that we need to find out if it collides with anything.
 /// Used internally in collision detection, exposed to allow custom broad phase algorithms.
 pub struct BodyRef<'a> {
-    pub tr: graph::NodeRef<'a, uv::Isometry2>,
+    pub pose: graph::NodeRef<'a, uv::Isometry2>,
     pub coll: graph::NodeRef<'a, Collider>,
     pub rb: graph::NodeRef<'a, RigidBody>,
 }
@@ -427,7 +427,7 @@ pub struct BodyRef<'a> {
 impl<'a> BodyRef<'a> {
     fn downgrade(&self) -> BodyNodes {
         BodyNodes {
-            tr: self.tr.pos(),
+            pose: self.pose.pos(),
             coll: self.coll.pos(),
             rb: self.rb.pos(),
         }
@@ -448,7 +448,7 @@ fn ordered_positions(b1: &BodyRef<'_>, b2: &BodyRef<'_>) -> [usize; 2] {
 /// from the same graph layer during one iteration.
 #[derive(Clone, Copy, Debug)]
 struct BodyNodes {
-    tr: graph::NodePosition,
+    pose: graph::NodePosition,
     coll: graph::NodePosition,
     rb: graph::NodePosition,
 }

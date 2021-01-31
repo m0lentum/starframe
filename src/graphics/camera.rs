@@ -41,7 +41,7 @@ impl ScalingStrategy {
 
 pub struct MouseDragCamera {
     pub scaling_strategy: ScalingStrategy,
-    pub transform: uv::Similarity2,
+    pub pose: uv::Similarity2,
     pub zoom_speed: f32,
     pub min_zoom_out: f32,
     pub max_zoom_out: f32,
@@ -52,7 +52,7 @@ impl MouseDragCamera {
     pub fn new(scaling_strategy: ScalingStrategy) -> Self {
         MouseDragCamera {
             scaling_strategy,
-            transform: uv::Similarity2::identity(),
+            pose: uv::Similarity2::identity(),
             zoom_speed: 0.01,
             min_zoom_out: 0.1,
             max_zoom_out: 10.0,
@@ -67,22 +67,22 @@ impl MouseDragCamera {
         let scaling_factor = self.scaling_strategy.scaling_factor(viewport_size);
         match (input_cache.drag_state(), self.drag_start) {
             (None, _) => self.drag_start = None,
-            (Some(DragState::InProgress { .. }), None) => self.drag_start = Some(self.transform),
-            (Some(DragState::InProgress { start, .. }), Some(tr_at_start)) => {
+            (Some(DragState::InProgress { .. }), None) => self.drag_start = Some(self.pose),
+            (Some(DragState::InProgress { start, .. }), Some(pose_at_start)) => {
                 let cursor_pos = input_cache.cursor_position().get();
                 let offset = uv::Vec2::new(
                     (cursor_pos.x - start.x) as f32,
                     -(cursor_pos.y - start.y) as f32,
                 );
-                self.transform = tr_at_start;
-                self.transform
-                    .append_translation(-offset * self.transform.scale / scaling_factor);
+                self.pose = pose_at_start;
+                self.pose
+                    .append_translation(-offset * self.pose.scale / scaling_factor);
             }
-            (Some(DragState::Completed { start, end, .. }), Some(tr_at_start)) => {
+            (Some(DragState::Completed { start, end, .. }), Some(pose_at_start)) => {
                 let offset = uv::Vec2::new((end.x - start.x) as f32, -(end.y - start.y) as f32);
-                self.transform = tr_at_start;
-                self.transform
-                    .append_translation(-offset * self.transform.scale / scaling_factor);
+                self.pose = pose_at_start;
+                self.pose
+                    .append_translation(-offset * self.pose.scale / scaling_factor);
                 self.drag_start = None;
             }
             _ => (),
@@ -91,9 +91,9 @@ impl MouseDragCamera {
         let scroll = input_cache.scroll_delta();
         if scroll != 0.0 {
             // TODO: zoom towards mouse cursor
-            let new_scaling = (1.0 + scroll * -self.zoom_speed) * self.transform.scale;
+            let new_scaling = (1.0 + scroll * -self.zoom_speed) * self.pose.scale;
             let new_scaling = new_scaling.max(self.min_zoom_out).min(self.max_zoom_out);
-            self.transform.scale = new_scaling;
+            self.pose.scale = new_scaling;
         }
     }
 }
@@ -103,7 +103,7 @@ impl Camera for MouseDragCamera {
         let vp_scaling = uv::Mat3::from_nonuniform_scale_homogeneous(
             self.scaling_strategy.scaling(viewport_size),
         );
-        let my_transform_inv = self.transform.inversed().into_homogeneous_matrix();
+        let my_transform_inv = self.pose.inversed().into_homogeneous_matrix();
         vp_scaling * my_transform_inv
     }
 }

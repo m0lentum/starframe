@@ -3,11 +3,11 @@
 //! A game object in Starframe is a _directed graph_ of components.
 //! Conceptually, one may look something like this:
 //! ```text
-//! Transform <----> RigidBody <----> Collider
-//!    ^                ^
-//!    |                |
-//!    v                v
-//!  Sprite         EventSink
+//!   Pose <----> RigidBody <----> Collider
+//!    ^              ^
+//!    |              |
+//!    v              v
+//!  Sprite       EventSink
 //!    |
 //!    |
 //!    v
@@ -243,10 +243,10 @@ impl<'a, T> NodeRefMut<'a, T> {
 /// ```
 /// # use starframe::graph::{Graph, Layer};
 /// # use starframe::physics::{Collider, RigidBody};
-/// # use starframe::math::Transform;
+/// # use starframe::math::Pose;
 /// struct MyGraph {
 ///     graph: Graph,
-///     l_transform: Layer<Transform>,
+///     l_pose: Layer<Pose>,
 ///     l_collider: Layer<Collider>,
 ///     l_body: Layer<RigidBody>,
 ///     // etc.
@@ -254,12 +254,12 @@ impl<'a, T> NodeRefMut<'a, T> {
 /// impl MyGraph {
 ///     pub fn new() -> Self {
 ///         let mut graph = Graph::new();
-///         let l_transform = graph.create_layer();
+///         let l_pose = graph.create_layer();
 ///         let l_collider = graph.create_layer();
 ///         let l_body = graph.create_layer();
 ///         MyGraph {
 ///             graph,
-///             l_transform,
+///             l_pose,
 ///             l_collider,
 ///             l_body,
 ///         }
@@ -688,21 +688,21 @@ impl<T> Layer<T> {
     ///
     /// You can use this with `Graph::get_neighbor` to iterate over patterns in the graph:
     /// ```
-    /// # use starframe::{math::Transform, physics::{Collider, RigidBody}, graph::{Graph, Layer}};
+    /// # use starframe::{math::Pose, physics::{Collider, RigidBody}, graph::{Graph, Layer}};
     /// # let mut graph = Graph::new();
     /// # let l_rigidbody: Layer<RigidBody> = graph.create_layer();
-    /// # let l_transform: Layer<Transform> = graph.create_layer();
+    /// # let l_pose: Layer<Pose> = graph.create_layer();
     /// # let l_collider: Layer<Collider> = graph.create_layer();
     /// for body in l_rigidbody.iter(&graph) {
-    ///     let tr = match graph.get_neighbor(&body, &l_transform) {
-    ///         Some(tr) => tr,
+    ///     let pose = match graph.get_neighbor(&body, &l_pose) {
+    ///         Some(pose) => pose,
     ///         None => continue,
     ///     };
     ///     let coll = match graph.get_neighbor(&body, &l_collider) {
     ///         Some(coll) => coll,
     ///         None => continue,
     ///     };
-    ///     // do stuff with body, tr and coll...
+    ///     // do stuff with body, pose and coll...
     /// }
     /// ```
     pub fn iter<'s, 'g: 's>(&'s self, graph: &'g Graph) -> LayerIter<'s, T> {
@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn connect_nodes() {
         let mut graph = Graph::new();
-        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut poses: Layer<Transform> = graph.create_layer();
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
@@ -824,15 +824,15 @@ mod tests {
 
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
-            let tr_node = trs.insert(Transform(i), &mut graph);
+            let pose_node = poses.insert(Transform(i), &mut graph);
             let vel_node = vels.insert(Velocity(i), &mut graph);
             let rb_node = rbs.insert(RigidBody(i), &mut graph);
-            graph.connect(&vel_node, &tr_node);
-            graph.connect(&rb_node, &tr_node);
+            graph.connect(&vel_node, &pose_node);
+            graph.connect(&rb_node, &pose_node);
             graph.connect(&rb_node, &vel_node);
             graph.connect_oneway(&rb_node, &everyones_shape);
             // refcounts
-            assert_eq!(graph.get_refcount(&tr_node), 2);
+            assert_eq!(graph.get_refcount(&pose_node), 2);
             assert_eq!(graph.get_refcount(&rb_node), 2);
             // 1 extra from the pin
             assert_eq!(graph.get_refcount(&everyones_shape), i + 2);
@@ -842,17 +842,17 @@ mod tests {
                 &Shape(69)
             );
             assert_eq!(
-                graph.get_neighbor(&tr_node, &rbs).unwrap().item,
+                graph.get_neighbor(&pose_node, &rbs).unwrap().item,
                 &RigidBody(i)
             );
-            assert!(graph.get_neighbor(&tr_node, &shapes).is_none());
+            assert!(graph.get_neighbor(&pose_node, &shapes).is_none());
 
             // spawn something with different connections in between
-            let tr_node_ = trs.insert(Transform(42 + i), &mut graph);
+            let pose_node_ = poses.insert(Transform(42 + i), &mut graph);
             let shape_node_ = shapes.insert(Shape(i), &mut graph);
-            graph.connect(&tr_node_, &shape_node_);
+            graph.connect(&pose_node_, &shape_node_);
             assert_eq!(
-                graph.get_neighbor(&tr_node_, &shapes).unwrap().item,
+                graph.get_neighbor(&pose_node_, &shapes).unwrap().item,
                 &Shape(i)
             );
         }
@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn iterate() {
         let mut graph = Graph::new();
-        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut poses: Layer<Transform> = graph.create_layer();
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
@@ -869,12 +869,12 @@ mod tests {
         let everyones_shape = shapes.insert(Shape(69), &mut graph).pin(&mut graph);
 
         for i in 0..10 {
-            let tr_node = trs.insert(Transform(i), &mut graph);
+            let pose_node = poses.insert(Transform(i), &mut graph);
             let vel_node = vels.insert(Velocity(i), &mut graph);
             let rb_node = rbs.insert(RigidBody(0), &mut graph);
-            graph.connect(&rb_node, &tr_node);
+            graph.connect(&rb_node, &pose_node);
             if i % 2 == 0 {
-                graph.connect(&tr_node, &vel_node);
+                graph.connect(&pose_node, &vel_node);
             }
             if i % 4 == 0 {
                 graph.connect_oneway(&rb_node, &everyones_shape);
@@ -886,11 +886,11 @@ mod tests {
         let mut match_count = 0; // not including shape
         let mut full_match_count = 0; // including shape
         for mut rb in rbs.iter_mut(&graph) {
-            let tr = match graph.get_neighbor(&rb, &trs) {
-                Some(tr) => tr,
+            let pose = match graph.get_neighbor(&rb, &poses) {
+                Some(pose) => pose,
                 None => continue,
             };
-            let vel = match graph.get_neighbor(&tr, &vels) {
+            let vel = match graph.get_neighbor(&pose, &vels) {
                 Some(vel) => vel,
                 None => continue,
             };
@@ -909,7 +909,7 @@ mod tests {
             println!(
                 "{:?}, {:?}, {:?}, {:?}",
                 rb.item,
-                tr.item,
+                pose.item,
                 vel.item,
                 shape.map(|s| s.item)
             );
@@ -922,8 +922,8 @@ mod tests {
 
         for rb in rbs.iter(&graph) {
             if graph
-                .get_neighbor(&rb, &trs)
-                .and_then(|tr| graph.get_neighbor(&tr, &vels))
+                .get_neighbor(&rb, &poses)
+                .and_then(|pose| graph.get_neighbor(&pose, &vels))
                 .is_none()
             {
                 assert_eq!(rb.item.0, 0);
@@ -936,7 +936,7 @@ mod tests {
     #[test]
     fn delete() {
         let mut graph = Graph::new();
-        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut poses: Layer<Transform> = graph.create_layer();
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
@@ -947,12 +947,12 @@ mod tests {
         graph.connect(&everyones_shape, &shape_owns_thing);
 
         for i in 0..10 {
-            let tr_node = trs.insert(Transform(i), &mut graph);
+            let pose_node = poses.insert(Transform(i), &mut graph);
             let vel_node = vels.insert(Velocity(i), &mut graph);
             let rb_node = rbs.insert(RigidBody(0), &mut graph);
-            graph.connect(&rb_node, &tr_node);
+            graph.connect(&rb_node, &pose_node);
             if i % 2 == 0 {
-                graph.connect(&tr_node, &vel_node);
+                graph.connect(&pose_node, &vel_node);
             } else {
                 graph.connect_oneway(&vel_node, &vel_node); // connect vel to itself to "keep it alive"
             }
@@ -971,8 +971,8 @@ mod tests {
         }
         // all vels deleted (== have 0 referrers)
         assert_eq!(vels.iter(&graph).count(), 0);
-        // half of trs had vels attached and have also been deleted
-        assert_eq!(trs.iter(&graph).count(), 5);
+        // half of poses had vels attached and have also been deleted
+        assert_eq!(poses.iter(&graph).count(), 5);
 
         println!("Refcounts after first deletions {:?}", graph.refcounts);
 
@@ -987,7 +987,7 @@ mod tests {
             graph.delete(rbs.get_unchecked(rb_to_del));
         }
         assert_eq!(shapes.iter(&graph).count(), 0);
-        assert_eq!(trs.iter(&graph).count(), 0);
+        assert_eq!(poses.iter(&graph).count(), 0);
         assert_eq!(vels.iter(&graph).count(), 0);
         assert_eq!(rbs.iter(&graph).count(), 0);
 
@@ -1013,7 +1013,7 @@ mod tests {
     #[test]
     fn reuse_deleted_slots() {
         let mut graph = Graph::new();
-        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut poses: Layer<Transform> = graph.create_layer();
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
         let mut shapes: Layer<Shape> = graph.create_layer();
@@ -1023,62 +1023,62 @@ mod tests {
         // delete and respawn stuff a few times to hopefully see if things get connected wrong at some point
         // (this doesn't prove things won't go wrong over a long enough time but fingers crossed)
         for i in 0..5 {
-            for tr_node in trs
+            for pose_node in poses
                 .iter(&graph)
                 // delete half of everything that was placed,
                 // so every new iteration we should be reusing slots for half and pushing new for half
                 .take(5)
-                .map(|tr| tr.pos())
+                .map(|pose| pose.pos())
                 .collect::<Vec<_>>()
             {
-                graph.delete(trs.get_unchecked(tr_node));
+                graph.delete(poses.get_unchecked(pose_node));
             }
             for j in 0..10 {
                 let id = i * 20 + j;
-                let tr_node = trs.insert(Transform(id), &mut graph);
+                let pose_node = poses.insert(Transform(id), &mut graph);
                 let vel_node = vels.insert(Velocity(id), &mut graph);
                 let rb_node = rbs.insert(RigidBody(id), &mut graph);
-                graph.connect(&tr_node, &vel_node);
+                graph.connect(&pose_node, &vel_node);
                 graph.connect(&vel_node, &rb_node);
-                graph.connect_oneway(&tr_node, &everyones_shape);
+                graph.connect_oneway(&pose_node, &everyones_shape);
                 // delete and replace every other
                 if i % 2 == 0 {
-                    let tr_node = NodeRef::as_node(&tr_node, &graph); // drop the ref to the layer
+                    let pose_node = NodeRef::as_node(&pose_node, &graph); // drop the ref to the layer
 
-                    let tr_len_before = trs.content.len();
+                    let pose_len_before = poses.content.len();
 
                     graph.delete(
-                        trs.get(
-                            tr_node
+                        poses.get(
+                            pose_node
                                 .check(&graph)
-                                .expect("tr_node wasn't deleted yet so it should be there"),
+                                .expect("pose_node wasn't deleted yet so it should be there"),
                         ),
                     );
                     assert!(
-                        tr_node.check(&graph).is_none(),
-                        "tr_node was deleted so checking it should now give None"
+                        pose_node.check(&graph).is_none(),
+                        "pose_node was deleted so checking it should now give None"
                     );
 
-                    let tr_node = trs.insert(Transform(100), &mut graph);
+                    let pose_node = poses.insert(Transform(100), &mut graph);
                     let vel_node = vels.insert(Velocity(100), &mut graph);
-                    graph.connect(&tr_node, &vel_node);
+                    graph.connect(&pose_node, &vel_node);
                     if i % 4 == 0 {
                         let rb_node = rbs.insert(RigidBody(100), &mut graph);
-                        graph.connect(&rb_node, &tr_node);
+                        graph.connect(&rb_node, &pose_node);
                     }
 
-                    let tr_len_after = trs.content.len();
+                    let pose_len_after = poses.content.len();
                     // reused the slot that was left behind by delete
-                    assert_eq!(tr_len_before, tr_len_after);
+                    assert_eq!(pose_len_before, pose_len_after);
                 }
             }
         }
 
-        println!("trs.content: {:?}", trs.content);
+        println!("poses.content: {:?}", poses.content);
         println!("vels.content: {:?}", vels.content);
         println!("rbs.content: {:?}", rbs.content);
 
-        assert_eq!(trs.content.len(), 30);
+        assert_eq!(poses.content.len(), 30);
         assert_eq!(vels.content.len(), 30);
         // everyones_shape was never deleted
         assert_eq!(shapes.content.len(), 1);
@@ -1087,15 +1087,15 @@ mod tests {
     #[test]
     fn pin() {
         let mut graph = Graph::new();
-        let mut trs: Layer<Transform> = graph.create_layer();
+        let mut poses: Layer<Transform> = graph.create_layer();
         let mut vels: Layer<Velocity> = graph.create_layer();
         let mut rbs: Layer<RigidBody> = graph.create_layer();
 
-        let tr = trs.insert(Transform(0), &mut graph);
-        let tr_pin = tr.pin(&mut graph);
-        let tr = NodeRef::as_node(&tr, &graph); // just to be able to delete and still have the pinned node
-                                                // should appear in the iterator even though it's not connected to anything
-        assert_eq!(trs.iter(&graph).count(), 1);
+        let pose = poses.insert(Transform(0), &mut graph);
+        let pose_pin = pose.pin(&mut graph);
+        let pose = NodeRef::as_node(&pose, &graph); // just to be able to delete and still have the pinned node
+                                                    // should appear in the iterator even though it's not connected to anything
+        assert_eq!(poses.iter(&graph).count(), 1);
 
         // awkward way to drop the reference to `vels` but this is unlikely to be needed in an actual spawning function
         let vel = NodeRef::as_node(&vels.insert(Velocity(0), &mut graph), &graph);
@@ -1103,20 +1103,20 @@ mod tests {
         let rb = NodeRef::as_node(&rbs.insert(RigidBody(0), &mut graph), &graph);
         let rb_check = rb.check(&graph).unwrap();
 
-        graph.connect(&tr_pin, &vel_check);
-        graph.connect_oneway(&tr_pin, &rb_check);
+        graph.connect(&pose_pin, &vel_check);
+        graph.connect_oneway(&pose_pin, &rb_check);
         graph.connect_oneway(&vel_check, &rb_check);
 
         // this should not delete anything because the root node of deletion is pinned
-        graph.delete(tr.check(&graph).unwrap());
-        assert!(graph.get_neighbor(&tr_pin, &vels).is_some());
-        assert!(graph.get_neighbor(&tr_pin, &rbs).is_some());
+        graph.delete(pose.check(&graph).unwrap());
+        assert!(graph.get_neighbor(&pose_pin, &vels).is_some());
+        assert!(graph.get_neighbor(&pose_pin, &rbs).is_some());
         assert!(graph.get_neighbor(&vel_check, &rbs).is_some());
 
         // unpinning and then deleting should delete everything
-        graph.unpin(tr_pin);
-        graph.delete(tr.check(&graph).unwrap());
-        assert!(tr.check(&graph).is_none());
+        graph.unpin(pose_pin);
+        graph.delete(pose.check(&graph).unwrap());
+        assert!(pose.check(&graph).is_none());
         assert!(vel.check(&graph).is_none());
         assert!(rb.check(&graph).is_none());
     }

@@ -2,6 +2,8 @@
 use std::f32::consts::PI;
 pub use ultraviolet as uv;
 
+pub type Pose = uv::Isometry2;
+
 /// An angle in either degrees or radians.
 /// Default conversion from f32 is in degrees.
 #[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]

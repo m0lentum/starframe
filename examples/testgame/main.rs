@@ -192,7 +192,7 @@ impl game::GameState for State {
         self.camera
             .update(&game.input, game.renderer.window_size().into());
         if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
-            self.camera.transform = uv::Similarity2::identity();
+            self.camera.pose = uv::Similarity2::identity();
         }
 
         // reload
@@ -248,7 +248,7 @@ impl game::GameState for State {
                 let mut rng = rand::thread_rng();
                 if game.input.is_key_pressed(Key::S, Some(0)) {
                     Recipe::DynamicBlock(recipes::Block {
-                        transform: math::IsometryBuilder::new()
+                        pose: math::IsometryBuilder::new()
                             .with_position(random_pos())
                             .with_rotation(random_angle()),
                         width: distr::Uniform::from(0.6..1.0).sample(&mut rng),

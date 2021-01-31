@@ -16,8 +16,8 @@ pub(crate) enum ConstraintFunction {
 }
 
 impl ConstraintFunction {
-    pub(crate) fn value(&self, tr1: uv::Isometry2, tr2: Option<uv::Isometry2>) -> f32 {
-        let tr2 = tr2.unwrap_or(uv::Isometry2::identity());
+    pub(crate) fn value(&self, pose1: uv::Isometry2, pose2: Option<uv::Isometry2>) -> f32 {
+        let pose2 = pose2.unwrap_or(uv::Isometry2::identity());
         use ConstraintFunction::*;
         match self {
             Normal { .. } => {
@@ -29,7 +29,7 @@ impl ConstraintFunction {
                 distance_squared,
                 offsets,
             } => {
-                let actual_dist_sq = (tr2 * offsets[1] - tr1 * offsets[0]).mag_sq();
+                let actual_dist_sq = (pose2 * offsets[1] - pose1 * offsets[0]).mag_sq();
 
                 // divide by 2 to make the jacobian match the derivative of this
                 (actual_dist_sq - distance_squared) / 2.0
@@ -37,8 +37,8 @@ impl ConstraintFunction {
         }
     }
 
-    pub(crate) fn jacobian(&self, tr1: uv::Isometry2, tr2: Option<uv::Isometry2>) -> Vec6 {
-        let tr2 = tr2.unwrap_or(uv::Isometry2::identity());
+    pub(crate) fn jacobian(&self, pose1: uv::Isometry2, pose2: Option<uv::Isometry2>) -> Vec6 {
+        let pose2 = pose2.unwrap_or(uv::Isometry2::identity());
         use ConstraintFunction::*;
         match self {
             Normal { normal, offsets } => Vec6 {
@@ -48,7 +48,7 @@ impl ConstraintFunction {
                 w2: -math::left_normal(offsets[1]).dot(**normal),
             },
             Distance { offsets, .. } => {
-                let dist_v = tr2 * offsets[1] - tr1 * offsets[0];
+                let dist_v = pose2 * offsets[1] - pose1 * offsets[0];
                 let dist_v = if dist_v.x == 0.0 && dist_v.y == 0.0 {
                     // return the downwards direction if the points overlap perfectly,
                     // else this would cause a NaN to enter the system and cause a crash
@@ -58,9 +58,9 @@ impl ConstraintFunction {
                 };
                 Vec6 {
                     v1: -dist_v,
-                    w1: -math::left_normal(tr1.rotation * offsets[0]).dot(dist_v),
+                    w1: -math::left_normal(pose1.rotation * offsets[0]).dot(dist_v),
                     v2: dist_v,
-                    w2: math::left_normal(tr2.rotation * offsets[1]).dot(dist_v),
+                    w2: math::left_normal(pose2.rotation * offsets[1]).dot(dist_v),
                 }
             }
         }

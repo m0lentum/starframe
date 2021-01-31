@@ -34,10 +34,10 @@ impl Shape {
         }
     }
 
-    pub(self) fn verts(&self, tr: &uv::Isometry2) -> Vec<Vertex> {
+    pub(self) fn verts(&self, pose: &uv::Isometry2) -> Vec<Vertex> {
         // generate a triangle mesh
-        fn as_verts(pts: &[uv::Vec2], tr: &uv::Isometry2, color: Color) -> Vec<Vertex> {
-            let mut iter = pts.iter().map(|p| *tr * *p).peekable();
+        fn as_verts(pts: &[uv::Vec2], pose: &uv::Isometry2, color: Color) -> Vec<Vertex> {
+            let mut iter = pts.iter().map(|p| *pose * *p).peekable();
             let first = match iter.next() {
                 Some(p) => Vertex {
                     position: [p.x, p.y],
@@ -72,7 +72,7 @@ impl Shape {
                         uv::Vec2::new(r * angle.cos(), r * angle.sin())
                     })
                     .collect();
-                as_verts(verts.as_slice(), tr, *color)
+                as_verts(verts.as_slice(), pose, *color)
             }
             Shape::Rect { w, h, color } => {
                 let hw = 0.5 * w;
@@ -84,11 +84,11 @@ impl Shape {
                         uv::Vec2::new(-hw, -hh),
                         uv::Vec2::new(hw, -hh),
                     ],
-                    tr,
+                    pose,
                     *color,
                 )
             }
-            Shape::Poly { points, color } => as_verts(points.as_slice(), tr, *color),
+            Shape::Poly { points, color } => as_verts(points.as_slice(), pose, *color),
         }
     }
 }
@@ -232,8 +232,8 @@ impl ShapeRenderer {
     /// Draw all the alive `Shape`s that have associated `Transform`s.
     pub fn draw(
         &mut self,
-        shapes: &graph::Layer<Shape>,
-        transforms: &graph::Layer<uv::Isometry2>,
+        l_shape: &graph::Layer<Shape>,
+        l_pose: &graph::Layer<uv::Isometry2>,
         graph: &graph::Graph,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,
@@ -252,9 +252,9 @@ impl ShapeRenderer {
         // Update the vertex buffer
         //
 
-        let verts: Vec<Vertex> = shapes
+        let verts: Vec<Vertex> = l_shape
             .iter(graph)
-            .filter_map(|s| graph.get_neighbor(&s, transforms).map(|tr| s.verts(&*tr)))
+            .filter_map(|s| graph.get_neighbor(&s, l_pose).map(|tr| s.verts(&*tr)))
             .flatten()
             .collect();
         if verts.len() == 0 {

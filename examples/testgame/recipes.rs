@@ -36,7 +36,7 @@ pub enum Recipe {
 pub struct Block {
     pub width: f32,
     pub height: f32,
-    pub transform: m::IsometryBuilder,
+    pub pose: m::IsometryBuilder,
 }
 
 impl Default for Block {
@@ -44,7 +44,7 @@ impl Default for Block {
         Self {
             width: 1.0,
             height: 1.0,
-            transform: Default::default(),
+            pose: Default::default(),
         }
     }
 }
@@ -55,9 +55,9 @@ fn spawn_block(
     is_static: bool,
     graph: &mut crate::MyGraph,
 ) -> sf::graph::Node<phys::RigidBody> {
-    let tr_node = graph
+    let pose_node = graph
         .l_transform
-        .insert(block.transform.into(), &mut graph.graph);
+        .insert(block.pose.into(), &mut graph.graph);
     let coll = phys::Collider::new_rect(block.width, block.height);
     let body = if is_static {
         phys::RigidBody::new_static()
@@ -74,9 +74,9 @@ fn spawn_block(
         },
         &mut graph.graph,
     );
-    graph.graph.connect(&tr_node, &body_node);
+    graph.graph.connect(&pose_node, &body_node);
     graph.graph.connect(&body_node, &coll_node);
-    graph.graph.connect(&tr_node, &shape_node);
+    graph.graph.connect(&pose_node, &shape_node);
 
     sf::graph::NodeRef::as_node(&body_node, &graph.graph)
 }
@@ -93,7 +93,7 @@ impl Recipe {
                 spawn_block(*block, random_color(), false, graph);
             }
             Ball { radius, position } => {
-                let tr_node = graph.l_transform.insert(
+                let pose_node = graph.l_transform.insert(
                     uv::Isometry2::new(position.into(), uv::Rotor2::identity()),
                     &mut graph.graph,
                 );
@@ -109,9 +109,9 @@ impl Recipe {
                     },
                     &mut graph.graph,
                 );
-                graph.graph.connect(&tr_node, &body_node);
+                graph.graph.connect(&pose_node, &body_node);
                 graph.graph.connect(&body_node, &coll_node);
-                graph.graph.connect(&tr_node, &shape_node);
+                graph.graph.connect(&pose_node, &shape_node);
             }
             Blockchain {
                 width,
@@ -140,7 +140,7 @@ impl Recipe {
                         Block {
                             width: block_length,
                             height: *width, // a bit weird but makes sense with the orientation calculations
-                            transform: m::IsometryBuilder::new()
+                            pose: m::IsometryBuilder::new()
                                 .with_position(center)
                                 .with_rotation(m::Angle::Rad(orientation)),
                         },
@@ -205,7 +205,7 @@ impl Recipe {
                     Block {
                         width: 1.0,
                         height: 1.0,
-                        transform: m::IsometryBuilder::new().with_position(position + offset),
+                        pose: m::IsometryBuilder::new().with_position(position + offset),
                     },
                     random_color(),
                     false,
@@ -215,7 +215,7 @@ impl Recipe {
                     Block {
                         width: 1.0,
                         height: 1.0,
-                        transform: m::IsometryBuilder::new().with_position(position - offset),
+                        pose: m::IsometryBuilder::new().with_position(position - offset),
                     },
                     random_color(),
                     false,

@@ -1,5 +1,5 @@
 /// A component that allows a game object to collide with others.
-/// Note that a Transform component must also be present.
+/// Note that a Pose component must also be present.
 #[derive(Clone, Copy, Debug)]
 pub struct Collider {
     shape: ColliderShape,
