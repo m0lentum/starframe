@@ -254,11 +254,7 @@ impl ShapeRenderer {
 
         let verts: Vec<Vertex> = shapes
             .iter(graph)
-            .filter_map(|s| {
-                graph
-                    .get_neighbor(&s, transforms)
-                    .map(|tr| s.item.verts(tr.item))
-            })
+            .filter_map(|s| graph.get_neighbor(&s, transforms).map(|tr| s.verts(&*tr)))
             .flatten()
             .collect();
         if verts.len() == 0 {

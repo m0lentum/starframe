@@ -1,5 +1,5 @@
 use crate::{
-    graph::{self, UnsafeNode},
+    graph::{self, NodeRef, UnsafeNode},
     math::{self, uv, Angle, Unit},
 };
 
@@ -160,11 +160,11 @@ impl Physics {
         forcefield: &impl ForceField,
     ) {
         // apply environment forces (gravity, usually)
-        for rb in l_body.iter_mut(graph) {
+        for mut rb in l_body.iter_mut(graph) {
             if let (Some(ref tr), rigidbody::BodyType::Dynamic { velocity, .. }) =
-                (graph.get_neighbor(&rb, &l_transform), &mut rb.item.body)
+                (graph.get_neighbor(&rb, &l_transform), &mut rb.body)
             {
-                velocity.linear += forcefield.value_at(tr.item.translation) * dt;
+                velocity.linear += forcefield.value_at(tr.translation) * dt;
             }
         }
 
@@ -186,16 +186,11 @@ impl Physics {
         // this will be modified directly by the solver and we will map the changes back to the originals at the end
         let mut velocities: Vec<Velocity> = body_refs
             .iter()
-            .map(|br| br.rb.item.velocity_or_zero())
+            .map(|br| br.rb.velocity_or_zero())
             .collect();
         let inv_masses: Vec<uv::Vec2> = body_refs
             .iter()
-            .map(|br| {
-                uv::Vec2::new(
-                    br.rb.item.inverse_mass(),
-                    br.rb.item.inverse_moment_of_inertia(),
-                )
-            })
+            .map(|br| uv::Vec2::new(br.rb.inverse_mass(), br.rb.inverse_moment_of_inertia()))
             .collect();
 
         // detect collisions, produce contact constraints
@@ -205,8 +200,8 @@ impl Physics {
         let mut penetration_constraints: Vec<WorkingConstraint> = Vec::new();
         let mut friction_constraints: Vec<WorkingConstraint> = Vec::new();
         for pair in pairs {
-            if body_refs[pair[0]].rb.item.responds_to_collisions()
-                || body_refs[pair[1]].rb.item.responds_to_collisions()
+            if body_refs[pair[0]].rb.responds_to_collisions()
+                || body_refs[pair[1]].rb.responds_to_collisions()
             {
                 let coll_contacts = collision::narrowphase::intersection_check(
                     &body_refs[pair[0]],
@@ -232,10 +227,8 @@ impl Physics {
                     };
                     penetration_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
-                        jacobian_row: normal_constr.jacobian(
-                            *body_refs[pair[0]].tr.item,
-                            Some(*body_refs[pair[1]].tr.item),
-                        ),
+                        jacobian_row: normal_constr
+                            .jacobian(*body_refs[pair[0]].tr, Some(*body_refs[pair[1]].tr)),
                         softness: ConstraintSoftnessType::Hard {
                             correction_coef: self.stabilisation_coef,
                         },
@@ -255,8 +248,8 @@ impl Physics {
 
                     // simplified coefficient model, actually this would depend on the specific pair of materials
                     // and couldn't be stored within a single material
-                    let friction_coef = body_refs[pair[0]].rb.item.material.friction
-                        * body_refs[pair[1]].rb.item.material.friction;
+                    let friction_coef = body_refs[pair[0]].rb.material.friction
+                        * body_refs[pair[1]].rb.material.friction;
 
                     let tangent_constr = ConstraintFunction::Normal {
                         normal: Unit::new_unchecked(math::left_normal(*contact.normal)),
@@ -265,10 +258,8 @@ impl Physics {
 
                     friction_constraints.push(WorkingConstraint {
                         body_indices: (pair[0], Some(pair[1])),
-                        jacobian_row: tangent_constr.jacobian(
-                            *body_refs[pair[0]].tr.item,
-                            Some(*body_refs[pair[1]].tr.item),
-                        ),
+                        jacobian_row: tangent_constr
+                            .jacobian(*body_refs[pair[0]].tr, Some(*body_refs[pair[1]].tr)),
                         softness: ConstraintSoftnessType::Hard {
                             correction_coef: 0.0,
                         },
@@ -313,8 +304,8 @@ impl Physics {
             } else {
                 None
             };
-            let tr1 = *body_refs[ref_idx_1].tr.item;
-            let tr2 = ref_idx_2.map(|b2| *body_refs[b2].tr.item);
+            let tr1 = *body_refs[ref_idx_1].tr;
+            let tr2 = ref_idx_2.map(|b2| *body_refs[b2].tr);
             let cache_id = ConstraintId::UserDefined(key);
             let softness = match user_ctr.softness {
                 None => ConstraintSoftnessType::Hard {
@@ -371,12 +362,12 @@ impl Physics {
                 let bodies = &constraint.body_indices;
                 let contact = &contacts[contact_idx];
                 let impulse = impulses[contact_idx];
-                if let Some(sink) =
+                if let Some(mut sink) =
                     graph.get_neighbor_mut_unchecked(&body_refs[bodies.0].rb, l_evt_sink)
                 {
-                    sink.item.push(crate::Event::Contact(ContactEvent {
+                    sink.push(crate::Event::Contact(ContactEvent {
                         // unwrap because all contact constraints have a target body
-                        other_body: body_refs[bodies.1.unwrap()].rb.node(graph),
+                        other_body: NodeRef::as_node(&body_refs[bodies.1.unwrap()].rb, &graph),
                         info: ContactInfo {
                             point: contact.point,
                             normal: -contact.normal,
@@ -384,11 +375,11 @@ impl Physics {
                         },
                     }));
                 }
-                if let Some(sink) =
+                if let Some(mut sink) =
                     graph.get_neighbor_mut_unchecked(&body_refs[bodies.1.unwrap()].rb, l_evt_sink)
                 {
-                    sink.item.push(crate::Event::Contact(ContactEvent {
-                        other_body: body_refs[bodies.0].rb.node(graph),
+                    sink.push(crate::Event::Contact(ContactEvent {
+                        other_body: NodeRef::as_node(&body_refs[bodies.0].rb, &graph),
                         info: ContactInfo {
                             point: contact.point,
                             normal: contact.normal,
@@ -406,7 +397,7 @@ impl Physics {
 
             // apply the velocities updated by the solver back to the actual bodies
             for (body, new_vel) in izip!(body_nodes, velocities) {
-                let rb = l_body.get_mut_unchecked(body.rb).item;
+                let mut rb = l_body.get_mut_unchecked(body.rb);
                 if let Some(body_vel) = rb.velocity_mut() {
                     *body_vel = new_vel;
                 }
@@ -415,12 +406,11 @@ impl Physics {
 
         // semi-implicit Euler integration: use velocities at the end of the time step
         for rb in l_body.iter(graph) {
-            if let (Some(tr), Some(vel)) =
-                (graph.get_neighbor_mut(&rb, l_transform), rb.item.velocity())
+            if let (Some(mut tr), Some(vel)) =
+                (graph.get_neighbor_mut(&rb, l_transform), rb.velocity())
             {
-                tr.item.append_translation(dt * vel.linear);
-                tr.item
-                    .prepend_rotation(Angle::Rad(dt * vel.angular).into());
+                tr.append_translation(dt * vel.linear);
+                tr.prepend_rotation(Angle::Rad(dt * vel.angular).into());
             }
         }
     }

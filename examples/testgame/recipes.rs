@@ -78,7 +78,7 @@ fn spawn_block(
     graph.graph.connect(&body_node, &coll_node);
     graph.graph.connect(&tr_node, &shape_node);
 
-    body_node.node(&graph.graph)
+    sf::graph::NodeRef::as_node(&body_node, &graph.graph)
 }
 
 impl Recipe {

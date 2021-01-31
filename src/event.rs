@@ -38,8 +38,8 @@ impl<Params> EventSinkLayer<Params> {
         let mut evts_with_responders: Vec<(Event, g::Node<EventSink<Params>>, Response<Params>)> =
             self.iter_mut(graph)
                 .flat_map(|sink_ref| {
-                    let node = sink_ref.node(graph);
-                    let resp = sink_ref.item.response;
+                    let node = g::NodeRefMut::as_node(&sink_ref, graph);
+                    let resp = sink_ref.response;
                     (sink_ref.item.events.drain(..)).map(move |evt| (evt, node, resp))
                 })
                 .collect();

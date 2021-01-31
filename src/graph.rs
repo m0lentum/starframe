@@ -167,9 +167,15 @@ impl<T> SafeNode for PinnedNode<T> {
 /// A reference to a component in a `Layer`
 /// that knows its position in the graph and can be used in graph operations.
 pub struct NodeRef<'a, T> {
-    /// The component.
-    pub item: &'a T,
+    item: &'a T,
     pos: NodePosition,
+}
+impl<'a, T> std::ops::Deref for NodeRef<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.item
+    }
 }
 impl<'a, T> UnsafeNode for NodeRef<'a, T> {
     fn pos(&self) -> NodePosition {
@@ -180,10 +186,10 @@ impl<'a, T> SafeNode for NodeRef<'a, T> {
     type MarkerType = T;
 }
 impl<'a, T> NodeRef<'a, T> {
-    pub fn node(&self, graph: &Graph) -> Node<T> {
+    pub fn as_node(nr: &Self, graph: &Graph) -> Node<T> {
         Node {
-            pos: self.pos,
-            gen: graph.generations[self.pos.layer_idx][self.pos.item_idx],
+            pos: nr.pos,
+            gen: graph.generations[nr.pos.layer_idx][nr.pos.item_idx],
             _marker: PhantomData,
         }
     }
@@ -192,9 +198,21 @@ impl<'a, T> NodeRef<'a, T> {
 /// A mutable reference to a component in a `Layer`
 /// that knows its position in the graph and can be used in graph operations.
 pub struct NodeRefMut<'a, T> {
-    /// The component.
-    pub item: &'a mut T,
+    // exposed to crate to allow a trick in `event.rs`
+    pub(crate) item: &'a mut T,
     pos: NodePosition,
+}
+impl<'a, T> std::ops::Deref for NodeRefMut<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.item
+    }
+}
+impl<'a, T> std::ops::DerefMut for NodeRefMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.item
+    }
 }
 impl<'a, T> UnsafeNode for NodeRefMut<'a, T> {
     fn pos(&self) -> NodePosition {
@@ -205,10 +223,10 @@ impl<'a, T> SafeNode for NodeRefMut<'a, T> {
     type MarkerType = T;
 }
 impl<'a, T> NodeRefMut<'a, T> {
-    pub fn node(&self, graph: &Graph) -> Node<T> {
+    pub fn as_node(nrm: &Self, graph: &Graph) -> Node<T> {
         Node {
-            pos: self.pos,
-            gen: graph.generations[self.pos.layer_idx][self.pos.item_idx],
+            pos: nrm.pos,
+            gen: graph.generations[nrm.pos.layer_idx][nrm.pos.item_idx],
             _marker: PhantomData,
         }
     }
@@ -1025,7 +1043,7 @@ mod tests {
                 graph.connect_oneway(&tr_node, &everyones_shape);
                 // delete and replace every other
                 if i % 2 == 0 {
-                    let tr_node = tr_node.node(&graph); // drop the ref to the layer
+                    let tr_node = NodeRef::as_node(&tr_node, &graph); // drop the ref to the layer
 
                     let tr_len_before = trs.content.len();
 
@@ -1075,14 +1093,14 @@ mod tests {
 
         let tr = trs.insert(Transform(0), &mut graph);
         let tr_pin = tr.pin(&mut graph);
-        let tr = tr.node(&graph); // just to be able to delete and still have the pinned node
-                                  // should appear in the iterator even though it's not connected to anything
+        let tr = NodeRef::as_node(&tr, &graph); // just to be able to delete and still have the pinned node
+                                                // should appear in the iterator even though it's not connected to anything
         assert_eq!(trs.iter(&graph).count(), 1);
 
         // awkward way to drop the reference to `vels` but this is unlikely to be needed in an actual spawning function
-        let vel = vels.insert(Velocity(0), &mut graph).node(&graph);
+        let vel = NodeRef::as_node(&vels.insert(Velocity(0), &mut graph), &graph);
         let vel_check = vel.check(&graph).unwrap();
-        let rb = rbs.insert(RigidBody(0), &mut graph).node(&graph);
+        let rb = NodeRef::as_node(&rbs.insert(RigidBody(0), &mut graph), &graph);
         let rb_check = rb.check(&graph).unwrap();
 
         graph.connect(&tr_pin, &vel_check);

@@ -88,7 +88,7 @@ impl PlayerController {
 
         let mut bullet_queue: Vec<(uv::Isometry2, phys::Velocity)> = Vec::new();
         for mut player in g.l_player.iter_mut(&g.graph) {
-            let player_body = g.graph.get_neighbor_mut(&player, &mut g.l_body).unwrap();
+            let mut player_body = g.graph.get_neighbor_mut(&player, &mut g.l_body).unwrap();
             let mut player_tr = g
                 .graph
                 .get_neighbor_mut(&player, &mut g.l_transform)
@@ -97,13 +97,13 @@ impl PlayerController {
             // move and orient
 
             if let Some(facing) = target_facing {
-                player.item.facing = facing;
+                player.facing = facing;
             }
 
             let move_speed = self.base_move_speed;
 
             let target_hvel = target_hdir * move_speed;
-            let player_vel = match player_body.item.velocity_mut() {
+            let player_vel = match player_body.velocity_mut() {
                 Some(vel) => vel,
                 None => continue,
             };
@@ -114,7 +114,7 @@ impl PlayerController {
             // hacked up rotation locking
 
             player_vel.angular = 0.0;
-            player_tr.item.rotation = uv::Rotor2::identity();
+            player_tr.rotation = uv::Rotor2::identity();
 
             // jump
 
@@ -129,13 +129,13 @@ impl PlayerController {
                 bullet_queue.push((
                     math::IsometryBuilder::new()
                         .with_position(
-                            player_tr.item.translation
-                                + player.item.facing.orient_vec(uv::Vec2::new(0.2, 0.0)),
+                            player_tr.translation
+                                + player.facing.orient_vec(uv::Vec2::new(0.2, 0.0)),
                         )
                         .build(),
                     phys::Velocity {
                         angular: 0.0,
-                        linear: player.item.facing.orient_vec(uv::Vec2::new(20.0, 0.1)),
+                        linear: player.facing.orient_vec(uv::Vec2::new(20.0, 0.1)),
                     },
                 ));
             }
