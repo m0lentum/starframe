@@ -211,11 +211,16 @@ impl Physics {
                     // store the contacts themselves to generate events later
                     contacts.push(*contact);
 
+                    let offsets = [
+                        contact.point - body_refs[pair[0]].pose.translation,
+                        contact.point - body_refs[pair[1]].pose.translation,
+                    ];
+
                     let body_indices = ordered_positions(&body_refs[pair[0]], &body_refs[pair[1]]);
 
                     let normal_constr = ConstraintFunction::Normal {
                         normal: contact.normal,
-                        offsets: contact.offsets,
+                        offsets,
                     };
 
                     // constraint index for friction to depend on
@@ -253,7 +258,7 @@ impl Physics {
 
                     let tangent_constr = ConstraintFunction::Normal {
                         normal: Unit::new_unchecked(math::left_normal(*contact.normal)),
-                        offsets: contact.offsets,
+                        offsets,
                     };
 
                     friction_constraints.push(WorkingConstraint {
