@@ -223,48 +223,44 @@ impl game::GameState for State {
             self.instantiate_scene();
         }
 
-        match self.state {
+        // spawn stuff also when paused
+        let random_pos = || {
+            let mut rng = rand::thread_rng();
+            uv::Vec2::new(
+                distr::Uniform::from(-5.0..5.0).sample(&mut rng),
+                distr::Uniform::from(1.0..4.0).sample(&mut rng),
+            )
+        };
+        let random_angle =
+            || math::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
+        let mut rng = rand::thread_rng();
+        if game.input.is_key_pressed(Key::S, Some(0)) {
+            Recipe::DynamicBlock(recipes::Block {
+                pose: math::IsometryBuilder::new()
+                    .with_position(random_pos())
+                    .with_rotation(random_angle()),
+                width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
+                height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
+            })
+            .spawn(&mut self.graph, &mut self.physics);
+        }
+        if game.input.is_key_pressed(Key::T, Some(0)) {
+            Recipe::Ball {
+                position: random_pos().into(),
+                radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
+            }
+            .spawn(&mut self.graph, &mut self.physics);
+        }
+
+        match (&self.state, game.input.is_key_pressed(Key::Space, Some(0))) {
             //
-            // Playing
+            // Playing or stepping manually
             //
-            StateEnum::Playing => {
-                if game.input.is_key_pressed(Key::Space, Some(0)) {
+            (StateEnum::Playing, _) | (StateEnum::Paused, true) => {
+                if game.input.is_key_pressed(Key::P, Some(0)) {
                     self.state = StateEnum::Paused;
                     return Some(());
                 }
-
-                let random_pos = || {
-                    let mut rng = rand::thread_rng();
-                    uv::Vec2::new(
-                        distr::Uniform::from(-5.0..5.0).sample(&mut rng),
-                        distr::Uniform::from(1.0..4.0).sample(&mut rng),
-                    )
-                };
-                let random_angle = || {
-                    math::Angle::Deg(
-                        distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()),
-                    )
-                };
-                let mut rng = rand::thread_rng();
-                if game.input.is_key_pressed(Key::S, Some(0)) {
-                    Recipe::DynamicBlock(recipes::Block {
-                        pose: math::IsometryBuilder::new()
-                            .with_position(random_pos())
-                            .with_rotation(random_angle()),
-                        width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                        height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
-                    })
-                    .spawn(&mut self.graph, &mut self.physics);
-                }
-                if game.input.is_key_pressed(Key::T, Some(0)) {
-                    Recipe::Ball {
-                        position: random_pos().into(),
-                        radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
-                    }
-                    .spawn(&mut self.graph, &mut self.physics);
-                }
-
-                //
 
                 {
                     microprofile::scope!("update", "physics");
@@ -291,8 +287,8 @@ impl game::GameState for State {
             //
             // Paused
             //
-            StateEnum::Paused => {
-                if game.input.is_key_pressed(Key::Space, Some(0)) {
+            (StateEnum::Paused, false) => {
+                if game.input.is_key_pressed(Key::P, Some(0)) {
                     self.state = StateEnum::Playing;
                     return Some(());
                 }
