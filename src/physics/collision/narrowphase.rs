@@ -52,10 +52,8 @@ impl<'a> Iterator for ContactIterator<'a> {
 pub struct Contact {
     /// The normal, facing away from obj1
     pub normal: math::Unit<uv::Vec2>,
-    /// Penetration depth
-    pub depth: f32,
-    /// Point of contact on the surface of obj1, in world space
-    pub point: uv::Vec2,
+    /// Points of contact on the surface of each object, in object-local space.
+    pub offsets: [uv::Vec2; 2],
 }
 
 /// Checks two colliders for intersection.
@@ -79,8 +77,7 @@ pub fn intersection_check(
 fn flip_contacts(contacts: ContactResult) -> ContactResult {
     contacts.map(|c| Contact {
         normal: -c.normal,
-        depth: c.depth,
-        point: c.point - c.depth * *c.normal,
+        offsets: [c.offsets[1], c.offsets[0]],
     })
 }
 
@@ -91,24 +88,22 @@ fn circle_circle(pose1: &uv::Isometry2, r1: f32, pose2: &uv::Isometry2, r2: f32)
     let dist = pos2 - pos1;
     let dist_sq = dist.mag_sq();
 
-    let depth;
-    let normal;
-    if dist_sq < 0.001 {
+    let normal = if dist_sq < 0.001 {
         // same position, consider penetration to be on x axis
-        depth = r1 + r2;
-        normal = Unit::unit_x();
+        Unit::unit_x()
     } else if dist_sq < (r1 + r2) * (r1 + r2) {
-        // normal collision
-        depth = (r1 + r2) - dist.mag();
-        normal = Unit::new_normalize(dist);
+        // typical collision
+        Unit::new_normalize(dist)
     } else {
         return ContactResult::Zero;
-    }
+    };
 
     ContactResult::One(Contact {
         normal,
-        depth,
-        point: pos1 + (r1 * (*normal)),
+        offsets: [
+            pose1.rotation.reversed() * (r1 * *normal),
+            pose2.rotation.reversed() * (-r2 * *normal),
+        ],
     })
 }
 
@@ -130,32 +125,27 @@ fn rect_circle(
         return ContactResult::Zero;
     }
     let point_abs: uv::Vec2;
-    let depth: f32;
     let normal_abs: Unit<uv::Vec2>;
     if c_to_corner.x > 0.0 && c_to_corner.y > 0.0 {
         // circle center is inside the rect
         if c_to_corner.x < c_to_corner.y {
             point_abs = uv::Vec2::new(hw, dist_abs.y);
-            depth = c_to_corner.x + r;
             normal_abs = Unit::unit_x();
         } else {
             point_abs = uv::Vec2::new(dist_abs.x, hh);
-            depth = c_to_corner.y + r;
             normal_abs = Unit::unit_y();
         };
     } else if c_to_corner.x > 0.0 {
         // inside in the x direction but not y
         point_abs = uv::Vec2::new(dist_abs.x, hh);
-        depth = c_to_corner.y + r; // c_to_corner.y is negative
         normal_abs = Unit::unit_y();
     } else if c_to_corner.y > 0.0 {
         // inside in the y direction but not x
         point_abs = uv::Vec2::new(hw, dist_abs.y);
-        depth = c_to_corner.x + r;
         normal_abs = Unit::unit_x();
     } else {
         // outside both edges, possible intersection with the corner point
-        depth = r - c_to_corner.mag();
+        let depth = r - c_to_corner.mag();
         if depth > 0.0 {
             point_abs = uv::Vec2::new(hw, hh);
             normal_abs = Unit::new_normalize(-c_to_corner);
@@ -164,15 +154,17 @@ fn rect_circle(
         }
     }
 
+    let normal_wrt_rect = Unit::new_unchecked(uv::Vec2::new(
+        dist_signums.x * normal_abs.x,
+        dist_signums.y * normal_abs.y,
+    ));
+
     ContactResult::One(Contact {
-        normal: pose_rect.rotation
-            * Unit::new_unchecked(uv::Vec2::new(
-                dist_signums.x * normal_abs.x,
-                dist_signums.y * normal_abs.y,
-            )),
-        depth,
-        point: *pose_rect
-            * uv::Vec2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
+        normal: pose_rect.rotation * normal_wrt_rect,
+        offsets: [
+            uv::Vec2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
+            pose_c_wrt_rect.rotation.reversed() * (-r * *normal_wrt_rect),
+        ],
     })
 }
 
@@ -236,18 +228,18 @@ fn rect_rect(
         let axis_dot_y2 = axis.dot(*y2_axis);
         let x2_axis_facing_point = Unit::new_unchecked(-axis_dot_x2.signum() * *x2_axis);
         let y2_axis_facing_point = Unit::new_unchecked(-axis_dot_y2.signum() * *y2_axis);
-        // this can be outside both objects! we need to clip on both edges later
-        let farthest_point = dist + (*x2_axis_facing_point * hw2) + (*y2_axis_facing_point * hh2);
+        let extreme_point_on_obj2 =
+            dist + (*x2_axis_facing_point * hw2) + (*y2_axis_facing_point * hh2);
         // clip incident edges to find possible second contact point
         let incident_edge = if axis_dot_x2.abs() < axis_dot_y2.abs() {
             Edge {
-                start: farthest_point,
+                start: extreme_point_on_obj2,
                 dir: -x2_axis_facing_point,
                 length: hw2 * 2.0,
             }
         } else {
             Edge {
-                start: farthest_point,
+                start: extreme_point_on_obj2,
                 dir: -y2_axis_facing_point,
                 length: hh2 * 2.0,
             }
@@ -266,34 +258,35 @@ fn rect_rect(
             }
         };
         match clip_edge(owning_edge, incident_edge) {
-            EdgeClipResult::Intersects => {
-                ContactResult::One(Contact {
-                    normal,
-                    depth,
-                    // point on object 1's surface
-                    point: *pose1 * (farthest_point + depth * *axis),
-                })
-            }
+            EdgeClipResult::Intersects => ContactResult::One(Contact {
+                normal,
+                offsets: [
+                    incident_edge.start + depth * *axis,
+                    pose2_wrt_pose1.inversed() * incident_edge.start,
+                ],
+            }),
             EdgeClipResult::Passes { enters, exits } => {
                 let edge_dot_axis = incident_edge.dir.dot(*axis);
                 let enter_depth = depth - enters * edge_dot_axis;
                 let exit_depth = depth - exits * edge_dot_axis;
+
+                let enter_point = incident_edge.start + (enters * *incident_edge.dir);
+                let exit_point = incident_edge.start + (exits * *incident_edge.dir);
+                let p2_wrt_p1_inv = pose2_wrt_pose1.inversed();
                 ContactResult::Two(
                     Contact {
                         normal,
-                        depth: enter_depth,
-                        point: *pose1
-                            * (farthest_point
-                                + (enters * *incident_edge.dir)
-                                + (enter_depth * *axis)),
+                        offsets: [
+                            enter_point + (enter_depth * *axis),
+                            p2_wrt_p1_inv * enter_point,
+                        ],
                     },
                     Contact {
                         normal,
-                        depth: exit_depth,
-                        point: *pose1
-                            * (farthest_point
-                                + (exits * *incident_edge.dir)
-                                + (exit_depth * *axis)),
+                        offsets: [
+                            exit_point + (exit_depth * *axis),
+                            p2_wrt_p1_inv * exit_point,
+                        ],
                     },
                 )
             }
@@ -303,16 +296,16 @@ fn rect_rect(
         // axis is on obj2, penetrating point(s) are on obj1
         let x1_axis_facing_point = Unit::new_unchecked(axis.x.signum() * uv::Vec2::unit_x());
         let y1_axis_facing_point = Unit::new_unchecked(axis.y.signum() * uv::Vec2::unit_y());
-        let farthest_point = uv::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
+        let extreme_point_on_obj1 = uv::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
         let incident_edge = if axis.x.abs() < axis.y.abs() {
             Edge {
-                start: farthest_point,
+                start: extreme_point_on_obj1,
                 dir: -x1_axis_facing_point,
                 length: hw1 * 2.0,
             }
         } else {
             Edge {
-                start: farthest_point,
+                start: extreme_point_on_obj1,
                 dir: -y1_axis_facing_point,
                 length: hh1 * 2.0,
             }
@@ -334,24 +327,33 @@ fn rect_rect(
         match clip_edge(owning_edge, incident_edge) {
             EdgeClipResult::Intersects => ContactResult::One(Contact {
                 normal,
-                depth,
-                point: *pose1 * farthest_point,
+                offsets: [
+                    incident_edge.start,
+                    pose2_wrt_pose1.inversed() * (incident_edge.start - depth * *axis),
+                ],
             }),
             EdgeClipResult::Passes { enters, exits } => {
                 let edge_dot_axis = incident_edge.dir.dot(*axis);
                 let enter_depth = depth - enters * edge_dot_axis;
                 let exit_depth = depth - exits * edge_dot_axis;
+
+                let enter_point = incident_edge.start + (enters * *incident_edge.dir);
+                let exit_point = incident_edge.start + (exits * *incident_edge.dir);
+                let p2_wrt_p1_inv = pose2_wrt_pose1.inversed();
                 ContactResult::Two(
                     Contact {
                         normal,
-                        depth: enter_depth,
-                        // same as above but minus adding the depth because we're already on body 1's surface
-                        point: *pose1 * (farthest_point + (enters * *incident_edge.dir)),
+                        offsets: [
+                            enter_point,
+                            p2_wrt_p1_inv * (enter_point - enter_depth * *axis),
+                        ],
                     },
                     Contact {
                         normal,
-                        depth: exit_depth,
-                        point: *pose1 * (farthest_point + (exits * *incident_edge.dir)),
+                        offsets: [
+                            exit_point,
+                            p2_wrt_p1_inv * (exit_point - exit_depth * *axis),
+                        ],
                     },
                 )
             }

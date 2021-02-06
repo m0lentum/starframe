@@ -60,7 +60,7 @@ impl State {
             state: StateEnum::Playing,
             graph: MyGraph::new(),
             player: player::PlayerController::new(),
-            physics: phys::Physics::new(1),
+            physics: phys::Physics::with_substeps(1),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 20.0,
@@ -183,8 +183,21 @@ impl game::GameState for State {
         //
         // State-independent stuff
         //
+
+        // exit on esc
         if game.input.is_key_pressed(Key::Escape, None) {
             return None;
+        }
+
+        // adjust physics substeps
+        if game.input.is_key_pressed(Key::NumpadAdd, Some(0)) {
+            self.physics.substeps += 1;
+            println!("Substeps: {}", self.physics.substeps);
+        } else if game.input.is_key_pressed(Key::NumpadSubtract, Some(0))
+            && self.physics.substeps > 1
+        {
+            self.physics.substeps -= 1;
+            println!("Substeps: {}", self.physics.substeps);
         }
 
         // mouse camera

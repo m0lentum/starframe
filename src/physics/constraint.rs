@@ -8,17 +8,12 @@
 //! [Tam15] Tamis, M. (2015). 3D Constraint Derivations for Impulse Solvers.
 //!     http://www.mft-spirit.nl/files/MTamis_Constraints.pdf
 
-pub(crate) mod cache;
-
-mod solver;
-pub use solver::*;
-
 pub(crate) mod func;
 use func::ConstraintFunction;
 
 //
 
-use super::RigidBody;
+use super::{RigidBody, Velocity};
 use crate::{graph, math::uv};
 
 /// A constraint restricts the relative motion of two bodies,
@@ -145,6 +140,46 @@ impl ConstraintBuilder {
             impulse_bounds: self.impulse_bounds,
             softness: self.softness,
             func,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Vec6 {
+    pub(crate) v1: uv::Vec2,
+    pub(crate) w1: f32,
+    pub(crate) v2: uv::Vec2,
+    pub(crate) w2: f32,
+}
+
+impl Vec6 {
+    fn dot(&self, other: &Vec6) -> f32 {
+        self.v1.dot(other.v1) + self.w1 * other.w1 + self.v2.dot(other.v2) + self.w2 * other.w2
+    }
+
+    /// Multiply the first three elements with a scalar and return the result as a Velocity.
+    fn mul_first(&self, magnitude: f32) -> Velocity {
+        Velocity {
+            linear: self.v1 * magnitude,
+            angular: self.w1 * magnitude,
+        }
+    }
+
+    /// Multiply the last three elements with a scalar and return the result as a Velocity.
+    fn mul_second(&self, magnitude: f32) -> Velocity {
+        Velocity {
+            linear: self.v2 * magnitude,
+            angular: self.w2 * magnitude,
+        }
+    }
+}
+impl From<[Velocity; 2]> for Vec6 {
+    fn from(v: [Velocity; 2]) -> Self {
+        Self {
+            v1: v[0].linear,
+            w1: v[0].angular,
+            v2: v[1].linear,
+            w2: v[1].angular,
         }
     }
 }

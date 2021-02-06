@@ -5,10 +5,6 @@ use crate::math::{self, uv};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ConstraintFunction {
-    Normal {
-        normal: math::Unit<uv::Vec2>,
-        offsets: [uv::Vec2; 2],
-    },
     Distance {
         distance_squared: f32,
         offsets: [uv::Vec2; 2],
@@ -20,11 +16,6 @@ impl ConstraintFunction {
         let pose2 = pose2.unwrap_or(uv::Isometry2::identity());
         use ConstraintFunction::*;
         match self {
-            Normal { .. } => {
-                // we've already computed the value in collision detection
-                // and we set the bias for this type of constraint separately in the solver
-                0.0
-            }
             Distance {
                 distance_squared,
                 offsets,
@@ -41,12 +32,6 @@ impl ConstraintFunction {
         let pose2 = pose2.unwrap_or(uv::Isometry2::identity());
         use ConstraintFunction::*;
         match self {
-            Normal { normal, offsets } => Vec6 {
-                v1: **normal,
-                w1: math::left_normal(offsets[0]).dot(**normal),
-                v2: -**normal,
-                w2: -math::left_normal(offsets[1]).dot(**normal),
-            },
             Distance { offsets, .. } => {
                 let dist_v = pose2 * offsets[1] - pose1 * offsets[0];
                 let dist_v = if dist_v.x == 0.0 && dist_v.y == 0.0 {

@@ -1,5 +1,5 @@
 use crate::{
-    graph::{self, NodeRef, UnsafeNode},
+    graph::{self, UnsafeNode},
     math::{self, uv, Angle, Unit},
 };
 
@@ -14,12 +14,7 @@ use collision::narrowphase::intersection_check;
 pub use collision::{Collider, ColliderShape, Contact, ContactResult};
 
 pub mod constraint;
-use constraint::{
-    cache::{ConstraintId, DynamicConstraintId, DynamicConstraintType, ImpulseCache},
-    func::{self, ConstraintFunction},
-    ConstraintSoftnessType, ImpulseBounds, WorkingConstraint,
-};
-pub use constraint::{Constraint, ConstraintBuilder, OscillatorParams, SolverConvergence};
+pub use constraint::{Constraint, ConstraintBuilder, OscillatorParams};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
@@ -112,19 +107,19 @@ sm::new_key_type! {
 }
 
 pub struct Physics {
-    substeps: usize,
+    pub substeps: usize,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
 }
 
 impl Default for Physics {
     fn default() -> Self {
-        Self::new(20)
+        Self::with_substeps(10)
     }
 }
 
 impl Physics {
     /// Create a physics solver with the specified number of substeps per frame.
-    pub fn new(substeps: usize) -> Self {
+    pub fn with_substeps(substeps: usize) -> Self {
         Physics {
             substeps,
             user_constraints: sm::DenseSlotMap::with_key(),
@@ -177,10 +172,14 @@ impl Physics {
         // indexed using the same index as for body_refs
         let mut old_poses: Vec<math::Pose> = body_refs.iter().map(|body| *body.pose).collect();
         let mut poses: Vec<math::Pose> = old_poses.clone();
-        let mut velocities: Vec<Velocity> = body_refs
+        // old velocities used for restitution
+        let mut old_velocities: Vec<Velocity> = body_refs
             .iter()
             .map(|body| body.rb.velocity_or_zero())
             .collect();
+        let mut velocities: Vec<Velocity> = old_velocities.clone();
+        // accelerations from external forces used as a speed limit for restitution
+        let mut ext_f_accelerations: Vec<uv::Vec2> = vec![uv::Vec2::default(); velocities.len()];
 
         // map from the position of a node in the graph layer to the position of a node in body_refs
         let node_ref_map: HashMap<usize, usize> = body_refs
@@ -207,22 +206,35 @@ impl Physics {
         // probably have an array of accumulator-type things with length equal to `pairs`
 
         for _substep in 0..self.substeps {
-            // apply external forces and estimate post-step pose
-
-            for (body, old_pose, pose, vel) in
-                izip!(&body_refs, &mut old_poses, &mut poses, &mut velocities)
-            {
+            //
+            // apply external forces and estimate post-step pose with explicit Euler step
+            //
+            for (body, old_pose, pose, old_vel, vel, ext_accel) in izip!(
+                &body_refs,
+                &mut old_poses,
+                &mut poses,
+                &mut old_velocities,
+                &mut velocities,
+                &mut ext_f_accelerations
+            ) {
                 if let rigidbody::BodyType::Dynamic { .. } = body.rb.body {
                     // TODO: rename forcefield to accelerationfield or allow it to depend on mass
-                    vel.linear += forcefield.value_at(body.pose.translation) * dt;
+                    let ff_accel = forcefield.value_at(body.pose.translation);
+                    vel.linear += ff_accel * dt;
+                    *ext_accel = ff_accel;
 
+                    // old_vel is velocity after external forces but before collisions
+                    *old_vel = *vel;
                     *old_pose = *pose;
                     *pose = vel.apply_to_pose(dt, *pose);
                 }
             }
 
+            //
             // single Nonlinear Gauss-Seidel position solve step (accuracy is achieved with substepping)
+            //
 
+            // re-do collision detection every iteration so we don't miss anything
             let contacts: Vec<ContactResult> = pairs
                 .iter()
                 .map(|[b1, b2]| {
@@ -246,17 +258,25 @@ impl Physics {
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
                     let inv_mom_inertias =
                         map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
-                    let offsets =
-                        map_pair(*pair, |b| contact.point - body_refs[*b].pose.translation);
-                    let offsets_wedge_normal = map_pair(offsets, |os| os.wedge(*contact.normal).xy);
-
-                    // TOTO: something wrong with moment of inertia, figure that shit uot
-
+                    let offsets_wedge_normal =
+                        map_pair(contact.offsets, |os| os.wedge(*contact.normal).xy);
                     let eff_inv_masses = map_pair([0, 1], |i| {
                         inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
                     });
 
-                    let d_lambda = -contact.depth / (eff_inv_masses[0] + eff_inv_masses[1]);
+                    // we can't return depth directly from collision detection because
+                    // earlier position corrections can change it,
+                    // thus we compute depth here from the points on each object's surface
+                    let offsets_worldspace =
+                        map_pair([0, 1], |i| poses[pair[*i]] * contact.offsets[*i]);
+                    let depth =
+                        (offsets_worldspace[0] - offsets_worldspace[1]).dot(*contact.normal);
+
+                    if depth <= 0.0 {
+                        continue;
+                    }
+
+                    let d_lambda = -depth / (eff_inv_masses[0] + eff_inv_masses[1]);
                     let impulse = d_lambda * *contact.normal;
 
                     poses[pair[0]].append_translation(impulse * inv_masses[0]);
@@ -275,15 +295,6 @@ impl Physics {
 
             // update velocities from pose differences
             for (old_pose, pose, vel) in izip!(&old_poses, &poses, &mut velocities) {
-                if contacts
-                    .iter()
-                    .filter(|c| !matches!(c, ContactResult::Zero))
-                    .next()
-                    .is_some()
-                {
-                    dbg!(Angle::from(old_pose.rotation));
-                    dbg!(Angle::from(pose.rotation));
-                }
                 vel.linear = (pose.translation - old_pose.translation) * inv_dt;
                 // I'm sure there are more efficient ways to handle the angle but this'll do
                 vel.angular =
@@ -292,7 +303,48 @@ impl Physics {
 
             // velocity step for dynamic friction and restitution on contacts
             for (pair, contact) in izip!(&pairs, &contacts) {
-                // TODO
+                for contact in contact.iter() {
+                    // TODO: cache these earlier
+                    let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
+                    let inv_mom_inertias =
+                        map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
+                    let offsets_wedge_normal =
+                        map_pair(contact.offsets, |os| os.wedge(*contact.normal).xy);
+                    let eff_inv_masses = map_pair([0, 1], |i| {
+                        inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
+                    });
+                    // </TODO>
+
+                    let relative_vel_at_p = velocities[pair[0]].point_velocity(contact.offsets[0])
+                        - velocities[pair[1]].point_velocity(contact.offsets[1]);
+                    let normal_vel = relative_vel_at_p.dot(*contact.normal);
+                    let tangent_vel = relative_vel_at_p - (normal_vel * *contact.normal);
+
+                    // TODO: friction using tangent_vel
+
+                    let old_normal_vel = (old_velocities[pair[0]]
+                        .point_velocity(contact.offsets[0])
+                        - old_velocities[pair[1]].point_velocity(contact.offsets[1]))
+                    .dot(*contact.normal);
+                    let restitution_coef = if old_normal_vel * old_normal_vel
+                        < dt * (ext_f_accelerations[pair[0]] + ext_f_accelerations[pair[1]])
+                            .mag_sq()
+                    {
+                        0.0
+                    } else {
+                        // TODO: add restitution coef to rigid bodies and use that
+                        0.0
+                    };
+
+                    let delta_v_mag = -normal_vel - (restitution_coef * old_normal_vel).min(0.0);
+                    let impulse_mag = delta_v_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
+                    velocities[pair[0]].linear += impulse_mag * inv_masses[0] * *contact.normal;
+                    velocities[pair[0]].angular +=
+                        impulse_mag * inv_mom_inertias[0] * offsets_wedge_normal[0];
+                    velocities[pair[1]].linear -= impulse_mag * inv_masses[1] * *contact.normal;
+                    velocities[pair[1]].angular -=
+                        impulse_mag * inv_mom_inertias[1] * offsets_wedge_normal[1];
+                }
             }
         }
 
