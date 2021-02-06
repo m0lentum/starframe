@@ -38,6 +38,11 @@ impl Into<uv::Rotor2> for Angle {
         uv::Rotor2::from_angle(self.rad())
     }
 }
+impl From<uv::Rotor2> for Angle {
+    fn from(rotor: uv::Rotor2) -> Self {
+        Angle::Rad(-rotor.bv.xy.atan2(rotor.s) * 2.0)
+    }
+}
 
 /// A wrapper type to indicate a vector should always be normalized.
 #[derive(Clone, Copy, Debug)]

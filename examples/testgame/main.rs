@@ -60,7 +60,7 @@ impl State {
             state: StateEnum::Playing,
             graph: MyGraph::new(),
             player: player::PlayerController::new(),
-            physics: phys::Physics::new(),
+            physics: phys::Physics::new(1),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 20.0,
@@ -72,7 +72,7 @@ impl State {
     }
 
     fn reset(&mut self) {
-        self.physics.reset();
+        self.physics.clear_constraints();
         self.graph = MyGraph::new();
     }
 

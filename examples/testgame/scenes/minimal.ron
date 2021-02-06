@@ -1,0 +1,11 @@
+(
+    recipes: [
+        DynamicBlock ((
+            pose: ( rotation: Deg(1) ),
+        )),
+        // Ball ( radius: 1.0, position: (0, 0) ),
+        StaticBlock ((
+            width: 10, height: 2, pose: ( position: (0, -3) ),
+        )),
+    ]
+)

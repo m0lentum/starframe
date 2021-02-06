@@ -1,6 +1,6 @@
 use super::collider::ColliderShape;
-use crate::math::{self, uv, Unit};
-use crate::physics::BodyRef;
+use crate::math::{self, uv, Pose, Unit};
+use crate::physics::Collider;
 
 /// 0-2 points of contact can occur between two 2D objects.
 #[derive(Clone, Copy, Debug)]
@@ -25,6 +25,7 @@ impl ContactResult {
     }
 }
 
+/// An iterator over the contacts in a ContactResult.
 pub struct ContactIterator<'a> {
     cr: &'a ContactResult,
     idx: u8,
@@ -58,16 +59,19 @@ pub struct Contact {
 }
 
 /// Checks two colliders for intersection.
-pub fn intersection_check(obj1: &BodyRef<'_>, obj2: &BodyRef<'_>) -> ContactResult {
+pub fn intersection_check(
+    pose1: &Pose,
+    coll1: &Collider,
+    pose2: &Pose,
+    coll2: &Collider,
+) -> ContactResult {
     use ColliderShape::*;
-    match (obj1.coll.shape(), obj2.coll.shape()) {
-        (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(&obj1.pose, *r1, &obj2.pose, *r2),
-        (Rect { hw, hh }, Circle { r }) => rect_circle(&obj1.pose, *hw, *hh, &obj2.pose, *r),
-        (Circle { r }, Rect { hw, hh }) => {
-            flip_contacts(rect_circle(&obj2.pose, *hw, *hh, &obj1.pose, *r))
-        }
+    match (coll1.shape(), coll2.shape()) {
+        (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(pose1, *r1, pose2, *r2),
+        (Rect { hw, hh }, Circle { r }) => rect_circle(pose1, *hw, *hh, pose2, *r),
+        (Circle { r }, Rect { hw, hh }) => flip_contacts(rect_circle(pose2, *hw, *hh, pose1, *r)),
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
-            rect_rect(&obj1.pose, *hw1, *hh1, &obj2.pose, *hw2, *hh2)
+            rect_rect(pose1, *hw1, *hh1, pose2, *hw2, *hh2)
         }
     }
 }
