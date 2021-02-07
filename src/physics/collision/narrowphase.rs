@@ -269,6 +269,12 @@ fn rect_rect(
                 let edge_dot_axis = incident_edge.dir.dot(*axis);
                 let enter_depth = depth - enters * edge_dot_axis;
                 let exit_depth = depth - exits * edge_dot_axis;
+                // due to floating point inaccuracy there's a possible case
+                // where we get to this point but the edge clip misses.
+                // just bail if that happens
+                if enter_depth <= 0.0 || exit_depth <= 0.0 {
+                    return ContactResult::Zero;
+                }
 
                 let enter_point = incident_edge.start + (enters * *incident_edge.dir);
                 let exit_point = incident_edge.start + (exits * *incident_edge.dir);
@@ -334,8 +340,11 @@ fn rect_rect(
             }),
             EdgeClipResult::Passes { enters, exits } => {
                 let edge_dot_axis = incident_edge.dir.dot(*axis);
-                let enter_depth = depth - enters * edge_dot_axis;
-                let exit_depth = depth - exits * edge_dot_axis;
+                let enter_depth = depth + enters * edge_dot_axis;
+                let exit_depth = depth + exits * edge_dot_axis;
+                if enter_depth <= 0.0 || exit_depth <= 0.0 {
+                    return ContactResult::Zero;
+                }
 
                 let enter_point = incident_edge.start + (enters * *incident_edge.dir);
                 let exit_point = incident_edge.start + (exits * *incident_edge.dir);

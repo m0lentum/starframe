@@ -47,7 +47,7 @@ impl Default for Velocity {
 impl Velocity {
     /// Get the linear velocity of a point offset from the center of mass.
     pub fn point_velocity(&self, offset: uv::Vec2) -> uv::Vec2 {
-        let tangent = uv::Vec2::new(-offset[1], offset[0]) * self.angular;
+        let tangent = math::left_normal(offset) * self.angular;
         self.linear + tangent
     }
 
@@ -258,8 +258,10 @@ impl Physics {
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
                     let inv_mom_inertias =
                         map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
-                    let offsets_wedge_normal =
-                        map_pair(contact.offsets, |os| os.wedge(*contact.normal).xy);
+                    let offsets_wedge_normal = map_pair([0, 1], |i| {
+                        let os_rotated: uv::Vec2 = poses[pair[*i]].rotation * contact.offsets[*i];
+                        os_rotated.wedge(*contact.normal).xy
+                    });
                     let eff_inv_masses = map_pair([0, 1], |i| {
                         inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
                     });
@@ -293,7 +295,10 @@ impl Physics {
                 }
             }
 
+            //
             // update velocities from pose differences
+            //
+
             for (old_pose, pose, vel) in izip!(&old_poses, &poses, &mut velocities) {
                 vel.linear = (pose.translation - old_pose.translation) * inv_dt;
                 // I'm sure there are more efficient ways to handle the angle but this'll do
@@ -301,15 +306,20 @@ impl Physics {
                     Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * inv_dt;
             }
 
+            //
             // velocity step for dynamic friction and restitution on contacts
+            //
+
             for (pair, contact) in izip!(&pairs, &contacts) {
                 for contact in contact.iter() {
                     // TODO: cache these earlier
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
                     let inv_mom_inertias =
                         map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
-                    let offsets_wedge_normal =
-                        map_pair(contact.offsets, |os| os.wedge(*contact.normal).xy);
+                    let offsets_wedge_normal = map_pair([0, 1], |i| {
+                        let os_rotated = poses[pair[*i]].rotation * contact.offsets[*i];
+                        os_rotated.wedge(*contact.normal).xy
+                    });
                     let eff_inv_masses = map_pair([0, 1], |i| {
                         inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
                     });
@@ -348,7 +358,9 @@ impl Physics {
             }
         }
 
+        //
         // apply results back to state from temp buffers
+        //
 
         // drop body_refs so we can get mutable references
         let body_nodes: Vec<BodyNodes> = body_refs.into_iter().map(|br| br.downgrade()).collect();
