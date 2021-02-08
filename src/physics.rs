@@ -219,7 +219,7 @@ impl Physics {
             ) {
                 if let rigidbody::BodyType::Dynamic { .. } = body.rb.body {
                     // TODO: rename forcefield to accelerationfield or allow it to depend on mass
-                    let ff_accel = forcefield.value_at(body.pose.translation);
+                    let ff_accel = forcefield.value_at(pose.translation);
                     vel.linear += ff_accel * dt;
                     *ext_accel = ff_accel;
 
