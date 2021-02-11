@@ -316,25 +316,25 @@ impl Physics {
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
                     let inv_mom_inertias =
                         map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
-                    let offsets_wedge_normal = map_pair([0, 1], |i| {
-                        let os_rotated = poses[pair[*i]].rotation * contact.offsets[*i];
-                        os_rotated.wedge(*contact.normal).xy
-                    });
+                    let offsets_rotated =
+                        map_pair([0, 1], |i| poses[pair[*i]].rotation * contact.offsets[*i]);
+                    let offsets_wedge_normal =
+                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(*contact.normal).xy);
                     let eff_inv_masses = map_pair([0, 1], |i| {
                         inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
                     });
                     // </TODO>
 
-                    let relative_vel_at_p = velocities[pair[0]].point_velocity(contact.offsets[0])
-                        - velocities[pair[1]].point_velocity(contact.offsets[1]);
+                    let relative_vel_at_p = velocities[pair[0]].point_velocity(offsets_rotated[0])
+                        - velocities[pair[1]].point_velocity(offsets_rotated[1]);
                     let normal_vel = relative_vel_at_p.dot(*contact.normal);
                     let tangent_vel = relative_vel_at_p - (normal_vel * *contact.normal);
 
                     // TODO: friction using tangent_vel
 
                     let old_normal_vel = (old_velocities[pair[0]]
-                        .point_velocity(contact.offsets[0])
-                        - old_velocities[pair[1]].point_velocity(contact.offsets[1]))
+                        .point_velocity(offsets_rotated[0])
+                        - old_velocities[pair[1]].point_velocity(offsets_rotated[1]))
                     .dot(*contact.normal);
                     let restitution_coef = if old_normal_vel * old_normal_vel
                         < dt * (ext_f_accelerations[pair[0]] + ext_f_accelerations[pair[1]])
