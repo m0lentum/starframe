@@ -53,9 +53,10 @@ impl Collider {
     }
 
     pub fn moment_of_inertia_coef(&self) -> f32 {
+        // from https://en.wikipedia.org/wiki/List_of_moments_of_inertia
         match self.shape {
             ColliderShape::Circle { r } => r * r / 2.0,
-            ColliderShape::Rect { hw, hh } => (4.0 * hw * hw + 4.0 * hh * hh) / 3.0,
+            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
         }
     }
 }
