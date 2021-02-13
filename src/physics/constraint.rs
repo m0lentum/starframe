@@ -1,19 +1,6 @@
-//! Types of physical constraints and tools for creating and solving them.
-//!
-//! Major sources:
-//! [Cat05] Catto, E. (2005). Iterative Dynamics With Temporal Coherence.
-//!     https://www.gamedevs.org/uploads/iterative-dynamics-with-temporal-coherence.pdf
-//! [Cat11] Catto, E. (2011). Soft Constraints.
-//!     https://box2d.org/files/ErinCatto_SoftConstraints_GDC2011.pdf
-//! [Tam15] Tamis, M. (2015). 3D Constraint Derivations for Impulse Solvers.
-//!     http://www.mft-spirit.nl/files/MTamis_Constraints.pdf
+//! Types of physical constraints.
 
-pub(crate) mod func;
-use func::ConstraintFunction;
-
-//
-
-use super::{RigidBody, Velocity};
+use super::RigidBody;
 use crate::{graph, math::uv};
 
 /// A constraint restricts the relative motion of two bodies,
@@ -22,49 +9,52 @@ use crate::{graph, math::uv};
 pub struct Constraint {
     pub(crate) owner: graph::Node<RigidBody>,
     pub(crate) target: Option<graph::Node<RigidBody>>,
-    pub(crate) impulse_bounds: (Option<f32>, Option<f32>),
-    pub(crate) softness: Option<OscillatorParams>,
-    pub(crate) func: ConstraintFunction,
+    pub(crate) compliance: f32,
+    pub(crate) ty: ConstraintType,
 }
 
-/// Designer-friendly parameters for tuning soft constraints.
 #[derive(Clone, Copy, Debug)]
-pub struct OscillatorParams {
-    /// Oscillations per second.
-    pub frequency: f32,
-    /// Damping ratio.
-    ///
-    /// If == 0, allows indefinite oscillation.  
-    /// If < 1, decays to zero with some oscillation.  
-    /// If == 1, decays smoothly to zero.  
-    /// If > 1, decays smoothly to zero but slower.
-    pub damping: f32,
+pub(crate) enum ConstraintType {
+    Distance {
+        distance: f32,
+        offsets: [uv::Vec2; 2],
+        limit: ConstraintLimit,
+    },
+}
+
+/// Some constraints can be set to only work in one direction,
+/// to e.g. set a maximum distance while allowing shorter distances.
+#[derive(Clone, Copy, Debug)]
+pub enum ConstraintLimit {
+    /// Always apply a correction to the constraint.
+    Eq,
+    /// Only apply a correction if the constraint value is less than the target.
+    Lt,
+    /// Only apply a correction if the constraint value is greater than the target.
+    Gt,
 }
 
 /// A builder that allows ergonomic construction of different constraints.
 #[derive(Clone, Copy, Debug)]
 pub struct ConstraintBuilder {
     owner: graph::Node<RigidBody>,
-    owner_origin: uv::Vec2,
     target: Option<graph::Node<RigidBody>>,
-    target_origin: uv::Vec2,
-    impulse_bounds: (Option<f32>, Option<f32>),
-    softness: Option<OscillatorParams>,
+    offsets: [uv::Vec2; 2],
+    compliance: f32,
 }
 
 impl ConstraintBuilder {
-    /// Start building a constraint. An owning body is required.
+    /// Start building a constraint.
     ///
+    /// An owning body is required.
     /// If you don't connect the constraint to another body with
     /// `with_target`, it will be connected to ground, i.e. the world origin.
     pub fn new(owner: graph::Node<RigidBody>) -> Self {
         Self {
             owner,
-            owner_origin: uv::Vec2::zero(),
             target: None,
-            target_origin: uv::Vec2::zero(),
-            impulse_bounds: (None, None),
-            softness: None,
+            offsets: [uv::Vec2::zero(); 2],
+            compliance: 0.0,
         }
     }
 
@@ -74,112 +64,61 @@ impl ConstraintBuilder {
         self
     }
 
-    /// Set the origin point of the constraint on the owning body.
+    /// Set the origin point of the constraint on the owning body
+    /// relative to the center of mass.
     ///
-    /// Note that this does not have an effect on all constraint types,
-    /// but it's so common it's included in the generic builder nonetheless.
+    /// This has no effect on angular-only constraints.
     pub fn with_origin(mut self, point: uv::Vec2) -> Self {
-        self.owner_origin = point;
+        self.offsets[0] = point;
         self
     }
 
-    /// Set the origin point of the constraint on the target body,
+    /// Set the origin point of the constraint on the target body
+    /// relative to the center of mass,
     /// or in the world if the target is None.
     ///
-    /// Note that this does not have an effect on all constraint types,
-    /// but it's so common it's included in the generic builder nonetheless.
+    /// This has no effect on angular-only constraints.
     pub fn with_target_origin(mut self, point: uv::Vec2) -> Self {
-        self.target_origin = point;
+        self.offsets[1] = point;
         self
     }
 
-    /// Allow constraint function values above zero.
-    pub fn inequality_gt(mut self) -> Self {
-        self.impulse_bounds.0 = Some(0.0);
-        self
-    }
-
-    /// Allow constraint function values below zero.
-    pub fn inequality_lt(mut self) -> Self {
-        self.impulse_bounds.1 = Some(0.0);
-        self
-    }
-
-    /// Make the constraint soft. This makes it equivalent to a spring.
+    /// Add compliance (inverse stiffness) to the constraint.
+    /// This makes it behave like a spring instead of a hard limit.
     ///
-    /// See [`SpringParams`](self::SpringParams) for details.
-    pub fn soft(mut self, params: OscillatorParams) -> Self {
-        self.softness = Some(params);
-        self
-    }
-
-    /// Limit the maximum impulse of the constraint.
-    /// This can be useful to e.g. limit the torque of a motor.
-    pub fn with_max_impulse(mut self, max_impulse: f32) -> Self {
-        let (lb, rb) = self.impulse_bounds;
-        self.impulse_bounds = (
-            lb.map(|lb| lb.max(-max_impulse)).or(Some(-max_impulse)),
-            rb.map(|rb| rb.min(max_impulse)).or(Some(max_impulse)),
-        );
+    /// Units of compliance are m/N.
+    pub fn with_compliance(mut self, compliance: f32) -> Self {
+        self.compliance = compliance;
         self
     }
 
     /// Build a distance constraint.
-    pub fn build_distance(self, distance: f32) -> Constraint {
-        let func = func::ConstraintFunction::Distance {
-            distance_squared: distance * distance,
-            offsets: [self.owner_origin, self.target_origin],
+    pub fn build_distance(self, distance: f32, dir: ConstraintLimit) -> Constraint {
+        let ty = ConstraintType::Distance {
+            distance,
+            offsets: self.offsets,
+            limit: dir,
         };
-        self.build(func)
+        self.build(ty)
     }
 
-    fn build(self, func: ConstraintFunction) -> Constraint {
+    /// Build an attachment constraint, i.e. a distance constraint of zero,
+    /// forcing the origin points to overlap.
+    pub fn build_attachment(self) -> Constraint {
+        let ty = ConstraintType::Distance {
+            distance: 0.0,
+            offsets: self.offsets,
+            limit: ConstraintLimit::Eq,
+        };
+        self.build(ty)
+    }
+
+    fn build(self, ty: ConstraintType) -> Constraint {
         Constraint {
             owner: self.owner,
             target: self.target,
-            impulse_bounds: self.impulse_bounds,
-            softness: self.softness,
-            func,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Vec6 {
-    pub(crate) v1: uv::Vec2,
-    pub(crate) w1: f32,
-    pub(crate) v2: uv::Vec2,
-    pub(crate) w2: f32,
-}
-
-impl Vec6 {
-    fn dot(&self, other: &Vec6) -> f32 {
-        self.v1.dot(other.v1) + self.w1 * other.w1 + self.v2.dot(other.v2) + self.w2 * other.w2
-    }
-
-    /// Multiply the first three elements with a scalar and return the result as a Velocity.
-    fn mul_first(&self, magnitude: f32) -> Velocity {
-        Velocity {
-            linear: self.v1 * magnitude,
-            angular: self.w1 * magnitude,
-        }
-    }
-
-    /// Multiply the last three elements with a scalar and return the result as a Velocity.
-    fn mul_second(&self, magnitude: f32) -> Velocity {
-        Velocity {
-            linear: self.v2 * magnitude,
-            angular: self.w2 * magnitude,
-        }
-    }
-}
-impl From<[Velocity; 2]> for Vec6 {
-    fn from(v: [Velocity; 2]) -> Self {
-        Self {
-            v1: v[0].linear,
-            w1: v[0].angular,
-            v2: v[1].linear,
-            w2: v[1].angular,
+            compliance: self.compliance,
+            ty,
         }
     }
 }

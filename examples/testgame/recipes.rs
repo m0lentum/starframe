@@ -23,8 +23,7 @@ pub enum Recipe {
         position: [f32; 2],
         begin_length: f32,
         target_length: f32,
-        frequency: f32,
-        damping: f32,
+        compliance: f32,
     },
 }
 
@@ -154,6 +153,8 @@ impl Recipe {
                     return;
                 }
 
+                let half_spacing = spacing / 2.0;
+
                 let mut links_iter = links.iter().map(|p| uv::Vec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
@@ -182,27 +183,20 @@ impl Recipe {
                         physics.add_constraint(
                             phys::ConstraintBuilder::new(block)
                                 .with_target(prev_block)
-                                .with_origin(uv::Vec2::new(-block_length_half, 0.0))
+                                .with_origin(uv::Vec2::new(-block_length_half - half_spacing, 0.0))
                                 .with_target_origin(uv::Vec2::new(prev_block_offset, 0.0))
-                                .inequality_lt()
-                                .soft(phys::OscillatorParams {
-                                    frequency: 20.0,
-                                    damping: 1.0,
-                                })
-                                .build_distance(*spacing),
+                                .with_compliance(0.015)
+                                .build_attachment(),
                         );
                     } else if *anchored_start {
                         physics.add_constraint(
                             phys::ConstraintBuilder::new(block)
-                                .with_origin(uv::Vec2::new(
-                                    -block_length_half - (spacing / 2.0),
-                                    0.0,
-                                ))
+                                .with_origin(uv::Vec2::new(-block_length_half - half_spacing, 0.0))
                                 .with_target_origin(link1)
-                                .build_distance(0.0),
+                                .build_attachment(),
                         );
                     }
-                    prev_block = Some((block, block_length_half));
+                    prev_block = Some((block, block_length_half + half_spacing));
                 }
 
                 if *anchored_end {
@@ -217,7 +211,7 @@ impl Recipe {
                                     .last()
                                     .unwrap(),
                             )
-                            .build_distance(0.0),
+                            .build_attachment(),
                     );
                 }
             }
@@ -225,8 +219,7 @@ impl Recipe {
                 position,
                 begin_length,
                 target_length,
-                frequency,
-                damping,
+                compliance,
             } => {
                 let position: uv::Vec2 = position.into();
                 let offset = uv::Vec2::new(begin_length / 2.0, 0.0);
@@ -253,11 +246,8 @@ impl Recipe {
                 physics.add_constraint(
                     phys::ConstraintBuilder::new(b1)
                         .with_target(b2)
-                        .soft(phys::OscillatorParams {
-                            frequency: *frequency,
-                            damping: *damping,
-                        })
-                        .build_distance(*target_length),
+                        .with_compliance(*compliance)
+                        .build_distance(*target_length, phys::ConstraintLimit::Eq),
                 );
             }
         }

@@ -21,30 +21,15 @@
             anchored_start: true,
             anchored_end: false,
         ),
-        // little basket
-        Blockchain (
-            width: 0.2,
-            spacing: 0.1,
-            links: [
-                (-9.0, 0.0),
-                (-8.8, -0.8),
-                (-8.0, -1.0),
-                (-7.0, -1.0),
-                (-6.2, -0.8),
-                (-6.0, 0.0),
-            ],
-            anchored_start: true,
-            anchored_end: true,
-        ),
         // stack of blocks
-        DynamicBlock (( pose: ( position: (-3, 3.5) ))),
-        DynamicBlock (( pose: ( position: (-3, 2.5) ))),
-        DynamicBlock (( pose: ( position: (-3, 1.5) ))),
-        DynamicBlock (( pose: ( position: (-3, 0.5) ))),
-        DynamicBlock (( pose: ( position: (-3, -0.5) ))),
-        DynamicBlock (( pose: ( position: (-3, -1.5) ))),
-        DynamicBlock (( pose: ( position: (-3, -2.5) ))),
-        DynamicBlock (( pose: ( position: (-3, -3.5) ))),
+        DynamicBlock (( pose: ( position: (-3, 3.0) ))),
+        DynamicBlock (( pose: ( position: (-3, 2.0) ))),
+        DynamicBlock (( pose: ( position: (-3, 1.0) ))),
+        DynamicBlock (( pose: ( position: (-3, -0.0) ))),
+        DynamicBlock (( pose: ( position: (-3, -1.0) ))),
+        DynamicBlock (( pose: ( position: (-3, -2.0) ))),
+        DynamicBlock (( pose: ( position: (-3, -3.0) ))),
+        DynamicBlock (( pose: ( position: (-3, -4.0) ))),
         // ramp to test static friction
         StaticBlock ((
             width: 8, height: 0.2, pose: ( position: ( 6.5, -0 ), rotation: Deg(20) ),
@@ -54,7 +39,7 @@
             width: 0.2,
             spacing: 0.1,
             links: [
-                (2.6, -1.4),
+                (2.6, -1.5),
                 (1.6, -1.9),
                 (0.6, -2.4),
                 (-0.4, -2.9),

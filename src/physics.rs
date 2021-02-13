@@ -14,7 +14,8 @@ use collision::narrowphase::intersection_check;
 pub use collision::{Collider, ColliderShape, Contact, ContactResult};
 
 pub mod constraint;
-pub use constraint::{Constraint, ConstraintBuilder, OscillatorParams};
+use constraint::ConstraintType;
+pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
@@ -158,6 +159,7 @@ impl Physics {
     ) {
         let dt = dt / self.substeps as f32;
         let inv_dt = 1.0 / dt;
+        let inv_dt_sq = inv_dt * inv_dt;
 
         let body_refs: Vec<BodyRef> = l_body
             .iter(graph)
@@ -181,6 +183,16 @@ impl Physics {
         // accelerations from external forces used as a speed limit for restitution
         let mut ext_f_accelerations: Vec<uv::Vec2> = vec![uv::Vec2::default(); velocities.len()];
 
+        //
+        // set up user-defined constraints
+        //
+
+        // remove constraints where one or both participating bodies have been destroyed
+        self.user_constraints.retain(|_, c| {
+            c.owner.check(&graph).is_some()
+                && c.target.map(|t| t.check(&graph).is_some()).unwrap_or(true)
+        });
+
         // map from the position of a node in the graph layer to the position of a node in body_refs
         let node_ref_map: HashMap<usize, usize> = body_refs
             .iter()
@@ -188,7 +200,23 @@ impl Physics {
             .map(|(idx, br)| (br.rb.pos().item_idx, idx))
             .collect();
 
-        // TODO: map out user constraints here
+        // assuming here that slotmap's iteration order doesn't change if the
+        // contents don't change. it doesn't guarantee this in the docs so if
+        // constraints start jumping from one object to another this is why
+        let constraint_body_pairs: Vec<(usize, Option<usize>)> = self
+            .user_constraints
+            .values()
+            .map(|c| {
+                (
+                    node_ref_map[&c.owner.pos().item_idx],
+                    c.target.map(|t| node_ref_map[&t.pos().item_idx]),
+                )
+            })
+            .collect();
+
+        //
+        // Set up collision detection
+        //
 
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep
@@ -201,11 +229,15 @@ impl Physics {
             });
             p
         };
-        // store absolute contact forces for friction purposes
+        // store contact forces for friction purposes
         let mut contact_lambdas: Vec<f32> = vec![0.0; pairs.len()];
 
         // TODO: how to collect contact events from contacts happening over multiple timesteps?
         // probably have an array of accumulator-type things with length equal to `pairs`
+
+        //
+        // Actual physics step
+        //
 
         for _substep in 0..self.substeps {
             //
@@ -249,10 +281,118 @@ impl Physics {
                 })
                 .collect();
 
-            // helper to reduce duplication when fetching info for a pair objects
+            // helpers to reduce duplication when fetching info for pairs of objects
             fn map_pair<T, R>(pair: [T; 2], f: impl Fn(&T) -> R) -> [R; 2] {
                 [f(&pair[0]), f(&pair[1])]
             }
+
+            fn map_semi_pair<T, R>(
+                pair: (T, Option<T>),
+                f: impl Fn(&T) -> R,
+                snd_default: R,
+            ) -> [R; 2] {
+                [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
+            }
+
+            //
+            // User-defined constraints
+            //
+
+            for (constraint, pair) in izip!(self.user_constraints.values(), &constraint_body_pairs)
+            {
+                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].rb.inverse_mass(), 0.0);
+                let inv_mom_inertias =
+                    map_semi_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia(), 0.0);
+
+                match constraint.ty {
+                    ConstraintType::Distance {
+                        distance,
+                        offsets,
+                        limit,
+                    } => {
+                        let offsets_worldspace = [
+                            poses[pair.0] * offsets[0],
+                            pair.1
+                                .map(|p1| poses[p1] * offsets[1])
+                                .unwrap_or(offsets[1]),
+                        ];
+                        let actual_dist = offsets_worldspace[1] - offsets_worldspace[0];
+                        let actual_dist_mag = actual_dist.mag();
+                        let error = distance - actual_dist_mag;
+
+                        if match limit {
+                            ConstraintLimit::Eq => true,
+                            ConstraintLimit::Lt if error < 0.0 => true,
+                            ConstraintLimit::Gt if error > 0.0 => true,
+                            _ => false,
+                        } {
+                            let dir = if actual_dist_mag != 0.0 {
+                                actual_dist / actual_dist_mag
+                            } else {
+                                uv::Vec2::unit_y()
+                            };
+
+                            match pair.1 {
+                                Some(p1) => {
+                                    // TODO: this will need some abstraction when more constraint types
+                                    // involving position corrections are introduced
+                                    let pair = [pair.0, p1];
+                                    let offsets_rotated = map_pair([0, 1], |i| {
+                                        poses[pair[*i]].rotation * offsets[*i]
+                                    });
+                                    let offsets_wedge_dir =
+                                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
+                                    let eff_inv_masses = map_pair([0, 1], |i| {
+                                        inv_masses[*i]
+                                            + (offsets_wedge_dir[*i].powi(2) * inv_mom_inertias[*i])
+                                    });
+
+                                    let lambda = -error
+                                        / (eff_inv_masses[0]
+                                            + eff_inv_masses[1]
+                                            + constraint.compliance * inv_dt_sq);
+
+                                    poses[pair[0]].append_translation(inv_masses[0] * lambda * dir);
+                                    poses[pair[0]].prepend_rotation(
+                                        Angle::Rad(
+                                            inv_mom_inertias[0] * lambda * offsets_wedge_dir[0],
+                                        )
+                                        .into(),
+                                    );
+                                    poses[pair[1]]
+                                        .append_translation(-inv_masses[1] * lambda * dir);
+                                    poses[pair[1]].prepend_rotation(
+                                        Angle::Rad(
+                                            -inv_mom_inertias[1] * lambda * offsets_wedge_dir[1],
+                                        )
+                                        .into(),
+                                    );
+                                }
+                                None => {
+                                    // this is repetitive but kind of hard to abstract :thinking:
+                                    let offset_rotated = poses[pair.0].rotation * offsets[0];
+                                    let offset_wedge_dir = offset_rotated.wedge(dir).xy;
+                                    let eff_inv_mass = inv_masses[0]
+                                        + offset_wedge_dir.powi(2) * inv_mom_inertias[0];
+
+                                    let lambda =
+                                        -error / (eff_inv_mass + constraint.compliance * inv_dt_sq);
+
+                                    poses[pair.0].append_translation(inv_masses[0] * lambda * dir);
+                                    poses[pair.0].prepend_rotation(
+                                        Angle::Rad(inv_mom_inertias[0] * lambda * offset_wedge_dir)
+                                            .into(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            //
+            // Contacts
+            //
 
             for (pair, contact, lambda_n) in izip!(&pairs, &contacts, &mut contact_lambdas) {
                 // TODO: match here and use a block solver for the Two case
@@ -260,10 +400,10 @@ impl Physics {
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
                     let inv_mom_inertias =
                         map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
-                    let offsets_wedge_normal = map_pair([0, 1], |i| {
-                        let os_rotated: uv::Vec2 = poses[pair[*i]].rotation * contact.offsets[*i];
-                        os_rotated.wedge(*contact.normal).xy
-                    });
+                    let offsets_rotated =
+                        map_pair([0, 1], |i| poses[pair[*i]].rotation * contact.offsets[*i]);
+                    let offsets_wedge_normal =
+                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(*contact.normal).xy);
                     let eff_inv_masses = map_pair([0, 1], |i| {
                         inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
                     });
@@ -307,10 +447,8 @@ impl Physics {
                         .static_friction_with(&body_refs[pair[1]].rb.material);
                     let max_coulomb_dx = *lambda_n * friction_coef;
 
-                    let offsets_wedge_tan = map_pair([0, 1], |i| {
-                        let os_rotated: uv::Vec2 = poses[pair[*i]].rotation * contact.offsets[*i];
-                        os_rotated.wedge(tangent).xy
-                    });
+                    let offsets_wedge_tan =
+                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(tangent).xy);
                     let eff_inv_masses_tan = map_pair([0, 1], |i| {
                         inv_masses[*i] + (offsets_wedge_tan[*i].powi(2) * inv_mom_inertias[*i])
                     });
@@ -386,8 +524,6 @@ impl Physics {
                     let max_coulomb_dv = inv_dt * lambda_n * friction_coef;
                     let delta_tan_vel =
                         tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum();
-
-                    // TODO: damping
 
                     // apply impulse
 

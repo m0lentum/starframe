@@ -37,8 +37,8 @@ pub struct SurfaceMaterial {
 impl Default for SurfaceMaterial {
     fn default() -> Self {
         SurfaceMaterial {
-            static_friction_coef: 3.0,
-            dynamic_friction_coef: 2.5,
+            static_friction_coef: 1.8,
+            dynamic_friction_coef: 1.5,
             restitution_coef: 0.0,
         }
     }
