@@ -63,7 +63,7 @@
             anchored_start: true,
             anchored_end: true,
         ),
-        DynamicBlock (( pose: ( position: (5, -0), rotation: Deg(20) ))),
+        DynamicBlock (( pose: ( position: (5, 0.2), rotation: Deg(20) ))),
         Ball ( radius: 0.4, position: ( 7, 1 ) ),
         Ball ( radius: 0.5, position: ( 8, 1.5 ) ),
         Ball ( radius: 0.6, position: ( 9, 2 ) ),

@@ -201,6 +201,8 @@ impl Physics {
             });
             p
         };
+        // store absolute contact forces for friction purposes
+        let mut contact_lambdas: Vec<f32> = vec![0.0; pairs.len()];
 
         // TODO: how to collect contact events from contacts happening over multiple timesteps?
         // probably have an array of accumulator-type things with length equal to `pairs`
@@ -252,7 +254,7 @@ impl Physics {
                 [f(&pair[0]), f(&pair[1])]
             }
 
-            for (pair, contact) in izip!(&pairs, &contacts) {
+            for (pair, contact, lambda_n) in izip!(&pairs, &contacts, &mut contact_lambdas) {
                 // TODO: match here and use a block solver for the Two case
                 for contact in contact.iter() {
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
@@ -275,23 +277,59 @@ impl Physics {
                         (offsets_worldspace[0] - offsets_worldspace[1]).dot(*contact.normal);
 
                     if depth <= 0.0 {
+                        *lambda_n = 0.0;
                         continue;
                     }
 
-                    let d_lambda = -depth / (eff_inv_masses[0] + eff_inv_masses[1]);
-                    let impulse = d_lambda * *contact.normal;
+                    *lambda_n = -depth / (eff_inv_masses[0] + eff_inv_masses[1]);
 
-                    poses[pair[0]].append_translation(impulse * inv_masses[0]);
+                    poses[pair[0]].append_translation(inv_masses[0] * *lambda_n * *contact.normal);
                     poses[pair[0]].prepend_rotation(
-                        Angle::Rad(d_lambda * offsets_wedge_normal[0] * inv_mom_inertias[0]).into(),
+                        Angle::Rad(inv_mom_inertias[0] * *lambda_n * offsets_wedge_normal[0])
+                            .into(),
                     );
-                    poses[pair[1]].append_translation(-impulse * inv_masses[1]);
+                    poses[pair[1]].append_translation(-inv_masses[1] * *lambda_n * *contact.normal);
                     poses[pair[1]].prepend_rotation(
-                        Angle::Rad(-d_lambda * offsets_wedge_normal[1] * inv_mom_inertias[1])
+                        Angle::Rad(-inv_mom_inertias[1] * *lambda_n * offsets_wedge_normal[1])
                             .into(),
                     );
 
-                    // TODO: static friction here
+                    // static friction
+
+                    let offsets_worldspace_old =
+                        map_pair([0, 1], |i| old_poses[pair[*i]] * contact.offsets[*i]);
+                    let offset_diff_motion = (offsets_worldspace[0] - offsets_worldspace_old[0])
+                        - (offsets_worldspace[1] - offsets_worldspace_old[1]);
+                    let tangent = math::left_normal(*contact.normal);
+                    let motion_along_tan = offset_diff_motion.dot(tangent);
+
+                    let friction_coef = (body_refs[pair[0]].rb.material)
+                        .static_friction_with(&body_refs[pair[1]].rb.material);
+                    let max_coulomb_dx = *lambda_n * friction_coef;
+
+                    let offsets_wedge_tan = map_pair([0, 1], |i| {
+                        let os_rotated: uv::Vec2 = poses[pair[*i]].rotation * contact.offsets[*i];
+                        os_rotated.wedge(tangent).xy
+                    });
+                    let eff_inv_masses_tan = map_pair([0, 1], |i| {
+                        inv_masses[*i] + (offsets_wedge_tan[*i].powi(2) * inv_mom_inertias[*i])
+                    });
+
+                    let lambda_t =
+                        -motion_along_tan / (eff_inv_masses_tan[0] + eff_inv_masses_tan[1]);
+
+                    if lambda_t < max_coulomb_dx {
+                        poses[pair[0]].append_translation(inv_masses[0] * lambda_t * tangent);
+                        poses[pair[0]].prepend_rotation(
+                            Angle::Rad(inv_mom_inertias[0] * lambda_t * offsets_wedge_tan[0])
+                                .into(),
+                        );
+                        poses[pair[1]].append_translation(-inv_masses[1] * lambda_t * tangent);
+                        poses[pair[1]].prepend_rotation(
+                            Angle::Rad(-inv_mom_inertias[1] * lambda_t * offsets_wedge_tan[1])
+                                .into(),
+                        );
+                    }
                 }
             }
 
@@ -310,50 +348,69 @@ impl Physics {
             // velocity step for dynamic friction and restitution on contacts
             //
 
-            for (pair, contact) in izip!(&pairs, &contacts) {
+            for (pair, contact, lambda_n) in izip!(&pairs, &contacts, &contact_lambdas) {
                 for contact in contact.iter() {
-                    // TODO: cache these earlier
                     let inv_masses = map_pair(*pair, |b| body_refs[*b].rb.inverse_mass());
                     let inv_mom_inertias =
                         map_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia());
                     let offsets_rotated =
                         map_pair([0, 1], |i| poses[pair[*i]].rotation * contact.offsets[*i]);
-                    let offsets_wedge_normal =
-                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(*contact.normal).xy);
-                    let eff_inv_masses = map_pair([0, 1], |i| {
-                        inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
-                    });
-                    // </TODO>
 
                     let relative_vel_at_p = velocities[pair[0]].point_velocity(offsets_rotated[0])
                         - velocities[pair[1]].point_velocity(offsets_rotated[1]);
-                    let normal_vel = relative_vel_at_p.dot(*contact.normal);
-                    let tangent_vel = relative_vel_at_p - (normal_vel * *contact.normal);
 
-                    // TODO: friction using tangent_vel
+                    // restitution
 
-                    let old_normal_vel = (old_velocities[pair[0]]
-                        .point_velocity(offsets_rotated[0])
-                        - old_velocities[pair[1]].point_velocity(offsets_rotated[1]))
-                    .dot(*contact.normal);
+                    let normal_vel: f32 = relative_vel_at_p.dot(*contact.normal);
+                    let old_rel_vel = old_velocities[pair[0]].point_velocity(offsets_rotated[0])
+                        - old_velocities[pair[1]].point_velocity(offsets_rotated[1]);
+                    let old_normal_vel = old_rel_vel.dot(*contact.normal);
                     let restitution_coef = if old_normal_vel * old_normal_vel
                         < dt * (ext_f_accelerations[pair[0]] + ext_f_accelerations[pair[1]])
                             .mag_sq()
                     {
                         0.0
                     } else {
-                        // TODO: add restitution coef to rigid bodies and use that
-                        0.0
+                        (body_refs[pair[0]].rb.material)
+                            .restitution_with(&body_refs[pair[1]].rb.material)
                     };
+                    let delta_normal_vel =
+                        -normal_vel - (restitution_coef * old_normal_vel).min(0.0);
 
-                    let delta_v_mag = -normal_vel - (restitution_coef * old_normal_vel).min(0.0);
-                    let impulse_mag = delta_v_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
-                    velocities[pair[0]].linear += impulse_mag * inv_masses[0] * *contact.normal;
+                    // dynamic friction
+
+                    let tangent = math::left_normal(*contact.normal);
+                    let tangent_vel = relative_vel_at_p.dot(tangent);
+                    let friction_coef = (body_refs[pair[0]].rb.material)
+                        .dynamic_friction_with(&body_refs[pair[1]].rb.material);
+                    let max_coulomb_dv = inv_dt * lambda_n * friction_coef;
+                    let delta_tan_vel =
+                        tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum();
+
+                    // TODO: damping
+
+                    // apply impulse
+
+                    let total_vel_update =
+                        delta_normal_vel * *contact.normal + delta_tan_vel * tangent;
+                    let vel_update_mag = total_vel_update.mag();
+                    if vel_update_mag < 0.0001 {
+                        continue;
+                    }
+                    let vel_update_dir = total_vel_update / vel_update_mag;
+                    let offsets_wedge_dv =
+                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(vel_update_dir).xy);
+                    let eff_inv_masses = map_pair([0, 1], |i| {
+                        inv_masses[*i] + (offsets_wedge_dv[*i].powi(2) * inv_mom_inertias[*i])
+                    });
+                    let impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
+
+                    velocities[pair[0]].linear += inv_masses[0] * impulse_mag * vel_update_dir;
                     velocities[pair[0]].angular +=
-                        impulse_mag * inv_mom_inertias[0] * offsets_wedge_normal[0];
-                    velocities[pair[1]].linear -= impulse_mag * inv_masses[1] * *contact.normal;
+                        inv_mom_inertias[0] * impulse_mag * offsets_wedge_dv[0];
+                    velocities[pair[1]].linear -= inv_masses[1] * impulse_mag * vel_update_dir;
                     velocities[pair[1]].angular -=
-                        impulse_mag * inv_mom_inertias[1] * offsets_wedge_normal[1];
+                        inv_mom_inertias[1] * impulse_mag * offsets_wedge_dv[1];
                 }
             }
         }

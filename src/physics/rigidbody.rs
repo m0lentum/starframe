@@ -23,17 +23,47 @@ pub enum BodyType {
 }
 
 /// Determines how the surface of a body responds to collisions.
+///
+/// Using a simplified friction model where each material has its own friction
+/// coefficients (rather than the realistic model where every pair of materials
+/// would have its own coefficients).
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceMaterial {
-    /// Simplified friction model where each material contributes some amount of "slipperiness".
-    /// Friction coefficients from both bodies are multiplied together.
-    /// Thus, zero means no friction with anything.
-    pub friction: f32,
+    pub static_friction_coef: f32,
+    pub dynamic_friction_coef: f32,
+    pub restitution_coef: f32,
 }
 
 impl Default for SurfaceMaterial {
     fn default() -> Self {
-        SurfaceMaterial { friction: 0.7 }
+        SurfaceMaterial {
+            static_friction_coef: 3.0,
+            dynamic_friction_coef: 2.5,
+            restitution_coef: 0.0,
+        }
+    }
+}
+
+impl SurfaceMaterial {
+    /// Get the static friction coefficient between this material and another.
+    ///
+    /// It is computed as the average between the two materials' friction coefficients.
+    pub fn static_friction_with(&self, other: &Self) -> f32 {
+        (self.static_friction_coef + other.static_friction_coef) / 2.0
+    }
+
+    /// Get the dynamic friction coefficient between this material and another.
+    ///
+    /// It is computed as the average between the two materials' friction coefficients.
+    pub fn dynamic_friction_with(&self, other: &Self) -> f32 {
+        (self.dynamic_friction_coef + other.dynamic_friction_coef) / 2.0
+    }
+
+    /// Get the restitution coefficient between this material and another.
+    ///
+    /// It is computed as the average between the two materials' friction coefficients.
+    pub fn restitution_with(&self, other: &Self) -> f32 {
+        (self.restitution_coef + other.restitution_coef) / 2.0
     }
 }
 

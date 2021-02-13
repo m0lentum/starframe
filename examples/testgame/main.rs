@@ -60,7 +60,7 @@ impl State {
             state: StateEnum::Playing,
             graph: MyGraph::new(),
             player: player::PlayerController::new(),
-            physics: phys::Physics::with_substeps(1),
+            physics: phys::Physics::with_substeps(10),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 20.0,
