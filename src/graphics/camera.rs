@@ -1,39 +1,39 @@
 use crate::{
     input::{DragState, InputCache},
-    math::uv,
+    math::{self as m, uv},
 };
 
 pub trait Camera {
-    fn view_matrix(&self, viewport_size: (u32, u32)) -> uv::Mat3;
+    fn view_matrix(&self, viewport_size: (u32, u32)) -> uv::DMat3;
 }
 
 /// Tells a camera how to adapt to changing viewport size.
 pub enum ScalingStrategy {
     /// Scale so that there are a constant number of viewport pixels
     /// per world coordinate unit at zoom level 1.0.
-    ConstantScale { pixels_per_unit: f32 },
+    ConstantScale { pixels_per_unit: f64 },
     /// Scale so that the area displayed at zoom level 1.0
     /// is the same regardless of viewport size.
-    ConstantDisplayArea { width: f32, height: f32 },
+    ConstantDisplayArea { width: f64, height: f64 },
 }
 
 impl ScalingStrategy {
     /// Get the uniform scaling factor that will result in the desired field of view
     /// in the given viewport size.
-    pub fn scaling_factor(&self, viewport_size: (u32, u32)) -> f32 {
+    pub fn scaling_factor(&self, viewport_size: (u32, u32)) -> f64 {
         let (vp_w, vp_h) = viewport_size;
         match self {
             ScalingStrategy::ConstantScale { pixels_per_unit } => *pixels_per_unit,
             ScalingStrategy::ConstantDisplayArea { width, height } => {
-                (vp_w as f32 / width).min(vp_h as f32 / height)
+                (vp_w as f64 / width).min(vp_h as f64 / height)
             }
         }
     }
 
     /// Get a nonuniform scaling vector to scale the camera's view to the given viewport.
-    pub fn scaling(&self, viewport_size: (u32, u32)) -> uv::Vec2 {
+    pub fn scaling(&self, viewport_size: (u32, u32)) -> m::Vec2 {
         let (vp_w, vp_h) = viewport_size;
-        let vp_scaling = uv::Vec2::new(2.0 / vp_w as f32, 2.0 / vp_h as f32);
+        let vp_scaling = m::Vec2::new(2.0 / vp_w as f64, 2.0 / vp_h as f64);
 
         self.scaling_factor(viewport_size) * vp_scaling
     }
@@ -41,18 +41,18 @@ impl ScalingStrategy {
 
 pub struct MouseDragCamera {
     pub scaling_strategy: ScalingStrategy,
-    pub pose: uv::Similarity2,
-    pub zoom_speed: f32,
-    pub min_zoom_out: f32,
-    pub max_zoom_out: f32,
-    drag_start: Option<uv::Similarity2>,
+    pub pose: uv::DSimilarity2,
+    pub zoom_speed: f64,
+    pub min_zoom_out: f64,
+    pub max_zoom_out: f64,
+    drag_start: Option<uv::DSimilarity2>,
 }
 
 impl MouseDragCamera {
     pub fn new(scaling_strategy: ScalingStrategy) -> Self {
         MouseDragCamera {
             scaling_strategy,
-            pose: uv::Similarity2::identity(),
+            pose: uv::DSimilarity2::identity(),
             zoom_speed: 0.01,
             min_zoom_out: 0.1,
             max_zoom_out: 10.0,
@@ -70,16 +70,16 @@ impl MouseDragCamera {
             (Some(DragState::InProgress { .. }), None) => self.drag_start = Some(self.pose),
             (Some(DragState::InProgress { start, .. }), Some(pose_at_start)) => {
                 let cursor_pos = input_cache.cursor_position().get();
-                let offset = uv::Vec2::new(
-                    (cursor_pos.x - start.x) as f32,
-                    -(cursor_pos.y - start.y) as f32,
+                let offset = m::Vec2::new(
+                    (cursor_pos.x - start.x) as f64,
+                    -(cursor_pos.y - start.y) as f64,
                 );
                 self.pose = pose_at_start;
                 self.pose
                     .append_translation(-offset * self.pose.scale / scaling_factor);
             }
             (Some(DragState::Completed { start, end, .. }), Some(pose_at_start)) => {
-                let offset = uv::Vec2::new((end.x - start.x) as f32, -(end.y - start.y) as f32);
+                let offset = m::Vec2::new((end.x - start.x) as f64, -(end.y - start.y) as f64);
                 self.pose = pose_at_start;
                 self.pose
                     .append_translation(-offset * self.pose.scale / scaling_factor);
@@ -99,8 +99,8 @@ impl MouseDragCamera {
 }
 
 impl Camera for MouseDragCamera {
-    fn view_matrix(&self, viewport_size: (u32, u32)) -> uv::Mat3 {
-        let vp_scaling = uv::Mat3::from_nonuniform_scale_homogeneous(
+    fn view_matrix(&self, viewport_size: (u32, u32)) -> uv::DMat3 {
+        let vp_scaling = uv::DMat3::from_nonuniform_scale_homogeneous(
             self.scaling_strategy.scaling(viewport_size),
         );
         let my_transform_inv = self.pose.inversed().into_homogeneous_matrix();

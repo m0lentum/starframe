@@ -1,5 +1,5 @@
 use super::collider::ColliderShape;
-use crate::math::{self, uv, Pose, Unit};
+use crate::math::{self as m, Pose, Unit};
 use crate::physics::Collider;
 
 /// 0-2 points of contact can occur between two 2D objects.
@@ -51,9 +51,9 @@ impl<'a> Iterator for ContactIterator<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
     /// The normal, facing away from obj1
-    pub normal: math::Unit<uv::Vec2>,
+    pub normal: m::Unit<m::Vec2>,
     /// Points of contact on the surface of each object, in object-local space.
-    pub offsets: [uv::Vec2; 2],
+    pub offsets: [m::Vec2; 2],
 }
 
 /// Checks two colliders for intersection.
@@ -81,7 +81,7 @@ fn flip_contacts(contacts: ContactResult) -> ContactResult {
     })
 }
 
-fn circle_circle(pose1: &uv::Isometry2, r1: f32, pose2: &uv::Isometry2, r2: f32) -> ContactResult {
+fn circle_circle(pose1: &m::Pose, r1: f64, pose2: &m::Pose, r2: f64) -> ContactResult {
     let pos1 = pose1.translation;
     let pos2 = pose2.translation;
 
@@ -108,53 +108,53 @@ fn circle_circle(pose1: &uv::Isometry2, r1: f32, pose2: &uv::Isometry2, r2: f32)
 }
 
 fn rect_circle(
-    pose_rect: &uv::Isometry2,
-    hw: f32,
-    hh: f32,
-    pose_circle: &uv::Isometry2,
-    r: f32,
+    pose_rect: &m::Pose,
+    hw: f64,
+    hh: f64,
+    pose_circle: &m::Pose,
+    r: f64,
 ) -> ContactResult {
     let pose_c_wrt_rect = pose_rect.inversed() * *pose_circle;
     let dist = pose_c_wrt_rect.translation;
-    let dist_abs = uv::Vec2::new(dist.x.abs(), dist.y.abs());
-    let dist_signums = uv::Vec2::new(dist.x.signum(), dist.y.signum());
+    let dist_abs = m::Vec2::new(dist.x.abs(), dist.y.abs());
+    let dist_signums = m::Vec2::new(dist.x.signum(), dist.y.signum());
 
-    let c_to_corner = uv::Vec2::new(hw - dist_abs.x, hh - dist_abs.y);
+    let c_to_corner = m::Vec2::new(hw - dist_abs.x, hh - dist_abs.y);
     if c_to_corner.x < -r || c_to_corner.y < -r {
         // too far to possibly intersect
         return ContactResult::Zero;
     }
-    let point_abs: uv::Vec2;
-    let normal_abs: Unit<uv::Vec2>;
+    let point_abs: m::Vec2;
+    let normal_abs: Unit<m::Vec2>;
     if c_to_corner.x > 0.0 && c_to_corner.y > 0.0 {
         // circle center is inside the rect
         if c_to_corner.x < c_to_corner.y {
-            point_abs = uv::Vec2::new(hw, dist_abs.y);
+            point_abs = m::Vec2::new(hw, dist_abs.y);
             normal_abs = Unit::unit_x();
         } else {
-            point_abs = uv::Vec2::new(dist_abs.x, hh);
+            point_abs = m::Vec2::new(dist_abs.x, hh);
             normal_abs = Unit::unit_y();
         };
     } else if c_to_corner.x > 0.0 {
         // inside in the x direction but not y
-        point_abs = uv::Vec2::new(dist_abs.x, hh);
+        point_abs = m::Vec2::new(dist_abs.x, hh);
         normal_abs = Unit::unit_y();
     } else if c_to_corner.y > 0.0 {
         // inside in the y direction but not x
-        point_abs = uv::Vec2::new(hw, dist_abs.y);
+        point_abs = m::Vec2::new(hw, dist_abs.y);
         normal_abs = Unit::unit_x();
     } else {
         // outside both edges, possible intersection with the corner point
         let depth = r - c_to_corner.mag();
         if depth > 0.0 {
-            point_abs = uv::Vec2::new(hw, hh);
+            point_abs = m::Vec2::new(hw, hh);
             normal_abs = Unit::new_normalize(-c_to_corner);
         } else {
             return ContactResult::Zero;
         }
     }
 
-    let normal_wrt_rect = Unit::new_unchecked(uv::Vec2::new(
+    let normal_wrt_rect = Unit::new_unchecked(m::Vec2::new(
         dist_signums.x * normal_abs.x,
         dist_signums.y * normal_abs.y,
     ));
@@ -162,19 +162,19 @@ fn rect_circle(
     ContactResult::One(Contact {
         normal: pose_rect.rotation * normal_wrt_rect,
         offsets: [
-            uv::Vec2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
+            m::Vec2::new(dist_signums.x * point_abs.x, dist_signums.y * point_abs.y),
             pose_c_wrt_rect.rotation.reversed() * (-r * *normal_wrt_rect),
         ],
     })
 }
 
 fn rect_rect(
-    pose1: &uv::Isometry2,
-    hw1: f32,
-    hh1: f32,
-    pose2: &uv::Isometry2,
-    hw2: f32,
-    hh2: f32,
+    pose1: &m::Pose,
+    hw1: f64,
+    hh1: f64,
+    pose2: &m::Pose,
+    hw2: f64,
+    hh2: f64,
 ) -> ContactResult {
     let pose2_wrt_pose1 = pose1.inversed() * *pose2;
 
@@ -184,7 +184,7 @@ fn rect_rect(
     let x2_axis = pose2_wrt_pose1.rotation * Unit::unit_x();
     let hw2_v = hw2 * (*x2_axis);
 
-    let y2_axis = Unit::new_unchecked(math::left_normal(*x2_axis));
+    let y2_axis = Unit::new_unchecked(m::left_normal(*x2_axis));
     let hh2_v = hh2 * (*y2_axis);
 
     let axes = [Unit::unit_x(), Unit::unit_y(), x2_axis, y2_axis];
@@ -246,13 +246,13 @@ fn rect_rect(
         };
         let owning_edge = if axis_i == 1 {
             Edge {
-                start: uv::Vec2::new(-hw1, axis.y.signum() * hh1),
+                start: m::Vec2::new(-hw1, axis.y.signum() * hh1),
                 dir: Unit::unit_x(),
                 length: hw1 * 2.0,
             }
         } else {
             Edge {
-                start: uv::Vec2::new(axis.x.signum() * hw1, -hh1),
+                start: m::Vec2::new(axis.x.signum() * hw1, -hh1),
                 dir: Unit::unit_y(),
                 length: hh1 * 2.0,
             }
@@ -300,9 +300,9 @@ fn rect_rect(
     } else {
         // copy-paste-modified from above, if there's a bug it's probably here
         // axis is on obj2, penetrating point(s) are on obj1
-        let x1_axis_facing_point = Unit::new_unchecked(axis.x.signum() * uv::Vec2::unit_x());
-        let y1_axis_facing_point = Unit::new_unchecked(axis.y.signum() * uv::Vec2::unit_y());
-        let extreme_point_on_obj1 = uv::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
+        let x1_axis_facing_point = Unit::new_unchecked(axis.x.signum() * m::Vec2::unit_x());
+        let y1_axis_facing_point = Unit::new_unchecked(axis.y.signum() * m::Vec2::unit_y());
+        let extreme_point_on_obj1 = m::Vec2::new(axis.x.signum() * hw1, axis.y.signum() * hh1);
         let incident_edge = if axis.x.abs() < axis.y.abs() {
             Edge {
                 start: extreme_point_on_obj1,
@@ -372,9 +372,9 @@ fn rect_rect(
 
 #[derive(Clone, Copy, Debug)]
 struct Edge {
-    start: uv::Vec2,
-    dir: Unit<uv::Vec2>,
-    length: f32,
+    start: m::Vec2,
+    dir: Unit<m::Vec2>,
+    length: f64,
 }
 
 enum EdgeClipResult {
@@ -383,7 +383,7 @@ enum EdgeClipResult {
     Intersects,
     /// If they don't intersect, we want the distances at which edge 1 intersects
     /// with the lines perpendicular to edge 2 going through edge 2's endpoints.
-    Passes { enters: f32, exits: f32 },
+    Passes { enters: f64, exits: f64 },
 }
 
 fn clip_edge(target: Edge, edge: Edge) -> EdgeClipResult {
@@ -416,20 +416,20 @@ fn clip_edge(target: Edge, edge: Edge) -> EdgeClipResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::f32::consts::PI;
+    use std::f64::consts::PI;
 
     #[test]
     fn clip_various_edges() {
         // intersection
         match clip_edge(
             Edge {
-                start: uv::Vec2::new(1.0, 1.0),
+                start: m::Vec2::new(1.0, 1.0),
                 dir: Unit::unit_x(),
                 length: 2.0,
             },
             Edge {
-                start: uv::Vec2::new(1.0, 0.0),
-                dir: Unit::new_normalize(uv::Vec2::new(1.0, 1.0)),
+                start: m::Vec2::new(1.0, 0.0),
+                dir: Unit::new_normalize(m::Vec2::new(1.0, 1.0)),
                 length: 2.0,
             },
         ) {
@@ -439,13 +439,13 @@ mod tests {
         // miss that starts at 0
         match clip_edge(
             Edge {
-                start: uv::Vec2::new(1.0, 1.0),
+                start: m::Vec2::new(1.0, 1.0),
                 dir: Unit::unit_x(),
                 length: 2.0,
             },
             Edge {
-                start: uv::Vec2::new(2.0, 0.0),
-                dir: uv::Rotor2::from_angle(PI / 6.0) * Unit::unit_x(),
+                start: m::Vec2::new(2.0, 0.0),
+                dir: m::Rotor2::from_angle(PI / 6.0) * Unit::unit_x(),
                 length: 2.0,
             },
         ) {
@@ -459,13 +459,13 @@ mod tests {
         // and also starts at the end of the other one
         match clip_edge(
             Edge {
-                start: uv::Vec2::new(1.0, 1.0),
+                start: m::Vec2::new(1.0, 1.0),
                 dir: Unit::unit_x(),
                 length: 2.0,
             },
             Edge {
-                start: uv::Vec2::new(4.0, 0.0),
-                dir: uv::Rotor2::from_angle(7.0 * PI / 8.0) * Unit::unit_x(),
+                start: m::Vec2::new(4.0, 0.0),
+                dir: m::Rotor2::from_angle(7.0 * PI / 8.0) * Unit::unit_x(),
                 length: 2.0,
             },
         ) {

@@ -29,9 +29,9 @@ pub enum BodyType {
 /// would have its own coefficients).
 #[derive(Clone, Copy, Debug)]
 pub struct SurfaceMaterial {
-    pub static_friction_coef: f32,
-    pub dynamic_friction_coef: f32,
-    pub restitution_coef: f32,
+    pub static_friction_coef: f64,
+    pub dynamic_friction_coef: f64,
+    pub restitution_coef: f64,
 }
 
 impl Default for SurfaceMaterial {
@@ -48,21 +48,21 @@ impl SurfaceMaterial {
     /// Get the static friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.
-    pub fn static_friction_with(&self, other: &Self) -> f32 {
+    pub fn static_friction_with(&self, other: &Self) -> f64 {
         (self.static_friction_coef + other.static_friction_coef) / 2.0
     }
 
     /// Get the dynamic friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.
-    pub fn dynamic_friction_with(&self, other: &Self) -> f32 {
+    pub fn dynamic_friction_with(&self, other: &Self) -> f64 {
         (self.dynamic_friction_coef + other.dynamic_friction_coef) / 2.0
     }
 
     /// Get the restitution coefficient between this material and another.
     ///
     /// It is computed as the largest coefficient between the two bodies.
-    pub fn restitution_with(&self, other: &Self) -> f32 {
+    pub fn restitution_with(&self, other: &Self) -> f64 {
         self.restitution_coef.max(other.restitution_coef)
     }
 }
@@ -70,13 +70,13 @@ impl SurfaceMaterial {
 impl RigidBody {
     /// Dynamic rigid bodies respond to collisions and environment forces.
     /// This constructor calculates mass and moment of inertia from the given density.
-    pub fn new_dynamic(collider: &Collider, density: f32) -> Self {
+    pub fn new_dynamic(collider: &Collider, density: f64) -> Self {
         Self::new_dynamic_const_mass(collider, collider.area() * density)
     }
 
     /// Create a dynamic rigid body with the given mass instead of using density.
     /// The collider is still required to compute moment of inertia.
-    pub fn new_dynamic_const_mass(collider: &Collider, mass: f32) -> Self {
+    pub fn new_dynamic_const_mass(collider: &Collider, mass: f64) -> Self {
         RigidBody {
             body: BodyType::Dynamic {
                 velocity: Velocity::default(),
@@ -164,7 +164,7 @@ impl RigidBody {
     }
 
     /// Returns the mass of the body if finite, otherwise None.
-    pub fn mass(&self) -> Option<f32> {
+    pub fn mass(&self) -> Option<f64> {
         match self.body {
             BodyType::Dynamic { mass: m, .. } => Some(m.mass()),
             _ => None,
@@ -172,7 +172,7 @@ impl RigidBody {
     }
 
     /// Returns the inverse mass of the body, which is zero if the mass is infinite.
-    pub fn inverse_mass(&self) -> f32 {
+    pub fn inverse_mass(&self) -> f64 {
         match self.body {
             BodyType::Dynamic { mass: m, .. } => m.inv(),
             _ => 0.0,
@@ -180,7 +180,7 @@ impl RigidBody {
     }
 
     /// Returns the moment of inertia of the body if finite, otherwise None.
-    pub fn moment_of_inertia(&self) -> Option<f32> {
+    pub fn moment_of_inertia(&self) -> Option<f64> {
         match self.body {
             BodyType::Dynamic {
                 moment_of_inertia: m,
@@ -190,7 +190,7 @@ impl RigidBody {
         }
     }
 
-    pub fn inverse_moment_of_inertia(&self) -> f32 {
+    pub fn inverse_moment_of_inertia(&self) -> f64 {
         match self.body {
             BodyType::Dynamic {
                 moment_of_inertia: m,
@@ -205,30 +205,30 @@ impl RigidBody {
 /// is expensive and needed a lot in physics calculations.
 #[derive(Clone, Copy, Debug)]
 pub struct Mass {
-    mass: f32,
-    inverse: f32,
+    mass: f64,
+    inverse: f64,
 }
 
 impl Mass {
-    pub fn new(mass: f32) -> Self {
+    pub fn new(mass: f64) -> Self {
         Mass {
             mass,
             inverse: 1.0 / mass,
         }
     }
 
-    pub fn from_inv(inverse: f32) -> Self {
+    pub fn from_inv(inverse: f64) -> Self {
         Mass {
             mass: 1.0 / inverse,
             inverse,
         }
     }
 
-    pub fn mass(&self) -> f32 {
+    pub fn mass(&self) -> f64 {
         self.mass
     }
 
-    pub fn inv(&self) -> f32 {
+    pub fn inv(&self) -> f64 {
         self.inverse
     }
 }

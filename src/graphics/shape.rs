@@ -1,6 +1,6 @@
 use crate::{
     graphics::{self as gx, util::GlslMat3},
-    {graph, math::uv},
+    {graph, math as m},
 };
 
 use zerocopy::{AsBytes, FromBytes};
@@ -11,9 +11,9 @@ type Color = [f32; 4];
 /// Concavity will not result in an error but will be rendered incorrectly.
 #[derive(Clone, Debug)]
 pub enum Shape {
-    Circle { r: f32, points: usize, color: Color },
-    Rect { w: f32, h: f32, color: Color },
-    Poly { points: Vec<uv::Vec2>, color: Color },
+    Circle { r: f64, points: usize, color: Color },
+    Rect { w: f64, h: f64, color: Color },
+    Poly { points: Vec<m::Vec2>, color: Color },
 }
 
 impl Shape {
@@ -34,13 +34,13 @@ impl Shape {
         }
     }
 
-    pub(self) fn verts(&self, pose: &uv::Isometry2) -> Vec<Vertex> {
+    pub(self) fn verts(&self, pose: &m::Pose) -> Vec<Vertex> {
         // generate a triangle mesh
-        fn as_verts(pts: &[uv::Vec2], pose: &uv::Isometry2, color: Color) -> Vec<Vertex> {
+        fn as_verts(pts: &[m::Vec2], pose: &m::Pose, color: Color) -> Vec<Vertex> {
             let mut iter = pts.iter().map(|p| *pose * *p).peekable();
             let first = match iter.next() {
                 Some(p) => Vertex {
-                    position: [p.x, p.y],
+                    position: [p.x as f32, p.y as f32],
                     color,
                 },
                 None => return Vec::new(),
@@ -50,11 +50,11 @@ impl Shape {
                 if let Some(&next) = iter.peek() {
                     verts.push(first);
                     verts.push(Vertex {
-                        position: [curr.x, curr.y],
+                        position: [curr.x as f32, curr.y as f32],
                         color,
                     });
                     verts.push(Vertex {
-                        position: [next.x, next.y],
+                        position: [next.x as f32, next.y as f32],
                         color,
                     });
                 }
@@ -65,11 +65,11 @@ impl Shape {
         // do it
         match self {
             Shape::Circle { r, points, color } => {
-                let angle_incr = 2.0 * std::f32::consts::PI / *points as f32;
-                let verts: Vec<uv::Vec2> = (0..*points)
+                let angle_incr = 2.0 * std::f64::consts::PI / *points as f64;
+                let verts: Vec<m::Vec2> = (0..*points)
                     .map(|i| {
-                        let angle = angle_incr * i as f32;
-                        uv::Vec2::new(r * angle.cos(), r * angle.sin())
+                        let angle = angle_incr * i as f64;
+                        m::Vec2::new(r * angle.cos(), r * angle.sin())
                     })
                     .collect();
                 as_verts(verts.as_slice(), pose, *color)
@@ -79,10 +79,10 @@ impl Shape {
                 let hh = 0.5 * h;
                 as_verts(
                     &[
-                        uv::Vec2::new(hw, hh),
-                        uv::Vec2::new(-hw, hh),
-                        uv::Vec2::new(-hw, -hh),
-                        uv::Vec2::new(hw, -hh),
+                        m::Vec2::new(hw, hh),
+                        m::Vec2::new(-hw, hh),
+                        m::Vec2::new(-hw, -hh),
+                        m::Vec2::new(hw, -hh),
                     ],
                     pose,
                     *color,
@@ -233,7 +233,7 @@ impl ShapeRenderer {
     pub fn draw(
         &mut self,
         l_shape: &graph::Layer<Shape>,
-        l_pose: &graph::Layer<uv::Isometry2>,
+        l_pose: &graph::Layer<m::Pose>,
         graph: &graph::Graph,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,

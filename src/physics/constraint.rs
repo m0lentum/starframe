@@ -1,7 +1,7 @@
 //! Types of physical constraints.
 
 use super::RigidBody;
-use crate::{graph, math::uv};
+use crate::{graph, math as m};
 
 /// A constraint restricts the relative motion of two bodies,
 /// or the motion of a single body in the world.
@@ -9,15 +9,15 @@ use crate::{graph, math::uv};
 pub struct Constraint {
     pub(crate) owner: graph::Node<RigidBody>,
     pub(crate) target: Option<graph::Node<RigidBody>>,
-    pub(crate) compliance: f32,
+    pub(crate) compliance: f64,
     pub(crate) ty: ConstraintType,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ConstraintType {
     Distance {
-        distance: f32,
-        offsets: [uv::Vec2; 2],
+        distance: f64,
+        offsets: [m::Vec2; 2],
         limit: ConstraintLimit,
     },
 }
@@ -39,8 +39,8 @@ pub enum ConstraintLimit {
 pub struct ConstraintBuilder {
     owner: graph::Node<RigidBody>,
     target: Option<graph::Node<RigidBody>>,
-    offsets: [uv::Vec2; 2],
-    compliance: f32,
+    offsets: [m::Vec2; 2],
+    compliance: f64,
 }
 
 impl ConstraintBuilder {
@@ -53,7 +53,7 @@ impl ConstraintBuilder {
         Self {
             owner,
             target: None,
-            offsets: [uv::Vec2::zero(); 2],
+            offsets: [m::Vec2::zero(); 2],
             compliance: 0.0,
         }
     }
@@ -68,7 +68,7 @@ impl ConstraintBuilder {
     /// relative to the center of mass.
     ///
     /// This has no effect on angular-only constraints.
-    pub fn with_origin(mut self, point: uv::Vec2) -> Self {
+    pub fn with_origin(mut self, point: m::Vec2) -> Self {
         self.offsets[0] = point;
         self
     }
@@ -78,7 +78,7 @@ impl ConstraintBuilder {
     /// or in the world if the target is None.
     ///
     /// This has no effect on angular-only constraints.
-    pub fn with_target_origin(mut self, point: uv::Vec2) -> Self {
+    pub fn with_target_origin(mut self, point: m::Vec2) -> Self {
         self.offsets[1] = point;
         self
     }
@@ -87,13 +87,13 @@ impl ConstraintBuilder {
     /// This makes it behave like a spring instead of a hard limit.
     ///
     /// Units of compliance are m/N.
-    pub fn with_compliance(mut self, compliance: f32) -> Self {
+    pub fn with_compliance(mut self, compliance: f64) -> Self {
         self.compliance = compliance;
         self
     }
 
     /// Build a distance constraint.
-    pub fn build_distance(self, distance: f32, dir: ConstraintLimit) -> Constraint {
+    pub fn build_distance(self, distance: f64, dir: ConstraintLimit) -> Constraint {
         let ty = ConstraintType::Distance {
             distance,
             offsets: self.offsets,

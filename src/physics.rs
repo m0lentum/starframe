@@ -1,6 +1,6 @@
 use crate::{
     graph::{self, UnsafeNode},
-    math::{self, uv, Angle, Unit},
+    math::{self as m, Angle, Unit},
 };
 
 use itertools::izip;
@@ -31,15 +31,15 @@ pub use rigidbody::RigidBody;
 #[derive(Copy, Clone, Debug)]
 pub struct Velocity {
     /// Linear velocity in metres per second.
-    pub linear: uv::Vec2,
+    pub linear: m::Vec2,
     /// Angular velocity in radians per second.
-    pub angular: f32,
+    pub angular: f64,
 }
 
 impl Default for Velocity {
     fn default() -> Self {
         Velocity {
-            linear: uv::Vec2::zero(),
+            linear: m::Vec2::zero(),
             angular: 0.0,
         }
     }
@@ -47,15 +47,15 @@ impl Default for Velocity {
 
 impl Velocity {
     /// Get the linear velocity of a point offset from the center of mass.
-    pub fn point_velocity(&self, offset: uv::Vec2) -> uv::Vec2 {
-        let tangent = math::left_normal(offset) * self.angular;
+    pub fn point_velocity(&self, offset: m::Vec2) -> m::Vec2 {
+        let tangent = m::left_normal(offset) * self.angular;
         self.linear + tangent
     }
 
-    pub fn apply_to_pose(&self, dt: f32, mut pose: math::Pose) -> math::Pose {
+    pub fn apply_to_pose(&self, dt: f64, mut pose: m::Pose) -> m::Pose {
         let scaled = *self * dt;
         pose.append_translation(scaled.linear);
-        pose.prepend_rotation(math::Angle::Rad(scaled.angular).into());
+        pose.prepend_rotation(m::Angle::Rad(scaled.angular).into());
         pose
     }
 }
@@ -74,10 +74,10 @@ impl std::ops::AddAssign for Velocity {
         *self = *self + other;
     }
 }
-impl std::ops::Mul<f32> for Velocity {
+impl std::ops::Mul<f64> for Velocity {
     type Output = Velocity;
 
-    fn mul(self, rhs: f32) -> Self::Output {
+    fn mul(self, rhs: f64) -> Self::Output {
         Velocity {
             linear: self.linear * rhs,
             angular: self.angular * rhs,
@@ -96,11 +96,11 @@ pub struct ContactEvent {
 #[derive(Clone, Copy, Debug)]
 pub struct ContactInfo {
     /// The point in world space where the collision occurred.
-    pub point: uv::Vec2,
+    pub point: m::Vec2,
     /// The normal of the colliding plane, facing towards this object.
-    pub normal: Unit<uv::Vec2>,
+    pub normal: Unit<m::Vec2>,
     /// The strength of the impulse caused by the contact.
-    pub impulse: f32,
+    pub impulse: f64,
 }
 
 sm::new_key_type! {
@@ -150,14 +150,14 @@ impl Physics {
     pub fn tick<EvtParams>(
         &mut self,
         graph: &graph::Graph,
-        l_pose: &mut graph::Layer<math::Pose>,
+        l_pose: &mut graph::Layer<m::Pose>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
         l_evt_sink: &mut crate::EventSinkLayer<EvtParams>,
-        dt: f32,
+        dt: f64,
         forcefield: &impl ForceField,
     ) {
-        let dt = dt / self.substeps as f32;
+        let dt = dt / self.substeps as f64;
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
 
@@ -172,8 +172,8 @@ impl Physics {
         // buffers for working variables, outside of body_refs
         // to make it simpler to mutate things without breaking borrowing rules.
         // indexed using the same index as for body_refs
-        let mut old_poses: Vec<math::Pose> = body_refs.iter().map(|body| *body.pose).collect();
-        let mut poses: Vec<math::Pose> = old_poses.clone();
+        let mut old_poses: Vec<m::Pose> = body_refs.iter().map(|body| *body.pose).collect();
+        let mut poses: Vec<m::Pose> = old_poses.clone();
         // old velocities used for restitution
         let mut old_velocities: Vec<Velocity> = body_refs
             .iter()
@@ -181,7 +181,7 @@ impl Physics {
             .collect();
         let mut velocities: Vec<Velocity> = old_velocities.clone();
         // accelerations from external forces used as a speed limit for restitution
-        let mut ext_f_accelerations: Vec<uv::Vec2> = vec![uv::Vec2::default(); velocities.len()];
+        let mut ext_f_accelerations: Vec<m::Vec2> = vec![m::Vec2::default(); velocities.len()];
 
         //
         // set up user-defined constraints
@@ -230,7 +230,7 @@ impl Physics {
             p
         };
         // store contact forces for friction purposes
-        let mut contact_lambdas: Vec<f32> = vec![0.0; pairs.len()];
+        let mut contact_lambdas: Vec<f64> = vec![0.0; pairs.len()];
 
         // TODO: how to collect contact events from contacts happening over multiple timesteps?
         // probably have an array of accumulator-type things with length equal to `pairs`
@@ -329,7 +329,7 @@ impl Physics {
                             let dir = if actual_dist_mag != 0.0 {
                                 actual_dist / actual_dist_mag
                             } else {
-                                uv::Vec2::unit_y()
+                                m::Vec2::unit_y()
                             };
 
                             match pair.1 {
@@ -440,7 +440,7 @@ impl Physics {
                         map_pair([0, 1], |i| old_poses[pair[*i]] * contact.offsets[*i]);
                     let offset_diff_motion = (offsets_worldspace[0] - offsets_worldspace_old[0])
                         - (offsets_worldspace[1] - offsets_worldspace_old[1]);
-                    let tangent = math::left_normal(*contact.normal);
+                    let tangent = m::left_normal(*contact.normal);
                     let motion_along_tan = offset_diff_motion.dot(tangent);
 
                     let friction_coef = (body_refs[pair[0]].rb.material)
@@ -517,7 +517,7 @@ impl Physics {
 
                     // dynamic friction
 
-                    let tangent = math::left_normal(*contact.normal);
+                    let tangent = m::left_normal(*contact.normal);
                     let tangent_vel = relative_vel_at_p.dot(tangent);
                     let friction_coef = (body_refs[pair[0]].rb.material)
                         .dynamic_friction_with(&body_refs[pair[1]].rb.material);
@@ -569,7 +569,7 @@ impl Physics {
 /// References to the parts of a body that we need to find out if it collides with anything.
 /// Used internally in collision detection, exposed to allow custom broad phase algorithms.
 pub struct BodyRef<'a> {
-    pub pose: graph::NodeRef<'a, math::Pose>,
+    pub pose: graph::NodeRef<'a, m::Pose>,
     pub coll: graph::NodeRef<'a, Collider>,
     pub rb: graph::NodeRef<'a, RigidBody>,
 }

@@ -14,7 +14,7 @@ pub struct InputCache {
     keyboard: HashMap<Key, AgedState>,
     mouse_buttons: MouseButtonState,
     cursor_pos: CursorPosition,
-    scroll_delta: f32,
+    scroll_delta: f64,
     drag_state: Option<DragState>,
 }
 
@@ -127,7 +127,7 @@ impl InputCache {
     }
 
     /// Get the vertical scroll distance in pixels during the last tick.
-    pub fn scroll_delta(&self) -> f32 {
+    pub fn scroll_delta(&self) -> f64 {
         self.scroll_delta
     }
 
@@ -206,12 +206,12 @@ impl InputCache {
     /// TODO: test to make line and pixel delta effects match
     ///
     pub fn track_mouse_wheel(&mut self, delta: ev::MouseScrollDelta) {
-        const PIXELS_PER_LINE: f32 = 10.0;
+        const PIXELS_PER_LINE: f64 = 10.0;
 
         use ev::MouseScrollDelta::*;
         match delta {
-            LineDelta(_, y) => self.scroll_delta += PIXELS_PER_LINE * y,
-            PixelDelta(PhysicalPosition { y, .. }) => self.scroll_delta += y as f32,
+            LineDelta(_, y) => self.scroll_delta += PIXELS_PER_LINE * y as f64,
+            PixelDelta(PhysicalPosition { y, .. }) => self.scroll_delta += y as f64,
         }
     }
 

@@ -1,6 +1,5 @@
 use starframe::{
-    self as sf, graphics as gx,
-    math::{self as m, uv},
+    self as sf, graphics as gx, math as m,
     physics::{self as phys, rigidbody::SurfaceMaterial, Velocity},
 };
 
@@ -13,27 +12,27 @@ pub enum Recipe {
     DynamicBlock(Block),
     Ball(Ball),
     Blockchain {
-        width: f32,
-        spacing: f32,
-        links: Vec<[f32; 2]>,
+        width: f64,
+        spacing: f64,
+        links: Vec<[f64; 2]>,
         anchored_start: bool,
         anchored_end: bool,
     },
     Oscillator {
-        position: [f32; 2],
-        begin_length: f32,
-        target_length: f32,
-        compliance: f32,
+        position: [f64; 2],
+        begin_length: f64,
+        target_length: f64,
+        compliance: f64,
     },
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct Ball {
-    pub radius: f32,
-    pub position: [f32; 2],
-    pub restitution: f32,
-    pub start_velocity: [f32; 2],
+    pub radius: f64,
+    pub position: [f64; 2],
+    pub restitution: f64,
+    pub start_velocity: [f64; 2],
 }
 
 impl Default for Ball {
@@ -50,8 +49,8 @@ impl Default for Ball {
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct Block {
-    pub width: f32,
-    pub height: f32,
+    pub width: f64,
+    pub height: f64,
     pub pose: m::IsometryBuilder,
 }
 
@@ -71,9 +70,7 @@ fn spawn_block(
     is_static: bool,
     graph: &mut crate::MyGraph,
 ) -> sf::graph::Node<phys::RigidBody> {
-    let pose_node = graph
-        .l_transform
-        .insert(block.pose.into(), &mut graph.graph);
+    let pose_node = graph.l_pose.insert(block.pose.into(), &mut graph.graph);
     let coll = phys::Collider::new_rect(block.width, block.height);
     let body = if is_static {
         phys::RigidBody::new_static()
@@ -113,8 +110,8 @@ impl Recipe {
                 restitution,
                 start_velocity,
             }) => {
-                let pose_node = graph.l_transform.insert(
-                    uv::Isometry2::new(position.into(), uv::Rotor2::identity()),
+                let pose_node = graph.l_pose.insert(
+                    m::Pose::new(position.into(), m::Rotor2::identity()),
                     &mut graph.graph,
                 );
                 let coll = phys::Collider::new_circle(*radius);
@@ -155,10 +152,10 @@ impl Recipe {
 
                 let half_spacing = spacing / 2.0;
 
-                let mut links_iter = links.iter().map(|p| uv::Vec2::new(p[0], p[1])).peekable();
+                let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
-                let mut prev_block: Option<(sf::graph::Node<phys::RigidBody>, f32)> = None;
+                let mut prev_block: Option<(sf::graph::Node<phys::RigidBody>, f64)> = None;
                 while let (Some(link1), Some(link2)) = (links_iter.next(), links_iter.peek()) {
                     let distance = *link2 - link1;
                     let dist_norm = distance.mag();
@@ -183,15 +180,15 @@ impl Recipe {
                         physics.add_constraint(
                             phys::ConstraintBuilder::new(block)
                                 .with_target(prev_block)
-                                .with_origin(uv::Vec2::new(-block_length_half - half_spacing, 0.0))
-                                .with_target_origin(uv::Vec2::new(prev_block_offset, 0.0))
+                                .with_origin(m::Vec2::new(-block_length_half - half_spacing, 0.0))
+                                .with_target_origin(m::Vec2::new(prev_block_offset, 0.0))
                                 .with_compliance(0.015)
                                 .build_attachment(),
                         );
                     } else if *anchored_start {
                         physics.add_constraint(
                             phys::ConstraintBuilder::new(block)
-                                .with_origin(uv::Vec2::new(-block_length_half - half_spacing, 0.0))
+                                .with_origin(m::Vec2::new(-block_length_half - half_spacing, 0.0))
                                 .with_target_origin(link1)
                                 .build_attachment(),
                         );
@@ -203,11 +200,11 @@ impl Recipe {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
                     physics.add_constraint(
                         phys::ConstraintBuilder::new(prev_block)
-                            .with_origin(uv::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
+                            .with_origin(m::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
                             .with_target_origin(
                                 links
                                     .iter()
-                                    .map(|p| uv::Vec2::new(p[0], p[1]))
+                                    .map(|p| m::Vec2::new(p[0], p[1]))
                                     .last()
                                     .unwrap(),
                             )
@@ -221,8 +218,8 @@ impl Recipe {
                 target_length,
                 compliance,
             } => {
-                let position: uv::Vec2 = position.into();
-                let offset = uv::Vec2::new(begin_length / 2.0, 0.0);
+                let position: m::Vec2 = position.into();
+                let offset = m::Vec2::new(begin_length / 2.0, 0.0);
                 let b1 = spawn_block(
                     Block {
                         width: 1.0,

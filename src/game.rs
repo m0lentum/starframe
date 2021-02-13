@@ -18,7 +18,7 @@ use winit::{
 /// #    fn init() -> Self { Self }
 /// # }
 /// # impl GameState for MyState {
-/// #   fn tick(&mut self, dt: f32, game: &Game) -> Option<()> { None }
+/// #   fn tick(&mut self, dt: f64, game: &Game) -> Option<()> { None }
 /// #   fn draw(&mut self, renderer: &mut starframe::graphics::Renderer) {}
 /// # }
 /// let game = Game::init(winit::window::WindowBuilder::new());
@@ -62,7 +62,7 @@ impl Game {
 /// The entire state of a game.
 pub trait GameState: Sized + 'static {
     /// Advance the game forward by a timestep. Return None to exit the game.
-    fn tick(&mut self, dt: f32, game: &Game) -> Option<()>;
+    fn tick(&mut self, dt: f64, game: &Game) -> Option<()>;
     /// Render the game onto the screen.
     fn draw(&mut self, renderer: &mut crate::graphics::Renderer);
 }
@@ -88,14 +88,14 @@ const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 /// A loop that runs both simulation and rendering at a fixed framerate.
 pub struct LockstepLoop {
     nanos_per_frame: u128,
-    dt: f32,
+    dt: f64,
 }
 
 impl LockstepLoop {
     pub fn from_fps(fps: u32) -> Self {
         LockstepLoop {
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
-            dt: 1.0 / fps as f32,
+            dt: 1.0 / fps as f64,
         }
     }
 }

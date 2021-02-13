@@ -10,7 +10,7 @@ use starframe::{
     game::{self, Game},
     graph, graphics as gx,
     input::{Key, MouseButton},
-    math::{self, uv},
+    math::{self as m, uv},
     physics as phys,
 };
 
@@ -107,7 +107,7 @@ impl State {
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct Scene {
-    gravity: [f32; 2],
+    gravity: [f64; 2],
     recipes: Vec<Recipe>,
 }
 
@@ -143,7 +143,7 @@ impl Scene {
 /// The entity graph.
 pub struct MyGraph {
     graph: graph::Graph,
-    l_transform: graph::Layer<uv::Isometry2>,
+    l_pose: graph::Layer<m::Pose>,
     l_collider: graph::Layer<phys::Collider>,
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
@@ -153,7 +153,7 @@ pub struct MyGraph {
 impl MyGraph {
     pub fn new() -> Self {
         let mut graph = graph::Graph::new();
-        let l_transform = graph.create_layer();
+        let l_pose = graph.create_layer();
         let l_collider = graph.create_layer();
         let l_body = graph.create_layer();
         let l_shape = graph.create_layer();
@@ -161,7 +161,7 @@ impl MyGraph {
         let l_evt_sinks = graph.create_layer();
         MyGraph {
             graph,
-            l_transform,
+            l_pose,
             l_collider,
             l_body,
             l_shape,
@@ -176,7 +176,7 @@ impl MyGraph {
 //
 
 impl game::GameState for State {
-    fn tick(&mut self, dt: f32, game: &Game) -> Option<()> {
+    fn tick(&mut self, dt: f64, game: &Game) -> Option<()> {
         microprofile::flip();
         microprofile::scope!("update", "all");
 
@@ -205,7 +205,7 @@ impl game::GameState for State {
         self.camera
             .update(&game.input, game.renderer.window_size().into());
         if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
-            self.camera.pose = uv::Similarity2::identity();
+            self.camera.pose = uv::DSimilarity2::identity();
         }
 
         // reload
@@ -239,13 +239,13 @@ impl game::GameState for State {
         // spawn stuff also when paused
         let random_pos = || {
             let mut rng = rand::thread_rng();
-            uv::Vec2::new(
+            m::Vec2::new(
                 distr::Uniform::from(-5.0..5.0).sample(&mut rng),
                 distr::Uniform::from(1.0..4.0).sample(&mut rng),
             )
         };
         let random_angle =
-            || math::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
+            || m::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
         let random_vel = || {
             let mut rng = rand::thread_rng();
             [
@@ -256,7 +256,7 @@ impl game::GameState for State {
         let mut rng = rand::thread_rng();
         if game.input.is_key_pressed(Key::S, Some(0)) {
             Recipe::DynamicBlock(recipes::Block {
-                pose: math::IsometryBuilder::new()
+                pose: m::IsometryBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle()),
                 width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
@@ -289,7 +289,7 @@ impl game::GameState for State {
                     let grav = phys::forcefield::Gravity(self.scene.gravity.into());
                     self.physics.tick(
                         &self.graph.graph,
-                        &mut self.graph.l_transform,
+                        &mut self.graph.l_pose,
                         &mut self.graph.l_body,
                         &self.graph.l_collider,
                         &mut self.graph.l_evt_sink,
@@ -333,7 +333,7 @@ impl game::GameState for State {
 
         self.shape_renderer.draw(
             &self.graph.l_shape,
-            &self.graph.l_transform,
+            &self.graph.l_pose,
             &self.graph.graph,
             &self.camera,
             &mut ctx,

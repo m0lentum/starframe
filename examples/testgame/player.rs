@@ -2,8 +2,7 @@ use crate::MyGraph;
 use starframe::{
     self as sf, graphics as gx,
     input::{Key, KeyAxisState},
-    math::{self, uv},
-    physics as phys,
+    math as m, physics as phys,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -23,10 +22,10 @@ pub(self) enum Facing {
     Left,
 }
 impl Facing {
-    fn orient_vec(&self, vel: uv::Vec2) -> uv::Vec2 {
+    fn orient_vec(&self, vel: m::Vec2) -> m::Vec2 {
         match self {
             Facing::Right => vel,
-            Facing::Left => uv::Vec2::new(-vel.x, vel.y),
+            Facing::Left => m::Vec2::new(-vel.x, vel.y),
         }
     }
 }
@@ -34,15 +33,15 @@ impl Facing {
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct PlayerRecipe {
-    pub pose: math::IsometryBuilder,
+    pub pose: m::IsometryBuilder,
 }
 
 impl PlayerRecipe {
     pub fn spawn(&self, graph: &mut MyGraph) {
-        const WIDTH: f32 = 0.2;
-        const HEIGHT: f32 = 0.4;
+        const WIDTH: f64 = 0.2;
+        const HEIGHT: f64 = 0.4;
 
-        let pose_node = graph.l_transform.insert(self.pose.into(), &mut graph.graph);
+        let pose_node = graph.l_pose.insert(self.pose.into(), &mut graph.graph);
         let shape_node = graph.l_shape.insert(
             gx::Shape::Rect {
                 w: WIDTH,
@@ -66,8 +65,8 @@ impl PlayerRecipe {
 }
 
 pub struct PlayerController {
-    base_move_speed: f32,
-    max_acceleration: f32,
+    base_move_speed: f64,
+    max_acceleration: f64,
 }
 impl PlayerController {
     pub fn new() -> Self {
@@ -84,13 +83,10 @@ impl PlayerController {
             KeyAxisState::Neg => (Some(Facing::Left), -1.0),
         };
 
-        let mut bullet_queue: Vec<(uv::Isometry2, phys::Velocity)> = Vec::new();
+        let mut bullet_queue: Vec<(m::Pose, phys::Velocity)> = Vec::new();
         for mut player in g.l_player.iter_mut(&g.graph) {
             let mut player_body = g.graph.get_neighbor_mut(&player, &mut g.l_body).unwrap();
-            let mut player_tr = g
-                .graph
-                .get_neighbor_mut(&player, &mut g.l_transform)
-                .unwrap();
+            let mut player_tr = g.graph.get_neighbor_mut(&player, &mut g.l_pose).unwrap();
 
             // move and orient
 
@@ -112,7 +108,7 @@ impl PlayerController {
             // hacked up rotation locking
 
             player_vel.angular = 0.0;
-            player_tr.rotation = uv::Rotor2::identity();
+            player_tr.rotation = m::Rotor2::identity();
 
             // jump
 
@@ -125,15 +121,15 @@ impl PlayerController {
 
             if input.is_key_pressed(Key::Z, Some(0)) {
                 bullet_queue.push((
-                    math::IsometryBuilder::new()
+                    m::IsometryBuilder::new()
                         .with_position(
                             player_tr.translation
-                                + player.facing.orient_vec(uv::Vec2::new(0.2, 0.0)),
+                                + player.facing.orient_vec(m::Vec2::new(0.2, 0.0)),
                         )
                         .build(),
                     phys::Velocity {
                         angular: 0.0,
-                        linear: player.facing.orient_vec(uv::Vec2::new(20.0, 0.1)),
+                        linear: player.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
                     },
                 ));
             }
@@ -144,9 +140,9 @@ impl PlayerController {
         }
     }
 
-    fn spawn_bullet(tr: uv::Isometry2, vel: phys::Velocity, g: &mut MyGraph) {
-        const R: f32 = 0.05;
-        let pose_node = g.l_transform.insert(tr, &mut g.graph);
+    fn spawn_bullet(tr: m::Pose, vel: phys::Velocity, g: &mut MyGraph) {
+        const R: f64 = 0.05;
+        let pose_node = g.l_pose.insert(tr, &mut g.graph);
         let shape_node = g.l_shape.insert(
             gx::Shape::Circle {
                 r: R,
