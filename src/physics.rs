@@ -361,21 +361,21 @@ impl Physics {
 
                     // restitution
 
-                    let normal_vel: f32 = relative_vel_at_p.dot(*contact.normal);
+                    let normal_vel = relative_vel_at_p.dot(*contact.normal);
                     let old_rel_vel = old_velocities[pair[0]].point_velocity(offsets_rotated[0])
                         - old_velocities[pair[1]].point_velocity(offsets_rotated[1]);
                     let old_normal_vel = old_rel_vel.dot(*contact.normal);
                     let restitution_coef = if old_normal_vel * old_normal_vel
-                        < dt * (ext_f_accelerations[pair[0]] + ext_f_accelerations[pair[1]])
-                            .mag_sq()
+                        < dt * dt
+                            * (ext_f_accelerations[pair[0]] + ext_f_accelerations[pair[1]]).mag_sq()
                     {
+                        // don't bounce if the normal velocity is very small to avoid jitter
                         0.0
                     } else {
                         (body_refs[pair[0]].rb.material)
                             .restitution_with(&body_refs[pair[1]].rb.material)
                     };
-                    let delta_normal_vel =
-                        -normal_vel - (restitution_coef * old_normal_vel).min(0.0);
+                    let delta_normal_vel = -normal_vel - restitution_coef * old_normal_vel.max(0.0);
 
                     // dynamic friction
 

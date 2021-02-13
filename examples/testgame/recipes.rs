@@ -1,7 +1,7 @@
 use starframe::{
     self as sf, graphics as gx,
     math::{self as m, uv},
-    physics as phys,
+    physics::{self as phys, rigidbody::SurfaceMaterial, Velocity},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -11,10 +11,7 @@ pub enum Recipe {
     Player(crate::player::PlayerRecipe),
     StaticBlock(Block),
     DynamicBlock(Block),
-    Ball {
-        radius: f32,
-        position: [f32; 2],
-    },
+    Ball(Ball),
     Blockchain {
         width: f32,
         spacing: f32,
@@ -29,6 +26,26 @@ pub enum Recipe {
         frequency: f32,
         damping: f32,
     },
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct Ball {
+    pub radius: f32,
+    pub position: [f32; 2],
+    pub restitution: f32,
+    pub start_velocity: [f32; 2],
+}
+
+impl Default for Ball {
+    fn default() -> Self {
+        Self {
+            radius: 1.0,
+            position: [0.0, 0.0],
+            restitution: 0.0,
+            start_velocity: [0.0, 0.0],
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -83,22 +100,34 @@ fn spawn_block(
 
 impl Recipe {
     pub fn spawn(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
-        use Recipe::*;
         match self {
-            Player(p_rec) => p_rec.spawn(graph),
-            StaticBlock(block) => {
+            Recipe::Player(p_rec) => p_rec.spawn(graph),
+            Recipe::StaticBlock(block) => {
                 spawn_block(*block, [0.5; 4], true, graph);
             }
-            DynamicBlock(block) => {
+            Recipe::DynamicBlock(block) => {
                 spawn_block(*block, random_color(), false, graph);
             }
-            Ball { radius, position } => {
+            Recipe::Ball(Ball {
+                radius,
+                position,
+                restitution,
+                start_velocity,
+            }) => {
                 let pose_node = graph.l_transform.insert(
                     uv::Isometry2::new(position.into(), uv::Rotor2::identity()),
                     &mut graph.graph,
                 );
                 let coll = phys::Collider::new_circle(*radius);
-                let body = phys::RigidBody::new_dynamic(&coll, 0.5);
+                let body = phys::RigidBody::new_dynamic(&coll, 0.5)
+                    .with_material(SurfaceMaterial {
+                        restitution_coef: *restitution,
+                        ..Default::default()
+                    })
+                    .with_velocity(Velocity {
+                        linear: start_velocity.into(),
+                        angular: 0.0,
+                    });
                 let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
                 let body_node = graph.l_body.insert(body, &mut graph.graph);
                 let shape_node = graph.l_shape.insert(
@@ -113,7 +142,7 @@ impl Recipe {
                 graph.graph.connect(&body_node, &coll_node);
                 graph.graph.connect(&pose_node, &shape_node);
             }
-            Blockchain {
+            Recipe::Blockchain {
                 width,
                 spacing,
                 links,
@@ -192,7 +221,7 @@ impl Recipe {
                     );
                 }
             }
-            Oscillator {
+            Recipe::Oscillator {
                 position,
                 begin_length,
                 target_length,

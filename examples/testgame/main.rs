@@ -246,6 +246,13 @@ impl game::GameState for State {
         };
         let random_angle =
             || math::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
+        let random_vel = || {
+            let mut rng = rand::thread_rng();
+            [
+                distr::Uniform::from(-5.0..5.0).sample(&mut rng),
+                distr::Uniform::from(-5.0..5.0).sample(&mut rng),
+            ]
+        };
         let mut rng = rand::thread_rng();
         if game.input.is_key_pressed(Key::S, Some(0)) {
             Recipe::DynamicBlock(recipes::Block {
@@ -258,10 +265,12 @@ impl game::GameState for State {
             .spawn(&mut self.graph, &mut self.physics);
         }
         if game.input.is_key_pressed(Key::T, Some(0)) {
-            Recipe::Ball {
+            Recipe::Ball(recipes::Ball {
                 position: random_pos().into(),
                 radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
-            }
+                restitution: 1.0,
+                start_velocity: random_vel(),
+            })
             .spawn(&mut self.graph, &mut self.physics);
         }
 

@@ -1,9 +1,9 @@
 (
     recipes: [
-        // DynamicBlock (( pose: ( position: (0, 0) ))),
+        DynamicBlock (( pose: ( position: (0, 0) ))),
         // DynamicBlock (( pose: ( position: (0, -1) ))),
-        // Ball ( radius: 1.0, position: (0, 0) ),
-        DynamicBlock (( pose: ( position: (0, -1.75) ))),
+        // Ball (( radius: 1.0, position: (0, 0) )),
+        // DynamicBlock (( pose: ( position: (0, -1.75) ))),
         StaticBlock ((
             width: 10, height: 2, pose: ( position: (0, -3) ),
         )),

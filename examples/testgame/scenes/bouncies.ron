@@ -1,0 +1,18 @@
+(
+    gravity: (0, 0),
+    recipes: [
+        // walls
+        StaticBlock (( 
+            width: 20, height: 0.2, pose: ( position: (0, 5) ),
+        )),
+        StaticBlock ((
+            width: 20, height: 0.2, pose: ( position: (0, -5) ),
+        )),
+        StaticBlock ((
+            width: 0.2, height: 10, pose: ( position: (10, 0) ),
+        )),
+        StaticBlock ((
+            width: 0.2, height: 10, pose: ( position: (-10, 0) ),
+        )),
+    ],
+)

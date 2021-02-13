@@ -61,9 +61,9 @@ impl SurfaceMaterial {
 
     /// Get the restitution coefficient between this material and another.
     ///
-    /// It is computed as the average between the two materials' friction coefficients.
+    /// It is computed as the largest coefficient between the two bodies.
     pub fn restitution_with(&self, other: &Self) -> f32 {
-        (self.restitution_coef + other.restitution_coef) / 2.0
+        self.restitution_coef.max(other.restitution_coef)
     }
 }
 
@@ -107,6 +107,11 @@ impl RigidBody {
 
     pub fn with_velocity(mut self, vel: Velocity) -> Self {
         self.velocity_mut().map(|v| *v = vel);
+        self
+    }
+
+    pub fn with_material(mut self, mat: SurfaceMaterial) -> Self {
+        self.material = mat;
         self
     }
 
