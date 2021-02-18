@@ -14,6 +14,8 @@ use starframe::{
     physics as phys,
 };
 
+mod mousegrab;
+use mousegrab::MouseGrabber;
 mod player;
 mod recipes;
 use recipes::Recipe;
@@ -49,6 +51,8 @@ pub struct State {
     state: StateEnum,
     graph: MyGraph,
     player: player::PlayerController,
+    mouse_mode: MouseMode,
+    mouse_grabber: MouseGrabber,
     physics: phys::Physics,
     camera: gx::camera::MouseDragCamera,
     shape_renderer: gx::ShapeRenderer,
@@ -60,6 +64,8 @@ impl State {
             state: StateEnum::Playing,
             graph: MyGraph::new(),
             player: player::PlayerController::new(),
+            mouse_mode: MouseMode::Grab,
+            mouse_grabber: MouseGrabber::new(),
             physics: phys::Physics::with_substeps(10),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
@@ -101,6 +107,14 @@ impl State {
     fn instantiate_scene(&mut self) {
         self.scene.instantiate(&mut self.graph, &mut self.physics);
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum MouseMode {
+    /// Grab objects with the mouse
+    Grab,
+    /// Move the camera with the mouse
+    Camera,
 }
 
 /// The recipes in a scene plus some adjustable parameters.
@@ -148,7 +162,7 @@ pub struct MyGraph {
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
     l_player: graph::Layer<player::Player>,
-    l_evt_sink: sf::EventSinkLayer<MyGraph>,
+    l_evt_sink: sf::event::EventSinkLayer<MyGraph>,
 }
 impl MyGraph {
     pub fn new() -> Self {
@@ -200,12 +214,32 @@ impl game::GameState for State {
             println!("Substeps: {}", self.physics.substeps);
         }
 
-        // mouse camera
+        // mouse controls
 
-        self.camera
-            .update(&game.input, game.renderer.window_size().into());
-        if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
-            self.camera.pose = uv::DSimilarity2::identity();
+        if game.input.is_key_pressed(Key::V, Some(0)) {
+            self.mouse_mode = match self.mouse_mode {
+                MouseMode::Grab => MouseMode::Camera,
+                MouseMode::Camera => MouseMode::Grab,
+            };
+            println!("Mouse mode: {:?}", self.mouse_mode);
+        }
+        match self.mouse_mode {
+            MouseMode::Grab => {
+                self.mouse_grabber.update(
+                    &game.input,
+                    &self.camera,
+                    game.renderer.window_size().into(),
+                    &mut self.physics,
+                    &self.graph,
+                );
+            }
+            MouseMode::Camera => {
+                self.camera
+                    .update(&game.input, game.renderer.window_size().into());
+                if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
+                    self.camera.pose = uv::DSimilarity2::identity();
+                }
+            }
         }
 
         // reload

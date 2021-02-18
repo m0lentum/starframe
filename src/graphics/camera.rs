@@ -3,8 +3,12 @@ use crate::{
     math::{self as m, uv},
 };
 
+/// A camera determines the area of space to draw when rendering.
 pub trait Camera {
+    /// Generate a view matrix for rendering.
     fn view_matrix(&self, viewport_size: (u32, u32)) -> uv::DMat3;
+    /// Map a point from screen space to world space.
+    fn point_screen_to_world(&self, viewport_size: (u32, u32), point: m::Vec2) -> m::Vec2;
 }
 
 /// Tells a camera how to adapt to changing viewport size.
@@ -105,5 +109,20 @@ impl Camera for MouseDragCamera {
         );
         let my_transform_inv = self.pose.inversed().into_homogeneous_matrix();
         vp_scaling * my_transform_inv
+    }
+
+    fn point_screen_to_world(
+        &self,
+        viewport_size: (u32, u32),
+        point_screenspace: m::Vec2,
+    ) -> m::Vec2 {
+        let pixels_per_unit = self.scaling_strategy.scaling_factor(viewport_size);
+        let half_vp_diag = m::Vec2::new(viewport_size.0 as f64 / 2.0, viewport_size.1 as f64 / 2.0);
+        let point_screen_wrt_center = {
+            let p = point_screenspace - half_vp_diag;
+            m::Vec2::new(p.x, -p.y)
+        };
+
+        self.pose * (point_screen_wrt_center / pixels_per_unit)
     }
 }

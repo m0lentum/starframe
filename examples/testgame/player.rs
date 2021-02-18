@@ -157,7 +157,7 @@ impl PlayerController {
         let body_node = g.l_body.insert(body, &mut g.graph);
 
         let evt_sink_node = g.l_evt_sink.insert(
-            sf::EventSink::new(|g: &mut MyGraph, node, evt| match evt {
+            sf::event::EventSink::new(|g: &mut MyGraph, node, evt| match evt {
                 sf::Event::Contact(contact) => {
                     println!(
                         "Bullet hit with {:?}",

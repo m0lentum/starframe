@@ -1,3 +1,5 @@
+use crate::math as m;
+
 use std::collections::HashMap;
 use winit::dpi::PhysicalPosition;
 
@@ -298,6 +300,13 @@ impl CursorPosition {
             CursorPosition::InWindow(p) => p,
             CursorPosition::OutOfWindow(p) => p,
         }
+    }
+}
+
+impl Into<m::Vec2> for &CursorPosition {
+    fn into(self) -> m::Vec2 {
+        let pos = self.get();
+        m::Vec2::new(pos.x, pos.y)
     }
 }
 

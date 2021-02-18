@@ -14,8 +14,7 @@ use collision::narrowphase::intersection_check;
 pub use collision::{Collider, ColliderShape, Contact, ContactResult};
 
 pub mod constraint;
-use constraint::ConstraintType;
-pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit};
+pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
@@ -163,7 +162,7 @@ impl Physics {
         l_pose: &mut graph::Layer<m::Pose>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
-        l_evt_sink: &mut crate::EventSinkLayer<EvtParams>,
+        l_evt_sink: &mut crate::event::EventSinkLayer<EvtParams>,
         dt: f64,
         forcefield: &impl ForceField,
     ) {
@@ -573,6 +572,30 @@ impl Physics {
             rb.velocity_mut().map(|v| *v = vel_result);
             *pose = pose_result;
         }
+    }
+
+    /// Find the first rigid body that intersects with the given point.
+    pub fn query_point_body<'g>(
+        &self,
+        graph: &'g graph::Graph,
+        l_pose: &'g graph::Layer<m::Pose>,
+        l_collider: &'g graph::Layer<Collider>,
+        l_body: &'g graph::Layer<RigidBody>,
+        point: m::Vec2,
+    ) -> Option<(
+        graph::NodeRef<'g, m::Pose>,
+        graph::NodeRef<'g, Collider>,
+        graph::NodeRef<'g, RigidBody>,
+    )> {
+        l_body.iter(graph).find_map(|rb| {
+            let coll = graph.get_neighbor(&rb, &l_collider)?;
+            let pose = graph.get_neighbor(&rb, &l_pose)?;
+            if collision::query::point_collider_bool(point, &*pose, &*coll) {
+                Some((pose, coll, rb))
+            } else {
+                None
+            }
+        })
     }
 }
 
