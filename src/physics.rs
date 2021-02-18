@@ -132,6 +132,16 @@ impl Physics {
         self.user_constraints.insert(constraint)
     }
 
+    /// Access a constraint if it still exists.
+    pub fn get_constraint(&self, handle: ConstraintHandle) -> Option<&Constraint> {
+        self.user_constraints.get(handle)
+    }
+
+    /// Mutably access a constraint if it still exists.
+    pub fn get_constraint_mut(&mut self, handle: ConstraintHandle) -> Option<&mut Constraint> {
+        self.user_constraints.get_mut(handle)
+    }
+
     /// Remove a constraint from the system. Returns the constraint if it still existed.
     ///
     /// Constraints can also disappear on their own if the objects they're associated with

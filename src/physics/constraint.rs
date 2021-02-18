@@ -5,19 +5,33 @@ use crate::{graph, math as m};
 
 /// A constraint restricts the relative motion of two bodies,
 /// or the motion of a single body in the world.
+///
+/// [`ConstraintBuilder`][self::ConstraintBuilder] is the preferred
+/// way to create these, but the fields are public to allow in-place editing
+/// for advanced users.
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
-    pub(crate) owner: graph::Node<RigidBody>,
-    pub(crate) target: Option<graph::Node<RigidBody>>,
-    pub(crate) compliance: f64,
-    pub(crate) ty: ConstraintType,
+    /// The body that owns this constraint.
+    pub owner: graph::Node<RigidBody>,
+    /// The body this constraint is attached to.
+    /// `None` represents ground.
+    pub target: Option<graph::Node<RigidBody>>,
+    /// Inverse of stiffness, or how much the constraint resists violation.
+    pub compliance: f64,
+    /// Type of the constraint.
+    pub ty: ConstraintType,
 }
 
+/// Type-specific variables for constraints.
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum ConstraintType {
+pub enum ConstraintType {
+    /// A distance constraint enforces a specific distance between two points.
     Distance {
+        /// The desired distance.
         distance: f64,
+        /// Offsets from each body's center of mass (or world origin).
         offsets: [m::Vec2; 2],
+        /// Which directions to enforce the constraint in.
         limit: ConstraintLimit,
     },
 }
