@@ -43,9 +43,9 @@ impl MouseGrabber {
                             ConstraintBuilder::new(sf::graph::NodeRef::as_node(&rb, &graph.graph))
                                 .with_origin(pose.inversed() * target_point)
                                 .with_target_origin(target_point)
-                                .with_compliance(0.05)
-                                .with_linear_damping(200.0)
-                                .with_angular_damping(1.0)
+                                .with_compliance(0.01)
+                                .with_linear_damping(10.0)
+                                .with_angular_damping(0.5)
                                 .build_attachment();
                         self.constraint = Some(physics.add_constraint(constr));
                     }

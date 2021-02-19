@@ -573,13 +573,8 @@ impl Physics {
 
                         let relative_vel = velocities[pair[0]].point_velocity(offsets_rotated[0])
                             - velocities[pair[1]].point_velocity(offsets_rotated[1]);
-                        let old_rel_vel = old_velocities[pair[0]]
-                            .point_velocity(offsets_rotated[0])
-                            - old_velocities[pair[1]].point_velocity(offsets_rotated[1]);
-                        let rel_vel_diff = relative_vel - old_rel_vel;
-
-                        let rel_vel_diff_mag = rel_vel_diff.mag();
-                        let dir = rel_vel_diff / rel_vel_diff_mag;
+                        let relative_vel_mag = relative_vel.mag();
+                        let dir = relative_vel / relative_vel_mag;
 
                         let offsets_wedge_dir =
                             map_pair([0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
@@ -588,7 +583,7 @@ impl Physics {
                         });
 
                         let vel_update_mag =
-                            -rel_vel_diff_mag * (constraint.linear_damping * dt).min(1.0);
+                            -relative_vel_mag * (constraint.linear_damping * dt).min(1.0);
                         let linear_impulse_mag =
                             vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
@@ -602,11 +597,8 @@ impl Physics {
                         if constraint.angular_damping > 0.0 {
                             let rel_angular_vel =
                                 velocities[pair[0]].angular - velocities[pair[1]].angular;
-                            let old_rel_ang_vel =
-                                old_velocities[pair[0]].angular - old_velocities[pair[1]].angular;
-                            let rel_ang_vel_diff = rel_angular_vel - old_rel_ang_vel;
                             let ang_vel_update_mag =
-                                -rel_ang_vel_diff * (constraint.angular_damping * dt).min(1.0);
+                                -rel_angular_vel * (constraint.angular_damping * dt).min(1.0);
                             let angular_impulse =
                                 ang_vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
@@ -617,17 +609,16 @@ impl Physics {
                     None => {
                         let offset_rotated = poses[pair.0].rotation * constraint.offsets[0];
 
-                        let point_vel_diff = velocities[pair.0].point_velocity(offset_rotated)
-                            - old_velocities[pair.0].point_velocity(offset_rotated);
-                        let p_v_diff_mag = point_vel_diff.mag();
-                        let dir = point_vel_diff / p_v_diff_mag;
+                        let point_vel = velocities[pair.0].point_velocity(offset_rotated);
+                        let point_vel_mag = point_vel.mag();
+                        let dir = point_vel / point_vel_mag;
 
                         let offset_wedge_dir = offset_rotated.wedge(dir).xy;
                         let eff_inv_mass =
                             inv_masses[0] + offset_wedge_dir.powi(2) * inv_mom_inertias[0];
 
                         let vel_update_mag =
-                            -p_v_diff_mag * (constraint.linear_damping * dt).min(1.0);
+                            -point_vel_mag * (constraint.linear_damping * dt).min(1.0);
                         let linear_impulse_mag = vel_update_mag / eff_inv_mass;
 
                         velocities[pair.0].linear += inv_masses[0] * linear_impulse_mag * dir;
