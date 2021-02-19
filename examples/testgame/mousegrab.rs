@@ -1,6 +1,6 @@
 use sf::{
     graphics::camera::Camera,
-    physics::{Constraint, ConstraintBuilder, ConstraintHandle, ConstraintType},
+    physics::{ConstraintBuilder, ConstraintHandle},
 };
 use starframe as sf;
 
@@ -27,12 +27,8 @@ impl MouseGrabber {
                 camera.point_screen_to_world(viewport_size, input.cursor_position().into());
             match self.constraint {
                 Some(handle) => {
-                    if let Some(Constraint {
-                        ty: ConstraintType::Distance { offsets, .. },
-                        ..
-                    }) = physics.get_constraint_mut(handle)
-                    {
-                        offsets[1] = target_point;
+                    if let Some(constr) = physics.get_constraint_mut(handle) {
+                        constr.offsets[1] = target_point;
                     }
                 }
                 None => {
@@ -48,6 +44,8 @@ impl MouseGrabber {
                                 .with_origin(pose.inversed() * target_point)
                                 .with_target_origin(target_point)
                                 .with_compliance(0.05)
+                                .with_linear_damping(200.0)
+                                .with_angular_damping(1.0)
                                 .build_attachment();
                         self.constraint = Some(physics.add_constraint(constr));
                     }

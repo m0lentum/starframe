@@ -18,6 +18,14 @@ pub struct Constraint {
     pub target: Option<graph::Node<RigidBody>>,
     /// Inverse of stiffness, or how much the constraint resists violation.
     pub compliance: f64,
+    /// Damping coefficient for linear velocity.
+    pub linear_damping: f64,
+    /// Damping coefficient for angular velocity.
+    pub angular_damping: f64,
+    /// Offsets from each body's center of mass (or world origin).
+    pub offsets: [m::Vec2; 2],
+    /// Which directions to enforce the constraint in.
+    pub limit: ConstraintLimit,
     /// Type of the constraint.
     pub ty: ConstraintType,
 }
@@ -29,10 +37,6 @@ pub enum ConstraintType {
     Distance {
         /// The desired distance.
         distance: f64,
-        /// Offsets from each body's center of mass (or world origin).
-        offsets: [m::Vec2; 2],
-        /// Which directions to enforce the constraint in.
-        limit: ConstraintLimit,
     },
 }
 
@@ -54,7 +58,10 @@ pub struct ConstraintBuilder {
     owner: graph::Node<RigidBody>,
     target: Option<graph::Node<RigidBody>>,
     offsets: [m::Vec2; 2],
+    limit: ConstraintLimit,
     compliance: f64,
+    linear_damping: f64,
+    angular_damping: f64,
 }
 
 impl ConstraintBuilder {
@@ -68,7 +75,10 @@ impl ConstraintBuilder {
             owner,
             target: None,
             offsets: [m::Vec2::zero(); 2],
+            limit: ConstraintLimit::Eq,
             compliance: 0.0,
+            linear_damping: 0.1,
+            angular_damping: 0.0,
         }
     }
 
@@ -106,25 +116,35 @@ impl ConstraintBuilder {
         self
     }
 
+    /// Set the linear damping coefficient of the constraint. This will slow down
+    /// the relative linear velocities of the participating bodies.
+    pub fn with_linear_damping(mut self, damping: f64) -> Self {
+        self.linear_damping = damping;
+        self
+    }
+
+    /// Set the angular damping coefficient of the constraint. This will slow down
+    /// the relative angular velocities of the participating bodies.
+    pub fn with_angular_damping(mut self, damping: f64) -> Self {
+        self.angular_damping = damping;
+        self
+    }
+
+    /// Set the limit for when to enforce the constraint.
+    pub fn with_limit(mut self, limit: ConstraintLimit) -> Self {
+        self.limit = limit;
+        self
+    }
+
     /// Build a distance constraint.
     pub fn build_distance(self, distance: f64, dir: ConstraintLimit) -> Constraint {
-        let ty = ConstraintType::Distance {
-            distance,
-            offsets: self.offsets,
-            limit: dir,
-        };
-        self.build(ty)
+        self.build(ConstraintType::Distance { distance })
     }
 
     /// Build an attachment constraint, i.e. a distance constraint of zero,
     /// forcing the origin points to overlap.
     pub fn build_attachment(self) -> Constraint {
-        let ty = ConstraintType::Distance {
-            distance: 0.0,
-            offsets: self.offsets,
-            limit: ConstraintLimit::Eq,
-        };
-        self.build(ty)
+        self.build(ConstraintType::Distance { distance: 0.0 })
     }
 
     fn build(self, ty: ConstraintType) -> Constraint {
@@ -132,6 +152,10 @@ impl ConstraintBuilder {
             owner: self.owner,
             target: self.target,
             compliance: self.compliance,
+            linear_damping: self.linear_damping,
+            angular_damping: self.angular_damping,
+            offsets: self.offsets,
+            limit: self.limit,
             ty,
         }
     }

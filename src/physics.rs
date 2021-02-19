@@ -314,22 +314,18 @@ impl Physics {
                     map_semi_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia(), 0.0);
 
                 match constraint.ty {
-                    ConstraintType::Distance {
-                        distance,
-                        offsets,
-                        limit,
-                    } => {
+                    ConstraintType::Distance { distance } => {
                         let offsets_worldspace = [
-                            poses[pair.0] * offsets[0],
+                            poses[pair.0] * constraint.offsets[0],
                             pair.1
-                                .map(|p1| poses[p1] * offsets[1])
-                                .unwrap_or(offsets[1]),
+                                .map(|p1| poses[p1] * constraint.offsets[1])
+                                .unwrap_or(constraint.offsets[1]),
                         ];
                         let actual_dist = offsets_worldspace[1] - offsets_worldspace[0];
                         let actual_dist_mag = actual_dist.mag();
                         let error = distance - actual_dist_mag;
 
-                        if match limit {
+                        if match constraint.limit {
                             ConstraintLimit::Eq => true,
                             ConstraintLimit::Lt if error < 0.0 => true,
                             ConstraintLimit::Gt if error > 0.0 => true,
@@ -347,7 +343,7 @@ impl Physics {
                                     // involving position corrections are introduced
                                     let pair = [pair.0, p1];
                                     let offsets_rotated = map_pair([0, 1], |i| {
-                                        poses[pair[*i]].rotation * offsets[*i]
+                                        poses[pair[*i]].rotation * constraint.offsets[*i]
                                     });
                                     let offsets_wedge_dir =
                                         map_pair([0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
@@ -379,7 +375,8 @@ impl Physics {
                                 }
                                 None => {
                                     // this is repetitive but kind of hard to abstract :thinking:
-                                    let offset_rotated = poses[pair.0].rotation * offsets[0];
+                                    let offset_rotated =
+                                        poses[pair.0].rotation * constraint.offsets[0];
                                     let offset_wedge_dir = offset_rotated.wedge(dir).xy;
                                     let eff_inv_mass = inv_masses[0]
                                         + offset_wedge_dir.powi(2) * inv_mom_inertias[0];
@@ -492,7 +489,7 @@ impl Physics {
             }
 
             //
-            // velocity step for dynamic friction and restitution on contacts
+            // velocity step for dynamic friction and restitution on contacts + damping on other constraints
             //
 
             for (pair, contact, lambda_n) in izip!(&pairs, &contacts, &contact_lambdas) {
@@ -556,6 +553,94 @@ impl Physics {
                     velocities[pair[1]].linear -= inv_masses[1] * impulse_mag * vel_update_dir;
                     velocities[pair[1]].angular -=
                         inv_mom_inertias[1] * impulse_mag * offsets_wedge_dv[1];
+                }
+            }
+
+            // damping
+
+            for (constraint, pair) in izip!(self.user_constraints.values(), &constraint_body_pairs)
+            {
+                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].rb.inverse_mass(), 0.0);
+                let inv_mom_inertias =
+                    map_semi_pair(*pair, |b| body_refs[*b].rb.inverse_moment_of_inertia(), 0.0);
+
+                match pair.1 {
+                    Some(p1) => {
+                        let pair = [pair.0, p1];
+                        let offsets_rotated = map_pair([0, 1], |i| {
+                            poses[pair[*i]].rotation * constraint.offsets[*i]
+                        });
+
+                        let relative_vel = velocities[pair[0]].point_velocity(offsets_rotated[0])
+                            - velocities[pair[1]].point_velocity(offsets_rotated[1]);
+                        let old_rel_vel = old_velocities[pair[0]]
+                            .point_velocity(offsets_rotated[0])
+                            - old_velocities[pair[1]].point_velocity(offsets_rotated[1]);
+                        let rel_vel_diff = relative_vel - old_rel_vel;
+
+                        let rel_vel_diff_mag = rel_vel_diff.mag();
+                        let dir = rel_vel_diff / rel_vel_diff_mag;
+
+                        let offsets_wedge_dir =
+                            map_pair([0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
+                        let eff_inv_masses = map_pair([0, 1], |i| {
+                            inv_masses[*i] + (offsets_wedge_dir[*i].powi(2) * inv_mom_inertias[*i])
+                        });
+
+                        let vel_update_mag =
+                            -rel_vel_diff_mag * (constraint.linear_damping * dt).min(1.0);
+                        let linear_impulse_mag =
+                            vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
+
+                        velocities[pair[0]].linear += inv_masses[0] * linear_impulse_mag * dir;
+                        velocities[pair[0]].angular +=
+                            inv_mom_inertias[0] * linear_impulse_mag * offsets_wedge_dir[0];
+                        velocities[pair[1]].linear -= inv_masses[1] * linear_impulse_mag * dir;
+                        velocities[pair[1]].angular -=
+                            inv_mom_inertias[1] * linear_impulse_mag * offsets_wedge_dir[1];
+
+                        if constraint.angular_damping > 0.0 {
+                            let rel_angular_vel =
+                                velocities[pair[0]].angular - velocities[pair[1]].angular;
+                            let old_rel_ang_vel =
+                                old_velocities[pair[0]].angular - old_velocities[pair[1]].angular;
+                            let rel_ang_vel_diff = rel_angular_vel - old_rel_ang_vel;
+                            let ang_vel_update_mag =
+                                -rel_ang_vel_diff * (constraint.angular_damping * dt).min(1.0);
+                            let angular_impulse =
+                                ang_vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
+
+                            velocities[pair[1]].angular -= inv_mom_inertias[1] * angular_impulse;
+                            velocities[pair[0]].angular += inv_mom_inertias[0] * angular_impulse;
+                        };
+                    }
+                    None => {
+                        let offset_rotated = poses[pair.0].rotation * constraint.offsets[0];
+
+                        let point_vel_diff = velocities[pair.0].point_velocity(offset_rotated)
+                            - old_velocities[pair.0].point_velocity(offset_rotated);
+                        let p_v_diff_mag = point_vel_diff.mag();
+                        let dir = point_vel_diff / p_v_diff_mag;
+
+                        let offset_wedge_dir = offset_rotated.wedge(dir).xy;
+                        let eff_inv_mass =
+                            inv_masses[0] + offset_wedge_dir.powi(2) * inv_mom_inertias[0];
+
+                        let vel_update_mag =
+                            -p_v_diff_mag * (constraint.linear_damping * dt).min(1.0);
+                        let linear_impulse_mag = vel_update_mag / eff_inv_mass;
+
+                        velocities[pair.0].linear += inv_masses[0] * linear_impulse_mag * dir;
+                        velocities[pair.0].angular +=
+                            inv_mom_inertias[0] * linear_impulse_mag * offset_wedge_dir;
+
+                        if constraint.angular_damping > 0.0 {
+                            let ang_vel_update_mag = velocities[pair.0].angular
+                                * (constraint.angular_damping * dt).min(1.0);
+                            let angular_impulse = -ang_vel_update_mag / eff_inv_mass;
+                            velocities[pair.0].angular += inv_mom_inertias[0] * angular_impulse;
+                        };
+                    }
                 }
             }
         }
