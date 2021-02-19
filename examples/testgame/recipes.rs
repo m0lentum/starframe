@@ -244,7 +244,8 @@ impl Recipe {
                     phys::ConstraintBuilder::new(b1)
                         .with_target(b2)
                         .with_compliance(*compliance)
-                        .build_distance(*target_length, phys::ConstraintLimit::Eq),
+                        .with_linear_damping(0.0)
+                        .build_distance(*target_length),
                 );
             }
         }

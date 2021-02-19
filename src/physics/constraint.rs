@@ -137,7 +137,7 @@ impl ConstraintBuilder {
     }
 
     /// Build a distance constraint.
-    pub fn build_distance(self, distance: f64, dir: ConstraintLimit) -> Constraint {
+    pub fn build_distance(self, distance: f64) -> Constraint {
         self.build(ConstraintType::Distance { distance })
     }
 
