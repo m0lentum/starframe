@@ -25,6 +25,7 @@ fn main() {
     microprofile::set_enable_all_groups!(true);
 
     let game = Game::init(
+        60,
         winit::window::WindowBuilder::new()
             .with_title("starframe test")
             .with_inner_size(winit::dpi::LogicalSize {
@@ -33,7 +34,7 @@ fn main() {
             }),
     );
     let state = State::init(&game.renderer.device);
-    game.run(game::LockstepLoop::from_fps(60), state);
+    game.run(state);
 
     microprofile::shutdown!();
 }
