@@ -98,13 +98,13 @@ where
 /// A builder useful for deserializing isometries from RON files.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-pub struct IsometryBuilder {
+pub struct PoseBuilder {
     position: [f64; 2],
     rotation: Angle,
 }
-impl IsometryBuilder {
+impl PoseBuilder {
     pub fn new() -> Self {
-        IsometryBuilder {
+        PoseBuilder {
             position: [0.0, 0.0],
             rotation: Angle::default(),
         }
@@ -124,29 +124,29 @@ impl IsometryBuilder {
         )
     }
 }
-impl Default for IsometryBuilder {
+impl Default for PoseBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
-impl From<IsometryBuilder> for Pose {
-    fn from(iso: IsometryBuilder) -> Pose {
+impl From<PoseBuilder> for Pose {
+    fn from(iso: PoseBuilder) -> Pose {
         iso.build()
     }
 }
-impl From<[f64; 2]> for IsometryBuilder {
+impl From<[f64; 2]> for PoseBuilder {
     fn from(vec: [f64; 2]) -> Self {
-        IsometryBuilder::new().with_position(vec)
+        PoseBuilder::new().with_position(vec)
     }
 }
-impl From<Vec2> for IsometryBuilder {
+impl From<Vec2> for PoseBuilder {
     fn from(vec: Vec2) -> Self {
-        IsometryBuilder::new().with_position(vec)
+        PoseBuilder::new().with_position(vec)
     }
 }
-impl From<Angle> for IsometryBuilder {
+impl From<Angle> for PoseBuilder {
     fn from(angle: Angle) -> Self {
-        IsometryBuilder::new().with_rotation(angle)
+        PoseBuilder::new().with_rotation(angle)
     }
 }
 

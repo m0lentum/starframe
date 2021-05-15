@@ -33,7 +33,7 @@ impl Facing {
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct PlayerRecipe {
-    pub pose: m::IsometryBuilder,
+    pub pose: m::PoseBuilder,
 }
 
 impl PlayerRecipe {
@@ -121,7 +121,7 @@ impl PlayerController {
 
             if input.is_key_pressed(Key::Z, Some(0)) {
                 bullet_queue.push((
-                    m::IsometryBuilder::new()
+                    m::PoseBuilder::new()
                         .with_position(
                             player_tr.translation
                                 + player.facing.orient_vec(m::Vec2::new(0.2, 0.0)),

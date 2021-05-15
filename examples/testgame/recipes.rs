@@ -51,7 +51,7 @@ impl Default for Ball {
 pub struct Block {
     pub width: f64,
     pub height: f64,
-    pub pose: m::IsometryBuilder,
+    pub pose: m::PoseBuilder,
 }
 
 impl Default for Block {
@@ -167,7 +167,7 @@ impl Recipe {
                         Block {
                             width: block_length,
                             height: *width, // a bit weird but makes sense with the orientation calculations
-                            pose: m::IsometryBuilder::new()
+                            pose: m::PoseBuilder::new()
                                 .with_position(center)
                                 .with_rotation(m::Angle::Rad(orientation)),
                         },
@@ -224,7 +224,7 @@ impl Recipe {
                     Block {
                         width: 1.0,
                         height: 1.0,
-                        pose: m::IsometryBuilder::new().with_position(position + offset),
+                        pose: m::PoseBuilder::new().with_position(position + offset),
                     },
                     random_color(),
                     false,
@@ -234,7 +234,7 @@ impl Recipe {
                     Block {
                         width: 1.0,
                         height: 1.0,
-                        pose: m::IsometryBuilder::new().with_position(position - offset),
+                        pose: m::PoseBuilder::new().with_position(position - offset),
                     },
                     random_color(),
                     false,

@@ -291,7 +291,7 @@ impl game::GameState for State {
         let mut rng = rand::thread_rng();
         if game.input.is_key_pressed(Key::S, Some(0)) {
             Recipe::DynamicBlock(recipes::Block {
-                pose: m::IsometryBuilder::new()
+                pose: m::PoseBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle()),
                 width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
