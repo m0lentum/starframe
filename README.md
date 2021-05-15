@@ -17,6 +17,7 @@ Its main feature is the physics engine, with design driven by sidescrolling acti
   - collision detection for boxes and circles
   - constraint solver based on
     [Extended Position-Based Dynamics](https://matthias-research.github.io/pages/publications/PBDBodies.pdf)
+    - [related blog post](https://moletrooper.github.io/blog/2021/03/starframe-devlog-constraints/)
 - Graphics
   - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
 
