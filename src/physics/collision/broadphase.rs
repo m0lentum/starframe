@@ -7,7 +7,7 @@ use crate::physics::BodyRef;
 /// A broad phase algorithm.
 pub trait BroadPhase {
     /// Returns pairs of indices to potentially intersecting objects.
-    fn pairs<'a>(items: &[BodyRef]) -> Vec<[usize; 2]>;
+    fn pairs(items: &[BodyRef]) -> Vec<[usize; 2]>;
 }
 
 /// The simplest possible broad phase algorithm,
@@ -16,7 +16,7 @@ pub trait BroadPhase {
 pub struct BruteForce;
 
 impl BroadPhase for BruteForce {
-    fn pairs<'a>(items: &[BodyRef]) -> Vec<[usize; 2]> {
+    fn pairs(items: &[BodyRef]) -> Vec<[usize; 2]> {
         (0..items.len())
             .flat_map(|b1| (b1 + 1..items.len()).map(move |b2| [b1, b2]))
             .collect()

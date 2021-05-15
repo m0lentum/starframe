@@ -158,7 +158,7 @@ impl InputCache {
                         }
                     }
                 })
-                .or_insert(AgedState::new(evt.state));
+                .or_insert_with(|| AgedState::new(evt.state));
         }
     }
 
@@ -178,9 +178,9 @@ impl InputCache {
 
     /// Track a mouse button event.
     pub fn track_mouse_button(&mut self, button: ev::MouseButton, new_state: ElementState) {
-        self.mouse_buttons
-            .get_mut(button)
-            .map(|s| *s = AgedState::new(new_state));
+        if let Some(s) = self.mouse_buttons.get_mut(button) {
+            *s = AgedState::new(new_state);
+        }
 
         // drag, at least for now hardcoded to only work with left click
         match (button, new_state, self.drag_state) {
@@ -303,9 +303,9 @@ impl CursorPosition {
     }
 }
 
-impl Into<m::Vec2> for &CursorPosition {
-    fn into(self) -> m::Vec2 {
-        let pos = self.get();
+impl From<&CursorPosition> for m::Vec2 {
+    fn from(cp: &CursorPosition) -> m::Vec2 {
+        let pos = cp.get();
         m::Vec2::new(pos.x, pos.y)
     }
 }

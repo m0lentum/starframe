@@ -106,7 +106,9 @@ impl RigidBody {
     }
 
     pub fn with_velocity(mut self, vel: Velocity) -> Self {
-        self.velocity_mut().map(|v| *v = vel);
+        if let Some(v) = self.velocity_mut() {
+            *v = vel;
+        }
         self
     }
 
@@ -126,10 +128,7 @@ impl RigidBody {
     }
 
     pub fn responds_to_collisions(&self) -> bool {
-        match self.body {
-            BodyType::Dynamic { .. } => true,
-            _ => false,
-        }
+        matches!(self.body, BodyType::Dynamic { .. })
     }
 
     pub fn velocity(&self) -> Option<&Velocity> {

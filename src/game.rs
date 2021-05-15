@@ -118,7 +118,7 @@ impl Game {
                         }
 
                         while acc >= self.nanos_per_frame {
-                            if let None = state.tick(self.dt_fixed, &self) {
+                            if state.tick(self.dt_fixed, &self).is_none() {
                                 *control_flow = ControlFlow::Exit;
                                 return;
                             }

@@ -513,7 +513,7 @@ impl Graph {
     pub fn delete(&mut self, root: impl SafeNode) {
         let root = root.pos();
         // check if the node is already considered deleted before doing anything
-        if self.refcounts[root.layer_idx][root.item_idx] <= 0 {
+        if self.refcounts[root.layer_idx][root.item_idx] == 0 {
             return;
         }
         let mut visited = vec![VisitedNode {
@@ -535,13 +535,14 @@ impl Graph {
 
         for vis_node in visited {
             let node = vis_node.node;
-            if self.refcounts[node.layer_idx][node.item_idx] <= 0 {
+            if self.refcounts[node.layer_idx][node.item_idx] == 0 {
                 debug_assert!(
                     self.vacant_slots[node.layer_idx]
                         .iter()
                         .find(|&&idx| idx == node.item_idx)
                         .is_none(),
-                    format!("Same slot marked vacant twice ({:?})", node),
+                    "Same slot marked vacant twice ({:?})",
+                    node,
                 );
                 self.vacant_slots[node.layer_idx].push_back(node.item_idx);
                 self.generations[node.layer_idx][node.item_idx] += 1;
@@ -611,6 +612,13 @@ impl Graph {
         }
     }
 }
+
+impl Default for Graph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug)]
 struct VisitedNode {
     node: NodePosition,
@@ -1003,10 +1011,7 @@ mod tests {
                         .flat_map(move |to_l| to_l.iter().map(move |e| (layer_idx, e)))
                 })
         {
-            assert!(
-                edge.is_none(),
-                format!("Layer {} had a non-empty edge", layer_idx),
-            );
+            assert!(edge.is_none(), "Layer {} had a non-empty edge", layer_idx);
         }
     }
 

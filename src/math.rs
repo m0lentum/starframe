@@ -35,9 +35,9 @@ impl Default for Angle {
         Angle::Rad(0.0)
     }
 }
-impl Into<Rotor2> for Angle {
-    fn into(self) -> Rotor2 {
-        Rotor2::from_angle(self.rad())
+impl From<Angle> for Rotor2 {
+    fn from(ang: Angle) -> Rotor2 {
+        Rotor2::from_angle(ang.rad())
     }
 }
 impl From<Rotor2> for Angle {
@@ -129,9 +129,9 @@ impl Default for IsometryBuilder {
         Self::new()
     }
 }
-impl Into<Pose> for IsometryBuilder {
-    fn into(self) -> Pose {
-        self.build()
+impl From<IsometryBuilder> for Pose {
+    fn from(iso: IsometryBuilder) -> Pose {
+        iso.build()
     }
 }
 impl From<[f64; 2]> for IsometryBuilder {

@@ -645,7 +645,9 @@ impl Physics {
         for (body, pose_result, vel_result) in izip!(body_nodes, poses, velocities) {
             let mut rb = l_body.get_mut_unchecked(body.rb);
             let mut pose = l_pose.get_mut_unchecked(body.pose);
-            rb.velocity_mut().map(|v| *v = vel_result);
+            if let Some(v) = rb.velocity_mut() {
+                *v = vel_result;
+            }
             *pose = pose_result;
         }
     }

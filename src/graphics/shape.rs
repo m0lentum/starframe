@@ -256,7 +256,7 @@ impl ShapeRenderer {
             .filter_map(|s| graph.get_neighbor(&s, l_pose).map(|tr| s.verts(&*tr)))
             .flatten()
             .collect();
-        if verts.len() == 0 {
+        if verts.is_empty() {
             return;
         }
         let active_verts_len = verts.len() as u32;
