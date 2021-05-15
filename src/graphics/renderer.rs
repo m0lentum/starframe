@@ -19,7 +19,7 @@ impl Renderer {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
+                power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
             })
             .await
@@ -30,7 +30,7 @@ impl Renderer {
                 &wgpu::DeviceDescriptor {
                     features: wgpu::Features::empty(),
                     limits: wgpu::Limits::default(),
-                    shader_validation: true,
+                    label: None,
                 },
                 None,
             )
@@ -39,7 +39,7 @@ impl Renderer {
 
         let window_size = window.inner_size();
         let swap_chain_descriptor = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
+            usage: wgpu::TextureUsage::RENDER_ATTACHMENT,
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
             width: window_size.width,
             height: window_size.height,
@@ -132,8 +132,9 @@ impl<'a> RenderContext<'a> {
     /// Fill the render target with a flat color.
     pub fn clear(&mut self, color: wgpu::Color) {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: self.target.view(),
+            label: None,
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                view: self.target.view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(color),
@@ -149,8 +150,9 @@ impl<'a> RenderContext<'a> {
     /// Begin a render pass.
     pub fn pass(&mut self) -> wgpu::RenderPass {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                attachment: self.target.view(),
+            label: None,
+            color_attachments: &[wgpu::RenderPassColorAttachment {
+                view: self.target.view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,

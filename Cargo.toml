@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 winit = "0.23.0"
-wgpu = "0.6.0"
+wgpu = "0.8.1"
 zerocopy = "0.3.0"
 futures = "0.3.7"
 ultraviolet = { version = "0.7.5", features = ["f64"] }
