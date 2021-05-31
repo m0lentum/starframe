@@ -158,11 +158,7 @@ impl PlayerController {
 
         let evt_sink_node = g.evt_graph.add_sink(
             |g: &mut MyGraph, node, evt| match evt {
-                sf::Event::Contact(contact) => {
-                    println!(
-                        "Bullet hit with {:?}",
-                        contact.info.impulse * *contact.info.normal
-                    );
+                sf::Event::Contact(_) => {
                     if let Some(checked) = node.check(&g.graph) {
                         g.graph.delete(checked);
                     }

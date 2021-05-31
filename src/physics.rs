@@ -1,6 +1,7 @@
 use crate::{
+    event::{Event, EventSink},
     graph::{self, UnsafeNode},
-    math::{self as m, Angle, Unit},
+    math::{self as m, Angle},
 };
 
 use itertools::izip;
@@ -85,21 +86,14 @@ impl std::ops::Mul<f64> for Velocity {
 }
 
 /// Events produced by the physics system when two physics objects collide.
+///
+/// Note: for now this doesn't tell you anything except which body the contact was with.
+/// This isn't great, but that's the only thing I've needed so far.
+/// More info will be added when needed in a project.
 #[derive(Clone, Copy, Debug)]
 pub struct ContactEvent {
+    /// The body that this body was in contact with.
     pub other_body: graph::Node<RigidBody>,
-    pub info: ContactInfo,
-}
-
-/// Detailed information about a contact event.
-#[derive(Clone, Copy, Debug)]
-pub struct ContactInfo {
-    /// The point in world space where the collision occurred.
-    pub point: m::Vec2,
-    /// The normal of the colliding plane, facing towards this object.
-    pub normal: Unit<m::Vec2>,
-    /// The strength of the impulse caused by the contact.
-    pub impulse: f64,
 }
 
 sm::new_key_type! {
@@ -162,7 +156,7 @@ impl Physics {
         l_pose: &mut graph::Layer<m::Pose>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
-        l_evt_sink: &mut graph::Layer<crate::event::EventSink>,
+        l_evt_sink: &mut graph::Layer<EventSink>,
         dt: f64,
         forcefield: &impl ForceField,
     ) {
@@ -240,9 +234,6 @@ impl Physics {
         };
         // store contact forces for friction purposes
         let mut contact_lambdas: Vec<f64> = vec![0.0; pairs.len()];
-
-        // TODO: how to collect contact events from contacts happening over multiple timesteps?
-        // probably have an array of accumulator-type things with length equal to `pairs`
 
         //
         // Actual physics step
@@ -631,6 +622,32 @@ impl Physics {
                             let angular_impulse = -ang_vel_update_mag / eff_inv_mass;
                             velocities[pair.0].angular += inv_mom_inertias[0] * angular_impulse;
                         };
+                    }
+                }
+            }
+
+            //
+            // Event gathering
+            //
+
+            for (pair, contact) in izip!(&pairs, &contacts) {
+                match contact {
+                    ContactResult::Zero => (),
+                    _ => {
+                        if let Some(mut sink) =
+                            graph.get_neighbor_mut(&body_refs[pair[0]].rb, l_evt_sink)
+                        {
+                            sink.push(Event::Contact(ContactEvent {
+                                other_body: graph::NodeRef::as_node(&body_refs[pair[1]].rb, graph),
+                            }));
+                        }
+                        if let Some(mut sink) =
+                            graph.get_neighbor_mut(&body_refs[pair[1]].rb, l_evt_sink)
+                        {
+                            sink.push(Event::Contact(ContactEvent {
+                                other_body: graph::NodeRef::as_node(&body_refs[pair[0]].rb, graph),
+                            }));
+                        }
                     }
                 }
             }
