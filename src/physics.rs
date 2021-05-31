@@ -156,13 +156,13 @@ impl Physics {
     }
 
     /// Detect collisions, solve constraint forces and move bodies.
-    pub fn tick<EvtParams>(
+    pub fn tick(
         &mut self,
         graph: &graph::Graph,
         l_pose: &mut graph::Layer<m::Pose>,
         l_body: &mut graph::Layer<RigidBody>,
         l_collider: &graph::Layer<Collider>,
-        l_evt_sink: &mut crate::event::EventSinkLayer<EvtParams>,
+        l_evt_sink: &mut graph::Layer<crate::event::EventSink>,
         dt: f64,
         forcefield: &impl ForceField,
     ) {

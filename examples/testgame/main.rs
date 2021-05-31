@@ -163,7 +163,7 @@ pub struct MyGraph {
     l_body: graph::Layer<phys::RigidBody>,
     l_shape: graph::Layer<gx::Shape>,
     l_player: graph::Layer<player::Player>,
-    l_evt_sink: sf::event::EventSinkLayer<MyGraph>,
+    evt_graph: sf::event::EventGraph<MyGraph>,
 }
 impl MyGraph {
     pub fn new() -> Self {
@@ -173,7 +173,7 @@ impl MyGraph {
         let l_body = graph.create_layer();
         let l_shape = graph.create_layer();
         let l_player = graph.create_layer();
-        let l_evt_sinks = graph.create_layer();
+        let evt_graph = sf::event::EventGraph::new(&mut graph);
         MyGraph {
             graph,
             l_pose,
@@ -181,7 +181,7 @@ impl MyGraph {
             l_body,
             l_shape,
             l_player,
-            l_evt_sink: l_evt_sinks,
+            evt_graph,
         }
     }
 }
@@ -327,7 +327,7 @@ impl game::GameState for State {
                         &mut self.graph.l_pose,
                         &mut self.graph.l_body,
                         &self.graph.l_collider,
-                        &mut self.graph.l_evt_sink,
+                        &mut self.graph.evt_graph.sinks,
                         dt,
                         &grav,
                     );
@@ -337,7 +337,7 @@ impl game::GameState for State {
                     self.player.tick(&mut self.graph, &game.input);
                 }
 
-                self.graph.l_evt_sink.flush(&self.graph.graph)(&mut self.graph);
+                self.graph.evt_graph.flush(&self.graph.graph)(&mut self.graph);
 
                 Some(())
             }
