@@ -29,7 +29,11 @@ pub struct EventGraph<Params> {
     /// The graph layer for event sinks, which collect events.
     /// Pass this to functions that produce events.
     pub sinks: g::Layer<EventSink>,
-    consumers: g::Layer<Consumer<Params>>,
+    // Consumers stored in a separate Vec so that sinks can be
+    // moved around without a type parameter.
+    // Every sink has exactly one associated consumer,
+    // so the association is made using the sink's index in the Layer.
+    consumers: Vec<Consumer<Params>>,
 }
 
 impl<Params> EventGraph<Params> {
@@ -37,7 +41,7 @@ impl<Params> EventGraph<Params> {
     pub fn new(graph: &mut g::Graph) -> Self {
         EventGraph {
             sinks: graph.create_layer(),
-            consumers: graph.create_layer(),
+            consumers: Vec::new(),
         }
     }
 
@@ -50,8 +54,14 @@ impl<Params> EventGraph<Params> {
         graph: &mut g::Graph,
     ) -> g::NodeRef<EventSink> {
         let sink = self.sinks.insert(EventSink::new(), graph);
-        let consumer = self.consumers.insert(consumer, graph);
-        graph.connect(&sink, &consumer);
+
+        use g::UnsafeNode;
+        let idx = sink.pos().item_idx;
+        if idx >= self.consumers.len() {
+            self.consumers.resize(idx + 1, noop_consumer);
+        }
+        self.consumers[idx] = consumer;
+
         sink
     }
 
@@ -67,10 +77,8 @@ impl<Params> EventGraph<Params> {
             .iter_mut(graph)
             .flat_map(|sink_ref| {
                 let node = g::NodeRefMut::as_node(&sink_ref, graph);
-                let cmer: Consumer<Params> = match graph.get_neighbor(&sink_ref, consumers) {
-                    Some(cmer) => *cmer,
-                    None => noop_consumer::<Params>,
-                };
+                use g::UnsafeNode;
+                let cmer = consumers[sink_ref.pos().item_idx];
                 (sink_ref.item.events.drain(..)).map(move |evt| (evt, node, cmer))
             })
             .collect();
