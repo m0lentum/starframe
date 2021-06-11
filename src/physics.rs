@@ -11,7 +11,7 @@ use std::collections::HashMap;
 //
 
 pub mod collision;
-use collision::narrowphase::intersection_check;
+use collision::shape_shape::intersection_check;
 pub use collision::{Collider, ColliderShape, Contact, ContactResult};
 
 pub mod constraint;
