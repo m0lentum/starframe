@@ -172,6 +172,6 @@ impl PlayerController {
         g.graph.connect(&pose_node, &body_node);
         g.graph.connect(&body_node, &coll_node);
         g.graph.connect(&pose_node, &shape_node);
-        g.graph.connect(&body_node, &evt_sink_node);
+        g.graph.connect(&coll_node, &evt_sink_node);
     }
 }

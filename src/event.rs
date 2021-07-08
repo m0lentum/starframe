@@ -13,7 +13,7 @@ use super::graph as g;
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     /// A contact happened in the physics system. Received if connected to a
-    /// [`RigidBody`][crate::physics::RigidBody].
+    /// [`Collider`][crate::physics::Collider].
     Contact(crate::physics::ContactEvent),
 }
 
