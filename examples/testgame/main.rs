@@ -160,7 +160,7 @@ pub struct MyGraph {
     graph: graph::Graph,
     l_pose: graph::Layer<m::Pose>,
     l_collider: graph::Layer<phys::Collider>,
-    l_body: graph::Layer<phys::RigidBody>,
+    l_body: graph::Layer<phys::Body>,
     l_shape: graph::Layer<gx::Shape>,
     l_player: graph::Layer<player::Player>,
     evt_graph: sf::event::EventGraph<MyGraph>,

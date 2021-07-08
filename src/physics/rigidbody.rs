@@ -2,7 +2,7 @@ use super::{Collider, Velocity};
 
 /// A rigid body can collide with other rigid bodies and respond to physical forces.
 #[derive(Clone, Copy, Debug)]
-pub struct RigidBody {
+pub struct Body {
     pub(crate) body: BodyType,
     pub(crate) material: SurfaceMaterial,
 }
@@ -67,7 +67,7 @@ impl SurfaceMaterial {
     }
 }
 
-impl RigidBody {
+impl Body {
     /// Dynamic rigid bodies respond to collisions and environment forces.
     /// This constructor calculates mass and moment of inertia from the given density.
     pub fn new_dynamic(collider: &Collider, density: f64) -> Self {
@@ -77,7 +77,7 @@ impl RigidBody {
     /// Create a dynamic rigid body with the given mass instead of using density.
     /// The collider is still required to compute moment of inertia.
     pub fn new_dynamic_const_mass(collider: &Collider, mass: f64) -> Self {
-        RigidBody {
+        Body {
             body: BodyType::Dynamic {
                 velocity: Velocity::default(),
                 mass: Mass::new(mass),
@@ -89,7 +89,7 @@ impl RigidBody {
 
     /// Kinematic rigid bodies are not affected by collision forces.
     pub fn new_kinematic() -> Self {
-        RigidBody {
+        Body {
             body: BodyType::Kinematic {
                 velocity: Velocity::default(),
             },
@@ -99,7 +99,7 @@ impl RigidBody {
 
     /// Static rigid bodies do not move at all.
     pub fn new_static() -> Self {
-        RigidBody {
+        Body {
             body: BodyType::Static,
             material: SurfaceMaterial::default(),
         }

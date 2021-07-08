@@ -51,11 +51,12 @@ impl PlayerRecipe {
             &mut graph.graph,
         );
         let coll = phys::Collider::new_rect(WIDTH, HEIGHT);
-        let body = phys::RigidBody::new_dynamic(&coll, 3.0);
+        let body = phys::Body::new_dynamic(&coll, 3.0);
         let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
         let body_node = graph.l_body.insert(body, &mut graph.graph);
         let tag_node = graph.l_player.insert(Player::new(), &mut graph.graph);
         graph.graph.connect(&pose_node, &body_node);
+        graph.graph.connect(&pose_node, &coll_node);
         graph.graph.connect(&body_node, &coll_node);
         graph.graph.connect(&pose_node, &shape_node);
 
@@ -152,7 +153,7 @@ impl PlayerController {
             &mut g.graph,
         );
         let coll = phys::Collider::new_circle(R);
-        let body = phys::RigidBody::new_dynamic_const_mass(&coll, 1.0).with_velocity(vel);
+        let body = phys::Body::new_dynamic_const_mass(&coll, 1.0).with_velocity(vel);
         let coll_node = g.l_collider.insert(coll, &mut g.graph);
         let body_node = g.l_body.insert(body, &mut g.graph);
 

@@ -69,13 +69,13 @@ fn spawn_block(
     color: [f32; 4],
     is_static: bool,
     graph: &mut crate::MyGraph,
-) -> sf::graph::Node<phys::RigidBody> {
+) -> sf::graph::Node<phys::Body> {
     let pose_node = graph.l_pose.insert(block.pose.into(), &mut graph.graph);
     let coll = phys::Collider::new_rect(block.width, block.height);
     let body = if is_static {
-        phys::RigidBody::new_static()
+        phys::Body::new_static()
     } else {
-        phys::RigidBody::new_dynamic(&coll, 0.5)
+        phys::Body::new_dynamic(&coll, 0.5)
     };
     let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
     let body_node = graph.l_body.insert(body, &mut graph.graph);
@@ -88,6 +88,7 @@ fn spawn_block(
         &mut graph.graph,
     );
     graph.graph.connect(&pose_node, &body_node);
+    graph.graph.connect(&pose_node, &coll_node);
     graph.graph.connect(&body_node, &coll_node);
     graph.graph.connect(&pose_node, &shape_node);
 
@@ -115,7 +116,7 @@ impl Recipe {
                     &mut graph.graph,
                 );
                 let coll = phys::Collider::new_circle(*radius);
-                let body = phys::RigidBody::new_dynamic(&coll, 0.5)
+                let body = phys::Body::new_dynamic(&coll, 0.5)
                     .with_material(SurfaceMaterial {
                         restitution_coef: *restitution,
                         ..Default::default()
@@ -135,6 +136,7 @@ impl Recipe {
                     &mut graph.graph,
                 );
                 graph.graph.connect(&pose_node, &body_node);
+                graph.graph.connect(&pose_node, &coll_node);
                 graph.graph.connect(&body_node, &coll_node);
                 graph.graph.connect(&pose_node, &shape_node);
             }
@@ -155,7 +157,7 @@ impl Recipe {
                 let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
-                let mut prev_block: Option<(sf::graph::Node<phys::RigidBody>, f64)> = None;
+                let mut prev_block: Option<(sf::graph::Node<phys::Body>, f64)> = None;
                 while let (Some(link1), Some(link2)) = (links_iter.next(), links_iter.peek()) {
                     let distance = *link2 - link1;
                     let dist_norm = distance.mag();

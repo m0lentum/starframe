@@ -1,5 +1,5 @@
-pub mod broadphase;
-pub use broadphase::BroadPhase;
+mod spatialindex;
+pub(crate) use spatialindex::SpatialIndex;
 
 mod collider;
 pub use collider::{Collider, ColliderShape};
