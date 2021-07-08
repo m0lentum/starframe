@@ -19,8 +19,8 @@ pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintT
 pub mod forcefield;
 pub use forcefield::ForceField;
 
-pub mod rigidbody;
-pub use rigidbody::Body;
+pub mod body;
+pub use body::Body;
 
 //
 
@@ -259,7 +259,7 @@ impl Physics {
                 &mut velocities,
                 &mut ext_f_accelerations
             ) {
-                if let rigidbody::BodyType::Dynamic { .. } = body.body {
+                if let body::BodyType::Dynamic { .. } = body.body {
                     // TODO: rename forcefield to accelerationfield or allow it to depend on mass
                     let ff_accel = forcefield.value_at(pose.translation);
                     vel.linear += ff_accel * dt;

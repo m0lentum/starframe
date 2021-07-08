@@ -1,6 +1,6 @@
 use starframe::{
     self as sf, graphics as gx, math as m,
-    physics::{self as phys, rigidbody::SurfaceMaterial, Velocity},
+    physics::{self as phys, body::SurfaceMaterial, Velocity},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
