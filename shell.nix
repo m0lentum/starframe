@@ -11,6 +11,7 @@ pkgs.mkShell {
   buildInputs = [
     pkgs.niv
     rust
+    pkgs.cargo-flamegraph
     # for wgpu
     pkgs.pkgconfig
     pkgs.xlibs.libX11
