@@ -6,7 +6,6 @@ use crate::{
 
 use itertools::izip;
 use slotmap as sm;
-use std::collections::HashMap;
 
 //
 
@@ -169,6 +168,15 @@ impl Physics {
         //
 
         let body_refs: Vec<graph::NodeRef<Body>> = l_body.iter(graph).collect();
+        // map from the position of a node in the graph layer to the position of a node in body_refs
+        let node_ref_map: Vec<usize> = {
+            let mut map = vec![0; l_body.content.len()];
+            for (ref_pos, node) in body_refs.iter().enumerate() {
+                map[node.pos().item_idx] = ref_pos;
+            }
+            map
+        };
+
         // buffers for working variables, outside of body_refs
         // to make it simpler to mutate things without breaking borrowing rules.
         // indexed using the same index as for body_refs
@@ -196,13 +204,6 @@ impl Physics {
                 && c.target.map(|t| t.check(&graph).is_some()).unwrap_or(true)
         });
 
-        // map from the position of a node in the graph layer to the position of a node in body_refs
-        let node_ref_map: HashMap<usize, usize> = body_refs
-            .iter()
-            .enumerate()
-            .map(|(idx, b)| (b.pos().item_idx, idx))
-            .collect();
-
         // assuming here that slotmap's iteration order doesn't change if the
         // contents don't change. it doesn't guarantee this in the docs so if
         // constraints start jumping from one object to another this is why
@@ -211,8 +212,8 @@ impl Physics {
             .values()
             .map(|c| {
                 (
-                    node_ref_map[&c.owner.pos().item_idx],
-                    c.target.map(|t| node_ref_map[&t.pos().item_idx]),
+                    node_ref_map[c.owner.pos().item_idx],
+                    c.target.map(|t| node_ref_map[t.pos().item_idx]),
                 )
             })
             .collect();
@@ -232,8 +233,8 @@ impl Physics {
                 let b1 = graph.get_neighbor_unchecked(c1, l_body);
                 match (b0, b1) {
                     (Some(b0), Some(b1)) => Some([
-                        node_ref_map[&b0.pos().item_idx],
-                        node_ref_map[&b1.pos().item_idx],
+                        node_ref_map[b0.pos().item_idx],
+                        node_ref_map[b1.pos().item_idx],
                     ]),
                     _ => None,
                 }
@@ -284,7 +285,7 @@ impl Physics {
                     // is not a trigger, in which case we get the pose from the graph)
                     let poses =
                         map_pair(*colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
-                            Some(b) => poses[node_ref_map[&b.pos().item_idx]],
+                            Some(b) => poses[node_ref_map[b.pos().item_idx]],
                             None => *graph
                                 .get_neighbor_unchecked(c, l_pose)
                                 .expect("A Collider didn't have a Pose"),

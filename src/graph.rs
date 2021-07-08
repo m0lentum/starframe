@@ -637,7 +637,7 @@ struct VisitedNode {
 #[derive(Debug)]
 pub struct Layer<T> {
     index: LayerIdx,
-    content: Vec<T>,
+    pub(crate) content: Vec<T>,
 }
 
 impl<T> Layer<T> {
