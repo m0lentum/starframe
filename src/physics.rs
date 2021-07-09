@@ -220,6 +220,13 @@ impl Physics {
         // Set up collision detection
         //
 
+        /// poses are in our temporary buffer for colliders attached to bodies,
+        /// but for static colliders they're in the graph.
+        /// because we don't modify non-body poses, we can get the poses for static colliders just once
+        enum ColliderContext {
+            Body(usize),
+            Static(m::Pose),
+        }
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
         // we can map them to NodeRefs here because we won't borrow colliders mutably
@@ -228,13 +235,17 @@ impl Physics {
             .map(|colls| map_pair(colls, |c| l_collider.get_unchecked(c.pos())))
             .collect();
         // indices to bodies in `body_refs` corresponding to `coll_pairs`
-        let body_pairs: Vec<[Option<usize>; 2]> = coll_pairs
+        let ctx_pairs: Vec<[ColliderContext; 2]> = coll_pairs
             .iter()
             .map(|colls| {
-                map_pair(colls, |c| {
-                    graph
-                        .get_neighbor_unchecked(c, l_body)
-                        .map(|b| node_ref_map[b.pos().item_idx])
+                map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
+                    Some(b) => ColliderContext::Body(node_ref_map[b.pos().item_idx]),
+                    None => {
+                        ColliderContext::Static(match graph.get_neighbor_unchecked(c, l_pose) {
+                            Some(pose) => *pose,
+                            None => m::Pose::default(),
+                        })
+                    }
                 })
             })
             .collect();
@@ -285,9 +296,10 @@ impl Physics {
                     let poses =
                         map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
                             Some(b) => poses[node_ref_map[b.pos().item_idx]],
-                            None => *graph
-                                .get_neighbor_unchecked(c, l_pose)
-                                .expect("A Collider didn't have a Pose"),
+                            None => match graph.get_neighbor_unchecked(c, l_pose) {
+                                Some(pose) => *pose,
+                                None => m::Pose::default(),
+                            },
                         });
                     intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                 })
@@ -388,8 +400,8 @@ impl Physics {
             // Contacts
             //
 
-            for (colls, body_idxs, contact, lambda_n) in
-                izip!(&coll_pairs, &body_pairs, &contacts, &mut contact_lambdas)
+            for (colls, ctxs, contact, lambda_n) in
+                izip!(&coll_pairs, &ctx_pairs, &contacts, &mut contact_lambdas)
             {
                 let materials = match (colls[0].ty, colls[1].ty) {
                     (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
@@ -399,14 +411,14 @@ impl Physics {
                     }
                 };
 
-                if !body_idxs[0]
-                    .map(|b0| body_refs[b0].sees_forces())
-                    .unwrap_or(false)
-                    && !body_idxs[1]
-                        .map(|b1| body_refs[b1].sees_forces())
-                        .unwrap_or(false)
-                {
-                    // both bodies are kinematic, don't let them cause divisions by zero
+                if !match ctxs[0] {
+                    ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
+                    ColliderContext::Static(_) => false,
+                } && !match ctxs[1] {
+                    ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
+                    ColliderContext::Static(_) => false,
+                } {
+                    // both bodies are kinematic or static, don't let them cause divisions by zero
                     continue;
                 }
 
@@ -429,13 +441,10 @@ impl Physics {
                         eff_inv_mass_tan: f64,
                     }
                     let vars = map_pair(&[0, 1], |i| {
-                        match body_idxs[*i] {
+                        match ctxs[*i] {
                             // no body attached -> static body, infinite mass
-                            None => {
-                                let pose =
-                                    graph.get_neighbor_unchecked(&colls[*i], l_pose).unwrap();
-                                let offset_worldspace = *pose * contact.offsets[*i];
-
+                            ColliderContext::Static(pose) => {
+                                let offset_worldspace = pose * contact.offsets[*i];
                                 WorkingVars {
                                     offset_worldspace,
                                     offset_wedge_normal: 0.0,
@@ -445,7 +454,7 @@ impl Physics {
                                     eff_inv_mass_tan: 0.0,
                                 }
                             }
-                            Some(bi) => {
+                            ColliderContext::Body(bi) => {
                                 let im = body_refs[bi].mass.inv();
                                 let imi = body_refs[bi].moment_of_inertia.inv();
                                 let offset_rotated = poses[bi].rotation * contact.offsets[*i];
@@ -474,7 +483,7 @@ impl Physics {
 
                     *lambda_n = -depth / (vars[0].eff_inv_mass_n + vars[1].eff_inv_mass_n);
 
-                    if let Some(bi) = body_idxs[0] {
+                    if let ColliderContext::Body(bi) = ctxs[0] {
                         let im = body_refs[bi].mass.inv();
                         let imi = body_refs[bi].moment_of_inertia.inv();
                         poses[bi].append_translation(im * *lambda_n * *contact.normal);
@@ -482,7 +491,7 @@ impl Physics {
                             Angle::Rad(imi * *lambda_n * vars[0].offset_wedge_normal).into(),
                         );
                     }
-                    if let Some(bi) = body_idxs[1] {
+                    if let ColliderContext::Body(bi) = ctxs[1] {
                         let im = body_refs[bi].mass.inv();
                         let imi = body_refs[bi].moment_of_inertia.inv();
                         poses[bi].append_translation(-im * *lambda_n * *contact.normal);
@@ -505,7 +514,7 @@ impl Physics {
                         -motion_along_tan / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
 
                     if lambda_t < max_coulomb_dx {
-                        if let Some(bi) = body_idxs[0] {
+                        if let ColliderContext::Body(bi) = ctxs[0] {
                             let im = body_refs[bi].mass.inv();
                             let imi = body_refs[bi].moment_of_inertia.inv();
                             poses[bi].append_translation(im * lambda_t * tangent);
@@ -513,7 +522,7 @@ impl Physics {
                                 Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
                             );
                         }
-                        if let Some(bi) = body_idxs[1] {
+                        if let ColliderContext::Body(bi) = ctxs[1] {
                             let im = body_refs[bi].mass.inv();
                             let imi = body_refs[bi].moment_of_inertia.inv();
                             poses[bi].append_translation(-im * lambda_t * tangent);
@@ -540,8 +549,8 @@ impl Physics {
             // velocity step for dynamic friction and restitution on contacts + damping on other constraints
             //
 
-            for (colls, bodies, contact, lambda_n) in
-                izip!(&coll_pairs, &body_pairs, &contacts, &contact_lambdas)
+            for (colls, ctxs, contact, lambda_n) in
+                izip!(&coll_pairs, &ctx_pairs, &contacts, &contact_lambdas)
             {
                 let materials = match (colls[0].ty, colls[1].ty) {
                     (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
@@ -560,21 +569,17 @@ impl Physics {
                         old_point_vel: m::Vec2,
                         ext_f_accel: m::Vec2,
                     }
-                    let vars = map_pair(&[0, 1], |i| match bodies[*i] {
+                    let vars = map_pair(&[0, 1], |i| match ctxs[*i] {
                         // no body => infinite mass
-                        None => {
-                            let pose = graph.get_neighbor_unchecked(&colls[*i], l_pose).unwrap();
-
-                            WorkingVars {
-                                inv_mass: 0.0,
-                                inv_mom_inertia: 0.0,
-                                offset_rotated: pose.rotation * contact.offsets[*i],
-                                point_vel: m::Vec2::zero(),
-                                old_point_vel: m::Vec2::zero(),
-                                ext_f_accel: m::Vec2::zero(),
-                            }
-                        }
-                        Some(bi) => {
+                        ColliderContext::Static(pose) => WorkingVars {
+                            inv_mass: 0.0,
+                            inv_mom_inertia: 0.0,
+                            offset_rotated: pose.rotation * contact.offsets[*i],
+                            point_vel: m::Vec2::zero(),
+                            old_point_vel: m::Vec2::zero(),
+                            ext_f_accel: m::Vec2::zero(),
+                        },
+                        ColliderContext::Body(bi) => {
                             let offset_rotated = poses[bi].rotation * contact.offsets[*i];
                             WorkingVars {
                                 inv_mass: body_refs[bi].mass.inv(),
@@ -631,12 +636,12 @@ impl Physics {
                     });
                     let impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
-                    if let Some(bi) = bodies[0] {
+                    if let ColliderContext::Body(bi) = ctxs[0] {
                         velocities[bi].linear += vars[0].inv_mass * impulse_mag * vel_update_dir;
                         velocities[bi].angular +=
                             vars[0].inv_mom_inertia * impulse_mag * offsets_wedge_dv[0];
                     }
-                    if let Some(bi) = bodies[1] {
+                    if let ColliderContext::Body(bi) = ctxs[1] {
                         velocities[bi].linear -= vars[1].inv_mass * impulse_mag * vel_update_dir;
                         velocities[bi].angular -=
                             vars[1].inv_mom_inertia * impulse_mag * offsets_wedge_dv[1];
