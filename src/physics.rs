@@ -11,7 +11,7 @@ use slotmap as sm;
 
 pub mod collision;
 use collision::{shape_shape::intersection_check, SpatialIndex};
-pub use collision::{Collider, ColliderShape, Contact, ContactResult};
+pub use collision::{Collider, ColliderShape, ColliderType, Contact, ContactResult, Material};
 
 pub mod constraint;
 pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType};
@@ -20,7 +20,7 @@ pub mod forcefield;
 pub use forcefield::ForceField;
 
 pub mod body;
-pub use body::Body;
+pub use body::{Body, Mass};
 
 //
 
@@ -186,10 +186,8 @@ impl Physics {
             .collect();
         let mut poses: Vec<m::Pose> = old_poses.clone();
         // old velocities used for restitution
-        let mut old_velocities: Vec<Velocity> = body_refs
-            .iter()
-            .map(|body| body.velocity_or_zero())
-            .collect();
+        let mut old_velocities: Vec<Velocity> =
+            body_refs.iter().map(|body| body.velocity).collect();
         let mut velocities: Vec<Velocity> = old_velocities.clone();
         // accelerations from external forces used as a speed limit for restitution
         let mut ext_f_accelerations: Vec<m::Vec2> = vec![m::Vec2::default(); velocities.len()];
@@ -223,23 +221,24 @@ impl Physics {
         //
 
         // generate potentially colliding pairs,
-        // these will be used to re-detect collisions every substep
-        let coll_pairs = SpatialIndex::pairs(l_collider, graph);
-        // indices to body pairs in `body_refs` corresponding to `coll_pairs`
-        let body_pairs: Vec<Option<[usize; 2]>> = coll_pairs
+        // these will be used to re-detect collisions every substep.
+        // we can map them to NodeRefs here because we won't borrow colliders mutably
+        let coll_pairs: Vec<[graph::NodeRef<Collider>; 2]> = SpatialIndex::pairs(l_collider, graph)
             .iter()
-            .map(|[c0, c1]| {
-                let b0 = graph.get_neighbor_unchecked(c0, l_body);
-                let b1 = graph.get_neighbor_unchecked(c1, l_body);
-                match (b0, b1) {
-                    (Some(b0), Some(b1)) => Some([
-                        node_ref_map[b0.pos().item_idx],
-                        node_ref_map[b1.pos().item_idx],
-                    ]),
-                    _ => None,
-                }
+            .map(|colls| map_pair(colls, |c| l_collider.get_unchecked(c.pos())))
+            .collect();
+        // indices to bodies in `body_refs` corresponding to `coll_pairs`
+        let body_pairs: Vec<[Option<usize>; 2]> = coll_pairs
+            .iter()
+            .map(|colls| {
+                map_pair(colls, |c| {
+                    graph
+                        .get_neighbor_unchecked(c, l_body)
+                        .map(|b| node_ref_map[b.pos().item_idx])
+                })
             })
             .collect();
+
         // store contact forces for friction purposes
         let mut contact_lambdas: Vec<f64> = vec![0.0; coll_pairs.len()];
 
@@ -259,7 +258,7 @@ impl Physics {
                 &mut velocities,
                 &mut ext_f_accelerations
             ) {
-                if let body::BodyType::Dynamic { .. } = body.body {
+                if let Mass::Finite { .. } = body.mass {
                     // TODO: rename forcefield to accelerationfield or allow it to depend on mass
                     let ff_accel = forcefield.value_at(pose.translation);
                     vel.linear += ff_accel * dt;
@@ -281,36 +280,18 @@ impl Physics {
                 .iter()
                 .map(|colls| {
                     // poses for bodies are in our temporary buffer, so we need to get the
-                    // neighboring body to find the pose (if the collider belongs to a body, i.e.
-                    // is not a trigger, in which case we get the pose from the graph)
+                    // neighboring body to find the pose (if the collider belongs to a body,
+                    // otherwise we get the pose from the graph)
                     let poses =
-                        map_pair(*colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
+                        map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
                             Some(b) => poses[node_ref_map[b.pos().item_idx]],
                             None => *graph
                                 .get_neighbor_unchecked(c, l_pose)
                                 .expect("A Collider didn't have a Pose"),
                         });
-                    intersection_check(
-                        &poses[0],
-                        &*l_collider.get_unchecked(colls[0].pos()),
-                        &poses[1],
-                        &*l_collider.get_unchecked(colls[1].pos()),
-                    )
+                    intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                 })
                 .collect();
-
-            // helpers to reduce duplication when fetching info for pairs of objects
-            fn map_pair<T, R>(pair: [T; 2], f: impl Fn(&T) -> R) -> [R; 2] {
-                [f(&pair[0]), f(&pair[1])]
-            }
-
-            fn map_semi_pair<T, R>(
-                pair: (T, Option<T>),
-                f: impl Fn(&T) -> R,
-                snd_default: R,
-            ) -> [R; 2] {
-                [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
-            }
 
             //
             // User-defined constraints
@@ -318,9 +299,9 @@ impl Physics {
 
             for (constraint, pair) in izip!(self.user_constraints.values(), &constraint_body_pairs)
             {
-                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].inverse_mass(), 0.0);
+                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].mass.inv(), 0.0);
                 let inv_mom_inertias =
-                    map_semi_pair(*pair, |b| body_refs[*b].inverse_moment_of_inertia(), 0.0);
+                    map_semi_pair(*pair, |b| body_refs[*b].moment_of_inertia.inv(), 0.0);
 
                 match constraint.ty {
                     ConstraintType::Distance { distance } => {
@@ -348,15 +329,13 @@ impl Physics {
 
                             match pair.1 {
                                 Some(p1) => {
-                                    // TODO: this will need some abstraction when more constraint types
-                                    // involving position corrections are introduced
                                     let pair = [pair.0, p1];
-                                    let offsets_rotated = map_pair([0, 1], |i| {
+                                    let offsets_rotated = map_pair(&[0, 1], |i| {
                                         poses[pair[*i]].rotation * constraint.offsets[*i]
                                     });
                                     let offsets_wedge_dir =
-                                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
-                                    let eff_inv_masses = map_pair([0, 1], |i| {
+                                        map_pair(&[0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
+                                    let eff_inv_masses = map_pair(&[0, 1], |i| {
                                         inv_masses[*i]
                                             + (offsets_wedge_dir[*i].powi(2) * inv_mom_inertias[*i])
                                     });
@@ -409,90 +388,139 @@ impl Physics {
             // Contacts
             //
 
-            for (bodies, contact, lambda_n) in izip!(&body_pairs, &contacts, &mut contact_lambdas) {
-                let bs = match bodies {
-                    Some(bs) => bs,
-                    // this is a trigger hit, no response necessary here
-                    None => continue,
+            for (colls, body_idxs, contact, lambda_n) in
+                izip!(&coll_pairs, &body_pairs, &contacts, &mut contact_lambdas)
+            {
+                let materials = match (colls[0].ty, colls[1].ty) {
+                    (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
+                    // one of the colliders was a trigger, no physics response
+                    _ => {
+                        continue;
+                    }
                 };
-                if !body_refs[bs[0]].responds_to_collisions()
-                    && !body_refs[bs[1]].responds_to_collisions()
+
+                if !body_idxs[0]
+                    .map(|b0| body_refs[b0].sees_forces())
+                    .unwrap_or(false)
+                    && !body_idxs[1]
+                        .map(|b1| body_refs[b1].sees_forces())
+                        .unwrap_or(false)
                 {
-                    // both were static (these cases should normally be filtered out by the spatial
-                    // index, but will cause a crash if they get here)
+                    // both bodies are kinematic, don't let them cause divisions by zero
                     continue;
                 }
+
                 for contact in contact.iter() {
-                    let inv_masses = map_pair(*bs, |b| body_refs[*b].inverse_mass());
-                    let inv_mom_inertias =
-                        map_pair(*bs, |b| body_refs[*b].inverse_moment_of_inertia());
-                    let offsets_rotated =
-                        map_pair([0, 1], |i| poses[bs[*i]].rotation * contact.offsets[*i]);
-                    let offsets_wedge_normal =
-                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(*contact.normal).xy);
-                    let eff_inv_masses = map_pair([0, 1], |i| {
-                        inv_masses[*i] + (offsets_wedge_normal[*i].powi(2) * inv_mom_inertias[*i])
+                    // tangent for static friction
+                    let tangent = m::left_normal(*contact.normal);
+
+                    // gather variables into a struct because they're different
+                    // for static and dynamic bodies and this lets us get them in one match
+                    struct WorkingVars {
+                        // we can't return depth directly from collision detection because
+                        // earlier position corrections can change it,
+                        // thus we compute depth here from the points on each object's surface
+                        offset_worldspace: m::Vec2,
+                        offset_wedge_normal: f64,
+                        eff_inv_mass_n: f64,
+                        // for friction
+                        offset_worldspace_old: m::Vec2,
+                        offset_wedge_tan: f64,
+                        eff_inv_mass_tan: f64,
+                    }
+                    let vars = map_pair(&[0, 1], |i| {
+                        match body_idxs[*i] {
+                            // no body attached -> static body, infinite mass
+                            None => {
+                                let pose =
+                                    graph.get_neighbor_unchecked(&colls[*i], l_pose).unwrap();
+                                let offset_worldspace = *pose * contact.offsets[*i];
+
+                                WorkingVars {
+                                    offset_worldspace,
+                                    offset_wedge_normal: 0.0,
+                                    eff_inv_mass_n: 0.0,
+                                    offset_worldspace_old: offset_worldspace,
+                                    offset_wedge_tan: 0.0,
+                                    eff_inv_mass_tan: 0.0,
+                                }
+                            }
+                            Some(bi) => {
+                                let im = body_refs[bi].mass.inv();
+                                let imi = body_refs[bi].moment_of_inertia.inv();
+                                let offset_rotated = poses[bi].rotation * contact.offsets[*i];
+                                let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
+                                let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
+
+                                WorkingVars {
+                                    offset_worldspace: poses[bi] * contact.offsets[*i],
+                                    offset_wedge_normal,
+                                    eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
+                                    offset_worldspace_old: old_poses[bi] * contact.offsets[*i],
+                                    offset_wedge_tan,
+                                    eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
+                                }
+                            }
+                        }
                     });
 
-                    // we can't return depth directly from collision detection because
-                    // earlier position corrections can change it,
-                    // thus we compute depth here from the points on each object's surface
-                    let offsets_worldspace =
-                        map_pair([0, 1], |i| poses[bs[*i]] * contact.offsets[*i]);
-                    let depth =
-                        (offsets_worldspace[0] - offsets_worldspace[1]).dot(*contact.normal);
+                    let depth = (vars[0].offset_worldspace - vars[1].offset_worldspace)
+                        .dot(*contact.normal);
 
                     if depth <= 0.0 {
                         *lambda_n = 0.0;
                         continue;
                     }
 
-                    *lambda_n = -depth / (eff_inv_masses[0] + eff_inv_masses[1]);
+                    *lambda_n = -depth / (vars[0].eff_inv_mass_n + vars[1].eff_inv_mass_n);
 
-                    poses[bs[0]].append_translation(inv_masses[0] * *lambda_n * *contact.normal);
-                    poses[bs[0]].prepend_rotation(
-                        Angle::Rad(inv_mom_inertias[0] * *lambda_n * offsets_wedge_normal[0])
-                            .into(),
-                    );
-                    poses[bs[1]].append_translation(-inv_masses[1] * *lambda_n * *contact.normal);
-                    poses[bs[1]].prepend_rotation(
-                        Angle::Rad(-inv_mom_inertias[1] * *lambda_n * offsets_wedge_normal[1])
-                            .into(),
-                    );
+                    if let Some(bi) = body_idxs[0] {
+                        let im = body_refs[bi].mass.inv();
+                        let imi = body_refs[bi].moment_of_inertia.inv();
+                        poses[bi].append_translation(im * *lambda_n * *contact.normal);
+                        poses[bi].prepend_rotation(
+                            Angle::Rad(imi * *lambda_n * vars[0].offset_wedge_normal).into(),
+                        );
+                    }
+                    if let Some(bi) = body_idxs[1] {
+                        let im = body_refs[bi].mass.inv();
+                        let imi = body_refs[bi].moment_of_inertia.inv();
+                        poses[bi].append_translation(-im * *lambda_n * *contact.normal);
+                        poses[bi].prepend_rotation(
+                            Angle::Rad(-imi * *lambda_n * vars[1].offset_wedge_normal).into(),
+                        );
+                    }
 
                     // static friction
 
-                    let offsets_worldspace_old =
-                        map_pair([0, 1], |i| old_poses[bs[*i]] * contact.offsets[*i]);
-                    let offset_diff_motion = (offsets_worldspace[0] - offsets_worldspace_old[0])
-                        - (offsets_worldspace[1] - offsets_worldspace_old[1]);
-                    let tangent = m::left_normal(*contact.normal);
+                    let offset_diff_motion = (vars[0].offset_worldspace
+                        - vars[0].offset_worldspace_old)
+                        - (vars[1].offset_worldspace - vars[1].offset_worldspace_old);
                     let motion_along_tan = offset_diff_motion.dot(tangent);
 
-                    let friction_coef = (body_refs[bs[0]].material)
-                        .static_friction_with(&body_refs[bs[1]].material);
+                    let friction_coef = materials[0].static_friction_with(&materials[1]);
                     let max_coulomb_dx = *lambda_n * friction_coef;
 
-                    let offsets_wedge_tan =
-                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(tangent).xy);
-                    let eff_inv_masses_tan = map_pair([0, 1], |i| {
-                        inv_masses[*i] + (offsets_wedge_tan[*i].powi(2) * inv_mom_inertias[*i])
-                    });
-
                     let lambda_t =
-                        -motion_along_tan / (eff_inv_masses_tan[0] + eff_inv_masses_tan[1]);
+                        -motion_along_tan / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
 
                     if lambda_t < max_coulomb_dx {
-                        poses[bs[0]].append_translation(inv_masses[0] * lambda_t * tangent);
-                        poses[bs[0]].prepend_rotation(
-                            Angle::Rad(inv_mom_inertias[0] * lambda_t * offsets_wedge_tan[0])
-                                .into(),
-                        );
-                        poses[bs[1]].append_translation(-inv_masses[1] * lambda_t * tangent);
-                        poses[bs[1]].prepend_rotation(
-                            Angle::Rad(-inv_mom_inertias[1] * lambda_t * offsets_wedge_tan[1])
-                                .into(),
-                        );
+                        if let Some(bi) = body_idxs[0] {
+                            let im = body_refs[bi].mass.inv();
+                            let imi = body_refs[bi].moment_of_inertia.inv();
+                            poses[bi].append_translation(im * lambda_t * tangent);
+                            poses[bi].prepend_rotation(
+                                Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
+                            );
+                        }
+                        if let Some(bi) = body_idxs[1] {
+                            let im = body_refs[bi].mass.inv();
+                            let imi = body_refs[bi].moment_of_inertia.inv();
+                            poses[bi].append_translation(-im * lambda_t * tangent);
+                            poses[bi].prepend_rotation(
+                                Angle::Rad(-imi * lambda_t * vars[1].offset_wedge_tan).into(),
+                            );
+                        }
                     }
                 }
             }
@@ -512,35 +540,67 @@ impl Physics {
             // velocity step for dynamic friction and restitution on contacts + damping on other constraints
             //
 
-            for (bodies, contact, lambda_n) in izip!(&body_pairs, &contacts, &contact_lambdas) {
-                let bs = match bodies {
-                    Some(bs) => bs,
-                    None => continue,
+            for (colls, bodies, contact, lambda_n) in
+                izip!(&coll_pairs, &body_pairs, &contacts, &contact_lambdas)
+            {
+                let materials = match (colls[0].ty, colls[1].ty) {
+                    (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
+                    // one of the colliders was a trigger, no physics response
+                    _ => {
+                        continue;
+                    }
                 };
-                for contact in contact.iter() {
-                    let inv_masses = map_pair(*bs, |b| body_refs[*b].inverse_mass());
-                    let inv_mom_inertias =
-                        map_pair(*bs, |b| body_refs[*b].inverse_moment_of_inertia());
-                    let offsets_rotated =
-                        map_pair([0, 1], |i| poses[bs[*i]].rotation * contact.offsets[*i]);
 
-                    let relative_vel_at_p = velocities[bs[0]].point_velocity(offsets_rotated[0])
-                        - velocities[bs[1]].point_velocity(offsets_rotated[1]);
+                for contact in contact.iter() {
+                    struct WorkingVars {
+                        inv_mass: f64,
+                        inv_mom_inertia: f64,
+                        offset_rotated: m::Vec2,
+                        point_vel: m::Vec2,
+                        old_point_vel: m::Vec2,
+                        ext_f_accel: m::Vec2,
+                    }
+                    let vars = map_pair(&[0, 1], |i| match bodies[*i] {
+                        // no body => infinite mass
+                        None => {
+                            let pose = graph.get_neighbor_unchecked(&colls[*i], l_pose).unwrap();
+
+                            WorkingVars {
+                                inv_mass: 0.0,
+                                inv_mom_inertia: 0.0,
+                                offset_rotated: pose.rotation * contact.offsets[*i],
+                                point_vel: m::Vec2::zero(),
+                                old_point_vel: m::Vec2::zero(),
+                                ext_f_accel: m::Vec2::zero(),
+                            }
+                        }
+                        Some(bi) => {
+                            let offset_rotated = poses[bi].rotation * contact.offsets[*i];
+                            WorkingVars {
+                                inv_mass: body_refs[bi].mass.inv(),
+                                inv_mom_inertia: body_refs[bi].moment_of_inertia.inv(),
+                                offset_rotated,
+                                point_vel: velocities[bi].point_velocity(offset_rotated),
+                                old_point_vel: old_velocities[bi].point_velocity(offset_rotated),
+                                ext_f_accel: ext_f_accelerations[bi],
+                            }
+                        }
+                    });
+
+                    let relative_vel_at_p = vars[0].point_vel - vars[1].point_vel;
 
                     // restitution
 
                     let normal_vel = relative_vel_at_p.dot(*contact.normal);
-                    let old_rel_vel = old_velocities[bs[0]].point_velocity(offsets_rotated[0])
-                        - old_velocities[bs[1]].point_velocity(offsets_rotated[1]);
+                    let old_rel_vel = vars[0].old_point_vel - vars[1].old_point_vel;
                     let old_normal_vel = old_rel_vel.dot(*contact.normal);
                     let restitution_coef = if old_normal_vel * old_normal_vel
-                        < dt * dt
-                            * (ext_f_accelerations[bs[0]] + ext_f_accelerations[bs[1]]).mag_sq()
+                        < dt * dt * (vars[0].ext_f_accel + vars[1].ext_f_accel).mag_sq()
                     {
                         // don't bounce if the normal velocity is very small to avoid jitter
                         0.0
                     } else {
-                        (body_refs[bs[0]].material).restitution_with(&body_refs[bs[1]].material)
+                        materials[0].restitution_with(&materials[1])
                     };
                     let delta_normal_vel = -normal_vel - restitution_coef * old_normal_vel.max(0.0);
 
@@ -548,8 +608,7 @@ impl Physics {
 
                     let tangent = m::left_normal(*contact.normal);
                     let tangent_vel = relative_vel_at_p.dot(tangent);
-                    let friction_coef = (body_refs[bs[0]].material)
-                        .dynamic_friction_with(&body_refs[bs[1]].material);
+                    let friction_coef = materials[0].dynamic_friction_with(&materials[1]);
                     let max_coulomb_dv = inv_dt * lambda_n * friction_coef;
                     let delta_tan_vel =
                         tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum();
@@ -563,19 +622,25 @@ impl Physics {
                         continue;
                     }
                     let vel_update_dir = total_vel_update / vel_update_mag;
-                    let offsets_wedge_dv =
-                        map_pair([0, 1], |i| offsets_rotated[*i].wedge(vel_update_dir).xy);
-                    let eff_inv_masses = map_pair([0, 1], |i| {
-                        inv_masses[*i] + (offsets_wedge_dv[*i].powi(2) * inv_mom_inertias[*i])
+                    let offsets_wedge_dv = map_pair(&[0, 1], |i| {
+                        vars[*i].offset_rotated.wedge(vel_update_dir).xy
+                    });
+                    let eff_inv_masses = map_pair(&[0, 1], |i| {
+                        vars[*i].inv_mass
+                            + (offsets_wedge_dv[*i].powi(2) * vars[*i].inv_mom_inertia)
                     });
                     let impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
-                    velocities[bs[0]].linear += inv_masses[0] * impulse_mag * vel_update_dir;
-                    velocities[bs[0]].angular +=
-                        inv_mom_inertias[0] * impulse_mag * offsets_wedge_dv[0];
-                    velocities[bs[1]].linear -= inv_masses[1] * impulse_mag * vel_update_dir;
-                    velocities[bs[1]].angular -=
-                        inv_mom_inertias[1] * impulse_mag * offsets_wedge_dv[1];
+                    if let Some(bi) = bodies[0] {
+                        velocities[bi].linear += vars[0].inv_mass * impulse_mag * vel_update_dir;
+                        velocities[bi].angular +=
+                            vars[0].inv_mom_inertia * impulse_mag * offsets_wedge_dv[0];
+                    }
+                    if let Some(bi) = bodies[1] {
+                        velocities[bi].linear -= vars[1].inv_mass * impulse_mag * vel_update_dir;
+                        velocities[bi].angular -=
+                            vars[1].inv_mom_inertia * impulse_mag * offsets_wedge_dv[1];
+                    }
                 }
             }
 
@@ -583,14 +648,14 @@ impl Physics {
 
             for (constraint, pair) in izip!(self.user_constraints.values(), &constraint_body_pairs)
             {
-                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].inverse_mass(), 0.0);
+                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].mass.inv(), 0.0);
                 let inv_mom_inertias =
-                    map_semi_pair(*pair, |b| body_refs[*b].inverse_moment_of_inertia(), 0.0);
+                    map_semi_pair(*pair, |b| body_refs[*b].moment_of_inertia.inv(), 0.0);
 
                 match pair.1 {
                     Some(p1) => {
                         let pair = [pair.0, p1];
-                        let offsets_rotated = map_pair([0, 1], |i| {
+                        let offsets_rotated = map_pair(&[0, 1], |i| {
                             poses[pair[*i]].rotation * constraint.offsets[*i]
                         });
 
@@ -600,8 +665,8 @@ impl Physics {
                         let dir = relative_vel / relative_vel_mag;
 
                         let offsets_wedge_dir =
-                            map_pair([0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
-                        let eff_inv_masses = map_pair([0, 1], |i| {
+                            map_pair(&[0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
+                        let eff_inv_masses = map_pair(&[0, 1], |i| {
                             inv_masses[*i] + (offsets_wedge_dir[*i].powi(2) * inv_mom_inertias[*i])
                         });
 
@@ -670,14 +735,14 @@ impl Physics {
                             graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
                         {
                             sink.push(Event::Contact(ContactEvent {
-                                other_collider: colls[1],
+                                other_collider: graph::NodeRef::as_node(&colls[1], graph),
                             }));
                         }
                         if let Some(mut sink) =
                             graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
                         {
                             sink.push(Event::Contact(ContactEvent {
-                                other_collider: colls[0],
+                                other_collider: graph::NodeRef::as_node(&colls[0], graph),
                             }));
                         }
                     }
@@ -693,11 +758,9 @@ impl Physics {
         let body_nodes: Vec<graph::NodePosition> =
             body_refs.into_iter().map(|br| br.pos()).collect();
         for (body, pose_result, vel_result) in izip!(body_nodes, poses, velocities) {
-            let mut rb = l_body.get_mut_unchecked(body);
-            let mut pose = graph.get_neighbor_mut_unchecked(&rb, l_pose).unwrap();
-            if let Some(v) = rb.velocity_mut() {
-                *v = vel_result;
-            }
+            let mut body = l_body.get_mut_unchecked(body);
+            let mut pose = graph.get_neighbor_mut_unchecked(&body, l_pose).unwrap();
+            body.velocity = vel_result;
             *pose = pose_result;
         }
     }
@@ -725,4 +788,13 @@ impl Physics {
             }
         })
     }
+}
+//
+// helpers to reduce duplication when fetching info for pairs of objects
+fn map_pair<T, R>(pair: &[T; 2], f: impl Fn(&T) -> R) -> [R; 2] {
+    [f(&pair[0]), f(&pair[1])]
+}
+
+fn map_semi_pair<T, R>(pair: (T, Option<T>), f: impl Fn(&T) -> R, snd_default: R) -> [R; 2] {
+    [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
 }

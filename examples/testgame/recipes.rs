@@ -1,6 +1,6 @@
 use starframe::{
     self as sf, graphics as gx, math as m,
-    physics::{self as phys, body::SurfaceMaterial, Velocity},
+    physics::{self as phys, Material, Velocity},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -68,31 +68,31 @@ fn spawn_block(
     block: Block,
     color: [f32; 4],
     is_static: bool,
-    graph: &mut crate::MyGraph,
-) -> sf::graph::Node<phys::Body> {
-    let pose_node = graph.l_pose.insert(block.pose.into(), &mut graph.graph);
+    g: &mut crate::MyGraph,
+) -> Option<sf::graph::Node<phys::Body>> {
+    let pose_node = g.l_pose.insert(block.pose.into(), &mut g.graph);
     let coll = phys::Collider::new_rect(block.width, block.height);
-    let body = if is_static {
-        phys::Body::new_static()
-    } else {
-        phys::Body::new_dynamic(&coll, 0.5)
-    };
-    let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
-    let body_node = graph.l_body.insert(body, &mut graph.graph);
-    let shape_node = graph.l_shape.insert(
+    let coll_node = g.l_collider.insert(coll, &mut g.graph);
+    let shape_node = g.l_shape.insert(
         gx::Shape::Rect {
             w: block.width,
             h: block.height,
             color,
         },
-        &mut graph.graph,
+        &mut g.graph,
     );
-    graph.graph.connect(&pose_node, &body_node);
-    graph.graph.connect(&pose_node, &coll_node);
-    graph.graph.connect(&body_node, &coll_node);
-    graph.graph.connect(&pose_node, &shape_node);
+    g.graph.connect(&pose_node, &coll_node);
+    g.graph.connect(&pose_node, &shape_node);
 
-    sf::graph::NodeRef::as_node(&body_node, &graph.graph)
+    if !is_static {
+        let body = phys::Body::new_dynamic(&coll, 0.5);
+        let body_node = g.l_body.insert(body, &mut g.graph);
+        g.graph.connect(&body_node, &coll_node);
+        g.graph.connect(&pose_node, &body_node);
+        Some(sf::graph::NodeRef::as_node(&body_node, &g.graph))
+    } else {
+        None
+    }
 }
 
 impl Recipe {
@@ -115,16 +115,14 @@ impl Recipe {
                     m::Pose::new(position.into(), m::Rotor2::identity()),
                     &mut graph.graph,
                 );
-                let coll = phys::Collider::new_circle(*radius);
-                let body = phys::Body::new_dynamic(&coll, 0.5)
-                    .with_material(SurfaceMaterial {
-                        restitution_coef: *restitution,
-                        ..Default::default()
-                    })
-                    .with_velocity(Velocity {
-                        linear: start_velocity.into(),
-                        angular: 0.0,
-                    });
+                let coll = phys::Collider::new_circle(*radius).with_material(Material {
+                    restitution_coef: *restitution,
+                    ..Default::default()
+                });
+                let body = phys::Body::new_dynamic(&coll, 0.5).with_velocity(Velocity {
+                    linear: start_velocity.into(),
+                    angular: 0.0,
+                });
                 let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
                 let body_node = graph.l_body.insert(body, &mut graph.graph);
                 let shape_node = graph.l_shape.insert(
@@ -176,7 +174,8 @@ impl Recipe {
                         random_color(),
                         false,
                         graph,
-                    );
+                    )
+                    .unwrap();
                     let block_length_half = block_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
                         physics.add_constraint(
@@ -231,7 +230,8 @@ impl Recipe {
                     random_color(),
                     false,
                     graph,
-                );
+                )
+                .unwrap();
                 let b2 = spawn_block(
                     Block {
                         width: 1.0,
@@ -241,7 +241,8 @@ impl Recipe {
                     random_color(),
                     false,
                     graph,
-                );
+                )
+                .unwrap();
                 physics.add_constraint(
                     phys::ConstraintBuilder::new(b1)
                         .with_target(b2)

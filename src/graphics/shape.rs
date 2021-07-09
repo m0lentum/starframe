@@ -21,9 +21,9 @@ impl Shape {
     /// Create a Shape that matches the given Collider.
     pub fn from_collider(coll: &crate::physics::Collider, color: Color) -> Self {
         use crate::physics::ColliderShape;
-        match coll.shape() {
+        match coll.shape {
             ColliderShape::Circle { r } => Shape::Circle {
-                r: *r,
+                r,
                 points: 16,
                 color,
             },

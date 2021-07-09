@@ -64,12 +64,12 @@ pub fn intersection_check(
     coll2: &Collider,
 ) -> ContactResult {
     use ColliderShape::*;
-    match (coll1.shape(), coll2.shape()) {
-        (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(pose1, *r1, pose2, *r2),
-        (Rect { hw, hh }, Circle { r }) => rect_circle(pose1, *hw, *hh, pose2, *r),
-        (Circle { r }, Rect { hw, hh }) => flip_contacts(rect_circle(pose2, *hw, *hh, pose1, *r)),
+    match (coll1.shape, coll2.shape) {
+        (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(pose1, r1, pose2, r2),
+        (Rect { hw, hh }, Circle { r }) => rect_circle(pose1, hw, hh, pose2, r),
+        (Circle { r }, Rect { hw, hh }) => flip_contacts(rect_circle(pose2, hw, hh, pose1, r)),
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
-            rect_rect(pose1, *hw1, *hh1, pose2, *hw2, *hh2)
+            rect_rect(pose1, hw1, hh1, pose2, hw2, hh2)
         }
     }
 }

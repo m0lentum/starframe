@@ -98,24 +98,20 @@ impl PlayerController {
             let move_speed = self.base_move_speed;
 
             let target_hvel = target_hdir * move_speed;
-            let player_vel = match player_body.velocity_mut() {
-                Some(vel) => vel,
-                None => continue,
-            };
-            let accel_needed = target_hvel - player_vel.linear.x;
+            let accel_needed = target_hvel - player_body.velocity.linear.x;
             let accel = accel_needed.min(self.max_acceleration);
-            player_vel.linear.x += accel;
+            player_body.velocity.linear.x += accel;
 
             // hacked up rotation locking
 
-            player_vel.angular = 0.0;
+            player_body.velocity.angular = 0.0;
             player_tr.rotation = m::Rotor2::identity();
 
             // jump
 
             if input.is_key_pressed(Key::LShift, Some(0)) {
                 // TODO: only on ground, double jump, custom curve
-                player_vel.linear.y = 4.0;
+                player_body.velocity.linear.y = 4.0;
             }
 
             // shoot
