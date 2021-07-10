@@ -1,5 +1,5 @@
-/// A component that allows a game object to collide with others.
-/// Note that a Pose component must also be present.
+/// A component that allows a game object to collide with others
+/// or act as a trigger.
 #[derive(Clone, Copy, Debug)]
 pub struct Collider {
     pub shape: ColliderShape,
@@ -30,6 +30,17 @@ impl Collider {
         }
     }
 
+    /// Create a solid capsule collider (a rectangle with semicircles at the ends on the x-axis).
+    pub fn new_capsule(length: f64, radius: f64) -> Self {
+        Collider {
+            shape: ColliderShape::Capsule {
+                hl: length / 2.0,
+                r: radius,
+            },
+            ty: ColliderType::default(),
+        }
+    }
+
     /// Set the collider to be solid with the given surface material.
     pub fn with_material(mut self, mat: Material) -> Self {
         self.ty = ColliderType::Solid(mat);
@@ -46,6 +57,7 @@ impl Collider {
         match self.shape {
             ColliderShape::Circle { r } => std::f64::consts::PI * r * r,
             ColliderShape::Rect { hw, hh } => 4.0 * hw * hh,
+            ColliderShape::Capsule { hl, r } => (std::f64::consts::PI * r * r) + (4.0 * hl * r),
         }
     }
 
@@ -54,6 +66,9 @@ impl Collider {
         match self.shape {
             ColliderShape::Circle { r } => r * r / 2.0,
             ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
+            // rough estimation as a rectangle, since an accurate formula is not on wikipedia.
+            // TODO: calculate a formula by hand
+            ColliderShape::Capsule { hl, r } => (hl * hl + r * r) / 3.0,
         }
     }
 
@@ -61,7 +76,6 @@ impl Collider {
         matches!(self.ty, ColliderType::Solid(_))
     }
 }
-
 /// The physical shape of a collider.
 #[derive(Clone, Copy, Debug)]
 pub enum ColliderShape {
@@ -73,6 +87,11 @@ pub enum ColliderShape {
     Rect {
         hw: f64,
         hh: f64,
+    },
+    /// A rectangle with half-circles at the ends, circles along the x-axis.
+    Capsule {
+        hl: f64,
+        r: f64,
     },
 }
 
@@ -90,7 +109,7 @@ impl Default for ColliderType {
     }
 }
 
-/// Determines how the surface of a body responds to collisions.
+/// Determines how the surface of a collider affects collisions.
 ///
 /// Using a simplified friction model where each material has its own friction
 /// coefficients (rather than the realistic model where every pair of materials

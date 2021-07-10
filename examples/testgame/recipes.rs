@@ -11,6 +11,11 @@ pub enum Recipe {
     StaticBlock(Block),
     DynamicBlock(Block),
     Ball(Ball),
+    Capsule {
+        length: f64,
+        radius: f64,
+        pose: m::PoseBuilder,
+    },
     Blockchain {
         width: f64,
         spacing: f64,
@@ -95,6 +100,29 @@ fn spawn_block(
     }
 }
 
+fn spawn_body(
+    pose: m::Pose,
+    coll: phys::Collider,
+    color: [f32; 4],
+    g: &mut crate::MyGraph,
+) -> sf::graph::Node<phys::Body> {
+    let pose_node = g.l_pose.insert(pose, &mut g.graph);
+    let coll_node = g.l_collider.insert(coll, &mut g.graph);
+    let shape_node = g
+        .l_shape
+        .insert(gx::Shape::from_collider(&coll, color), &mut g.graph);
+    let body_node = g
+        .l_body
+        .insert(phys::Body::new_dynamic(&coll, 0.5), &mut g.graph);
+
+    g.graph.connect(&pose_node, &coll_node);
+    g.graph.connect(&pose_node, &shape_node);
+    g.graph.connect(&body_node, &coll_node);
+    g.graph.connect(&pose_node, &body_node);
+
+    sf::graph::NodeRef::as_node(&body_node, &g.graph)
+}
+
 impl Recipe {
     pub fn spawn(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
         match self {
@@ -138,6 +166,18 @@ impl Recipe {
                 graph.graph.connect(&body_node, &coll_node);
                 graph.graph.connect(&pose_node, &shape_node);
             }
+            Recipe::Capsule {
+                length,
+                radius,
+                pose,
+            } => {
+                spawn_body(
+                    (*pose).into(),
+                    phys::Collider::new_capsule(*length, *radius),
+                    random_color(),
+                    graph,
+                );
+            }
             Recipe::Blockchain {
                 width,
                 spacing,
@@ -151,6 +191,7 @@ impl Recipe {
                 }
 
                 let half_spacing = spacing / 2.0;
+                let radius = width / 2.0;
 
                 let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
 
@@ -162,39 +203,35 @@ impl Recipe {
                     let center = (link1 + *link2) / 2.0;
                     let orientation = (distance[0] / dist_norm).acos() * distance[1].signum();
 
-                    let block_length = dist_norm - spacing;
-                    let block = spawn_block(
-                        Block {
-                            width: block_length,
-                            height: *width, // a bit weird but makes sense with the orientation calculations
-                            pose: m::PoseBuilder::new()
-                                .with_position(center)
-                                .with_rotation(m::Angle::Rad(orientation)),
-                        },
+                    let caps_full_length = dist_norm - spacing;
+                    let capsule = spawn_body(
+                        m::PoseBuilder::new()
+                            .with_position(center)
+                            .with_rotation(m::Angle::Rad(orientation))
+                            .into(),
+                        phys::Collider::new_capsule(caps_full_length - width, radius),
                         random_color(),
-                        false,
                         graph,
-                    )
-                    .unwrap();
-                    let block_length_half = block_length / 2.0;
+                    );
+                    let caps_length_half = caps_full_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(block)
+                            phys::ConstraintBuilder::new(capsule)
                                 .with_target(prev_block)
-                                .with_origin(m::Vec2::new(-block_length_half - half_spacing, 0.0))
+                                .with_origin(m::Vec2::new(-caps_length_half - half_spacing, 0.0))
                                 .with_target_origin(m::Vec2::new(prev_block_offset, 0.0))
                                 .with_compliance(0.015)
                                 .build_attachment(),
                         );
                     } else if *anchored_start {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(block)
-                                .with_origin(m::Vec2::new(-block_length_half - half_spacing, 0.0))
+                            phys::ConstraintBuilder::new(capsule)
+                                .with_origin(m::Vec2::new(-caps_length_half - half_spacing, 0.0))
                                 .with_target_origin(link1)
                                 .build_attachment(),
                         );
                     }
-                    prev_block = Some((block, block_length_half + half_spacing));
+                    prev_block = Some((capsule, caps_length_half + half_spacing));
                 }
 
                 if *anchored_end {

@@ -66,10 +66,23 @@ pub fn intersection_check(
     use ColliderShape::*;
     match (coll1.shape, coll2.shape) {
         (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(pose1, r1, pose2, r2),
-        (Rect { hw, hh }, Circle { r }) => rect_circle(pose1, hw, hh, pose2, r),
         (Circle { r }, Rect { hw, hh }) => flip_contacts(rect_circle(pose2, hw, hh, pose1, r)),
+        (Rect { hw, hh }, Circle { r }) => rect_circle(pose1, hw, hh, pose2, r),
+        (Circle { r: rcirc }, Capsule { hl, r: rcap }) => {
+            circle_capsule(pose1, rcirc, pose2, hl, rcap)
+        }
+        (Capsule { hl, r: rcap }, Circle { r: rcirc }) => {
+            flip_contacts(circle_capsule(pose2, rcirc, pose1, hl, rcap))
+        }
         (Rect { hw: hw1, hh: hh1 }, Rect { hw: hw2, hh: hh2 }) => {
             rect_rect(pose1, hw1, hh1, pose2, hw2, hh2)
+        }
+        (Rect { hw, hh }, Capsule { hl, r }) => rect_capsule(pose1, hw, hh, pose2, hl, r),
+        (Capsule { hl, r }, Rect { hw, hh }) => {
+            flip_contacts(rect_capsule(pose2, hw, hh, pose1, hl, r))
+        }
+        (Capsule { hl: hl1, r: r1 }, Capsule { hl: hl2, r: r2 }) => {
+            capsule_capsule(pose1, hl1, r1, pose2, hl2, r2)
         }
     }
 }
@@ -81,17 +94,22 @@ fn flip_contacts(contacts: ContactResult) -> ContactResult {
     })
 }
 
+//
+// CIRCLE <-> CIRCLE
+//
+
 fn circle_circle(pose1: &m::Pose, r1: f64, pose2: &m::Pose, r2: f64) -> ContactResult {
     let pos1 = pose1.translation;
     let pos2 = pose2.translation;
 
     let dist = pos2 - pos1;
     let dist_sq = dist.mag_sq();
+    let r_sum = r1 + r2;
 
     let normal = if dist_sq < 0.001 {
         // same position, consider penetration to be on x axis
         Unit::unit_x()
-    } else if dist_sq < (r1 + r2) * (r1 + r2) {
+    } else if dist_sq < r_sum * r_sum {
         // typical collision
         Unit::new_normalize(dist)
     } else {
@@ -106,6 +124,10 @@ fn circle_circle(pose1: &m::Pose, r1: f64, pose2: &m::Pose, r2: f64) -> ContactR
         ],
     })
 }
+
+//
+// RECT <-> CIRCLE
+//
 
 fn rect_circle(
     pose_rect: &m::Pose,
@@ -167,6 +189,52 @@ fn rect_circle(
         ],
     })
 }
+
+//
+// CIRCLE <-> CAPSULE
+//
+
+fn circle_capsule(
+    pose_circ: &m::Pose,
+    r_circ: f64,
+    pose_cap: &m::Pose,
+    hl: f64,
+    r_cap: f64,
+) -> ContactResult {
+    let pose_circ_wrt_cap = pose_cap.inversed() * *pose_circ;
+    let center_dist = pose_circ_wrt_cap.translation;
+
+    let dist = m::Vec2::new(
+        // x distance is 0 if the circle is along the line segment defining the capsule
+        (center_dist.x.abs() - hl).max(0.0) * center_dist.x.signum(),
+        center_dist.y,
+    );
+    let dist_sq = dist.mag_sq();
+    let r_sum = r_circ + r_cap;
+
+    let normal = if dist_sq < 0.001 {
+        Unit::unit_y()
+    } else if dist_sq < r_sum * r_sum {
+        // normal must be away from the circle, dist is from cap to circle
+        Unit::new_normalize(-dist)
+    } else {
+        return ContactResult::Zero;
+    };
+
+    let depth = r_sum - dist_sq.sqrt();
+
+    ContactResult::One(Contact {
+        normal: pose_cap.rotation * normal,
+        offsets: [
+            pose_circ_wrt_cap.rotation.reversed() * (r_circ * *normal),
+            center_dist + (r_circ - depth) * *normal,
+        ],
+    })
+}
+
+//
+// RECT <-> RECT
+//
 
 fn rect_rect(
     pose1: &m::Pose,
@@ -369,6 +437,329 @@ fn rect_rect(
         }
     }
 }
+
+//
+// RECT <-> CAPSULE
+//
+
+fn rect_capsule(
+    pose_rect: &m::Pose,
+    hw: f64,
+    hh: f64,
+    pose_cap: &m::Pose,
+    hl: f64,
+    r: f64,
+) -> ContactResult {
+    let pose_cap_wrt_rect = pose_rect.inversed() * *pose_cap;
+
+    // four possible separating axes:
+    // rect's principal axes, axis normal to the capsule's line segment,
+    // and axis between the closest cap end point and the closest rect corner
+
+    let dist = pose_cap_wrt_rect.translation;
+    let cap_dir = pose_cap_wrt_rect.rotation * m::Vec2::unit_x();
+    // orient normal away from rect
+    let cap_normal = m::left_normal(cap_dir);
+    let cap_normal = if cap_normal.dot(dist) < 0.0 {
+        -cap_normal
+    } else {
+        cap_normal
+    };
+
+    let pen_rect_x = (hw + cap_dir.x.abs() * hl + r) - dist.x.abs();
+    if pen_rect_x <= 0.0 {
+        return ContactResult::Zero;
+    }
+    let pen_rect_y = (hh + cap_dir.y.abs() * hl + r) - dist.y.abs();
+    if pen_rect_y <= 0.0 {
+        return ContactResult::Zero;
+    }
+    let pen_cap_normal =
+        (cap_normal.x.abs() * hw + cap_normal.y.abs() * hh + r) - dist.dot(cap_normal);
+    if pen_cap_normal <= 0.0 {
+        return ContactResult::Zero;
+    }
+    let cap_ends = [dist + hl * cap_dir, dist - hl * cap_dir];
+    let cap_end_dists = [
+        cap_ends[0].abs() - m::Vec2::new(hw, hh),
+        cap_ends[1].abs() - m::Vec2::new(hw, hh),
+    ];
+    let closer_cap_end = if cap_end_dists[0].mag_sq() <= cap_end_dists[1].mag_sq() {
+        cap_ends[0]
+    } else {
+        cap_ends[1]
+    };
+    let (closest_rect_corner, axis_cap_end, pen_cap_end) =
+        if closer_cap_end.x.abs() <= hw || closer_cap_end.y.abs() <= hh {
+            // cap end is only relevant if it's in the voronoi region outside both rect faces.
+            // we aren't, so set axis to whatever and depth to max so it doesn't get selected
+            (
+                m::Vec2::zero(),
+                Unit::new_unchecked(m::Vec2::unit_x()),
+                std::f64::MAX,
+            )
+        } else {
+            let closest_rect_corner = m::Vec2::new(
+                hw * closer_cap_end.x.signum(),
+                hh * closer_cap_end.y.signum(),
+            );
+            let rect_corner_to_cap_end = closer_cap_end - closest_rect_corner;
+            let axis = Unit::new_normalize(rect_corner_to_cap_end);
+            let axis = if axis.dot(dist) < 0.0 { -axis } else { axis };
+            let pen = (axis.abs().dot(m::Vec2::new(hw, hh)) + axis.dot(cap_dir).abs() * hl + r)
+                - axis.dot(dist);
+            if pen <= 0.0 {
+                return ContactResult::Zero;
+            }
+            (closest_rect_corner, axis, pen)
+        };
+
+    let (lowest_pen_axis, _) = [pen_rect_x, pen_rect_y, pen_cap_normal, pen_cap_end]
+        .iter()
+        .enumerate()
+        .min_by(|(_, d1), (_, d2)| d1.partial_cmp(d2).expect("There was a NaN somewhere"))
+        .unwrap();
+
+    match lowest_pen_axis {
+        // rect x axis
+        0 => {
+            let normal = Unit::new_unchecked(m::Vec2::new(dist.x.signum(), 0.0));
+            let normal_worldspace = pose_rect.rotation * normal;
+            // update cap_dir to match the axis direction
+            let cap_dir = if normal.dot(cap_dir) < 0.0 {
+                -cap_dir
+            } else {
+                cap_dir
+            };
+            // we might have two contact points along the straight edge of the capsule
+            let rect_edge = Edge {
+                start: m::Vec2::new(dist.x.signum() * hw, -hh),
+                dir: Unit::new_unchecked(m::Vec2::unit_y()),
+                length: hh * 2.0,
+            };
+            let cap_edge = Edge {
+                start: dist - cap_normal * r - cap_dir * hl,
+                dir: Unit::new_unchecked(cap_dir),
+                length: hl * 2.0,
+            };
+            match clip_edge(rect_edge, cap_edge) {
+                EdgeClipResult::Intersects => {
+                    // contact point is on the circle at the closer end of the capsule
+                    let point_on_cap = dist - cap_dir * hl - r * *normal;
+                    ContactResult::One(Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            point_on_cap + m::Vec2::new(pen_rect_x * dist.x.signum(), 0.0),
+                            pose_cap_wrt_rect.inversed() * point_on_cap,
+                        ],
+                    })
+                }
+                EdgeClipResult::Passes { enters, exits } => {
+                    let edge_dot_axis = cap_edge.dir.x * dist.x.signum();
+                    let start_depth = hw - cap_edge.start.x.abs();
+                    let enter_depth = start_depth - enters * edge_dot_axis;
+                    let exit_depth = start_depth - exits * edge_dot_axis;
+                    if enter_depth <= 0.0 || exit_depth <= 0.0 {
+                        // flat edge missed, so the point is on the circular part
+                        let point_on_cap = dist - cap_dir * hl - r * *normal;
+                        return ContactResult::One(Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                point_on_cap + m::Vec2::new(pen_rect_x * dist.x.signum(), 0.0),
+                                pose_cap_wrt_rect.inversed() * point_on_cap,
+                            ],
+                        });
+                    }
+
+                    let enter_point = cap_edge.start + (enters * *cap_edge.dir);
+                    let exit_point = cap_edge.start + (exits * *cap_edge.dir);
+                    let pc_wrt_pr_inv = pose_cap_wrt_rect.inversed();
+                    ContactResult::Two(
+                        Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                enter_point + m::Vec2::new(dist.x.signum() * enter_depth, 0.0),
+                                pc_wrt_pr_inv * enter_point,
+                            ],
+                        },
+                        Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                exit_point + m::Vec2::new(dist.x.signum() * exit_depth, 0.0),
+                                pc_wrt_pr_inv * exit_point,
+                            ],
+                        },
+                    )
+                }
+            }
+        }
+        // rect y axis
+        1 => {
+            let normal = Unit::new_unchecked(m::Vec2::new(0.0, dist.y.signum()));
+            let normal_worldspace = pose_rect.rotation * normal;
+            // update cap_dir to match the axis direction
+            let cap_dir = if normal.dot(cap_dir) < 0.0 {
+                -cap_dir
+            } else {
+                cap_dir
+            };
+            let rect_edge = Edge {
+                start: m::Vec2::new(-hw, dist.y.signum() * hh),
+                dir: Unit::new_unchecked(m::Vec2::unit_x()),
+                length: hw * 2.0,
+            };
+            let cap_edge = Edge {
+                start: dist - cap_normal * r - cap_dir * hl,
+                dir: Unit::new_unchecked(cap_dir),
+                length: hl * 2.0,
+            };
+            match clip_edge(rect_edge, cap_edge) {
+                EdgeClipResult::Intersects => {
+                    // contact point is on the circle at the closer end of the capsule
+                    let point_on_cap = dist - cap_dir * hl - r * *normal;
+                    ContactResult::One(Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            point_on_cap + m::Vec2::new(0.0, pen_rect_y * dist.y.signum()),
+                            pose_cap_wrt_rect.inversed() * point_on_cap,
+                        ],
+                    })
+                }
+                EdgeClipResult::Passes { enters, exits } => {
+                    let edge_dot_axis = cap_edge.dir.y * dist.y.signum();
+                    let start_depth = hh - cap_edge.start.y.abs();
+                    let enter_depth = start_depth - enters * edge_dot_axis;
+                    let exit_depth = start_depth - exits * edge_dot_axis;
+                    if enter_depth <= 0.0 || exit_depth <= 0.0 {
+                        // flat edge missed, so the point is on the circular part
+                        let point_on_cap = dist - cap_dir * hl - r * *normal;
+                        return ContactResult::One(Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                point_on_cap + m::Vec2::new(0.0, pen_rect_y * dist.y.signum()),
+                                pose_cap_wrt_rect.inversed() * point_on_cap,
+                            ],
+                        });
+                    }
+
+                    let enter_point = cap_edge.start + (enters * *cap_edge.dir);
+                    let exit_point = cap_edge.start + (exits * *cap_edge.dir);
+                    let pc_wrt_pr_inv = pose_cap_wrt_rect.inversed();
+                    ContactResult::Two(
+                        Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                enter_point + m::Vec2::new(0.0, dist.y.signum() * enter_depth),
+                                pc_wrt_pr_inv * enter_point,
+                            ],
+                        },
+                        Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                exit_point + m::Vec2::new(0.0, dist.y.signum() * exit_depth),
+                                pc_wrt_pr_inv * exit_point,
+                            ],
+                        },
+                    )
+                }
+            }
+        }
+        // capsule normal direction
+        2 => {
+            let normal_worldspace = pose_rect.rotation * Unit::new_unchecked(cap_normal);
+            let rect_edge = if cap_normal.x.abs() < cap_normal.y.abs() {
+                Edge {
+                    start: m::Vec2::new(-hw, dist.y.signum() * hh),
+                    dir: Unit::new_unchecked(m::Vec2::unit_x()),
+                    length: hw * 2.0,
+                }
+            } else {
+                Edge {
+                    start: m::Vec2::new(dist.x.signum() * hw, -hh),
+                    dir: Unit::new_unchecked(m::Vec2::unit_y()),
+                    length: hh * 2.0,
+                }
+            };
+            let cap_edge = Edge {
+                start: dist - cap_normal * r - cap_dir * hl,
+                dir: Unit::new_unchecked(cap_dir),
+                length: hl * 2.0,
+            };
+            match clip_edge(cap_edge, rect_edge) {
+                EdgeClipResult::Intersects => {
+                    // contact point is at the tip of the rect
+                    let point_on_rect =
+                        m::Vec2::new(cap_normal.x.signum() * hw, cap_normal.y.signum() * hh);
+                    ContactResult::One(Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            point_on_rect,
+                            pose_cap_wrt_rect.inversed()
+                                * (point_on_rect - cap_normal * pen_cap_normal),
+                        ],
+                    })
+                }
+                EdgeClipResult::Passes { enters, exits } => {
+                    let edge_dot_axis = rect_edge.dir.dot(cap_normal);
+                    let enter_depth = pen_cap_normal - enters * edge_dot_axis;
+                    let exit_depth = pen_cap_normal - exits * edge_dot_axis;
+                    if enter_depth <= 0.0 || exit_depth <= 0.0 {
+                        return ContactResult::Zero;
+                    }
+
+                    let enter_point = rect_edge.start + (enters * *rect_edge.dir);
+                    let exit_point = rect_edge.start + (exits * *rect_edge.dir);
+                    let pc_wrt_pr_inv = pose_cap_wrt_rect.inversed();
+                    ContactResult::Two(
+                        Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                enter_point,
+                                pc_wrt_pr_inv * (enter_point - cap_normal * enter_depth),
+                            ],
+                        },
+                        Contact {
+                            normal: normal_worldspace,
+                            offsets: [
+                                exit_point,
+                                pc_wrt_pr_inv * (exit_point - cap_normal * exit_depth),
+                            ],
+                        },
+                    )
+                }
+            }
+        }
+        // capsule closest corner
+        3 => ContactResult::One(Contact {
+            normal: pose_rect.rotation * axis_cap_end,
+            offsets: [
+                closest_rect_corner,
+                pose_cap_wrt_rect.inversed() * (closest_rect_corner - pen_cap_end * *axis_cap_end),
+            ],
+        }),
+        _ => unreachable!(),
+    }
+}
+
+//
+// CAPSULE <-> CAPSULE
+//
+
+fn capsule_capsule(
+    pose1: &m::Pose,
+    hl1: f64,
+    r1: f64,
+    pose2: &m::Pose,
+    hl2: f64,
+    r2: f64,
+) -> ContactResult {
+    // TODO
+    ContactResult::Zero
+}
+
+//
+// EDGE CLIP
+//
 
 #[derive(Clone, Copy, Debug)]
 struct Edge {

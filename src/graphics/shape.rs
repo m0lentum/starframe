@@ -12,9 +12,26 @@ type Color = [f32; 4];
 /// Concavity will not result in an error but will be rendered incorrectly.
 #[derive(Clone, Debug)]
 pub enum Shape {
-    Circle { r: f64, points: usize, color: Color },
-    Rect { w: f64, h: f64, color: Color },
-    Poly { points: Vec<m::Vec2>, color: Color },
+    Circle {
+        r: f64,
+        points: usize,
+        color: Color,
+    },
+    Rect {
+        w: f64,
+        h: f64,
+        color: Color,
+    },
+    Capsule {
+        hl: f64,
+        r: f64,
+        points_per_cap: usize,
+        color: Color,
+    },
+    Poly {
+        points: Vec<m::Vec2>,
+        color: Color,
+    },
 }
 
 impl Shape {
@@ -30,6 +47,12 @@ impl Shape {
             ColliderShape::Rect { hw, hh } => Shape::Rect {
                 w: 2.0 * hw,
                 h: 2.0 * hh,
+                color,
+            },
+            ColliderShape::Capsule { hl, r } => Shape::Capsule {
+                hl,
+                r,
+                points_per_cap: 8,
                 color,
             },
         }
@@ -88,6 +111,26 @@ impl Shape {
                     pose,
                     *color,
                 )
+            }
+            Shape::Capsule {
+                hl,
+                r,
+                points_per_cap,
+                color,
+            } => {
+                let angle_incr = std::f64::consts::PI / *points_per_cap as f64;
+                let verts: Vec<m::Vec2> = (0..=*points_per_cap)
+                    .map(|i| {
+                        let angle = angle_incr * i as f64;
+                        m::Vec2::new(r * angle.sin() + hl, r * angle.cos())
+                    })
+                    .chain((*points_per_cap..=2 * points_per_cap).map(|i| {
+                        let angle = angle_incr * i as f64;
+                        m::Vec2::new(r * angle.sin() - hl, r * angle.cos())
+                    }))
+                    .collect();
+
+                as_verts(verts.as_slice(), pose, *color)
             }
             Shape::Poly { points, color } => as_verts(points.as_slice(), pose, *color),
         }
