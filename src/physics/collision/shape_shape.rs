@@ -669,7 +669,7 @@ fn rect_capsule(
         // capsule normal direction
         2 => {
             let normal_worldspace = pose_rect.rotation * Unit::new_unchecked(cap_normal);
-            let rect_edge = if cap_normal.x.abs() < cap_normal.y.abs() {
+            let rect_edge = if cap_normal.x.abs() > cap_normal.y.abs() {
                 Edge {
                     start: m::Vec2::new(-hw, dist.y.signum() * hh),
                     dir: Unit::new_unchecked(m::Vec2::unit_x()),
