@@ -364,6 +364,7 @@ fn rect_rect(
                     },
                 )
             }
+            EdgeClipResult::Misses => ContactResult::Zero,
         }
     } else {
         // copy-paste-modified from above, if there's a bug it's probably here
@@ -434,6 +435,7 @@ fn rect_rect(
                     },
                 )
             }
+            EdgeClipResult::Misses => ContactResult::Zero,
         }
     }
 }
@@ -543,7 +545,7 @@ fn rect_capsule(
                 length: hl * 2.0,
             };
             match clip_edge(rect_edge, cap_edge) {
-                EdgeClipResult::Intersects => {
+                EdgeClipResult::Intersects | EdgeClipResult::Misses => {
                     // contact point is on the circle at the closer end of the capsule
                     let point_on_cap = dist - cap_dir * hl - r * *normal;
                     ContactResult::One(Contact {
@@ -614,7 +616,7 @@ fn rect_capsule(
                 length: hl * 2.0,
             };
             match clip_edge(rect_edge, cap_edge) {
-                EdgeClipResult::Intersects => {
+                EdgeClipResult::Intersects | EdgeClipResult::Misses => {
                     // contact point is on the circle at the closer end of the capsule
                     let point_on_cap = dist - cap_dir * hl - r * *normal;
                     ContactResult::One(Contact {
@@ -686,6 +688,7 @@ fn rect_capsule(
                 length: hl * 2.0,
             };
             match clip_edge(cap_edge, rect_edge) {
+                EdgeClipResult::Misses => ContactResult::Zero,
                 EdgeClipResult::Intersects => {
                     // contact point is at the tip of the rect
                     let point_on_rect =
@@ -753,8 +756,114 @@ fn capsule_capsule(
     hl2: f64,
     r2: f64,
 ) -> ContactResult {
-    // TODO
-    ContactResult::Zero
+    let pose2_wrt_pose1 = pose1.inversed() * *pose2;
+
+    let dist = pose2_wrt_pose1.translation;
+    let cap2_dir = pose2_wrt_pose1.rotation * m::Vec2::unit_x();
+
+    // get the closest points on the line segments defining the capsules
+    let closest_points = if cap2_dir.y == 0.0 {
+        // the capsules are perfectly collinear.
+        // pick one end of cap2 and the closest point to it on cap1
+        let closer_cap2_end = if cap2_dir.x.signum() == dist.x.signum() {
+            dist - cap2_dir * hl2
+        } else {
+            dist + cap2_dir * hl2
+        };
+        [
+            m::Vec2::new(closer_cap2_end.x.max(-hl1).min(hl1), 0.0),
+            closer_cap2_end,
+        ]
+    } else {
+        // intersection of the whole lines from cap 2's POV,
+        // clamped to the extents of the line segment
+        let t2 = (-dist.y / cap2_dir.y).min(hl2).max(-hl2);
+        // closest point on cap 1 to point t2, clamped
+        let t1 = (dist.x + t2 * cap2_dir.x).min(hl1).max(-hl1);
+        // set t2 to closest point to clamped t1, clamping again to make sure we stay
+        // within cap 2's limits
+        let t2 = m::Vec2::new(t1 - dist.x, -dist.y)
+            .dot(cap2_dir)
+            .min(hl2)
+            .max(-hl2);
+        [m::Vec2::new(t1, 0.0), dist + t2 * cap2_dir]
+    };
+    // knowing exact depth isn't necessary here, just whether it's over 0,
+    // so we save some cycles with mag_sq
+    let pen = (r1 + r2).powi(2) - (closest_points[0] - closest_points[1]).mag_sq();
+    if pen <= 0.0 {
+        return ContactResult::Zero;
+    }
+
+    // check closest straight edges for intersection
+    let cap1_edge = Edge {
+        start: m::Vec2::new(-hl1, dist.y.signum() * r1),
+        dir: Unit::new_unchecked(m::Vec2::unit_x()),
+        length: hl1 * 2.0,
+    };
+    let cap2_normal = m::left_normal(cap2_dir);
+    let cap2_normal = if cap2_normal.dot(dist) < 0.0 {
+        -cap2_normal
+    } else {
+        cap2_normal
+    };
+    let cap2_edge = Edge {
+        start: dist - hl2 * cap2_dir - r2 * cap2_normal,
+        dir: Unit::new_unchecked(cap2_dir),
+        length: hl2 * 2.0,
+    };
+    match clip_edge(cap1_edge, cap2_edge) {
+        EdgeClipResult::Intersects | EdgeClipResult::Misses => {
+            let normal = Unit::new_normalize(closest_points[1] - closest_points[0]);
+            ContactResult::One(Contact {
+                normal: pose1.rotation * normal,
+                offsets: [
+                    closest_points[0] + r1 * *normal,
+                    pose2_wrt_pose1.inversed() * (closest_points[1] - r2 * *normal),
+                ],
+            })
+        }
+        EdgeClipResult::Passes { enters, exits } => {
+            let enter_depth = r1 - (cap2_edge.start.y + enters * cap2_edge.dir.y).abs();
+            let exit_depth = r1 - (cap2_edge.start.y + exits * cap2_edge.dir.y).abs();
+            if enter_depth <= 0.0 || exit_depth <= 0.0 {
+                let normal = Unit::new_normalize(closest_points[1] - closest_points[0]);
+                ContactResult::One(Contact {
+                    normal: pose1.rotation * normal,
+                    offsets: [
+                        closest_points[0] + r1 * *normal,
+                        pose2_wrt_pose1.inversed() * (closest_points[1] - r2 * *normal),
+                    ],
+                })
+            } else {
+                let normal = Unit::new_unchecked(m::Vec2::new(0.0, dist.y.signum()));
+                let normal_worldspace = pose1.rotation * normal;
+                ContactResult::Two(
+                    Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            m::Vec2::new(
+                                cap2_edge.start.x + enters * cap2_edge.dir.x,
+                                dist.y.signum() * r1,
+                            ),
+                            pose2_wrt_pose1.inversed()
+                                * (cap2_edge.start + enters * *cap2_edge.dir),
+                        ],
+                    },
+                    Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            m::Vec2::new(
+                                cap2_edge.start.x + exits * cap2_edge.dir.x,
+                                dist.y.signum() * r1,
+                            ),
+                            pose2_wrt_pose1.inversed() * (cap2_edge.start + exits * *cap2_edge.dir),
+                        ],
+                    },
+                )
+            }
+        }
+    }
 }
 
 //
@@ -768,6 +877,7 @@ struct Edge {
     length: f64,
 }
 
+#[derive(Clone, Copy, Debug)]
 enum EdgeClipResult {
     /// If edges intersect, we don't care about anything else
     /// as this means a single contact point at an already known location
@@ -775,6 +885,8 @@ enum EdgeClipResult {
     /// If they don't intersect, we want the distances at which edge 1 intersects
     /// with the lines perpendicular to edge 2 going through edge 2's endpoints.
     Passes { enters: f64, exits: f64 },
+    /// If edge 1 is completely outside the slab defined by edge 1, this is returned.
+    Misses,
 }
 
 fn clip_edge(target: Edge, edge: Edge) -> EdgeClipResult {
@@ -795,6 +907,11 @@ fn clip_edge(target: Edge, edge: Edge) -> EdgeClipResult {
         let dirs_dot = edge.dir.dot(*target.dir);
         let start_clip_t = dist_dot_dir2 / dirs_dot;
         let end_clip_t = (target.length + dist_dot_dir2) / dirs_dot;
+        if (start_clip_t <= 0.0 && end_clip_t <= 0.0)
+            || (start_clip_t >= edge.length && end_clip_t >= edge.length)
+        {
+            return EdgeClipResult::Misses;
+        }
         let (enters, exits) = if start_clip_t < end_clip_t {
             (start_clip_t.max(0.0), end_clip_t.min(edge.length))
         } else {
