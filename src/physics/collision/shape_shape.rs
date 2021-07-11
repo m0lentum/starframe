@@ -671,13 +671,13 @@ fn rect_capsule(
             let normal_worldspace = pose_rect.rotation * Unit::new_unchecked(cap_normal);
             let rect_edge = if cap_normal.x.abs() > cap_normal.y.abs() {
                 Edge {
-                    start: m::Vec2::new(-hw, dist.y.signum() * hh),
+                    start: m::Vec2::new(-hw, cap_normal.y.signum() * hh),
                     dir: Unit::new_unchecked(m::Vec2::unit_x()),
                     length: hw * 2.0,
                 }
             } else {
                 Edge {
-                    start: m::Vec2::new(dist.x.signum() * hw, -hh),
+                    start: m::Vec2::new(cap_normal.x.signum() * hw, -hh),
                     dir: Unit::new_unchecked(m::Vec2::unit_y()),
                     length: hh * 2.0,
                 }
