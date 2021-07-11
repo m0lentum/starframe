@@ -14,7 +14,7 @@ Its main feature is the physics engine, with design driven by sidescrolling acti
 - Novel graph-based entity system inspired by [froggy](https://github.com/kvark/froggy)
   - [related blog post](https://moletrooper.github.io/blog/2020/08/starframe-1-architecture/)
 - 2D rigid body physics
-  - collision detection for boxes and circles
+  - collision detection for boxes, circles, and capsules (more shapes coming!)
   - constraint solver based on
     [Extended Position-Based Dynamics](https://matthias-research.github.io/pages/publications/PBDBodies.pdf)
     - [related blog post](https://moletrooper.github.io/blog/2021/03/starframe-devlog-constraints/)
@@ -61,6 +61,7 @@ LShift  - jump
 Z       - shoot
 S       - spawn a box
 T       - spawn a ball
+D       - spawn a capsule
 
 Left mouse  - grab a box (in grab mode)
 V           - change mouse mode between camera and grab

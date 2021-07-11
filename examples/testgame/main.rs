@@ -308,6 +308,16 @@ impl game::GameState for State {
             })
             .spawn(&mut self.graph, &mut self.physics);
         }
+        if game.input.is_key_pressed(Key::D, Some(0)) {
+            Recipe::Capsule {
+                pose: m::PoseBuilder::new()
+                    .with_position(random_pos())
+                    .with_rotation(random_angle()),
+                length: distr::Uniform::from(0.4..0.8).sample(&mut rng),
+                radius: distr::Uniform::from(0.1..0.5).sample(&mut rng),
+            }
+            .spawn(&mut self.graph, &mut self.physics);
+        }
 
         match (&self.state, game.input.is_key_pressed(Key::Space, Some(0))) {
             //
