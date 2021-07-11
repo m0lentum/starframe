@@ -124,7 +124,7 @@ pub struct Material {
 impl Default for Material {
     fn default() -> Self {
         Material {
-            static_friction_coef: 1.8,
+            static_friction_coef: 1.6,
             dynamic_friction_coef: 1.5,
             restitution_coef: 0.0,
         }
