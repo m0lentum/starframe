@@ -250,6 +250,8 @@ impl Physics {
             })
             .collect();
 
+        // store latest contacts for use in the velocity step
+        let mut contacts: Vec<ContactResult> = vec![ContactResult::Zero; coll_pairs.len()];
         // store contact forces for friction purposes
         let mut contact_lambdas: Vec<f64> = vec![0.0; coll_pairs.len()];
 
@@ -283,27 +285,8 @@ impl Physics {
             }
 
             //
-            // single Nonlinear Gauss-Seidel position solve step (accuracy is achieved with substepping)
+            // Nonlinear Gauss-Seidel constraint solve step
             //
-
-            // re-do collision detection every iteration so we don't miss anything
-            let contacts: Vec<ContactResult> = coll_pairs
-                .iter()
-                .map(|colls| {
-                    // poses for bodies are in our temporary buffer, so we need to get the
-                    // neighboring body to find the pose (if the collider belongs to a body,
-                    // otherwise we get the pose from the graph)
-                    let poses =
-                        map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
-                            Some(b) => poses[node_ref_map[b.pos().item_idx]],
-                            None => match graph.get_neighbor_unchecked(c, l_pose) {
-                                Some(pose) => *pose,
-                                None => m::Pose::default(),
-                            },
-                        });
-                    intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
-                })
-                .collect();
 
             //
             // User-defined constraints
@@ -401,16 +384,8 @@ impl Physics {
             //
 
             for (colls, ctxs, contact, lambda_n) in
-                izip!(&coll_pairs, &ctx_pairs, &contacts, &mut contact_lambdas)
+                izip!(&coll_pairs, &ctx_pairs, &mut contacts, &mut contact_lambdas)
             {
-                let materials = match (colls[0].ty, colls[1].ty) {
-                    (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
-                    // one of the colliders was a trigger, no physics response
-                    _ => {
-                        continue;
-                    }
-                };
-
                 if !match ctxs[0] {
                     ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
                     ColliderContext::Static(_) => false,
@@ -418,9 +393,34 @@ impl Physics {
                     ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
                     ColliderContext::Static(_) => false,
                 } {
-                    // both bodies are kinematic or static, don't let them cause divisions by zero
+                    // both bodies are kinematic or static, skip this pair
+                    *contact = ContactResult::Zero;
                     continue;
                 }
+
+                // check for collision
+                *contact = {
+                    // poses for bodies are in our temporary buffer, so we need to get the
+                    // neighboring body to find the pose (if the collider belongs to a body,
+                    // otherwise we get the pose from the graph)
+                    let poses =
+                        map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
+                            Some(b) => poses[node_ref_map[b.pos().item_idx]],
+                            None => match graph.get_neighbor_unchecked(c, l_pose) {
+                                Some(pose) => *pose,
+                                None => m::Pose::default(),
+                            },
+                        });
+                    intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
+                };
+
+                let materials = match (colls[0].ty, colls[1].ty) {
+                    (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
+                    // one of the colliders was a trigger, no physics response
+                    _ => {
+                        continue;
+                    }
+                };
 
                 for contact in contact.iter() {
                     // tangent for static friction
