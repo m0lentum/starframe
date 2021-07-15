@@ -166,6 +166,7 @@ impl<T> SafeNode for PinnedNode<T> {
 
 /// A reference to a component in a `Layer`
 /// that knows its position in the graph and can be used in graph operations.
+#[derive(Clone, Copy, Debug)]
 pub struct NodeRef<'a, T> {
     item: &'a T,
     pos: NodePosition,
@@ -335,8 +336,17 @@ impl Graph {
     /// # Panics
     /// Panics if either edge this creates would make `connect_oneway` panic.
     pub fn connect(&mut self, node1: &impl SafeNode, node2: &impl SafeNode) {
-        self.connect_oneway(node1, node2);
-        self.connect_oneway(node2, node1);
+        self.connect_unchecked(node1, node2)
+    }
+
+    /// Unchecked variant of [`connect`][Self::connect].
+    /// This method takes any node type, including ones that don't know for sure they're alive.
+    ///
+    /// All `Graph` methods that take nodes follow this convention —
+    /// a `SafeNode` variant without a prefix and an `UnsafeNode` variant called `<name>-unchecked`.
+    pub fn connect_unchecked(&mut self, node1: &impl UnsafeNode, node2: &impl UnsafeNode) {
+        self.connect_oneway_unchecked(node1, node2);
+        self.connect_oneway_unchecked(node2, node1);
     }
 
     /// Create an edge from one node to another.
@@ -355,6 +365,10 @@ impl Graph {
     /// If an edge from one of the nodes to the other's layer already exists, this function will panic,
     /// because this signals that you're creating a malformed object that won't work the way you expect.
     pub fn connect_oneway(&mut self, start: &impl SafeNode, end: &impl SafeNode) {
+        self.connect_oneway_unchecked(start, end)
+    }
+
+    pub fn connect_oneway_unchecked(&mut self, start: &impl UnsafeNode, end: &impl UnsafeNode) {
         let start = start.pos();
         let end = end.pos();
         let edge_vec = &mut self.edge_layers[start.layer_idx][end.layer_idx];
@@ -388,11 +402,6 @@ impl Graph {
         self.get_neighbor_unchecked(node, to_layer)
     }
 
-    /// Unchecked variant of `get_neighbor`.
-    /// This method takes any node type, including ones that don't know for sure they're alive.
-    ///
-    /// All `Graph` methods that take nodes follow this convention —
-    /// a `SafeNode` variant without a prefix and an `UnsafeNode` variant called `<name>-unchecked`.
     pub fn get_neighbor_unchecked<'to, To>(
         &self,
         node: &impl UnsafeNode,
@@ -443,7 +452,7 @@ impl Graph {
         }
     }
 
-    /// Pin a node, guaranteeing that it won't be deleted. See `PinnedNode`.
+    /// Pin a node, guaranteeing that it won't be deleted. See [`PinnedNode`][self::PinnedNode].
     pub fn pin<N: SafeNode>(&mut self, node: &N) -> PinnedNode<N::MarkerType> {
         let pos = node.pos();
         // we don't need a whole layer for pins because nothing ever needs to connect to a pin source.

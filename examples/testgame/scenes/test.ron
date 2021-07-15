@@ -22,17 +22,17 @@
             anchored_end: false,
         ),
         // stack of blocks
-        DynamicBlock (( pose: ( position: (-3, 3.0) ))),
-        DynamicBlock (( pose: ( position: (-3, 2.0) ))),
-        DynamicBlock (( pose: ( position: (-3, 1.0) ))),
-        DynamicBlock (( pose: ( position: (-3, -0.0) ))),
-        DynamicBlock (( pose: ( position: (-3, -1.0) ))),
-        DynamicBlock (( pose: ( position: (-3, -2.0) ))),
-        DynamicBlock (( pose: ( position: (-3, -3.0) ))),
-        DynamicBlock (( pose: ( position: (-3, -4.0) ))),
+        Block (( pose: ( position: (-3, 3.0) ))),
+        Block (( pose: ( position: (-3, 2.0) ))),
+        Block (( pose: ( position: (-3, 1.0) ))),
+        Block (( pose: ( position: (-3, -0.0) ))),
+        Block (( pose: ( position: (-3, -1.0) ))),
+        Block (( pose: ( position: (-3, -2.0) ))),
+        Block (( pose: ( position: (-3, -3.0) ))),
+        Block (( pose: ( position: (-3, -4.0) ))),
         // ramp to test static friction
-        StaticBlock ((
-            width: 8, height: 0.2, pose: ( position: ( 6.5, -0 ), rotation: Deg(20) ),
+        Block ((
+            width: 8, height: 0.2, pose: ( position: ( 6.5, -0 ), rotation: Deg(20) ), is_static: true,
         )),
         // "bridge" down from the ramp
         Blockchain (
@@ -48,22 +48,22 @@
             anchored_start: true,
             anchored_end: true,
         ),
-        DynamicBlock (( pose: ( position: (5, 0.2), rotation: Deg(20) ))),
+        Block (( pose: ( position: (5, 0.2), rotation: Deg(20) ))),
         Ball (( radius: 0.4, position: ( 7, 1 ) )),
         Ball (( radius: 0.5, position: ( 8, 1.5 ) )),
         Ball (( radius: 0.6, position: ( 9, 2 ) )),
         // walls
-        StaticBlock (( 
-            width: 20, height: 0.2, pose: ( position: (0, 5) ),
+        Block (( 
+            width: 20, height: 0.2, pose: ( position: (0, 5) ), is_static: true,
         )),
-        StaticBlock ((
-            width: 20, height: 0.2, pose: ( position: (0, -5) ),
+        Block ((
+            width: 20, height: 0.2, pose: ( position: (0, -5) ), is_static: true,
         )),
-        StaticBlock ((
-            width: 0.2, height: 10, pose: ( position: (10, 0) ),
+        Block ((
+            width: 0.2, height: 10, pose: ( position: (10, 0) ), is_static: true,
         )),
-        StaticBlock ((
-            width: 0.2, height: 10, pose: ( position: (-10, 0) ),
+        Block ((
+            width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
         )),
     ]
 )

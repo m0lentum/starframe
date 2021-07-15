@@ -1,9 +1,9 @@
 (
     recipes: [
-        Capsule ( length: 2.0, radius: 0.8, pose: ( position: (0, 0), rotation: Deg(91) )),
-        // Capsule ( length: 3.0, radius: 0.5, pose: ( position: (0, 7), rotation: Deg(90) )),
-        StaticBlock ((
-            width: 3, height: 2, pose: ( position: (0, -3), rotation: Deg(180) ),
+        Capsule ( length: 2, radius: 0.5, pose: ( position: (-1, 0) ) ),
+        Capsule ( length: 2, radius: 0.5, pose: ( position: (0.99, 0) ) ),
+        Block ((
+            width: 3, height: 2, pose: ( position: (0, -3), rotation: Deg(180) ), is_static: true,
         )),
     ]
 )

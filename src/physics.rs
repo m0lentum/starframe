@@ -11,16 +11,19 @@ use slotmap as sm;
 
 pub mod collision;
 use collision::{shape_shape::intersection_check, SpatialIndex};
-pub use collision::{Collider, ColliderShape, ColliderType, Contact, ContactResult, Material};
+pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
 
-pub mod constraint;
-pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType};
+mod constraint;
+pub use constraint::*;
 
 pub mod forcefield;
 pub use forcefield::ForceField;
 
-pub mod body;
-pub use body::{Body, Mass};
+mod body;
+pub use body::*;
+
+mod rope;
+pub use rope::*;
 
 //
 
@@ -155,10 +158,19 @@ impl Physics {
         l_pose: &mut graph::Layer<m::Pose>,
         l_body: &mut graph::Layer<Body>,
         l_collider: &graph::Layer<Collider>,
+        l_rope: &graph::Layer<Rope>,
         l_evt_sink: &mut graph::Layer<EventSink>,
         dt: f64,
         forcefield: &impl ForceField,
     ) {
+        // ropes WIP, nothing changed here yet.
+        // TODO:
+        // - skip collision detection on rope segment bodies with each other
+        // - build a lookup table of rope segment bodies to rope particle bodies and vice versa
+        // - every time a segment body is updated, use it to update particles at its ends and also neighboring segments
+        // - ???
+        // - profit
+
         let dt = dt / self.substeps as f64;
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;

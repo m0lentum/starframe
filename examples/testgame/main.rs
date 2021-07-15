@@ -161,6 +161,7 @@ pub struct MyGraph {
     l_pose: graph::Layer<m::Pose>,
     l_collider: graph::Layer<phys::Collider>,
     l_body: graph::Layer<phys::Body>,
+    l_rope: graph::Layer<phys::Rope>,
     l_shape: graph::Layer<gx::Shape>,
     l_player: graph::Layer<player::Player>,
     evt_graph: sf::event::EventGraph<MyGraph>,
@@ -171,6 +172,7 @@ impl MyGraph {
         let l_pose = graph.create_layer();
         let l_collider = graph.create_layer();
         let l_body = graph.create_layer();
+        let l_rope = graph.create_layer();
         let l_shape = graph.create_layer();
         let l_player = graph.create_layer();
         let evt_graph = sf::event::EventGraph::new(&mut graph);
@@ -179,6 +181,7 @@ impl MyGraph {
             l_pose,
             l_collider,
             l_body,
+            l_rope,
             l_shape,
             l_player,
             evt_graph,
@@ -290,12 +293,13 @@ impl game::GameState for State {
         };
         let mut rng = rand::thread_rng();
         if game.input.is_key_pressed(Key::S, Some(0)) {
-            Recipe::DynamicBlock(recipes::Block {
+            Recipe::Block(recipes::Block {
                 pose: m::PoseBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle()),
                 width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
                 height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
+                is_static: false,
             })
             .spawn(&mut self.graph, &mut self.physics);
         }
@@ -337,6 +341,7 @@ impl game::GameState for State {
                         &mut self.graph.l_pose,
                         &mut self.graph.l_body,
                         &self.graph.l_collider,
+                        &self.graph.l_rope,
                         &mut self.graph.evt_graph.sinks,
                         dt,
                         &grav,

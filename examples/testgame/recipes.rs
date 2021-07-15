@@ -8,8 +8,7 @@ use rand::{distributions as distr, distributions::Distribution};
 #[derive(Clone, Debug, serde::Deserialize)]
 pub enum Recipe {
     Player(crate::player::PlayerRecipe),
-    StaticBlock(Block),
-    DynamicBlock(Block),
+    Block(Block),
     Ball(Ball),
     Capsule {
         length: f64,
@@ -28,6 +27,12 @@ pub enum Recipe {
         begin_length: f64,
         target_length: f64,
         compliance: f64,
+    },
+    RopeConnectedBlocks {
+        block1: Block,
+        offset1: [f64; 2],
+        block2: Block,
+        offset2: [f64; 2],
     },
 }
 
@@ -57,6 +62,7 @@ pub struct Block {
     pub width: f64,
     pub height: f64,
     pub pose: m::PoseBuilder,
+    pub is_static: bool,
 }
 
 impl Default for Block {
@@ -65,6 +71,7 @@ impl Default for Block {
             width: 1.0,
             height: 1.0,
             pose: Default::default(),
+            is_static: false,
         }
     }
 }
@@ -72,7 +79,6 @@ impl Default for Block {
 fn spawn_block(
     block: Block,
     color: [f32; 4],
-    is_static: bool,
     g: &mut crate::MyGraph,
 ) -> Option<sf::graph::Node<phys::Body>> {
     let pose_node = g.l_pose.insert(block.pose.into(), &mut g.graph);
@@ -89,7 +95,7 @@ fn spawn_block(
     g.graph.connect(&pose_node, &coll_node);
     g.graph.connect(&pose_node, &shape_node);
 
-    if !is_static {
+    if !block.is_static {
         let body = phys::Body::new_dynamic(&coll, 0.5);
         let body_node = g.l_body.insert(body, &mut g.graph);
         g.graph.connect(&body_node, &coll_node);
@@ -127,11 +133,16 @@ impl Recipe {
     pub fn spawn(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(graph),
-            Recipe::StaticBlock(block) => {
-                spawn_block(*block, [0.5; 4], true, graph);
-            }
-            Recipe::DynamicBlock(block) => {
-                spawn_block(*block, random_color(), false, graph);
+            Recipe::Block(block) => {
+                spawn_block(
+                    *block,
+                    if block.is_static {
+                        [0.5; 4]
+                    } else {
+                        random_color()
+                    },
+                    graph,
+                );
             }
             Recipe::Ball(Ball {
                 radius,
@@ -263,9 +274,9 @@ impl Recipe {
                         width: 1.0,
                         height: 1.0,
                         pose: m::PoseBuilder::new().with_position(position + offset),
+                        is_static: false,
                     },
                     random_color(),
-                    false,
                     graph,
                 )
                 .unwrap();
@@ -274,9 +285,9 @@ impl Recipe {
                         width: 1.0,
                         height: 1.0,
                         pose: m::PoseBuilder::new().with_position(position - offset),
+                        is_static: false,
                     },
                     random_color(),
-                    false,
                     graph,
                 )
                 .unwrap();
@@ -287,6 +298,69 @@ impl Recipe {
                         .with_linear_damping(0.0)
                         .build_distance(*target_length),
                 );
+            }
+            Recipe::RopeConnectedBlocks {
+                block1,
+                offset1,
+                block2,
+                offset2,
+            } => {
+                let b1 = spawn_block(*block1, random_color(), graph);
+                let b2 = spawn_block(*block2, random_color(), graph);
+                let rope_end_1 = block1.pose.build() * m::Vec2::from(offset1);
+                let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
+                let rope = phys::spawn_rope_line(
+                    phys::Rope {
+                        spacing: 0.1,
+                        thickness: 0.1,
+                        compliance: 0.01,
+                        damping: 0.1,
+                        material: Default::default(),
+                    },
+                    rope_end_1,
+                    rope_end_2,
+                    0.5,
+                    &mut graph.l_body,
+                    &mut graph.l_pose,
+                    &mut graph.l_collider,
+                    &mut graph.l_rope,
+                    &mut graph.l_shape,
+                    &mut graph.graph,
+                );
+                match b1 {
+                    Some(b1) => {
+                        physics.add_constraint(
+                            phys::ConstraintBuilder::new(rope.first_particle)
+                                .with_target(b1)
+                                .with_target_origin(offset1.into())
+                                .build_attachment(),
+                        );
+                    }
+                    None => {
+                        physics.add_constraint(
+                            phys::ConstraintBuilder::new(rope.first_particle)
+                                .with_target_origin(rope_end_1)
+                                .build_attachment(),
+                        );
+                    }
+                }
+                match b2 {
+                    Some(b2) => {
+                        physics.add_constraint(
+                            phys::ConstraintBuilder::new(rope.last_particle)
+                                .with_target(b2)
+                                .with_target_origin(offset2.into())
+                                .build_attachment(),
+                        );
+                    }
+                    None => {
+                        physics.add_constraint(
+                            phys::ConstraintBuilder::new(rope.last_particle)
+                                .with_target_origin(rope_end_2)
+                                .build_attachment(),
+                        );
+                    }
+                }
             }
         }
     }

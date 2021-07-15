@@ -10,7 +10,7 @@ type Color = [f32; 4];
 /// A flat-colored convex polygon shape.
 ///
 /// Concavity will not result in an error but will be rendered incorrectly.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Shape {
     Circle {
         r: f64,
@@ -28,16 +28,12 @@ pub enum Shape {
         points_per_cap: usize,
         color: Color,
     },
-    Poly {
-        points: Vec<m::Vec2>,
-        color: Color,
-    },
 }
 
 impl Shape {
     /// Create a Shape that matches the given Collider.
     pub fn from_collider(coll: &crate::physics::Collider, color: Color) -> Self {
-        use crate::physics::ColliderShape;
+        use crate::physics::collision::ColliderShape;
         match coll.shape {
             ColliderShape::Circle { r } => Shape::Circle {
                 r,
@@ -132,7 +128,6 @@ impl Shape {
 
                 as_verts(verts.as_slice(), pose, *color)
             }
-            Shape::Poly { points, color } => as_verts(points.as_slice(), pose, *color),
         }
     }
 }
