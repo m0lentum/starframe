@@ -814,7 +814,13 @@ fn capsule_capsule(
     };
     match clip_edge(cap1_edge, cap2_edge) {
         EdgeClipResult::Intersects | EdgeClipResult::Misses => {
-            let normal = Unit::new_normalize(closest_points[1] - closest_points[0]);
+            let normal = if closest_points[1] != closest_points[0] {
+                Unit::new_normalize(closest_points[1] - closest_points[0])
+            } else {
+                // edge case where closest points are the exact same (line segments intersect).
+                // pick the y axis because it's likely to be right
+                Unit::new_unchecked(m::Vec2::new(0.0, dist.y.signum()))
+            };
             ContactResult::One(Contact {
                 normal: pose1.rotation * normal,
                 offsets: [
@@ -827,7 +833,11 @@ fn capsule_capsule(
             let enter_depth = r1 - (cap2_edge.start.y + enters * cap2_edge.dir.y).abs();
             let exit_depth = r1 - (cap2_edge.start.y + exits * cap2_edge.dir.y).abs();
             if enter_depth <= 0.0 || exit_depth <= 0.0 {
-                let normal = Unit::new_normalize(closest_points[1] - closest_points[0]);
+                let normal = if closest_points[1] != closest_points[0] {
+                    Unit::new_normalize(closest_points[1] - closest_points[0])
+                } else {
+                    Unit::new_unchecked(m::Vec2::new(0.0, dist.y.signum()))
+                };
                 ContactResult::One(Contact {
                     normal: pose1.rotation * normal,
                     offsets: [
