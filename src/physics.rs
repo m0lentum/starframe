@@ -104,6 +104,7 @@ sm::new_key_type! {
 
 pub struct Physics {
     pub substeps: usize,
+    pub mask_matrix: collision::MaskMatrix,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
 }
 
@@ -118,6 +119,7 @@ impl Physics {
     pub fn with_substeps(substeps: usize) -> Self {
         Physics {
             substeps,
+            mask_matrix: Default::default(),
             user_constraints: sm::DenseSlotMap::with_key(),
         }
     }
@@ -165,7 +167,6 @@ impl Physics {
     ) {
         // ropes WIP, nothing changed here yet.
         // TODO:
-        // - skip collision detection on rope segment bodies with each other
         // - build a lookup table of rope segment bodies to rope particle bodies and vice versa
         // - every time a segment body is updated, use it to update particles at its ends and also neighboring segments
         // - ???
@@ -245,6 +246,7 @@ impl Physics {
         let coll_pairs: Vec<[graph::NodeRef<Collider>; 2]> = SpatialIndex::pairs(l_collider, graph)
             .iter()
             .map(|colls| map_pair(colls, |c| l_collider.get_unchecked(c.pos())))
+            .filter(|[c1, c2]| self.mask_matrix.get(c1.layer, c2.layer))
             .collect();
         // indices to bodies in `body_refs` corresponding to `coll_pairs`
         let ctx_pairs: Vec<[ColliderContext; 2]> = coll_pairs

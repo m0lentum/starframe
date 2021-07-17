@@ -4,6 +4,9 @@
 pub struct Collider {
     pub shape: ColliderShape,
     pub ty: ColliderType,
+    /// Collision layer, see [`MaskMatrix`][super::MaskMatrix] for info.
+    /// Defaults to 0.
+    pub layer: usize,
 }
 
 impl Collider {
@@ -12,6 +15,7 @@ impl Collider {
         Collider {
             shape: ColliderShape::Circle { r: radius },
             ty: ColliderType::default(),
+            layer: 0,
         }
     }
 
@@ -27,6 +31,7 @@ impl Collider {
         Collider {
             shape: ColliderShape::Rect { hw, hh },
             ty: ColliderType::default(),
+            layer: 0,
         }
     }
 
@@ -38,6 +43,7 @@ impl Collider {
                 r: radius,
             },
             ty: ColliderType::default(),
+            layer: 0,
         }
     }
 
@@ -50,6 +56,11 @@ impl Collider {
     /// Turn the collider into a trigger.
     pub fn trigger(mut self) -> Self {
         self.ty = ColliderType::Trigger;
+        self
+    }
+
+    pub fn with_layer(mut self, layer: usize) -> Self {
+        self.layer = layer;
         self
     }
 

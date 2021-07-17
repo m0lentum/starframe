@@ -4,7 +4,7 @@ use crate::{
     graph::{self, UnsafeNode},
     graphics::Shape,
     math as m,
-    physics::{Body, Collider, Mass, Material},
+    physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
 };
 
 /// A rope built out of connected particles.
@@ -53,7 +53,8 @@ pub fn spawn_rope_line(
         mass: Mass::from(particle_mass),
         moment_of_inertia: Mass::Infinite,
     };
-    let collider_proto = Collider::new_capsule(rope.spacing, rope.thickness / 2.0);
+    let collider_proto =
+        Collider::new_capsule(rope.spacing, rope.thickness / 2.0).with_layer(ROPE_LAYER);
     let segment_body_proto = Body {
         velocity: Default::default(),
         // treat mass as concentrated on the particles
