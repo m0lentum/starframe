@@ -167,7 +167,6 @@ impl Physics {
     ) {
         // ropes WIP, nothing changed here yet.
         // TODO:
-        // - build a lookup table of rope segment bodies to rope particle bodies and vice versa
         // - every time a segment body is updated, use it to update particles at its ends and also neighboring segments
         // - ???
         // - profit
@@ -189,6 +188,34 @@ impl Physics {
             }
             map
         };
+        // store indices into neighboring bodies for rope nodes
+        let mut rope_next_particles: Vec<Option<usize>> = vec![None; body_refs.len()];
+        let mut rope_prev_particles: Vec<Option<usize>> = vec![None; body_refs.len()];
+        let mut rope_next_segments: Vec<Option<usize>> = vec![None; body_refs.len()];
+        let mut rope_prev_segments: Vec<Option<usize>> = vec![None; body_refs.len()];
+        for rope_node in l_rope.iter(graph) {
+            let mut iter = RopeIter::new(rope_node, l_body, graph)
+                .map(|node| node_ref_map[node.pos().item_idx]);
+            let mut curr_particle = iter.next().expect("Malformed rope");
+            let mut curr_segment = iter.next().expect("Malformed rope");
+            rope_next_segments[curr_particle] = Some(curr_segment);
+            rope_prev_particles[curr_segment] = Some(curr_particle);
+            while let Some(next_particle) = iter.next() {
+                rope_next_particles[curr_particle] = Some(next_particle);
+                rope_prev_particles[next_particle] = Some(curr_particle);
+                rope_next_particles[curr_segment] = Some(next_particle);
+                rope_prev_segments[next_particle] = Some(curr_segment);
+                if let Some(next_segment) = iter.next() {
+                    rope_next_segments[next_particle] = Some(next_segment);
+                    rope_prev_particles[next_segment] = Some(next_particle);
+                    rope_next_segments[curr_segment] = Some(next_segment);
+                    rope_prev_segments[next_segment] = Some(curr_segment);
+
+                    curr_segment = next_segment;
+                }
+                curr_particle = next_particle;
+            }
+        }
 
         // buffers for working variables, outside of body_refs
         // to make it simpler to mutate things without breaking borrowing rules.
@@ -299,8 +326,55 @@ impl Physics {
             }
 
             //
-            // Nonlinear Gauss-Seidel constraint solve step
+            // Rope distance constraints
             //
+
+            for rope in l_rope.iter(graph) {
+                let first_particle = graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx;
+                // solve constraints
+                let mut curr_particle = first_particle;
+                let mut next_particle = rope_next_particles[curr_particle].unwrap();
+                loop {
+                    let dist = poses[next_particle].translation - poses[curr_particle].translation;
+                    let dist_mag = dist.mag();
+                    let dir = dist / dist_mag;
+                    let error = rope.spacing - dist_mag;
+
+                    let lambda = -error
+                        / (body_refs[curr_particle].mass.inv()
+                            + body_refs[next_particle].mass.inv()
+                            + rope.compliance * inv_dt_sq);
+
+                    poses[curr_particle]
+                        .append_translation(body_refs[curr_particle].mass.inv() * lambda * dir);
+                    poses[next_particle]
+                        .append_translation(-body_refs[next_particle].mass.inv() * lambda * dir);
+
+                    // update segment body before curr_particle
+                    // (not the one between because next_particle will move again next iteration)
+                    if let Some(segment) = rope_prev_segments[curr_particle] {
+                        poses[segment] = rope::segment_pose_from_particles(
+                            poses[curr_particle].translation,
+                            poses[rope_prev_particles[segment].unwrap()].translation,
+                        );
+                    }
+
+                    let particle_after_next = match rope_next_particles[next_particle] {
+                        Some(next) => next,
+                        None => {
+                            // update final segment body
+                            poses[rope_prev_segments[next_particle].unwrap()] =
+                                rope::segment_pose_from_particles(
+                                    poses[curr_particle].translation,
+                                    poses[next_particle].translation,
+                                );
+                            break;
+                        }
+                    };
+                    curr_particle = next_particle;
+                    next_particle = particle_after_next;
+                }
+            }
 
             //
             // User-defined constraints
@@ -681,6 +755,9 @@ impl Physics {
                         let relative_vel = velocities[pair[0]].point_velocity(offsets_rotated[0])
                             - velocities[pair[1]].point_velocity(offsets_rotated[1]);
                         let relative_vel_mag = relative_vel.mag();
+                        if relative_vel_mag == 0.0 {
+                            continue;
+                        }
                         let dir = relative_vel / relative_vel_mag;
 
                         let offsets_wedge_dir =
@@ -718,6 +795,9 @@ impl Physics {
 
                         let point_vel = velocities[pair.0].point_velocity(offset_rotated);
                         let point_vel_mag = point_vel.mag();
+                        if point_vel_mag == 0.0 {
+                            continue;
+                        }
                         let dir = point_vel / point_vel_mag;
 
                         let offset_wedge_dir = offset_rotated.wedge(dir).xy;
@@ -739,6 +819,38 @@ impl Physics {
                             velocities[pair.0].angular += inv_mom_inertias[0] * angular_impulse;
                         };
                     }
+                }
+            }
+
+            // Damping of ropes
+            for rope in l_rope.iter(graph) {
+                let first_particle = graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx;
+                // solve constraints
+                let mut curr_particle = first_particle;
+                let mut next_particle = rope_next_particles[curr_particle].unwrap();
+                loop {
+                    let relative_vel =
+                        velocities[curr_particle].linear - velocities[next_particle].linear;
+                    let relative_vel_mag = relative_vel.mag();
+                    if relative_vel_mag != 0.0 {
+                        let dir = relative_vel / relative_vel_mag;
+                        let vel_update_mag = -relative_vel_mag * (rope.damping * dt).min(1.0);
+
+                        let linear_impulse_mag = vel_update_mag
+                            / (body_refs[curr_particle].mass.inv()
+                                + body_refs[next_particle].mass.inv());
+
+                        velocities[curr_particle].linear +=
+                            body_refs[curr_particle].mass.inv() * linear_impulse_mag * dir;
+                        velocities[next_particle].linear -=
+                            body_refs[next_particle].mass.inv() * linear_impulse_mag * dir;
+                    }
+
+                    curr_particle = next_particle;
+                    next_particle = match rope_next_particles[next_particle] {
+                        Some(next) => next,
+                        None => break,
+                    };
                 }
             }
 

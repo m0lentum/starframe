@@ -313,8 +313,8 @@ impl Recipe {
                     phys::Rope {
                         spacing: 0.1,
                         thickness: 0.1,
-                        compliance: 0.01,
-                        damping: 0.1,
+                        compliance: 0.0001,
+                        damping: 10.0,
                         material: Default::default(),
                     },
                     rope_end_1,

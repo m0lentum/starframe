@@ -3,7 +3,7 @@
         RopeConnectedBlocks(
             block1: ( pose: ( position: (-3, 2)), is_static: true, ),
             offset1: (0.55, 0.55),
-            block2: ( pose: ( position: (0, 2)), is_static: true, ),
+            block2: ( pose: ( position: (0, 2)), is_static: false, ),
             offset2: (-0.55, -0.55),
         ),
         // walls

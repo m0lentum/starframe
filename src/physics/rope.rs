@@ -125,9 +125,15 @@ pub fn spawn_rope_line(
     }
 }
 
+pub(crate) fn segment_pose_from_particles(p1: m::Vec2, p2: m::Vec2) -> m::Pose {
+    let dist = p2 - p1;
+    m::Pose::new(p1 + dist / 2.0, m::Rotor2::from_angle(dist.y.atan2(dist.x)))
+}
+
 /// An iterator over the particles in a particular rope, in order from start to end.
 pub struct RopeIter<'a> {
     rope_node: graph::NodeRef<'a, Rope>,
+    has_started: bool,
     curr_body: Option<graph::NodeRef<'a, Body>>,
     l_body: &'a graph::Layer<Body>,
     graph: &'a graph::Graph,
@@ -141,6 +147,7 @@ impl<'a> RopeIter<'a> {
     ) -> Self {
         Self {
             rope_node,
+            has_started: false,
             curr_body: None,
             l_body,
             graph,
@@ -154,7 +161,8 @@ impl<'a> Iterator for RopeIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(curr) = &self.curr_body {
             self.curr_body = self.graph.get_neighbor(curr, self.l_body)
-        } else {
+        } else if !self.has_started {
+            self.has_started = true;
             self.curr_body = self.graph.get_neighbor(&self.rope_node, self.l_body);
         }
         self.curr_body
