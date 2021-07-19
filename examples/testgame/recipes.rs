@@ -311,15 +311,19 @@ impl Recipe {
                 let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
                 let rope = phys::spawn_rope_line(
                     phys::Rope {
-                        spacing: 0.1,
+                        spacing: 0.05,
                         thickness: 0.1,
                         compliance: 0.0001,
                         damping: 10.0,
-                        material: Default::default(),
+                        material: phys::Material {
+                            static_friction_coef: 0.2,
+                            dynamic_friction_coef: 0.15,
+                            restitution_coef: 0.0,
+                        },
                     },
                     rope_end_1,
                     rope_end_2,
-                    0.5,
+                    0.05,
                     &mut graph.l_body,
                     &mut graph.l_pose,
                     &mut graph.l_collider,

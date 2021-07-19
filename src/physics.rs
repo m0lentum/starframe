@@ -165,12 +165,6 @@ impl Physics {
         dt: f64,
         forcefield: &impl ForceField,
     ) {
-        // ropes WIP, nothing changed here yet.
-        // TODO:
-        // - every time a segment body is updated, use it to update particles at its ends and also neighboring segments
-        // - ???
-        // - profit
-
         let dt = dt / self.substeps as f64;
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
@@ -188,32 +182,16 @@ impl Physics {
             }
             map
         };
-        // store indices into neighboring bodies for rope nodes
+        // store indices into neighboring particles for rope nodes
         let mut rope_next_particles: Vec<Option<usize>> = vec![None; body_refs.len()];
-        let mut rope_prev_particles: Vec<Option<usize>> = vec![None; body_refs.len()];
-        let mut rope_next_segments: Vec<Option<usize>> = vec![None; body_refs.len()];
-        let mut rope_prev_segments: Vec<Option<usize>> = vec![None; body_refs.len()];
         for rope_node in l_rope.iter(graph) {
             let mut iter = RopeIter::new(rope_node, l_body, graph)
-                .map(|node| node_ref_map[node.pos().item_idx]);
-            let mut curr_particle = iter.next().expect("Malformed rope");
-            let mut curr_segment = iter.next().expect("Malformed rope");
-            rope_next_segments[curr_particle] = Some(curr_segment);
-            rope_prev_particles[curr_segment] = Some(curr_particle);
-            while let Some(next_particle) = iter.next() {
-                rope_next_particles[curr_particle] = Some(next_particle);
-                rope_prev_particles[next_particle] = Some(curr_particle);
-                rope_next_particles[curr_segment] = Some(next_particle);
-                rope_prev_segments[next_particle] = Some(curr_segment);
-                if let Some(next_segment) = iter.next() {
-                    rope_next_segments[next_particle] = Some(next_segment);
-                    rope_prev_particles[next_segment] = Some(next_particle);
-                    rope_next_segments[curr_segment] = Some(next_segment);
-                    rope_prev_segments[next_segment] = Some(curr_segment);
-
-                    curr_segment = next_segment;
+                .map(|node| node_ref_map[node.pos().item_idx])
+                .peekable();
+            while let Some(particle) = iter.next() {
+                if let Some(next_particle) = iter.peek() {
+                    rope_next_particles[particle] = Some(*next_particle);
                 }
-                curr_particle = next_particle;
             }
         }
 
@@ -350,26 +328,9 @@ impl Physics {
                     poses[next_particle]
                         .append_translation(-body_refs[next_particle].mass.inv() * lambda * dir);
 
-                    // update segment body before curr_particle
-                    // (not the one between because next_particle will move again next iteration)
-                    if let Some(segment) = rope_prev_segments[curr_particle] {
-                        poses[segment] = rope::segment_pose_from_particles(
-                            poses[curr_particle].translation,
-                            poses[rope_prev_particles[segment].unwrap()].translation,
-                        );
-                    }
-
                     let particle_after_next = match rope_next_particles[next_particle] {
                         Some(next) => next,
-                        None => {
-                            // update final segment body
-                            poses[rope_prev_segments[next_particle].unwrap()] =
-                                rope::segment_pose_from_particles(
-                                    poses[curr_particle].translation,
-                                    poses[next_particle].translation,
-                                );
-                            break;
-                        }
+                        None => break,
                     };
                     curr_particle = next_particle;
                     next_particle = particle_after_next;
