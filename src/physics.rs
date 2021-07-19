@@ -488,17 +488,10 @@ impl Physics {
 
                 // check for collision
                 *contact = {
-                    // poses for bodies are in our temporary buffer, so we need to get the
-                    // neighboring body to find the pose (if the collider belongs to a body,
-                    // otherwise we get the pose from the graph)
-                    let poses =
-                        map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
-                            Some(b) => poses[node_ref_map[b.pos().item_idx]],
-                            None => match graph.get_neighbor_unchecked(c, l_pose) {
-                                Some(pose) => *pose,
-                                None => m::Pose::default(),
-                            },
-                        });
+                    let poses = map_pair(ctxs, |ctx| match ctx {
+                        ColliderContext::Body(b) => poses[*b],
+                        ColliderContext::Static(pose) => *pose,
+                    });
                     intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                 };
 
