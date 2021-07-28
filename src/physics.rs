@@ -304,7 +304,7 @@ impl Physics {
             }
 
             //
-            // Rope distance constraints
+            // Rope constraints
             //
 
             for rope in l_rope.iter(graph) {
@@ -332,6 +332,38 @@ impl Physics {
                         Some(next) => next,
                         None => break,
                     };
+
+                    // curvature constraint between last three particles
+
+                    if let Some(bending) = rope.bending {
+                        let curr_to_next =
+                            poses[next_particle].translation - poses[curr_particle].translation;
+                        let next_to_after = poses[particle_after_next].translation
+                            - poses[next_particle].translation;
+                        let angle = next_to_after
+                            .normalized()
+                            .dot(curr_to_next.normalized())
+                            .acos();
+                        let error = angle - bending.max_angle.rad();
+                        if error > 0.0 {
+                            let lambda = -error
+                                / (body_refs[particle_after_next].mass.inv()
+                                    + bending.compliance * inv_dt_sq);
+
+                            let lambda_oriented =
+                                if m::left_normal(curr_to_next).dot(next_to_after) > 0.0 {
+                                    lambda
+                                } else {
+                                    -lambda
+                                };
+                            let correction = m::Rotor2::from_angle(
+                                lambda_oriented * body_refs[particle_after_next].mass.inv(),
+                            );
+                            poses[particle_after_next].translation =
+                                poses[next_particle].translation + correction * next_to_after;
+                        }
+                    }
+
                     curr_particle = next_particle;
                     next_particle = particle_after_next;
                 }
