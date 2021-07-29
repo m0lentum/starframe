@@ -13,15 +13,10 @@ pub struct Rope {
     pub spacing: f64,
     pub thickness: f64,
     pub compliance: f64,
-    pub bending: Option<RopeBendingResistance>,
+    pub bending_max_angle: f64,
+    pub bending_compliance: f64,
     pub damping: f64,
     pub material: Material,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct RopeBendingResistance {
-    pub max_angle: m::Angle,
-    pub compliance: f64,
 }
 
 /// Information returned from the creation of a rope, useful for e.g. constraining the rope's ends.

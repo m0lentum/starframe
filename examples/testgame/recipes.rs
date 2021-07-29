@@ -313,12 +313,10 @@ impl Recipe {
                     phys::Rope {
                         spacing: 0.05,
                         thickness: 0.1,
-                        compliance: 0.0001,
-                        bending: Some(phys::RopeBendingResistance {
-                            max_angle: m::Angle::Deg(45.0),
-                            compliance: 0.1,
-                        }),
-                        damping: 10.0,
+                        compliance: 0.0000001,
+                        bending_max_angle: m::Angle::Deg(5.0).rad(),
+                        bending_compliance: 0.05,
+                        damping: 20.0,
                         material: phys::Material {
                             static_friction_coef: 0.0,
                             dynamic_friction_coef: 0.0,

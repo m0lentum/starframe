@@ -194,6 +194,8 @@ impl Physics {
                 }
             }
         }
+        // store lateral position corrections (bending resistance) for velocity correction
+        let mut rope_lateral_corrections: Vec<Option<m::Vec2>> = vec![None; body_refs.len()];
 
         // buffers for working variables, outside of body_refs
         // to make it simpler to mutate things without breaking borrowing rules.
@@ -307,6 +309,9 @@ impl Physics {
             // Rope constraints
             //
 
+            rope_lateral_corrections.iter_mut().for_each(|c| {
+                *c = None;
+            });
             for rope in l_rope.iter(graph) {
                 let first_particle = graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx;
                 // solve constraints
@@ -335,33 +340,35 @@ impl Physics {
 
                     // curvature constraint between last three particles
 
-                    if let Some(bending) = rope.bending {
-                        let curr_to_next =
-                            poses[next_particle].translation - poses[curr_particle].translation;
-                        let next_to_after = poses[particle_after_next].translation
-                            - poses[next_particle].translation;
-                        let angle = next_to_after
-                            .normalized()
-                            .dot(curr_to_next.normalized())
-                            .acos();
-                        let error = angle - bending.max_angle.rad();
-                        if error > 0.0 {
-                            let lambda = -error
-                                / (body_refs[particle_after_next].mass.inv()
-                                    + bending.compliance * inv_dt_sq);
+                    let curr_to_next =
+                        poses[next_particle].translation - poses[curr_particle].translation;
+                    let next_to_after =
+                        poses[particle_after_next].translation - poses[next_particle].translation;
+                    let angle = next_to_after
+                        .normalized()
+                        .dot(curr_to_next.normalized())
+                        .acos();
+                    let error = angle - rope.bending_max_angle;
+                    if error > 0.0 {
+                        let lambda = -error
+                            / (body_refs[particle_after_next].mass.inv()
+                                + rope.bending_compliance * inv_dt_sq);
 
-                            let lambda_oriented =
-                                if m::left_normal(curr_to_next).dot(next_to_after) > 0.0 {
-                                    lambda
-                                } else {
-                                    -lambda
-                                };
-                            let correction = m::Rotor2::from_angle(
-                                lambda_oriented * body_refs[particle_after_next].mass.inv(),
-                            );
-                            poses[particle_after_next].translation =
-                                poses[next_particle].translation + correction * next_to_after;
-                        }
+                        let lambda_oriented =
+                            if m::left_normal(curr_to_next).dot(next_to_after) > 0.0 {
+                                lambda
+                            } else {
+                                -lambda
+                            };
+                        let correction = m::Rotor2::from_angle(
+                            lambda_oriented * body_refs[particle_after_next].mass.inv(),
+                        );
+                        let old_pos = poses[particle_after_next].translation;
+                        poses[particle_after_next].translation =
+                            poses[next_particle].translation + correction * next_to_after;
+
+                        rope_lateral_corrections[particle_after_next] =
+                            Some(poses[particle_after_next].translation - old_pos);
                     }
 
                     curr_particle = next_particle;
@@ -808,10 +815,12 @@ impl Physics {
                 }
             }
 
-            // Damping of ropes
+            //
+            // Damping and velocity correction for ropes
+            //
+
             for rope in l_rope.iter(graph) {
                 let first_particle = graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx;
-                // solve constraints
                 let mut curr_particle = first_particle;
                 let mut next_particle = rope_next_particles[curr_particle].unwrap();
                 loop {
@@ -837,6 +846,31 @@ impl Physics {
                         Some(next) => next,
                         None => break,
                     };
+                }
+
+                // velocity correction to prevent bouncing if there was a lateral position correction
+                let mut particle = first_particle;
+                loop {
+                    if let Some(corr) = rope_lateral_corrections[particle] {
+                        let corr_mag = corr.mag();
+                        // velocity "created" by the correction, used as a maximum bound on
+                        // velocity correction to keep velocity from e.g. gravity
+                        let vel_from_corr = corr_mag * inv_dt;
+
+                        let dir = corr / corr_mag;
+                        let vel_in_dir = velocities[particle].linear.dot(dir);
+                        let vel_clamped = vel_in_dir.min(vel_from_corr).max(-vel_from_corr);
+
+                        let impulse_mag = -vel_clamped
+                            / (body_refs[particle].mass.inv() + rope.bending_compliance * inv_dt);
+                        velocities[particle].linear +=
+                            body_refs[particle].mass.inv() * impulse_mag * dir;
+                    }
+
+                    particle = match rope_next_particles[particle] {
+                        Some(next) => next,
+                        None => break,
+                    }
                 }
             }
 
