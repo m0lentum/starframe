@@ -1,7 +1,7 @@
 (
     recipes: [
-        Capsule ( length: 2, radius: 0.5, pose: ( position: (-1, 0) ) ),
-        Capsule ( length: 2, radius: 0.5, pose: ( position: (0.99, 0) ) ),
+        Capsule (( length: 2, radius: 0.5, pose: ( position: (-1, 0) ) )),
+        Capsule (( length: 2, radius: 0.5, pose: ( position: (0.99, 0) ) )),
         Block ((
             width: 3, height: 2, pose: ( position: (0, -3), rotation: Deg(180) ), is_static: true,
         )),

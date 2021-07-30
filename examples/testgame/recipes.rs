@@ -1,6 +1,6 @@
 use starframe::{
     self as sf, graphics as gx, math as m,
-    physics::{self as phys, Material, Velocity},
+    physics::{self as phys, Material},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -10,11 +10,7 @@ pub enum Recipe {
     Player(crate::player::PlayerRecipe),
     Block(Block),
     Ball(Ball),
-    Capsule {
-        length: f64,
-        radius: f64,
-        pose: m::PoseBuilder,
-    },
+    Capsule(Capsule),
     Blockchain {
         width: f64,
         spacing: f64,
@@ -43,6 +39,7 @@ pub struct Ball {
     pub position: [f64; 2],
     pub restitution: f64,
     pub start_velocity: [f64; 2],
+    pub is_static: bool,
 }
 
 impl Default for Ball {
@@ -52,6 +49,27 @@ impl Default for Ball {
             position: [0.0, 0.0],
             restitution: 0.0,
             start_velocity: [0.0, 0.0],
+            is_static: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
+pub struct Capsule {
+    pub length: f64,
+    pub radius: f64,
+    pub pose: m::PoseBuilder,
+    pub is_static: bool,
+}
+
+impl Default for Capsule {
+    fn default() -> Self {
+        Self {
+            length: 1.0,
+            radius: 0.5,
+            pose: Default::default(),
+            is_static: false,
         }
     }
 }
@@ -106,20 +124,34 @@ fn spawn_block(
     }
 }
 
-fn spawn_body(
+#[derive(Clone, Copy, Debug)]
+struct Solid {
     pose: m::Pose,
     coll: phys::Collider,
     color: [f32; 4],
-    g: &mut crate::MyGraph,
-) -> sf::graph::Node<phys::Body> {
-    let pose_node = g.l_pose.insert(pose, &mut g.graph);
-    let coll_node = g.l_collider.insert(coll, &mut g.graph);
-    let shape_node = g
-        .l_shape
-        .insert(gx::Shape::from_collider(&coll, color), &mut g.graph);
+}
+
+fn spawn_static(solid: Solid, g: &mut crate::MyGraph) {
+    let pose_node = g.l_pose.insert(solid.pose, &mut g.graph);
+    let coll_node = g.l_collider.insert(solid.coll, &mut g.graph);
+    let shape_node = g.l_shape.insert(
+        gx::Shape::from_collider(&solid.coll, solid.color),
+        &mut g.graph,
+    );
+    g.graph.connect(&pose_node, &coll_node);
+    g.graph.connect(&pose_node, &shape_node);
+}
+
+fn spawn_body(solid: Solid, g: &mut crate::MyGraph) -> sf::graph::Node<phys::Body> {
+    let pose_node = g.l_pose.insert(solid.pose, &mut g.graph);
+    let coll_node = g.l_collider.insert(solid.coll, &mut g.graph);
+    let shape_node = g.l_shape.insert(
+        gx::Shape::from_collider(&solid.coll, solid.color),
+        &mut g.graph,
+    );
     let body_node = g
         .l_body
-        .insert(phys::Body::new_dynamic(&coll, 0.5), &mut g.graph);
+        .insert(phys::Body::new_dynamic(&solid.coll, 0.5), &mut g.graph);
 
     g.graph.connect(&pose_node, &coll_node);
     g.graph.connect(&pose_node, &shape_node);
@@ -149,45 +181,45 @@ impl Recipe {
                 position,
                 restitution,
                 start_velocity,
+                is_static,
             }) => {
-                let pose_node = graph.l_pose.insert(
-                    m::Pose::new(position.into(), m::Rotor2::identity()),
-                    &mut graph.graph,
-                );
+                let pose = m::Pose::new(position.into(), m::Rotor2::identity());
                 let coll = phys::Collider::new_circle(*radius).with_material(Material {
                     restitution_coef: *restitution,
                     ..Default::default()
                 });
-                let body = phys::Body::new_dynamic(&coll, 0.5).with_velocity(Velocity {
-                    linear: start_velocity.into(),
-                    angular: 0.0,
-                });
-                let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
-                let body_node = graph.l_body.insert(body, &mut graph.graph);
-                let shape_node = graph.l_shape.insert(
-                    gx::Shape::Circle {
-                        r: *radius,
-                        points: 16,
-                        color: random_color(),
-                    },
-                    &mut graph.graph,
-                );
-                graph.graph.connect(&pose_node, &body_node);
-                graph.graph.connect(&pose_node, &coll_node);
-                graph.graph.connect(&body_node, &coll_node);
-                graph.graph.connect(&pose_node, &shape_node);
+                let solid = Solid {
+                    pose,
+                    coll,
+                    color: random_color(),
+                };
+                if *is_static {
+                    spawn_static(solid, graph);
+                } else {
+                    let body = spawn_body(solid, graph);
+                    graph
+                        .l_body
+                        .get_mut(body.check(&graph.graph).unwrap())
+                        .velocity
+                        .linear = start_velocity.into();
+                }
             }
-            Recipe::Capsule {
+            Recipe::Capsule(Capsule {
                 length,
                 radius,
                 pose,
-            } => {
-                spawn_body(
-                    (*pose).into(),
-                    phys::Collider::new_capsule(*length, *radius),
-                    random_color(),
-                    graph,
-                );
+                is_static,
+            }) => {
+                let solid = Solid {
+                    pose: (*pose).into(),
+                    coll: phys::Collider::new_capsule(*length, *radius),
+                    color: random_color(),
+                };
+                if *is_static {
+                    spawn_static(solid, graph);
+                } else {
+                    spawn_body(solid, graph);
+                }
             }
             Recipe::Blockchain {
                 width,
@@ -216,12 +248,14 @@ impl Recipe {
 
                     let caps_full_length = dist_norm - spacing;
                     let capsule = spawn_body(
-                        m::PoseBuilder::new()
-                            .with_position(center)
-                            .with_rotation(m::Angle::Rad(orientation))
-                            .into(),
-                        phys::Collider::new_capsule(caps_full_length - width, radius),
-                        random_color(),
+                        Solid {
+                            pose: m::PoseBuilder::new()
+                                .with_position(center)
+                                .with_rotation(m::Angle::Rad(orientation))
+                                .into(),
+                            coll: phys::Collider::new_capsule(caps_full_length - width, radius),
+                            color: random_color(),
+                        },
                         graph,
                     );
                     let caps_length_half = caps_full_length / 2.0;
@@ -314,8 +348,8 @@ impl Recipe {
                         spacing: 0.05,
                         thickness: 0.1,
                         compliance: 0.0000001,
-                        bending_max_angle: m::Angle::Deg(5.0).rad(),
-                        bending_compliance: 0.05,
+                        bending_max_angle: m::Angle::Deg(15.0).rad(),
+                        bending_compliance: 0.08,
                         damping: 20.0,
                         material: phys::Material {
                             static_friction_coef: 0.0,

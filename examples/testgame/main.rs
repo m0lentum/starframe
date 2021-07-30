@@ -309,17 +309,19 @@ impl game::GameState for State {
                 radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
                 restitution: 1.0,
                 start_velocity: random_vel(),
+                is_static: false,
             })
             .spawn(&mut self.graph, &mut self.physics);
         }
         if game.input.is_key_pressed(Key::D, Some(0)) {
-            Recipe::Capsule {
+            Recipe::Capsule(recipes::Capsule {
                 pose: m::PoseBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle()),
                 length: distr::Uniform::from(0.4..0.8).sample(&mut rng),
                 radius: distr::Uniform::from(0.1..0.5).sample(&mut rng),
-            }
+                is_static: false,
+            })
             .spawn(&mut self.graph, &mut self.physics);
         }
 

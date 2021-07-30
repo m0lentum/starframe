@@ -1,11 +1,28 @@
 (
     recipes: [
         RopeConnectedBlocks(
-            block1: ( pose: ( position: (-3, 2)), is_static: true, ),
+            block1: ( pose: ( position: (-7, 2)), is_static: true, ),
             offset1: (0.55, 0.55),
-            block2: ( pose: ( position: (0, 2)), is_static: false, ),
-            offset2: (-0.55, -0.55),
+            block2: ( pose: ( position: (-3, 2)), is_static: false, ),
+            offset2: (-0.55, 0.55),
         ),
+        RopeConnectedBlocks(
+            block1: ( pose: ( position: (-3, -2)), is_static: true, ),
+            offset1: (0.55, -0.2),
+            block2: ( pose: ( position: (3, -2)), is_static: true, ),
+            offset2: (-0.55, -0.2),
+        ),
+        Capsule(( pose: ( position: ( -1.2, 0.5 ), rotation: Deg(30)), length: 0.8, radius: 0.15 )),
+        Capsule(( pose: ( position: ( 1.0, 1 ), rotation: Deg(-17)), length: 0.5, radius: 0.3 )),
+        Capsule(( pose: ( position: ( 0, 2 ), rotation: Deg(85)), length: 1.0, radius: 0.3 )),
+        RopeConnectedBlocks(
+            block1: ( pose: ( position: (4.0, 3)), is_static: false, ),
+            offset1: (0.55, 0.55),
+            block2: ( pose: ( position: (7.0, 3)), is_static: false, ),
+            offset2: (-0.55, 0.55),
+        ),
+        Capsule(( pose: ( position: ( 5.0, 2.5 ), rotation: Deg(90)), length: 0.5, radius: 0.2, is_static: true )),
+        Capsule(( pose: ( position: ( 6.0, 2.5 ), rotation: Deg(90)), length: 0.5, radius: 0.2, is_static: true )),
         // walls
         Block (( 
             width: 20, height: 0.2, pose: ( position: (0, 5) ), is_static: true,
