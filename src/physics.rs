@@ -184,6 +184,7 @@ impl Physics {
         };
         // store indices into neighboring particles for rope nodes
         let mut rope_next_particles: Vec<Option<usize>> = vec![None; body_refs.len()];
+        let mut rope_prev_particles: Vec<Option<usize>> = vec![None; body_refs.len()];
         for rope_node in l_rope.iter(graph) {
             let mut iter = RopeIter::new(rope_node, l_body, graph)
                 .map(|node| node_ref_map[node.pos().item_idx])
@@ -191,6 +192,7 @@ impl Physics {
             while let Some(particle) = iter.next() {
                 if let Some(next_particle) = iter.peek() {
                     rope_next_particles[particle] = Some(*next_particle);
+                    rope_prev_particles[*next_particle] = Some(particle);
                 }
             }
         }
@@ -494,6 +496,34 @@ impl Physics {
                     });
                     intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                 };
+
+                // if one of the bodies is from a rope, adjust normal to perpendicular to the rope
+                // (because rope colliders are circles, only the One case is possible here)
+                if let ContactResult::One(contact) = contact {
+                    for (ctx, normal_dir) in izip!(ctxs, [1.0, -1.0]) {
+                        if let ColliderContext::Body(bi) = ctx {
+                            if let (Some(prev), Some(next)) =
+                                (rope_prev_particles[*bi], rope_next_particles[*bi])
+                            {
+                                let normal_oriented = *contact.normal * normal_dir;
+                                let to_prev = poses[prev].translation - poses[*bi].translation;
+                                let to_next = poses[next].translation - poses[*bi].translation;
+                                let new_normal = if normal_oriented.dot(to_prev)
+                                    > normal_oriented.dot(to_next)
+                                {
+                                    m::Unit::new_normalize(m::left_normal(to_prev))
+                                } else {
+                                    m::Unit::new_normalize(m::left_normal(to_next))
+                                };
+                                contact.normal = if contact.normal.dot(*new_normal) > 0.0 {
+                                    new_normal
+                                } else {
+                                    -new_normal
+                                };
+                            }
+                        }
+                    }
+                }
 
                 let materials = match (colls[0].ty, colls[1].ty) {
                     (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],

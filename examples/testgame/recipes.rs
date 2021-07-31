@@ -345,8 +345,8 @@ impl Recipe {
                 let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
                 let rope = phys::spawn_rope_line(
                     phys::Rope {
-                        spacing: 0.05,
-                        thickness: 0.1,
+                        spacing: 0.1,
+                        thickness: 0.12,
                         compliance: 0.0000001,
                         bending_max_angle: m::Angle::Deg(15.0).rad(),
                         bending_compliance: 0.08,
