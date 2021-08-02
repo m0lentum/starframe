@@ -206,6 +206,9 @@ impl Physics {
             .iter()
             .map(|b| *(graph.get_neighbor(b, l_pose)).expect("A Body didn't have a Pose"))
             .collect();
+        // poses after velocity and constraints are applied, used for rope normal correction
+        let mut pre_contact_poses: Vec<m::Pose> = old_poses.clone();
+        // actual poses used in most calculations
         let mut poses: Vec<m::Pose> = old_poses.clone();
         // old velocities used for restitution
         let mut old_velocities: Vec<Velocity> =
@@ -473,6 +476,10 @@ impl Physics {
             // Contacts
             //
 
+            for (pose, pre_cont_pose) in izip!(&poses, &mut pre_contact_poses) {
+                *pre_cont_pose = *pose;
+            }
+
             for (colls, ctxs, contact, lambda_n) in
                 izip!(&coll_pairs, &ctx_pairs, &mut contacts, &mut contact_lambdas)
             {
@@ -497,7 +504,9 @@ impl Physics {
                     intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                 };
 
-                // if one of the bodies is from a rope, adjust normal to perpendicular to the rope
+                // if one of the bodies is from a rope, adjust normal
+                // to perpendicular to the rope *before* any contacts
+                //
                 // (because rope colliders are circles, only the One case is possible here)
                 if let ContactResult::One(contact) = contact {
                     for (ctx, normal_dir) in izip!(ctxs, [1.0, -1.0]) {
@@ -506,8 +515,10 @@ impl Physics {
                                 (rope_prev_particles[*bi], rope_next_particles[*bi])
                             {
                                 let normal_oriented = *contact.normal * normal_dir;
-                                let to_prev = poses[prev].translation - poses[*bi].translation;
-                                let to_next = poses[next].translation - poses[*bi].translation;
+                                let to_prev = pre_contact_poses[prev].translation
+                                    - pre_contact_poses[*bi].translation;
+                                let to_next = pre_contact_poses[next].translation
+                                    - pre_contact_poses[*bi].translation;
                                 let new_normal = if normal_oriented.dot(to_prev)
                                     > normal_oriented.dot(to_next)
                                 {
