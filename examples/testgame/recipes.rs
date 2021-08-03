@@ -352,8 +352,8 @@ impl Recipe {
                         bending_compliance: 0.08,
                         damping: 20.0,
                         material: phys::Material {
-                            static_friction_coef: 0.0,
-                            dynamic_friction_coef: 0.0,
+                            static_friction_coef: None,
+                            dynamic_friction_coef: Some(1.5),
                             restitution_coef: 0.0,
                         },
                     },

@@ -624,33 +624,34 @@ impl Physics {
 
                     // static friction
 
-                    let offset_diff_motion = (vars[0].offset_worldspace
-                        - vars[0].offset_worldspace_old)
-                        - (vars[1].offset_worldspace - vars[1].offset_worldspace_old);
-                    let motion_along_tan = offset_diff_motion.dot(tangent);
+                    if let Some(friction_coef) = materials[0].static_friction_with(&materials[1]) {
+                        let offset_diff_motion = (vars[0].offset_worldspace
+                            - vars[0].offset_worldspace_old)
+                            - (vars[1].offset_worldspace - vars[1].offset_worldspace_old);
+                        let motion_along_tan = offset_diff_motion.dot(tangent);
 
-                    let friction_coef = materials[0].static_friction_with(&materials[1]);
-                    let max_coulomb_dx = *lambda_n * friction_coef;
+                        let max_coulomb_dx = *lambda_n * friction_coef;
 
-                    let lambda_t =
-                        -motion_along_tan / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
+                        let lambda_t = -motion_along_tan
+                            / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
 
-                    if lambda_t < max_coulomb_dx {
-                        if let ColliderContext::Body(bi) = ctxs[0] {
-                            let im = body_refs[bi].mass.inv();
-                            let imi = body_refs[bi].moment_of_inertia.inv();
-                            poses[bi].append_translation(im * lambda_t * tangent);
-                            poses[bi].prepend_rotation(
-                                Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
-                            );
-                        }
-                        if let ColliderContext::Body(bi) = ctxs[1] {
-                            let im = body_refs[bi].mass.inv();
-                            let imi = body_refs[bi].moment_of_inertia.inv();
-                            poses[bi].append_translation(-im * lambda_t * tangent);
-                            poses[bi].prepend_rotation(
-                                Angle::Rad(-imi * lambda_t * vars[1].offset_wedge_tan).into(),
-                            );
+                        if lambda_t < max_coulomb_dx {
+                            if let ColliderContext::Body(bi) = ctxs[0] {
+                                let im = body_refs[bi].mass.inv();
+                                let imi = body_refs[bi].moment_of_inertia.inv();
+                                poses[bi].append_translation(im * lambda_t * tangent);
+                                poses[bi].prepend_rotation(
+                                    Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
+                                );
+                            }
+                            if let ColliderContext::Body(bi) = ctxs[1] {
+                                let im = body_refs[bi].mass.inv();
+                                let imi = body_refs[bi].moment_of_inertia.inv();
+                                poses[bi].append_translation(-im * lambda_t * tangent);
+                                poses[bi].prepend_rotation(
+                                    Angle::Rad(-imi * lambda_t * vars[1].offset_wedge_tan).into(),
+                                );
+                            }
                         }
                     }
                 }
@@ -734,11 +735,14 @@ impl Physics {
                     // dynamic friction
 
                     let tangent = m::left_normal(*contact.normal);
-                    let tangent_vel = relative_vel_at_p.dot(tangent);
-                    let friction_coef = materials[0].dynamic_friction_with(&materials[1]);
-                    let max_coulomb_dv = inv_dt * lambda_n * friction_coef;
-                    let delta_tan_vel =
-                        tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum();
+                    let delta_tan_vel = match materials[0].dynamic_friction_with(&materials[1]) {
+                        Some(friction_coef) => {
+                            let tangent_vel = relative_vel_at_p.dot(tangent);
+                            let max_coulomb_dv = inv_dt * lambda_n * friction_coef;
+                            tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum()
+                        }
+                        None => 0.0,
+                    };
 
                     // apply impulse
 

@@ -127,16 +127,20 @@ impl Default for ColliderType {
 /// would have its own coefficients).
 #[derive(Clone, Copy, Debug)]
 pub struct Material {
-    pub static_friction_coef: f64,
-    pub dynamic_friction_coef: f64,
+    /// Coefficient of static friction.
+    /// Set to None to opt out of static friction.
+    pub static_friction_coef: Option<f64>,
+    /// Coefficient of dynamic friction.
+    /// Set to None to opt out of dynamic friction.
+    pub dynamic_friction_coef: Option<f64>,
     pub restitution_coef: f64,
 }
 
 impl Default for Material {
     fn default() -> Self {
         Material {
-            static_friction_coef: 1.6,
-            dynamic_friction_coef: 1.5,
+            static_friction_coef: Some(1.6),
+            dynamic_friction_coef: Some(1.5),
             restitution_coef: 0.0,
         }
     }
@@ -146,15 +150,21 @@ impl Material {
     /// Get the static friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.
-    pub fn static_friction_with(&self, other: &Self) -> f64 {
-        (self.static_friction_coef + other.static_friction_coef) / 2.0
+    pub fn static_friction_with(&self, other: &Self) -> Option<f64> {
+        match (self.static_friction_coef, other.static_friction_coef) {
+            (Some(mine), Some(theirs)) => Some((mine + theirs) / 2.0),
+            _ => None,
+        }
     }
 
     /// Get the dynamic friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.
-    pub fn dynamic_friction_with(&self, other: &Self) -> f64 {
-        (self.dynamic_friction_coef + other.dynamic_friction_coef) / 2.0
+    pub fn dynamic_friction_with(&self, other: &Self) -> Option<f64> {
+        match (self.dynamic_friction_coef, other.dynamic_friction_coef) {
+            (Some(mine), Some(theirs)) => Some((mine + theirs) / 2.0),
+            _ => None,
+        }
     }
 
     /// Get the restitution coefficient between this material and another.
