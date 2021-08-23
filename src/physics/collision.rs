@@ -9,6 +9,76 @@ pub use shape_shape::{Contact, ContactIterator, ContactResult};
 
 pub mod query;
 
+//
+
+use crate::math as m;
+
+/// Axis-aligned bounding box.
+#[derive(Clone, Copy, Debug)]
+pub struct AABB {
+    pub min: m::Vec2,
+    pub max: m::Vec2,
+}
+
+impl AABB {
+    /// Increase the size of the AABB by the same amount in all directions.
+    pub fn padded(mut self, amount: f64) -> Self {
+        self.min.x -= amount;
+        self.min.y -= amount;
+        self.max.x += amount;
+        self.max.y += amount;
+        self
+    }
+
+    /// Increase the size of the AABB in the direction of a vector.
+    pub fn extended(mut self, amount: m::Vec2) -> Self {
+        if amount.x < 0.0 {
+            self.min.x += amount.x;
+        } else {
+            self.max.x += amount.x;
+        }
+
+        if amount.y < 0.0 {
+            self.min.y += amount.y;
+        } else {
+            self.max.y += amount.y;
+        }
+
+        self
+    }
+
+    pub fn width(&self) -> f64 {
+        self.max.x - self.min.x
+    }
+
+    pub fn height(&self) -> f64 {
+        self.max.y - self.min.y
+    }
+
+    /// The smallest box containing both given boxes.
+    pub fn union(&self, other: &Self) -> Self {
+        Self {
+            min: self.min.min_by_component(other.min),
+            max: self.max.max_by_component(other.max),
+        }
+    }
+
+    /// The area that is inside both boxes.
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        let min = self.min.max_by_component(other.min);
+        let max = self.max.min_by_component(other.max);
+        if min.x >= max.x || min.y >= max.y {
+            None
+        } else {
+            Some(Self { min, max })
+        }
+    }
+
+    pub fn contains_point(&self, p: m::Vec2) -> bool {
+        p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
+    }
+}
+
 /// A set of bitmasks that determines which collider layers are allowed to
 /// collide with each other.
 ///

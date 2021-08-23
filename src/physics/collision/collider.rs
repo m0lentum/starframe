@@ -1,3 +1,6 @@
+use super::AABB;
+use crate::math as m;
+
 /// A component that allows a game object to collide with others
 /// or act as a trigger.
 #[derive(Clone, Copy, Debug)]
@@ -86,7 +89,34 @@ impl Collider {
     pub fn is_solid(&self) -> bool {
         matches!(self.ty, ColliderType::Solid(_))
     }
+
+    pub fn bounding_sphere_r(&self) -> f64 {
+        match self.shape {
+            ColliderShape::Circle { r } => r,
+            ColliderShape::Rect { hw, hh } => hw * hw + hh * hh,
+            ColliderShape::Capsule { hl, r } => hl + r,
+        }
+    }
+
+    pub fn aabb(&self, pose: &m::Pose) -> AABB {
+        // for symmetrical shapes, the box is one vector mirrored both ways
+        let extent = match self.shape {
+            ColliderShape::Circle { r } => m::Vec2::new(r, r),
+            ColliderShape::Rect { hw, hh } => {
+                (pose.rotation * m::Vec2::new(hw, 0.0)).abs()
+                    + (pose.rotation * m::Vec2::new(0.0, hh)).abs()
+            }
+            ColliderShape::Capsule { hl, r } => {
+                (pose.rotation * m::Vec2::new(hl, 0.0)).abs() + m::Vec2::new(r, r)
+            }
+        };
+        AABB {
+            min: pose.translation - extent,
+            max: pose.translation + extent,
+        }
+    }
 }
+
 /// The physical shape of a collider.
 #[derive(Clone, Copy, Debug)]
 pub enum ColliderShape {
