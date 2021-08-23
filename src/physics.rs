@@ -10,7 +10,7 @@ use slotmap as sm;
 //
 
 pub mod collision;
-use collision::{shape_shape::intersection_check, SpatialIndex};
+use collision::{shape_shape::intersection_check, HGrid};
 pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
 
 mod constraint;
@@ -106,22 +106,23 @@ pub struct Physics {
     pub substeps: usize,
     pub mask_matrix: collision::MaskMatrix,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
-}
-
-impl Default for Physics {
-    fn default() -> Self {
-        Self::with_substeps(10)
-    }
+    spatial_index: HGrid,
 }
 
 impl Physics {
-    /// Create a physics solver with the specified number of substeps per frame.
-    pub fn with_substeps(substeps: usize) -> Self {
+    pub fn new(grid_params: collision::HGridParams) -> Self {
         Physics {
-            substeps,
+            substeps: 10,
             mask_matrix: Default::default(),
             user_constraints: sm::DenseSlotMap::with_key(),
+            spatial_index: HGrid::new(grid_params),
         }
+    }
+
+    /// Set the number of substeps per frame.
+    pub fn with_substeps(mut self, substeps: usize) -> Self {
+        self.substeps = substeps;
+        self
     }
 
     /// Add a user-defined constraint to the system. Returns a handle that can be used to remove it later.
@@ -162,10 +163,10 @@ impl Physics {
         l_collider: &graph::Layer<Collider>,
         l_rope: &graph::Layer<Rope>,
         l_evt_sink: &mut graph::Layer<EventSink>,
-        dt: f64,
+        frame_dt: f64,
         forcefield: &impl ForceField,
     ) {
-        let dt = dt / self.substeps as f64;
+        let dt = frame_dt / self.substeps as f64;
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
 
@@ -248,33 +249,61 @@ impl Physics {
         /// poses are in our temporary buffer for colliders attached to bodies,
         /// but for static colliders they're in the graph.
         /// because we don't modify non-body poses, we can get the poses for static colliders just once
+        #[derive(Clone, Copy, Debug)]
         enum ColliderContext {
             Body(usize),
             Static(m::Pose),
         }
-        // generate potentially colliding pairs,
-        // these will be used to re-detect collisions every substep.
-        // we can map them to NodeRefs here because we won't borrow colliders mutably
-        let coll_pairs: Vec<[graph::NodeRef<Collider>; 2]> = SpatialIndex::pairs(l_collider, graph)
-            .iter()
-            .map(|colls| map_pair(colls, |c| l_collider.get_unchecked(c.pos())))
-            .filter(|[c1, c2]| self.mask_matrix.get(c1.layer, c2.layer))
-            .collect();
-        // indices to bodies in `body_refs` corresponding to `coll_pairs`
-        let ctx_pairs: Vec<[ColliderContext; 2]> = coll_pairs
-            .iter()
-            .map(|colls| {
-                map_pair(colls, |c| match graph.get_neighbor_unchecked(c, l_body) {
+        let coll_ctxs = {
+            let mut c: Vec<ColliderContext> =
+                // meaningless default to fill the gaps where colliders aren't actually alive
+                vec![ColliderContext::Static(m::Pose::default()); l_collider.content.len()];
+            for coll in l_collider.iter(graph) {
+                c[coll.pos().item_idx] = match graph.get_neighbor_unchecked(&coll, l_body) {
                     Some(b) => ColliderContext::Body(node_ref_map[b.pos().item_idx]),
                     None => {
-                        ColliderContext::Static(match graph.get_neighbor_unchecked(c, l_pose) {
+                        ColliderContext::Static(match graph.get_neighbor_unchecked(&coll, l_pose) {
                             Some(pose) => *pose,
                             None => m::Pose::default(),
                         })
                     }
-                })
-            })
-            .collect();
+                };
+            }
+            c
+        };
+
+        // prepare the spatial index
+
+        // constant for padding bounding volumes to fit movement during substeps,
+        // collisions may be missed if higher accelerations occur
+        const MAX_EXPECTED_ACCEL: f64 = 10.0;
+        let max_expected_accel_over_frame = MAX_EXPECTED_ACCEL * frame_dt;
+
+        self.spatial_index.prepare(l_collider.content.len());
+        // generate potentially colliding pairs,
+        // these will be used to re-detect collisions every substep.
+        let coll_pairs: Vec<[graph::NodeRef<Collider>; 2]> = {
+            let mut pairs = Vec::new();
+            for coll in l_collider.iter(graph) {
+                let aabb = match coll_ctxs[coll.pos().item_idx] {
+                    ColliderContext::Body(b) => coll
+                        .aabb(&poses[b])
+                        .extended(velocities[b].linear * frame_dt)
+                        .padded(max_expected_accel_over_frame),
+                    ColliderContext::Static(p) => coll.aabb(&p),
+                };
+
+                let spatial_index = &mut self.spatial_index;
+                let mask_matrix = &self.mask_matrix;
+                pairs.extend(
+                    spatial_index
+                        .test_and_insert(aabb, coll.pos().item_idx)
+                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other)])
+                        .filter(|[c1, c2]| mask_matrix.get(c1.layer, c2.layer)),
+                );
+            }
+            pairs
+        };
 
         // store latest contacts for use in the velocity step
         let mut contacts: Vec<ContactResult> = vec![ContactResult::Zero; coll_pairs.len()];
@@ -480,9 +509,10 @@ impl Physics {
                 *pre_cont_pose = *pose;
             }
 
-            for (colls, ctxs, contact, lambda_n) in
-                izip!(&coll_pairs, &ctx_pairs, &mut contacts, &mut contact_lambdas)
+            for (colls, contact, lambda_n) in
+                izip!(&coll_pairs, &mut contacts, &mut contact_lambdas)
             {
+                let ctxs = map_pair(colls, |c| coll_ctxs[c.pos().item_idx]);
                 if !match ctxs[0] {
                     ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
                     ColliderContext::Static(_) => false,
@@ -497,11 +527,18 @@ impl Physics {
 
                 // check for collision
                 *contact = {
-                    let poses = map_pair(ctxs, |ctx| match ctx {
+                    let poses = map_pair(&ctxs, |ctx| match ctx {
                         ColliderContext::Body(b) => poses[*b],
                         ColliderContext::Static(pose) => *pose,
                     });
-                    intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
+                    let aabb_isect = colls[0]
+                        .aabb(&poses[0])
+                        .intersection(&colls[1].aabb(&poses[1]));
+                    if aabb_isect.is_none() {
+                        ContactResult::Zero
+                    } else {
+                        intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
+                    }
                 };
 
                 // if one of the bodies is from a rope, adjust normal
@@ -512,13 +549,13 @@ impl Physics {
                     for (ctx, normal_dir) in izip!(ctxs, [1.0, -1.0]) {
                         if let ColliderContext::Body(bi) = ctx {
                             if let (Some(prev), Some(next)) =
-                                (rope_prev_particles[*bi], rope_next_particles[*bi])
+                                (rope_prev_particles[bi], rope_next_particles[bi])
                             {
                                 let normal_oriented = *contact.normal * normal_dir;
                                 let to_prev = pre_contact_poses[prev].translation
-                                    - pre_contact_poses[*bi].translation;
+                                    - pre_contact_poses[bi].translation;
                                 let to_next = pre_contact_poses[next].translation
-                                    - pre_contact_poses[*bi].translation;
+                                    - pre_contact_poses[bi].translation;
                                 let new_normal = if normal_oriented.dot(to_prev)
                                     > normal_oriented.dot(to_next)
                                 {
@@ -672,9 +709,7 @@ impl Physics {
             // velocity step for dynamic friction and restitution on contacts + damping on other constraints
             //
 
-            for (colls, ctxs, contact, lambda_n) in
-                izip!(&coll_pairs, &ctx_pairs, &contacts, &contact_lambdas)
-            {
+            for (colls, contact, lambda_n) in izip!(&coll_pairs, &contacts, &contact_lambdas) {
                 let materials = match (colls[0].ty, colls[1].ty) {
                     (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
                     // one of the colliders was a trigger, no physics response
@@ -682,6 +717,7 @@ impl Physics {
                         continue;
                     }
                 };
+                let ctxs = map_pair(colls, |c| coll_ctxs[c.pos().item_idx]);
 
                 for contact in contact.iter() {
                     struct WorkingVars {

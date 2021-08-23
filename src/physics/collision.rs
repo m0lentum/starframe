@@ -1,5 +1,5 @@
-mod spatialindex;
-pub(crate) use spatialindex::SpatialIndex;
+mod hgrid;
+pub use hgrid::{HGrid, HGridParams};
 
 mod collider;
 pub use collider::*;

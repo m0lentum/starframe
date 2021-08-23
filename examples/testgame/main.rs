@@ -67,7 +67,15 @@ impl State {
             player: player::PlayerController::new(),
             mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
-            physics: phys::Physics::with_substeps(10),
+            physics: phys::Physics::new(phys::collision::HGridParams {
+                approx_bounds: phys::collision::AABB {
+                    min: m::Vec2::new(-20.0, -10.0),
+                    max: m::Vec2::new(20.0, 10.0),
+                },
+                smallest_obj_radius: 0.5,
+                largest_obj_radius: 3.0,
+                expected_obj_count: 100,
+            }),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 20.0,

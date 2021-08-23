@@ -20,4 +20,4 @@ microprofile = "0.2.1"
 rand = "0.7.3"
 
 [profile.dev]
-opt-level = 1
+opt-level = 2

@@ -687,6 +687,15 @@ impl<T> Layer<T> {
         }
     }
 
+    /// Get an item by just item index. Used internally for some optimization
+    /// where storing the layer index would be wasteful.
+    pub(crate) fn get_unchecked_by_item_idx(&self, item_idx: usize) -> NodeRef<'_, T> {
+        self.get_unchecked(NodePosition {
+            layer_idx: self.index,
+            item_idx,
+        })
+    }
+
     /// Get a mutable reference to the component represented by the given node.
     pub fn get_mut(&mut self, node: impl SafeNode) -> NodeRefMut<'_, T> {
         let pos = node.pos();
