@@ -27,6 +27,13 @@ pub use rope::*;
 
 //
 
+#[cfg(feature = "tracy-client")]
+static COLLIDERS_PLOT: tracy_client::Plot = tracy_client::create_plot!("colliders");
+#[cfg(feature = "tracy-client")]
+static PAIRS_PLOT: tracy_client::Plot = tracy_client::create_plot!("collider pairs tested");
+#[cfg(feature = "tracy-client")]
+static CONTACTS_PLOT: tracy_client::Plot = tracy_client::create_plot!("contacts");
+
 /// Velocity of an object.
 ///
 // Equivalent to a Vec3 but with names for the translational and rotational part.
@@ -166,6 +173,8 @@ impl Physics {
         frame_dt: f64,
         forcefield: &impl ForceField,
     ) {
+        let _main_span = tracy_span!("physics tick", "tick");
+
         let dt = frame_dt / self.substeps as f64;
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
@@ -274,6 +283,8 @@ impl Physics {
 
         // prepare the spatial index
 
+        let spi_span = tracy_span!("build spatial index", "tick");
+
         // constant for padding bounding volumes to fit movement during substeps,
         // collisions may be missed if higher accelerations occur
         const MAX_EXPECTED_ACCEL: f64 = 10.0;
@@ -305,6 +316,14 @@ impl Physics {
             pairs
         };
 
+        #[cfg(feature = "tracy-client")]
+        {
+            COLLIDERS_PLOT.point(l_collider.iter(graph).count() as f64);
+            PAIRS_PLOT.point(coll_pairs.len() as f64);
+        }
+
+        drop(spi_span);
+
         // store latest contacts for use in the velocity step
         let mut contacts: Vec<ContactResult> = vec![ContactResult::Zero; coll_pairs.len()];
         // store contact forces for friction purposes
@@ -315,6 +334,7 @@ impl Physics {
         //
 
         for _substep in 0..self.substeps {
+            let _substep_span = tracy_span!("substep", "tick");
             //
             // apply external forces and estimate post-step pose with explicit Euler step
             //
@@ -342,6 +362,8 @@ impl Physics {
             //
             // Rope constraints
             //
+
+            let constr_span = tracy_span!("constraints", "tick");
 
             rope_lateral_corrections.iter_mut().for_each(|c| {
                 *c = None;
@@ -501,9 +523,15 @@ impl Physics {
                 }
             }
 
+            drop(constr_span);
+
             //
             // Contacts
             //
+
+            let cont_span = tracy_span!("contacts", "tick");
+            #[cfg(feature = "tracy-client")]
+            let mut contact_counter: usize = 0;
 
             for (pose, pre_cont_pose) in izip!(&poses, &mut pre_contact_poses) {
                 *pre_cont_pose = *pose;
@@ -540,6 +568,13 @@ impl Physics {
                         intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                     }
                 };
+
+                #[cfg(feature = "tracy-client")]
+                {
+                    if !matches!(contact, ContactResult::Zero) {
+                        contact_counter += 1;
+                    }
+                }
 
                 // if one of the bodies is from a rope, adjust normal
                 // to perpendicular to the rope *before* any contacts
@@ -694,6 +729,11 @@ impl Physics {
                 }
             }
 
+            #[cfg(feature = "tracy-client")]
+            CONTACTS_PLOT.point(contact_counter as f64);
+
+            drop(cont_span);
+
             //
             // update velocities from pose differences
             //
@@ -708,6 +748,8 @@ impl Physics {
             //
             // velocity step for dynamic friction and restitution on contacts + damping on other constraints
             //
+
+            let vel_span = tracy_span!("velocity solve", "tick");
 
             for (colls, contact, lambda_n) in izip!(&coll_pairs, &contacts, &contact_lambdas) {
                 let materials = match (colls[0].ty, colls[1].ty) {
@@ -954,6 +996,8 @@ impl Physics {
                     }
                 }
             }
+
+            drop(vel_span);
 
             //
             // Event gathering

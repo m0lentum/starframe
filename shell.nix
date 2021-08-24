@@ -14,6 +14,7 @@ pkgs.mkShell {
     pkgs.cargo-flamegraph
     pkgs.lld
     pkgs.llvmPackages.bintools
+    pkgs.tracy
     # for wgpu
     pkgs.pkgconfig
     pkgs.xlibs.libX11

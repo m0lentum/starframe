@@ -1,7 +1,7 @@
-#[macro_use]
-extern crate microprofile;
-
-//
+#[cfg(feature = "tracy-client")]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
+    tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
 use rand::{distributions as distr, distributions::Distribution};
 
@@ -21,9 +21,6 @@ mod recipes;
 use recipes::Recipe;
 
 fn main() {
-    microprofile::init!();
-    microprofile::set_enable_all_groups!(true);
-
     let game = Game::init(
         60,
         winit::window::WindowBuilder::new()
@@ -35,8 +32,6 @@ fn main() {
     );
     let state = State::init(&game.renderer.device);
     game.run(state);
-
-    microprofile::shutdown!();
 }
 
 //
@@ -203,9 +198,6 @@ impl MyGraph {
 
 impl game::GameState for State {
     fn tick(&mut self, dt: f64, game: &Game) -> Option<()> {
-        microprofile::flip();
-        microprofile::scope!("update", "all");
-
         //
         // State-independent stuff
         //
@@ -344,7 +336,6 @@ impl game::GameState for State {
                 }
 
                 {
-                    microprofile::scope!("update", "physics");
                     let grav = phys::forcefield::Gravity(self.scene.gravity.into());
                     self.physics.tick(
                         &self.graph.graph,
@@ -358,7 +349,6 @@ impl game::GameState for State {
                     );
                 }
                 {
-                    microprofile::scope!("update", "player");
                     self.player.tick(&mut self.graph, &game.input);
                 }
 
@@ -381,8 +371,6 @@ impl game::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut gx::Renderer) {
-        microprofile::scope!("render", "all");
-
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
