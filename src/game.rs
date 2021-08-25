@@ -118,7 +118,6 @@ impl Game {
                         }
 
                         while acc >= self.nanos_per_frame {
-                            #[cfg(feature = "tracy-client")]
                             let _frame = tracy_client::start_noncontinuous_frame!("tick");
 
                             if state.tick(self.dt_fixed, &self).is_none() {
@@ -135,7 +134,6 @@ impl Game {
                             state.draw(&mut self.renderer);
                         }
 
-                        #[cfg(feature = "tracy-client")]
                         tracy_client::finish_continuous_frame!();
 
                         let nanos_this_frame = frame_start_t.elapsed().as_nanos();

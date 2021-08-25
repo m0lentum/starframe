@@ -1,16 +1,9 @@
 #[macro_use]
 mod tracy_helpers {
     macro_rules! tracy_span {
-        ($name: literal, $func_name: literal) => {{
-            #[cfg(feature = "tracy-client")]
-            {
-                tracy_client::Span::new($name, $func_name, file!(), line!(), 100)
-            }
-            #[cfg(not(feature = "tracy-client"))]
-            {
-                ()
-            }
-        }};
+        ($name: literal, $func_name: literal) => {
+            tracy_client::Span::new($name, $func_name, file!(), line!(), 100)
+        };
     }
 }
 

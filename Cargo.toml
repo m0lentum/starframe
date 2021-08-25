@@ -14,7 +14,10 @@ serde = { version = "1.0.126", features = ["derive"] }
 ron = "0.6.4"
 itertools = "0.10.0"
 slotmap = "1.0.3"
-tracy-client = { version = "0.12.4", optional = true }
+tracy-client = { version = "0.12.4", default-features = false }
+
+[features]
+tracy = ["tracy-client/enable"]
 
 [dev-dependencies]
 rand = "0.7.3"

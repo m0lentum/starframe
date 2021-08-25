@@ -27,11 +27,11 @@ pub use rope::*;
 
 //
 
-#[cfg(feature = "tracy-client")]
+#[cfg(feature = "tracy")]
 static COLLIDERS_PLOT: tracy_client::Plot = tracy_client::create_plot!("colliders");
-#[cfg(feature = "tracy-client")]
+#[cfg(feature = "tracy")]
 static PAIRS_PLOT: tracy_client::Plot = tracy_client::create_plot!("collider pairs tested");
-#[cfg(feature = "tracy-client")]
+#[cfg(feature = "tracy")]
 static CONTACTS_PLOT: tracy_client::Plot = tracy_client::create_plot!("contacts");
 
 /// Velocity of an object.
@@ -316,7 +316,7 @@ impl Physics {
             pairs
         };
 
-        #[cfg(feature = "tracy-client")]
+        #[cfg(feature = "tracy")]
         {
             COLLIDERS_PLOT.point(l_collider.iter(graph).count() as f64);
             PAIRS_PLOT.point(coll_pairs.len() as f64);
@@ -530,7 +530,7 @@ impl Physics {
             //
 
             let cont_span = tracy_span!("contacts", "tick");
-            #[cfg(feature = "tracy-client")]
+            #[cfg(feature = "tracy")]
             let mut contact_counter: usize = 0;
 
             for (pose, pre_cont_pose) in izip!(&poses, &mut pre_contact_poses) {
@@ -569,7 +569,7 @@ impl Physics {
                     }
                 };
 
-                #[cfg(feature = "tracy-client")]
+                #[cfg(feature = "tracy")]
                 {
                     if !matches!(contact, ContactResult::Zero) {
                         contact_counter += 1;
@@ -729,7 +729,7 @@ impl Physics {
                 }
             }
 
-            #[cfg(feature = "tracy-client")]
+            #[cfg(feature = "tracy")]
             CONTACTS_PLOT.point(contact_counter as f64);
 
             drop(cont_span);
