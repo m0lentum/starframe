@@ -622,9 +622,10 @@ impl Physics {
                         ColliderContext::Body(b) => poses[*b],
                         ColliderContext::Static(pose) => *pose,
                     });
-                    let aabb_isect = colls[0]
-                        .aabb(&poses[0])
-                        .intersection(&colls[1].aabb(&poses[1]));
+                    let aabb_isect = self
+                        .spatial_index
+                        .get_aabb(colls[0].pos().item_idx)
+                        .intersection(&self.spatial_index.get_aabb(colls[1].pos().item_idx));
                     if aabb_isect.is_none() {
                         ContactResult::Zero
                     } else {

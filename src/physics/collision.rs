@@ -77,6 +77,14 @@ impl AABB {
     pub fn contains_point(&self, p: m::Vec2) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
+
+    /// Create an AABB with both extents at the origin. Useful as a filler default in cache.
+    pub(crate) fn zero() -> Self {
+        AABB {
+            min: m::Vec2::zero(),
+            max: m::Vec2::zero(),
+        }
+    }
 }
 
 /// A set of bitmasks that determines which collider layers are allowed to

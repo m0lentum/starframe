@@ -1,6 +1,7 @@
 //! The spatial index is responsible for detecting pairs of possibly
 //! intersecting objects for further, more accurate narrow phase inspection.
 
+use super::AABB;
 use crate::math as m;
 
 /// A hierarchical grid spatial index.
@@ -10,7 +11,7 @@ use crate::math as m;
 /// If the object count or world size is very large, it will eat up a lot of memory.
 #[derive(Clone, Debug)]
 pub struct HGrid {
-    bounds: super::AABB,
+    bounds: AABB,
     // bitsets for grid cells are stored as a contiguous buffer,
     // interpreted in chunks of <mask_size> u64s.
     // this lets us increase the size of a bitset at runtime
@@ -20,6 +21,8 @@ pub struct HGrid {
     // timestamping used to keep track of which colliders were already checked by a query.
     curr_timestamp: u16,
     timestamps: Vec<u16>,
+    // cache AABBs that colliders were inserted with
+    aabbs: Vec<AABB>,
 }
 
 #[derive(Clone, Debug)]
@@ -34,7 +37,7 @@ struct Grid {
 
 /// TODO: document all the params, these are not self-explanatory
 pub struct HGridParams {
-    pub approx_bounds: super::AABB,
+    pub approx_bounds: AABB,
     pub smallest_obj_radius: f64,
     pub largest_obj_radius: f64,
     pub expected_obj_count: usize,
@@ -53,7 +56,7 @@ impl HGrid {
         spacings.push(spacing);
 
         let largest_spacing = spacing;
-        let bounds = super::AABB {
+        let bounds = AABB {
             min: params.approx_bounds.min,
             max: m::Vec2::new(
                 (params.approx_bounds.width() / largest_spacing).ceil() * largest_spacing,
@@ -85,7 +88,13 @@ impl HGrid {
                 .collect(),
             curr_timestamp: 0,
             timestamps: vec![0; params.expected_obj_count],
+            aabbs: vec![AABB::zero(); params.expected_obj_count],
         }
+    }
+
+    #[inline]
+    pub(crate) fn get_aabb(&self, id: usize) -> AABB {
+        self.aabbs[id]
     }
 
     /// At least for now, recreating the whole grid every frame.
@@ -116,12 +125,13 @@ impl HGrid {
         for ts in &mut self.timestamps {
             *ts = 0;
         }
-        if self.timestamps.len() < collider_count {
-            self.timestamps.resize(collider_count, 0);
-        }
+        self.timestamps.resize(collider_count, 0);
+        self.aabbs.resize(collider_count, AABB::zero());
     }
 
-    pub(crate) fn insert(&mut self, aabb: super::AABB, id: usize) {
+    pub(crate) fn insert(&mut self, aabb: AABB, id: usize) {
+        self.aabbs[id] = aabb;
+
         let aabb_size = aabb.width().max(aabb.height());
         let grid_level = match self.grids.iter_mut().find(|g| g.spacing > aabb_size) {
             Some(first_bigger) => first_bigger,
@@ -153,7 +163,7 @@ impl HGrid {
 
     pub(crate) fn test_and_insert<'a>(
         &'a mut self,
-        aabb: super::AABB,
+        aabb: AABB,
         id: usize,
     ) -> impl 'a + Iterator<Item = usize> {
         self.insert(aabb, id);
@@ -161,10 +171,7 @@ impl HGrid {
         self.test_aabb(aabb)
     }
 
-    pub(crate) fn test_aabb<'a>(
-        &'a mut self,
-        aabb: super::AABB,
-    ) -> impl 'a + Iterator<Item = usize> {
+    pub(crate) fn test_aabb<'a>(&'a mut self, aabb: AABB) -> impl 'a + Iterator<Item = usize> {
         // destructuring to move into closures
         let bitset_size = self.bitset_size;
         let timestamps = &mut self.timestamps;
