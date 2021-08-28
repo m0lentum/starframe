@@ -15,6 +15,7 @@ use crate::math as m;
 
 /// Axis-aligned bounding box.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub struct AABB {
     pub min: m::Vec2,
     pub max: m::Vec2,

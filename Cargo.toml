@@ -9,18 +9,20 @@ winit = "0.25.0"
 wgpu = "0.8.1"
 zerocopy = "0.5.0"
 futures = "0.3.15"
-ultraviolet = { version = "0.8.0", features = ["f64"] }
-serde = { version = "1.0.126", features = ["derive"] }
-ron = "0.6.4"
+ultraviolet = { version = "0.8.1", features = ["f64"] }
 itertools = "0.10.0"
 slotmap = "1.0.3"
 tracy-client = { version = "0.12.4", default-features = false }
+serde = { version = "1.0.126", features = ["derive"], optional = true }
 
 [features]
+default = ["serde-types"]
+serde-types = ["serde", "ultraviolet/serde"]
 tracy = ["tracy-client/enable"]
 
 [dev-dependencies]
 rand = "0.7.3"
+ron = "0.6.4"
 
 [profile.dev]
 opt-level = 2
