@@ -30,7 +30,7 @@ fn main() {
                 height: 600.0,
             }),
     );
-    let state = State::init(&game.renderer.device);
+    let state = State::init(&game.renderer);
     game.run(state);
 }
 
@@ -54,7 +54,7 @@ pub struct State {
     shape_renderer: gx::ShapeRenderer,
 }
 impl State {
-    fn init(device: &wgpu::Device) -> Self {
+    fn init(renderer: &gx::Renderer) -> Self {
         State {
             scene: Scene::default(),
             state: StateEnum::Playing,
@@ -77,7 +77,7 @@ impl State {
                     height: 10.0,
                 },
             ),
-            shape_renderer: gx::ShapeRenderer::new(device),
+            shape_renderer: gx::ShapeRenderer::new(renderer),
         }
     }
 
