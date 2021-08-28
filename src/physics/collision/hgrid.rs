@@ -132,7 +132,8 @@ impl HGrid {
     pub(crate) fn insert(&mut self, aabb: AABB, id: usize) {
         self.aabbs[id] = aabb;
 
-        let aabb_size = aabb.width().max(aabb.height());
+        // select grid level based on smaller extent of the aabb
+        let aabb_size = aabb.width().min(aabb.height());
         let grid_level = match self.grids.iter_mut().find(|g| g.spacing > aabb_size) {
             Some(first_bigger) => first_bigger,
             None => self.grids.last_mut().unwrap(),
