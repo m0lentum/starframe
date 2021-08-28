@@ -94,11 +94,7 @@ impl Default for Block {
     }
 }
 
-fn spawn_block(
-    block: Block,
-    color: [f32; 4],
-    g: &mut crate::MyGraph,
-) -> Option<sf::graph::Node<phys::Body>> {
+fn spawn_block(block: Block, g: &mut crate::MyGraph) -> Option<sf::graph::Node<phys::Body>> {
     let pose_node = g.l_pose.insert(block.pose.into(), &mut g.graph);
     let coll = phys::Collider::new_rect(block.width, block.height);
     let coll_node = g.l_collider.insert(coll, &mut g.graph);
@@ -106,7 +102,11 @@ fn spawn_block(
         gx::Shape::Rect {
             w: block.width,
             h: block.height,
-            color,
+            color: if block.is_static {
+                [0.7; 4]
+            } else {
+                random_color()
+            },
         },
         &mut g.graph,
     );
@@ -166,15 +166,7 @@ impl Recipe {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(graph),
             Recipe::Block(block) => {
-                spawn_block(
-                    *block,
-                    if block.is_static {
-                        [0.5; 4]
-                    } else {
-                        random_color()
-                    },
-                    graph,
-                );
+                spawn_block(*block, graph);
             }
             Recipe::Ball(Ball {
                 radius,
@@ -310,7 +302,6 @@ impl Recipe {
                         pose: m::PoseBuilder::new().with_position(position + offset),
                         is_static: false,
                     },
-                    random_color(),
                     graph,
                 )
                 .unwrap();
@@ -321,7 +312,6 @@ impl Recipe {
                         pose: m::PoseBuilder::new().with_position(position - offset),
                         is_static: false,
                     },
-                    random_color(),
                     graph,
                 )
                 .unwrap();
@@ -339,8 +329,8 @@ impl Recipe {
                 block2,
                 offset2,
             } => {
-                let b1 = spawn_block(*block1, random_color(), graph);
-                let b2 = spawn_block(*block2, random_color(), graph);
+                let b1 = spawn_block(*block1, graph);
+                let b2 = spawn_block(*block2, graph);
                 let rope_end_1 = block1.pose.build() * m::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
                 let rope = phys::spawn_rope_line(

@@ -126,6 +126,7 @@ pub enum MouseMode {
 #[serde(default)]
 pub struct Scene {
     gravity: [f64; 2],
+    spawn_zone: phys::collision::AABB,
     recipes: Vec<Recipe>,
 }
 
@@ -133,6 +134,10 @@ impl Default for Scene {
     fn default() -> Self {
         Self {
             gravity: [0.0, -9.81],
+            spawn_zone: phys::collision::AABB {
+                min: m::Vec2::new(-5.0, 1.0),
+                max: m::Vec2::new(5.0, 4.0),
+            },
             recipes: vec![],
         }
     }
@@ -275,11 +280,12 @@ impl game::GameState for State {
         }
 
         // spawn stuff also when paused
+        let zone = self.scene.spawn_zone;
         let random_pos = || {
             let mut rng = rand::thread_rng();
             m::Vec2::new(
-                distr::Uniform::from(-5.0..5.0).sample(&mut rng),
-                distr::Uniform::from(1.0..4.0).sample(&mut rng),
+                distr::Uniform::from(zone.min.x..zone.max.x).sample(&mut rng),
+                distr::Uniform::from(zone.min.y..zone.max.y).sample(&mut rng),
             )
         };
         let random_angle =

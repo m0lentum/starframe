@@ -1,4 +1,5 @@
 (
+    spawn_zone: ( min: (x: -20, y: 5), max: (x: 20, y: 10) ),
     recipes: [
         RopeConnectedBlocks(
             block1: ( pose: ( position: (-7, 2)), is_static: true, ),
@@ -24,17 +25,30 @@
         Capsule(( pose: ( position: ( 5.0, 2.5 ), rotation: Deg(90)), length: 0.5, radius: 0.2, is_static: true )),
         Capsule(( pose: ( position: ( 6.0, 2.5 ), rotation: Deg(90)), length: 0.5, radius: 0.2, is_static: true )),
         // walls
-        Block (( 
-            width: 20, height: 0.2, pose: ( position: (0, 5) ), is_static: true,
+        Block ((
+            width: 35, height: 0.2, pose: ( position: (-35, -5) ), is_static: true,
         )),
         Block ((
-            width: 20, height: 0.2, pose: ( position: (0, -5) ), is_static: true,
+            width: 35, height: 0.2, pose: ( position: (35, -5) ), is_static: true,
         )),
         Block ((
-            width: 0.2, height: 10, pose: ( position: (10, 0) ), is_static: true,
+            width: 0.2, height: 50, pose: ( position: (50, 20) ), is_static: true,
         )),
         Block ((
-            width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
+            width: 0.2, height: 50, pose: ( position: (-50, 20) ), is_static: true,
         )),
+        // ramps
+        Block ((
+            width: 6, height: 0.2, pose: ( position: (-15.1, -3.5), rotation: Deg(30) ), is_static: true,
+        )),
+        Block ((
+            width: 6, height: 0.2, pose: ( position: (15.1, -3.5), rotation: Deg(-30) ), is_static: true,
+        )),
+        RopeConnectedBlocks (
+            block1: ( width: 6, height: 0.2, pose: ( position: (-10, -3.5), rotation: Deg(-30) ), is_static: true ),
+            offset1: (3.1, 0),
+            block2: ( width: 6, height: 0.2, pose: ( position: (10, -3.5), rotation: Deg(30) ), is_static: true ),
+            offset2: (-3.1, 0),
+        )
     ],
 )
