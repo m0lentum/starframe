@@ -133,6 +133,10 @@ impl HGrid {
     pub(crate) fn insert(&mut self, aabb: AABB, id: usize) {
         self.aabbs[id] = aabb;
 
+        let aabb = AABB {
+            min: aabb.min - self.bounds.min,
+            max: aabb.max - self.bounds.min,
+        };
         // select grid level based on smaller extent of the aabb
         let aabb_size = aabb.width().min(aabb.height());
         let grid_level = match self.grids.iter_mut().find(|g| g.spacing > aabb_size) {
@@ -174,6 +178,11 @@ impl HGrid {
     }
 
     pub(crate) fn test_aabb<'a>(&'a mut self, aabb: AABB) -> impl 'a + Iterator<Item = usize> {
+        let aabb = AABB {
+            min: aabb.min - self.bounds.min,
+            max: aabb.max - self.bounds.min,
+        };
+
         // destructuring to move into closures
         let bitset_size = self.bitset_size;
         let timestamps = &mut self.timestamps;
