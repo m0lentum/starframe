@@ -213,6 +213,43 @@ impl HGrid {
                 }
             })
     }
+
+    pub(crate) fn populated_cells<'a>(&'a self) -> impl 'a + Iterator<Item = GridCell> {
+        let bitset_size = self.bitset_size;
+        self.grids
+            .iter()
+            .enumerate()
+            .flat_map(move |(grid_idx, grid)| {
+                grid.column_bits.chunks(bitset_size).enumerate().flat_map(
+                    move |(col_idx, col_bits)| {
+                        grid.row_bits.chunks(bitset_size).enumerate().filter_map(
+                            move |(row_idx, row_bits)| {
+                                if BitsetIntersection(col_bits, row_bits)
+                                    .iter()
+                                    .next()
+                                    .is_none()
+                                {
+                                    None
+                                } else {
+                                    Some(GridCell {
+                                        grid_idx,
+                                        col_idx,
+                                        row_idx,
+                                    })
+                                }
+                            },
+                        )
+                    },
+                )
+            })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GridCell {
+    pub grid_idx: usize,
+    pub col_idx: usize,
+    pub row_idx: usize,
 }
 
 //

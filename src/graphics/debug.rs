@@ -22,10 +22,11 @@ struct Vertex {
 /// Renderer to draw
 pub struct DebugVisualizer {
     line_pipeline: wgpu::RenderPipeline,
-    shape_pipeline: wgpu::RenderPipeline,
+    mesh_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
-    vert_buf: super::util::DynamicVertexBuffer,
+    line_buf: super::util::DynamicVertexBuffer,
+    mesh_buf: super::util::DynamicVertexBuffer,
 }
 
 impl DebugVisualizer {
@@ -139,10 +140,11 @@ impl DebugVisualizer {
 
         Self {
             line_pipeline,
-            shape_pipeline,
+            mesh_pipeline: shape_pipeline,
             bind_group,
             uniform_buf,
-            vert_buf: super::util::DynamicVertexBuffer::new(Some("debug")),
+            line_buf: super::util::DynamicVertexBuffer::new(Some("debug lines")),
+            mesh_buf: super::util::DynamicVertexBuffer::new(Some("debug meshes")),
         }
     }
 
@@ -160,18 +162,54 @@ impl DebugVisualizer {
         ctx.queue
             .write_buffer(&self.uniform_buf, 0, uniforms.as_bytes());
 
-        // update vertices
+        // draw populated grid cells
 
         let hgrid = &phys.spatial_index;
+        let verts: Vec<Vertex> = hgrid
+            .populated_cells()
+            .flat_map(|cell| {
+                // more opaque for smaller grid levels
+                let alpha = 0.5 * (1.0 - cell.grid_idx as f32 / hgrid.grids.len() as f32);
+                let color = [0.8, 0.5 * alpha, alpha, alpha];
+                let spacing = hgrid.grids[cell.grid_idx].spacing as f32;
+                let min = [
+                    hgrid.bounds.min.x as f32 + cell.col_idx as f32 * spacing,
+                    hgrid.bounds.min.y as f32 + cell.row_idx as f32 * spacing,
+                ];
+                let max = [min[0] + spacing, min[1] + spacing];
+                std::array::IntoIter::new([
+                    [min[0], min[1]],
+                    [max[0], min[1]],
+                    [min[0], max[1]],
+                    [max[0], max[1]],
+                    [min[0], max[1]],
+                    [max[0], min[1]],
+                ])
+                .map(move |position| Vertex { position, color })
+            })
+            .collect();
+
+        self.mesh_buf.write(ctx, &verts);
+
+        {
+            let mut pass = ctx.pass();
+            pass.set_pipeline(&self.mesh_pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, self.mesh_buf.slice());
+            pass.draw(0..self.mesh_buf.len() as u32, 0..1);
+        }
+
+        // draw lines
+
         let bds = hgrid.bounds;
-        let line_verts: Vec<Vertex> = hgrid
+        let verts: Vec<Vertex> = hgrid
             .grids
             .iter()
             .enumerate()
             .flat_map(|(grid_idx, grid)| {
                 // less opaque for smaller grid levels
-                let lvl = 0.8 * (grid_idx as f32 / hgrid.grids.len() as f32);
-                let color = [0.0, 0.0, 0.0, lvl];
+                let alpha = 0.8 * (grid_idx as f32 / hgrid.grids.len() as f32);
+                let color = [0.0, 0.0, 0.0, alpha];
                 let spacing = grid.spacing;
                 (0..=grid.column_count)
                     .flat_map(move |col| {
@@ -203,15 +241,14 @@ impl DebugVisualizer {
             })
             .collect();
 
-        self.vert_buf.write(ctx, &line_verts);
+        self.line_buf.write(ctx, &verts);
 
-        // draw lines
         {
             let mut pass = ctx.pass();
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vert_buf.slice());
-            pass.draw(0..self.vert_buf.len() as u32, 0..1);
+            pass.set_vertex_buffer(0, self.line_buf.slice());
+            pass.draw(0..self.line_buf.len() as u32, 0..1);
         }
     }
 }
