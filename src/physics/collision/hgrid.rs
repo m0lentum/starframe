@@ -58,10 +58,11 @@ impl HGrid {
         let largest_spacing = spacing;
         let bounds = AABB {
             min: params.approx_bounds.min,
-            max: m::Vec2::new(
-                (params.approx_bounds.width() / largest_spacing).ceil() * largest_spacing,
-                (params.approx_bounds.height() / largest_spacing).ceil() * largest_spacing,
-            ),
+            max: params.approx_bounds.min
+                + m::Vec2::new(
+                    (params.approx_bounds.width() / largest_spacing).ceil() * largest_spacing,
+                    (params.approx_bounds.height() / largest_spacing).ceil() * largest_spacing,
+                ),
         };
         let bounds_w = bounds.width();
         let bounds_h = bounds.height();
