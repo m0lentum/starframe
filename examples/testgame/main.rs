@@ -65,8 +65,8 @@ impl State {
             mouse_grabber: MouseGrabber::new(),
             physics: phys::Physics::new(phys::collision::HGridParams {
                 approx_bounds: phys::collision::AABB {
-                    min: m::Vec2::new(-20.0, -10.0),
-                    max: m::Vec2::new(20.0, 10.0),
+                    min: m::Vec2::new(-40.0, -15.0),
+                    max: m::Vec2::new(40.0, 25.0),
                 },
                 smallest_obj_radius: 0.5,
                 largest_obj_radius: 3.0,

@@ -169,7 +169,7 @@ impl DebugVisualizer {
             .populated_cells()
             .flat_map(|cell| {
                 // more opaque for smaller grid levels
-                let alpha = 0.5 * (1.0 - cell.grid_idx as f32 / hgrid.grids.len() as f32);
+                let alpha = 0.2 * (1.0 - cell.grid_idx as f32 / hgrid.grids.len() as f32);
                 let color = [0.8, 0.5 * alpha, alpha, alpha];
                 let spacing = hgrid.grids[cell.grid_idx].spacing as f32;
                 let min = [
@@ -208,7 +208,7 @@ impl DebugVisualizer {
             .enumerate()
             .flat_map(|(grid_idx, grid)| {
                 // less opaque for smaller grid levels
-                let alpha = 0.8 * (grid_idx as f32 / hgrid.grids.len() as f32);
+                let alpha = 0.8 * ((grid_idx + 1) as f32 / hgrid.grids.len() as f32);
                 let color = [0.0, 0.0, 0.0, alpha];
                 let spacing = grid.spacing;
                 (0..=grid.column_count)
