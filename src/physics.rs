@@ -113,7 +113,7 @@ pub struct Physics {
     pub substeps: usize,
     pub mask_matrix: collision::MaskMatrix,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
-    spatial_index: HGrid,
+    pub(crate) spatial_index: HGrid,
     working_bufs: WorkingBuffers,
 }
 

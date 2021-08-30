@@ -7,3 +7,6 @@ pub mod camera;
 
 pub mod shape;
 pub use shape::{Shape, ShapeRenderer};
+
+mod debug;
+pub use debug::DebugVisualizer;

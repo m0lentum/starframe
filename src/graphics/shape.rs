@@ -153,9 +153,7 @@ pub struct ShapeRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
-    // we don't create the vertex buffer until in the draw method where we have some objects
-    vert_buf: Option<wgpu::Buffer>,
-    vert_buf_len: u32,
+    vert_buf: super::util::DynamicVertexBuffer,
 }
 impl ShapeRenderer {
     pub fn new(rend: &super::Renderer) -> Self {
@@ -262,12 +260,11 @@ impl ShapeRenderer {
             pipeline,
             bind_group,
             uniform_buf,
-            vert_buf: None,
-            vert_buf_len: 0,
+            vert_buf: super::util::DynamicVertexBuffer::new(Some("shape")),
         }
     }
 
-    /// Draw all the alive `Shape`s that have associated `Transform`s.
+    /// Draw all the alive [`Shape`][self::Shape]s that have associated [`Pose`][crate::math::Pose]s.
     pub fn draw(
         &mut self,
         l_shape: &graph::Layer<Shape>,
@@ -298,26 +295,8 @@ impl ShapeRenderer {
         if verts.is_empty() {
             return;
         }
-        let active_verts_len = verts.len() as u32;
-        let active_verts_size = active_verts_len as u64 * std::mem::size_of::<Vertex>() as u64;
 
-        // Allocate a new buffer if we don't have room for everything
-        //
-        // TODO: currently this grows on every frame that new shapes have been added,
-        // it should reserve some extra space to avoid this
-        if self.vert_buf.is_none() || self.vert_buf_len < active_verts_len {
-            self.vert_buf = Some(ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("shape"),
-                size: active_verts_size,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
-            self.vert_buf_len = active_verts_len;
-        }
-
-        // past this point the vertex buffer always exists
-        let vert_buf = self.vert_buf.as_ref().unwrap();
-        ctx.queue.write_buffer(vert_buf, 0, verts.as_bytes());
+        self.vert_buf.write(ctx, &verts);
 
         //
         // Render
@@ -326,8 +305,8 @@ impl ShapeRenderer {
             let mut pass = ctx.pass();
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, vert_buf.slice(..));
-            pass.draw(0..active_verts_len, 0..1);
+            pass.set_vertex_buffer(0, self.vert_buf.slice());
+            pass.draw(0..self.vert_buf.len() as u32, 0..1);
         }
     }
 }

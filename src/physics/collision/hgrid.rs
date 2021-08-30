@@ -11,13 +11,13 @@ use crate::math as m;
 /// If the object count or world size is very large, it will eat up a lot of memory.
 #[derive(Clone, Debug)]
 pub struct HGrid {
-    bounds: AABB,
+    pub(crate) bounds: AABB,
     // bitsets for grid cells are stored as a contiguous buffer,
     // interpreted in chunks of <mask_size> u64s.
     // this lets us increase the size of a bitset at runtime
     // when number of objects increases past the current limit.
     bitset_size: usize,
-    grids: Vec<Grid>,
+    pub(crate) grids: Vec<Grid>,
     // timestamping used to keep track of which colliders were already checked by a query.
     curr_timestamp: u16,
     timestamps: Vec<u16>,
@@ -26,11 +26,11 @@ pub struct HGrid {
 }
 
 #[derive(Clone, Debug)]
-struct Grid {
-    spacing: f64,
+pub(crate) struct Grid {
+    pub(crate) spacing: f64,
     has_objects: bool,
-    column_count: usize,
-    row_count: usize,
+    pub(crate) column_count: usize,
+    pub(crate) row_count: usize,
     column_bits: Vec<u64>,
     row_bits: Vec<u64>,
 }
@@ -227,6 +227,8 @@ trait IterableBitset {
 #[derive(Clone, Copy)]
 struct Bitset<'a>(&'a [u64]);
 
+// these methods are useful in tests even though they're not used anywhere public atm
+#[allow(dead_code)]
 impl<'a> Bitset<'a> {
     pub fn iter(&self) -> BitsetIter<Self> {
         BitsetIter {

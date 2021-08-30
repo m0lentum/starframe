@@ -52,6 +52,7 @@ pub struct State {
     physics: phys::Physics,
     camera: gx::camera::MouseDragCamera,
     shape_renderer: gx::ShapeRenderer,
+    debug_visualizer: gx::DebugVisualizer,
 }
 impl State {
     fn init(renderer: &gx::Renderer) -> Self {
@@ -78,6 +79,7 @@ impl State {
                 },
             ),
             shape_renderer: gx::ShapeRenderer::new(renderer),
+            debug_visualizer: gx::DebugVisualizer::new(renderer),
         }
     }
 
@@ -384,6 +386,9 @@ impl game::GameState for State {
             b: 0.1,
             a: 1.0,
         });
+
+        self.debug_visualizer
+            .draw_spatial_index(&self.physics, &self.camera, &mut ctx);
 
         self.shape_renderer.draw(
             &self.graph.l_shape,
