@@ -145,21 +145,21 @@ impl HGrid {
         };
         grid_level.has_objects = true;
 
-        let first_column = (aabb.min.x / grid_level.spacing) as usize;
-        let last_column = (aabb.max.x / grid_level.spacing) as usize;
+        let first_column = (aabb.min.x / grid_level.spacing) as isize;
+        let last_column = (aabb.max.x / grid_level.spacing) as isize;
         for col in first_column..=last_column {
             // toroidal wrapping for things outside the grid
-            let col = col % grid_level.column_count;
+            let col = col.rem_euclid(grid_level.column_count as isize) as usize;
             let m_start = col * self.bitset_size;
             let mut col_bitset =
                 BitsetMut(&mut grid_level.column_bits[m_start..(m_start + self.bitset_size)]);
             col_bitset.set(id);
         }
 
-        let first_row = (aabb.min.y / grid_level.spacing) as usize;
-        let last_row = (aabb.max.y / grid_level.spacing) as usize;
+        let first_row = (aabb.min.y / grid_level.spacing) as isize;
+        let last_row = (aabb.max.y / grid_level.spacing) as isize;
         for row in first_row..=last_row {
-            let row = row % grid_level.row_count;
+            let row = row.rem_euclid(grid_level.row_count as isize) as usize;
             let m_start = row * self.bitset_size;
             let mut row_bitset =
                 BitsetMut(&mut grid_level.row_bits[m_start..(m_start + self.bitset_size)]);
@@ -195,13 +195,13 @@ impl HGrid {
             .filter(|grid| grid.has_objects)
             .flat_map(move |grid| {
                 let col_range =
-                    ((aabb.min.x / grid.spacing) as usize)..=((aabb.max.x / grid.spacing) as usize);
+                    ((aabb.min.x / grid.spacing) as isize)..=((aabb.max.x / grid.spacing) as isize);
                 let row_range =
-                    ((aabb.min.y / grid.spacing) as usize)..=((aabb.max.y / grid.spacing) as usize);
+                    ((aabb.min.y / grid.spacing) as isize)..=((aabb.max.y / grid.spacing) as isize);
                 col_range.flat_map(move |col| {
-                    let col = col % grid.column_count;
+                    let col = col.rem_euclid(grid.column_count as isize) as usize;
                     row_range.clone().flat_map(move |row| {
-                        let row = row % grid.row_count;
+                        let row = row.rem_euclid(grid.row_count as isize) as usize;
 
                         let col_b = col * bitset_size;
                         let row_b = row * bitset_size;
