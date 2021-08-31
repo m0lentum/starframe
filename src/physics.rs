@@ -241,7 +241,7 @@ impl Physics {
         // node_ref_map maps from the position of a node in the graph layer
         // to the position of a node in body_refs
         // we don't need to clear it because gaps will just never be touched
-        bufs.node_ref_map.resize(body_refs.len(), 0);
+        bufs.node_ref_map.resize(l_body.content.len(), 0);
         for (ref_pos, node) in body_refs.iter().enumerate() {
             bufs.node_ref_map[node.pos().item_idx] = ref_pos;
         }
