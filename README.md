@@ -55,6 +55,7 @@ Enter           - reload current scene
 P               - pause
 Space           - step one frame while paused
 Esc             - close the game
+G               - toggle debug visualizations
 
 Arrows  - move the player
 LShift  - jump

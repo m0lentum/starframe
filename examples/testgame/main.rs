@@ -53,6 +53,7 @@ pub struct State {
     camera: gx::camera::MouseDragCamera,
     shape_renderer: gx::ShapeRenderer,
     debug_visualizer: gx::DebugVisualizer,
+    debug_vis_active: bool,
 }
 impl State {
     fn init(renderer: &gx::Renderer) -> Self {
@@ -80,6 +81,7 @@ impl State {
             ),
             shape_renderer: gx::ShapeRenderer::new(renderer),
             debug_visualizer: gx::DebugVisualizer::new(renderer),
+            debug_vis_active: false,
         }
     }
 
@@ -223,6 +225,11 @@ impl game::GameState for State {
         {
             self.physics.substeps -= 1;
             println!("Substeps: {}", self.physics.substeps);
+        }
+
+        // toggle debug visualizer
+        if game.input.is_key_pressed(Key::G, Some(0)) {
+            self.debug_vis_active = !self.debug_vis_active;
         }
 
         // mouse controls
@@ -387,8 +394,10 @@ impl game::GameState for State {
             a: 1.0,
         });
 
-        self.debug_visualizer
-            .draw_spatial_index(&self.physics, &self.camera, &mut ctx);
+        if self.debug_vis_active {
+            self.debug_visualizer
+                .draw_spatial_index(&self.physics, &self.camera, &mut ctx);
+        }
 
         self.shape_renderer.draw(
             &self.graph.l_shape,
