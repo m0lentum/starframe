@@ -178,6 +178,7 @@ impl HGrid {
     }
 
     pub(crate) fn test_aabb<'a>(&'a mut self, aabb: AABB) -> impl 'a + Iterator<Item = usize> {
+        let aabb_worldspace = aabb;
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
             max: aabb.max - self.bounds.min,
@@ -186,6 +187,7 @@ impl HGrid {
         // destructuring to move into closures
         let bitset_size = self.bitset_size;
         let timestamps = &mut self.timestamps;
+        let aabbs = &self.aabbs;
 
         self.curr_timestamp += 1;
         let curr_timestamp = self.curr_timestamp;
@@ -216,7 +218,9 @@ impl HGrid {
             .filter_map(move |id| {
                 if timestamps[id] != curr_timestamp {
                     timestamps[id] = curr_timestamp;
-                    Some(id)
+                    // aabb check to quickly cull things that are in the same square because of
+                    // wrapping or just far enough apart
+                    aabb_worldspace.intersection(&aabbs[id]).map(|_| id)
                 } else {
                     None
                 }

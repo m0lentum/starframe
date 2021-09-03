@@ -622,15 +622,7 @@ impl Physics {
                         ColliderContext::Body(b) => poses[*b],
                         ColliderContext::Static(pose) => *pose,
                     });
-                    let aabb_isect = self
-                        .spatial_index
-                        .get_aabb(colls[0].pos().item_idx)
-                        .intersection(&self.spatial_index.get_aabb(colls[1].pos().item_idx));
-                    if aabb_isect.is_none() {
-                        ContactResult::Zero
-                    } else {
-                        intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
-                    }
+                    intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
                 };
 
                 #[cfg(feature = "tracy")]
