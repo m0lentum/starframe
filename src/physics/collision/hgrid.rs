@@ -35,25 +35,63 @@ pub(crate) struct Grid {
     row_bits: Vec<u64>,
 }
 
-/// TODO: document all the params, these are not self-explanatory
+/// Parameters for the creation of a hierarchical grid.
 pub struct HGridParams {
+    /// Approximate bounds of the grid. Approximate because the actual bounds
+    /// are rounded to fit a multiple of the largest grid level's spacing.
+    /// The bottom left bound is used as-is and the top right is extended.
+    ///
+    /// Naturally, the larger the bounds, the more memory the grid takes.
+    /// The grid doesn't need to cover the whole world because it wraps around
+    /// toroidally to cover all of space, however, the larger the grid, the less
+    /// far-apart objects will be tested due to said wrapping.
+    /// Adjust the bounds to find a good tradeoff between speed and memory.
     pub approx_bounds: AABB,
-    pub smallest_obj_radius: f64,
-    pub largest_obj_radius: f64,
-    pub expected_obj_count: usize,
+    /// Spacing of the lowest grid level. Reducing it increases required memory
+    /// and reduces unnecessary collision checks.
+    ///
+    /// A likely good value is a little (10-50%) larger than the smallest objects in your scene.
+    pub lowest_spacing: f64,
+    /// Number of grid levels. Increasing it increases required memory and
+    /// may speed up collision detection if there's high variance in object size.
+    ///
+    /// NOTE: for now, little optimization involving multiple grid levels has been done.
+    /// You're probably best off setting this to 1.
+    pub level_count: usize,
+    /// The number to multiply spacing by for subsequent grid levels after `lowest_spacing`.
+    ///
+    /// A good number depends on the distribution of object sizes.  2 is good for most cases.
+    pub spacing_ratio: usize,
+    /// How many objects to initially allocate space for.
+    /// More space will be allocated as needed.
+    pub initial_capacity: usize,
+}
+
+impl Default for HGridParams {
+    fn default() -> Self {
+        Self {
+            approx_bounds: AABB {
+                min: m::Vec2::new(-40.0, -10.0),
+                max: m::Vec2::new(40.0, 10.0),
+            },
+            lowest_spacing: 1.0,
+            level_count: 1,
+            spacing_ratio: 2,
+            initial_capacity: 0,
+        }
+    }
 }
 
 impl HGrid {
     /// Create a new HGrid. See [`HGridParams`][self::HGridParams] for explanation.
     pub fn new(params: HGridParams) -> Self {
-        let mut spacings = Vec::new();
-        let mut spacing = params.smallest_obj_radius;
-        while spacing < params.largest_obj_radius {
-            spacings.push(spacing);
-            spacing *= 2.0;
-        }
-        // last spacing is the one bigger than everything
+        let mut spacings: Vec<f64> = Vec::new();
+        let mut spacing = params.lowest_spacing;
         spacings.push(spacing);
+        for _i in 1..params.level_count {
+            spacing *= params.spacing_ratio as f64;
+            spacings.push(spacing);
+        }
 
         let largest_spacing = spacing;
         let bounds = AABB {
@@ -67,7 +105,7 @@ impl HGrid {
         let bounds_w = bounds.width();
         let bounds_h = bounds.height();
 
-        let bitset_size = params.expected_obj_count / 64 + 1;
+        let bitset_size = params.initial_capacity / 64 + 1;
 
         HGrid {
             bounds,
@@ -88,8 +126,8 @@ impl HGrid {
                 })
                 .collect(),
             curr_timestamp: 0,
-            timestamps: vec![0; params.expected_obj_count],
-            aabbs: vec![AABB::zero(); params.expected_obj_count],
+            timestamps: vec![0; params.initial_capacity],
+            aabbs: vec![AABB::zero(); params.initial_capacity],
         }
     }
 

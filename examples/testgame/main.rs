@@ -69,9 +69,10 @@ impl State {
                     min: m::Vec2::new(-40.0, -15.0),
                     max: m::Vec2::new(40.0, 25.0),
                 },
-                smallest_obj_radius: 0.5,
-                largest_obj_radius: 3.0,
-                expected_obj_count: 100,
+                lowest_spacing: 0.5,
+                level_count: 2,
+                spacing_ratio: 3,
+                initial_capacity: 600,
             }),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
