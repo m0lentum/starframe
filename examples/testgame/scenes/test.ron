@@ -1,8 +1,6 @@
 (
     recipes: [
-        Player ((
-            pose: ( position: (-7, -4.5) ),
-        )),
+        Player ((  position: (-7, -4.5) )),
         // "curtain"
         Blockchain (
             width: 0.2,

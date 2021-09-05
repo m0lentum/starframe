@@ -1,6 +1,7 @@
 (
     spawn_zone: ( min: (x: -20, y: 5), max: (x: 20, y: 10) ),
     recipes: [
+        Player (( position: (-7, 3) )),
         RopeConnectedBlocks(
             block1: ( pose: ( position: (-7, 2)), is_static: true, ),
             offset1: (0.55, 0.55),

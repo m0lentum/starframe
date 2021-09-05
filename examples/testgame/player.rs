@@ -33,27 +33,35 @@ impl Facing {
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct PlayerRecipe {
-    pub pose: m::PoseBuilder,
+    pub position: [f64; 2],
 }
 
 impl PlayerRecipe {
     pub fn spawn(&self, graph: &mut MyGraph) {
-        const WIDTH: f64 = 0.2;
-        const HEIGHT: f64 = 0.4;
+        const R: f64 = 0.1;
+        const LENGTH: f64 = 0.2;
 
-        let pose_node = graph.l_pose.insert(self.pose.into(), &mut graph.graph);
-        let shape_node = graph.l_shape.insert(
-            gx::Shape::Rect {
-                w: WIDTH,
-                h: HEIGHT,
-                color: [0.2, 0.8, 0.6, 1.0],
-            },
+        let coll = phys::Collider::new_capsule(LENGTH, R).with_material(phys::Material {
+            static_friction_coef: None,
+            dynamic_friction_coef: None,
+            restitution_coef: 0.0,
+        });
+
+        let pose_node = graph.l_pose.insert(
+            m::PoseBuilder::new()
+                .with_position(self.position)
+                .with_rotation(m::Angle::Deg(90.0))
+                .build(),
             &mut graph.graph,
         );
-        let coll = phys::Collider::new_rect(WIDTH, HEIGHT);
-        let body = phys::Body::new_dynamic(&coll, 3.0);
+        let shape_node = graph.l_shape.insert(
+            gx::Shape::from_collider(&coll, [0.2, 0.8, 0.6, 1.0]),
+            &mut graph.graph,
+        );
         let coll_node = graph.l_collider.insert(coll, &mut graph.graph);
-        let body_node = graph.l_body.insert(body, &mut graph.graph);
+        let body_node = graph
+            .l_body
+            .insert(phys::Body::new_particle(1.0), &mut graph.graph);
         let tag_node = graph.l_player.insert(Player::new(), &mut graph.graph);
         graph.graph.connect(&pose_node, &body_node);
         graph.graph.connect(&pose_node, &coll_node);
@@ -87,7 +95,7 @@ impl PlayerController {
         let mut bullet_queue: Vec<(m::Pose, phys::Velocity)> = Vec::new();
         for mut player in g.l_player.iter_mut(&g.graph) {
             let mut player_body = g.graph.get_neighbor_mut(&player, &mut g.l_body).unwrap();
-            let mut player_tr = g.graph.get_neighbor_mut(&player, &mut g.l_pose).unwrap();
+            let player_tr = g.graph.get_neighbor_mut(&player, &mut g.l_pose).unwrap();
 
             // move and orient
 
@@ -101,11 +109,6 @@ impl PlayerController {
             let accel_needed = target_hvel - player_body.velocity.linear.x;
             let accel = accel_needed.min(self.max_acceleration);
             player_body.velocity.linear.x += accel;
-
-            // hacked up rotation locking
-
-            player_body.velocity.angular = 0.0;
-            player_tr.rotation = m::Rotor2::identity();
 
             // jump
 
@@ -160,7 +163,6 @@ impl PlayerController {
                         g.graph.delete(checked);
                     }
                 }
-                _ => (),
             },
             &mut g.graph,
         );
