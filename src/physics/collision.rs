@@ -1,4 +1,4 @@
-mod hgrid;
+pub(crate) mod hgrid;
 pub use hgrid::{HGrid, HGridParams};
 
 mod collider;

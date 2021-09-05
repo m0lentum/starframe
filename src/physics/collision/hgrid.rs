@@ -21,9 +21,11 @@ pub struct HGrid {
     // timestamping used to keep track of which colliders were already checked by a query.
     curr_timestamp: u16,
     timestamps: Vec<u16>,
-    // cache AABBs that colliders were inserted with and their layers for early checks
+    // cache AABBs that colliders were inserted with, their layers to cull ignored layer pairs
+    // quickly, and their generations in the graph to allow safe user-facing queries
     aabbs: Vec<AABB>,
     layers: Vec<u64>,
+    generations: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -130,6 +132,7 @@ impl HGrid {
             timestamps: vec![0; params.initial_capacity],
             aabbs: vec![AABB::zero(); params.initial_capacity],
             layers: vec![0; params.initial_capacity],
+            generations: vec![0; params.initial_capacity],
         }
     }
 
@@ -164,11 +167,14 @@ impl HGrid {
         self.timestamps.resize(collider_count, 0);
         self.aabbs.resize(collider_count, AABB::zero());
         self.layers.resize(collider_count, 0);
+        self.generations.resize(collider_count, 0);
     }
 
-    pub(crate) fn insert(&mut self, id: usize, aabb: AABB, layer: u64) {
+    pub(crate) fn insert(&mut self, node: StoredNode, aabb: AABB, layer: u64) {
+        let id = node.idx;
         self.aabbs[id] = aabb;
         self.layers[id] = layer;
+        self.generations[id] = node.gen;
 
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
@@ -206,13 +212,13 @@ impl HGrid {
 
     pub(crate) fn test_and_insert<'a>(
         &'a mut self,
-        id: usize,
+        node: StoredNode,
         aabb: AABB,
         layer: u64,
         mask_matrix: &'a MaskMatrix,
-    ) -> impl 'a + Iterator<Item = usize> {
-        self.insert(id, aabb, layer);
-        self.timestamps[id] = self.curr_timestamp + 1;
+    ) -> impl 'a + Iterator<Item = StoredNode> {
+        self.insert(node, aabb, layer);
+        self.timestamps[node.idx] = self.curr_timestamp + 1;
         self.test_aabb(aabb, layer, mask_matrix)
     }
 
@@ -221,7 +227,7 @@ impl HGrid {
         aabb: AABB,
         layer: u64,
         mask_matrix: &'a MaskMatrix,
-    ) -> impl 'a + Iterator<Item = usize> {
+    ) -> impl 'a + Iterator<Item = StoredNode> {
         let aabb_worldspace = aabb;
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
@@ -233,6 +239,7 @@ impl HGrid {
         let timestamps = &mut self.timestamps;
         let aabbs = &self.aabbs;
         let layers = &self.layers;
+        let generations = &self.generations;
 
         self.curr_timestamp += 1;
         let curr_timestamp = self.curr_timestamp;
@@ -266,7 +273,12 @@ impl HGrid {
                     if mask_matrix.get(layers[id], layer) {
                         // aabb check to quickly cull things that are in the same square because of
                         // wrapping or just far enough apart
-                        aabb_worldspace.intersection(&aabbs[id]).map(|_| id)
+                        aabb_worldspace
+                            .intersection(&aabbs[id])
+                            .map(|_| StoredNode {
+                                idx: id,
+                                gen: generations[id],
+                            })
                     } else {
                         None
                     }
@@ -276,12 +288,16 @@ impl HGrid {
             })
     }
 
-    pub(crate) fn test_point<'a>(&'a self, point: m::Vec2) -> impl 'a + Iterator<Item = usize> {
+    pub(crate) fn test_point<'a>(
+        &'a self,
+        point: m::Vec2,
+    ) -> impl 'a + Iterator<Item = StoredNode> {
         let point_worldspace = point;
         let point = point - self.bounds.min;
 
         let bitset_size = self.bitset_size;
         let aabbs = &self.aabbs;
+        let generations = &self.generations;
         self.grids
             .iter()
             .filter(|grid| grid.has_objects)
@@ -299,6 +315,10 @@ impl HGrid {
                 .iter()
             })
             .filter(move |&id| aabbs[id].contains_point(point_worldspace))
+            .map(move |id| StoredNode {
+                idx: id,
+                gen: generations[id],
+            })
     }
 
     pub(crate) fn populated_cells<'a>(&'a self) -> impl 'a + Iterator<Item = GridCell> {
@@ -330,6 +350,12 @@ impl HGrid {
                 )
             })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StoredNode {
+    pub idx: usize,
+    pub gen: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

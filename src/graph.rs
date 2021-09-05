@@ -190,7 +190,7 @@ impl<'a, T> NodeRef<'a, T> {
     pub fn as_node(nr: &Self, graph: &Graph) -> Node<T> {
         Node {
             pos: nr.pos,
-            gen: graph.generations[nr.pos.layer_idx][nr.pos.item_idx],
+            gen: graph.get_generation(nr),
             _marker: PhantomData,
         }
     }
@@ -227,7 +227,7 @@ impl<'a, T> NodeRefMut<'a, T> {
     pub fn as_node(nrm: &Self, graph: &Graph) -> Node<T> {
         Node {
             pos: nrm.pos,
-            gen: graph.generations[nrm.pos.layer_idx][nrm.pos.item_idx],
+            gen: graph.get_generation(nrm),
             _marker: PhantomData,
         }
     }
@@ -475,13 +475,32 @@ impl Graph {
     }
 
     /// Get the number of edges pointing towards the given node.
+    #[inline]
     pub fn get_refcount(&self, node: &impl SafeNode) -> Refcount {
         self.get_refcount_unchecked(node)
     }
 
+    #[inline]
     pub fn get_refcount_unchecked(&self, node: &impl UnsafeNode) -> Refcount {
         let node = node.pos();
         self.refcounts[node.layer_idx][node.item_idx]
+    }
+
+    /// Get the generation index of a node.
+    ///
+    /// This can be useful when implementing some kind of index outside the graph
+    /// that needs to know if a node is still there. Most of the time it's easier
+    /// to just store [`Node`][self::Node]s and use their [`check`][self::Node::check]
+    /// method, though.
+    #[inline]
+    pub fn get_generation(&self, node: &impl SafeNode) -> usize {
+        self.get_generation_unchecked(node)
+    }
+
+    #[inline]
+    pub fn get_generation_unchecked(&self, node: &impl UnsafeNode) -> usize {
+        let pos = node.pos();
+        self.generations[pos.layer_idx][pos.item_idx]
     }
 
     /// Delete a whole _object_ from the graph, beginning from the given node.

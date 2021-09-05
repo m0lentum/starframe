@@ -362,8 +362,16 @@ impl Physics {
                 let spatial_index = &mut self.spatial_index;
                 pairs.extend(
                     spatial_index
-                        .test_and_insert(coll.pos().item_idx, aabb, coll.layer, &self.mask_matrix)
-                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other)]),
+                        .test_and_insert(
+                            collision::hgrid::StoredNode {
+                                idx: coll.pos().item_idx,
+                                gen: graph.get_generation(&coll),
+                            },
+                            aabb,
+                            coll.layer,
+                            &self.mask_matrix,
+                        )
+                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other.idx)]),
                 );
             }
             pairs
@@ -1125,8 +1133,11 @@ impl Physics {
     > {
         self.spatial_index
             .test_point(point)
-            .filter_map(move |coll_idx| {
-                let coll = l_collider.get_unchecked_by_item_idx(coll_idx);
+            .filter_map(move |stored_coll| {
+                let coll = l_collider.get_unchecked_by_item_idx(stored_coll.idx);
+                if graph.get_generation(&coll) != stored_coll.gen {
+                    return None;
+                }
                 let rb = graph.get_neighbor(&coll, &l_body)?;
                 let pose = graph.get_neighbor(&rb, &l_pose)?;
                 if collision::query::point_collider_bool(point, &*pose, &*coll) {
