@@ -32,13 +32,16 @@ impl MouseGrabber {
                     }
                 }
                 None => {
-                    if let Some((pose, _, rb)) = physics.query_point_body(
-                        &graph.graph,
-                        &graph.l_pose,
-                        &graph.l_collider,
-                        &graph.l_body,
-                        target_point,
-                    ) {
+                    let body = physics
+                        .query_point_body(
+                            target_point,
+                            &graph.l_pose,
+                            &graph.l_collider,
+                            &graph.l_body,
+                            &graph.graph,
+                        )
+                        .nth(0);
+                    if let Some((pose, _, rb)) = body {
                         let constr =
                             ConstraintBuilder::new(sf::graph::NodeRef::as_node(&rb, &graph.graph))
                                 .with_origin(pose.inversed() * target_point)

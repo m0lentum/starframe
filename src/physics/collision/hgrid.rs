@@ -276,6 +276,31 @@ impl HGrid {
             })
     }
 
+    pub(crate) fn test_point<'a>(&'a self, point: m::Vec2) -> impl 'a + Iterator<Item = usize> {
+        let point_worldspace = point;
+        let point = point - self.bounds.min;
+
+        let bitset_size = self.bitset_size;
+        let aabbs = &self.aabbs;
+        self.grids
+            .iter()
+            .filter(|grid| grid.has_objects)
+            .flat_map(move |grid| {
+                let col = (point.x / grid.spacing) as isize;
+                let col = col.rem_euclid(grid.column_count as isize) as usize;
+                let row = (point.y / grid.spacing) as isize;
+                let row = row.rem_euclid(grid.row_count as isize) as usize;
+                let col_b = col * bitset_size;
+                let row_b = row * bitset_size;
+                BitsetIntersection(
+                    &grid.column_bits[col_b..col_b + bitset_size],
+                    &grid.row_bits[row_b..row_b + bitset_size],
+                )
+                .iter()
+            })
+            .filter(move |&id| aabbs[id].contains_point(point_worldspace))
+    }
+
     pub(crate) fn populated_cells<'a>(&'a self) -> impl 'a + Iterator<Item = GridCell> {
         let bitset_size = self.bitset_size;
         self.grids

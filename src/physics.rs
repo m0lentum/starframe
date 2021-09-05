@@ -1107,28 +1107,34 @@ impl Physics {
         }
     }
 
-    /// Find the first rigid body that intersects with the given point.
-    pub fn query_point_body<'g>(
-        &self,
-        graph: &'g graph::Graph,
+    /// Find every rigid body that intersects with the given point.
+    pub fn query_point_body<'p, 'g: 'p>(
+        &'p self,
+        point: m::Vec2,
         l_pose: &'g graph::Layer<m::Pose>,
         l_collider: &'g graph::Layer<Collider>,
         l_body: &'g graph::Layer<Body>,
-        point: m::Vec2,
-    ) -> Option<(
-        graph::NodeRef<'g, m::Pose>,
-        graph::NodeRef<'g, Collider>,
-        graph::NodeRef<'g, Body>,
-    )> {
-        l_body.iter(graph).find_map(|rb| {
-            let coll = graph.get_neighbor(&rb, &l_collider)?;
-            let pose = graph.get_neighbor(&rb, &l_pose)?;
-            if collision::query::point_collider_bool(point, &*pose, &*coll) {
-                Some((pose, coll, rb))
-            } else {
-                None
-            }
-        })
+        graph: &'g graph::Graph,
+    ) -> impl 'p
+           + Iterator<
+        Item = (
+            graph::NodeRef<'g, m::Pose>,
+            graph::NodeRef<'g, Collider>,
+            graph::NodeRef<'g, Body>,
+        ),
+    > {
+        self.spatial_index
+            .test_point(point)
+            .filter_map(move |coll_idx| {
+                let coll = l_collider.get_unchecked_by_item_idx(coll_idx);
+                let rb = graph.get_neighbor(&coll, &l_body)?;
+                let pose = graph.get_neighbor(&rb, &l_pose)?;
+                if collision::query::point_collider_bool(point, &*pose, &*coll) {
+                    Some((pose, coll, rb))
+                } else {
+                    None
+                }
+            })
     }
 }
 //
