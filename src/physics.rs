@@ -414,12 +414,12 @@ impl Physics {
                     let ff_accel = forcefield.value_at(pose.translation);
                     vel.linear += ff_accel * dt;
                     *ext_accel = ff_accel;
-
-                    // old_vel is velocity after external forces but before collisions
-                    *old_vel = *vel;
-                    *old_pose = *pose;
-                    *pose = vel.apply_to_pose(dt, *pose);
                 }
+
+                // old_vel is velocity after external forces but before collisions
+                *old_vel = *vel;
+                *old_pose = *pose;
+                *pose = vel.apply_to_pose(dt, *pose);
             }
 
             //
