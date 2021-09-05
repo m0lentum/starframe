@@ -1,7 +1,7 @@
 //! The spatial index is responsible for detecting pairs of possibly
 //! intersecting objects for further, more accurate narrow phase inspection.
 
-use super::AABB;
+use super::{MaskMatrix, AABB};
 use crate::math as m;
 
 /// A hierarchical grid spatial index.
@@ -21,8 +21,9 @@ pub struct HGrid {
     // timestamping used to keep track of which colliders were already checked by a query.
     curr_timestamp: u16,
     timestamps: Vec<u16>,
-    // cache AABBs that colliders were inserted with
+    // cache AABBs that colliders were inserted with and their layers for early checks
     aabbs: Vec<AABB>,
+    layers: Vec<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -128,12 +129,8 @@ impl HGrid {
             curr_timestamp: 0,
             timestamps: vec![0; params.initial_capacity],
             aabbs: vec![AABB::zero(); params.initial_capacity],
+            layers: vec![0; params.initial_capacity],
         }
-    }
-
-    #[inline]
-    pub(crate) fn get_aabb(&self, id: usize) -> AABB {
-        self.aabbs[id]
     }
 
     /// At least for now, recreating the whole grid every frame.
@@ -166,10 +163,12 @@ impl HGrid {
         }
         self.timestamps.resize(collider_count, 0);
         self.aabbs.resize(collider_count, AABB::zero());
+        self.layers.resize(collider_count, 0);
     }
 
-    pub(crate) fn insert(&mut self, aabb: AABB, id: usize) {
+    pub(crate) fn insert(&mut self, id: usize, aabb: AABB, layer: u64) {
         self.aabbs[id] = aabb;
+        self.layers[id] = layer;
 
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
@@ -207,15 +206,22 @@ impl HGrid {
 
     pub(crate) fn test_and_insert<'a>(
         &'a mut self,
-        aabb: AABB,
         id: usize,
+        aabb: AABB,
+        layer: u64,
+        mask_matrix: &'a MaskMatrix,
     ) -> impl 'a + Iterator<Item = usize> {
-        self.insert(aabb, id);
+        self.insert(id, aabb, layer);
         self.timestamps[id] = self.curr_timestamp + 1;
-        self.test_aabb(aabb)
+        self.test_aabb(aabb, layer, mask_matrix)
     }
 
-    pub(crate) fn test_aabb<'a>(&'a mut self, aabb: AABB) -> impl 'a + Iterator<Item = usize> {
+    pub(crate) fn test_aabb<'a>(
+        &'a mut self,
+        aabb: AABB,
+        layer: u64,
+        mask_matrix: &'a MaskMatrix,
+    ) -> impl 'a + Iterator<Item = usize> {
         let aabb_worldspace = aabb;
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
@@ -226,6 +232,7 @@ impl HGrid {
         let bitset_size = self.bitset_size;
         let timestamps = &mut self.timestamps;
         let aabbs = &self.aabbs;
+        let layers = &self.layers;
 
         self.curr_timestamp += 1;
         let curr_timestamp = self.curr_timestamp;
@@ -256,9 +263,13 @@ impl HGrid {
             .filter_map(move |id| {
                 if timestamps[id] != curr_timestamp {
                     timestamps[id] = curr_timestamp;
-                    // aabb check to quickly cull things that are in the same square because of
-                    // wrapping or just far enough apart
-                    aabb_worldspace.intersection(&aabbs[id]).map(|_| id)
+                    if mask_matrix.get(layers[id], layer) {
+                        // aabb check to quickly cull things that are in the same square because of
+                        // wrapping or just far enough apart
+                        aabb_worldspace.intersection(&aabbs[id]).map(|_| id)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

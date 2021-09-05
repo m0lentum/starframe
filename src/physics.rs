@@ -360,12 +360,10 @@ impl Physics {
                 };
 
                 let spatial_index = &mut self.spatial_index;
-                let mask_matrix = &self.mask_matrix;
                 pairs.extend(
                     spatial_index
-                        .test_and_insert(aabb, coll.pos().item_idx)
-                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other)])
-                        .filter(|[c1, c2]| mask_matrix.get(c1.layer, c2.layer)),
+                        .test_and_insert(coll.pos().item_idx, aabb, coll.layer, &self.mask_matrix)
+                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other)]),
                 );
             }
             pairs

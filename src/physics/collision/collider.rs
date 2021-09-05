@@ -9,7 +9,7 @@ pub struct Collider {
     pub ty: ColliderType,
     /// Collision layer, see [`MaskMatrix`][super::MaskMatrix] for info.
     /// Defaults to 0.
-    pub layer: usize,
+    pub layer: u64,
 }
 
 impl Collider {
@@ -62,7 +62,7 @@ impl Collider {
         self
     }
 
-    pub fn with_layer(mut self, layer: usize) -> Self {
+    pub fn with_layer(mut self, layer: u64) -> Self {
         self.layer = layer;
         self
     }

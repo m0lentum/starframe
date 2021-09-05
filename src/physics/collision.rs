@@ -97,7 +97,7 @@ pub struct MaskMatrix([u64; 64]);
 
 /// A reserved layer for ropes. By default, all ropes are on the same layer
 /// and thus do not collide with each other.
-pub const ROPE_LAYER: usize = 63;
+pub const ROPE_LAYER: u64 = 63;
 
 impl Default for MaskMatrix {
     fn default() -> Self {
@@ -109,18 +109,18 @@ impl Default for MaskMatrix {
 
 impl MaskMatrix {
     /// Stop collision detection between a pair of collision layers.
-    pub fn ignore(&mut self, layer1: usize, layer2: usize) {
-        self.0[layer1] &= !(1 << layer2);
-        self.0[layer2] &= !(1 << layer1);
+    pub fn ignore(&mut self, layer1: u64, layer2: u64) {
+        self.0[layer1 as usize] &= !(1 << layer2);
+        self.0[layer2 as usize] &= !(1 << layer1);
     }
 
     /// Stop collision detection between members of the same layer.
-    pub fn ignore_within(&mut self, layer: usize) {
-        self.0[layer] &= !(1 << layer);
+    pub fn ignore_within(&mut self, layer: u64) {
+        self.0[layer as usize] &= !(1 << layer);
     }
 
     /// Check whether or not two layers have collision enabled between them.
-    pub fn get(&self, layer1: usize, layer2: usize) -> bool {
-        self.0[layer1] & (1 << layer2) != 0
+    pub fn get(&self, layer1: u64, layer2: u64) -> bool {
+        self.0[layer1 as usize] & (1 << layer2) != 0
     }
 }
