@@ -350,12 +350,14 @@ impl Recipe {
                     rope_end_1,
                     rope_end_2,
                     0.02,
-                    &mut graph.l_body,
-                    &mut graph.l_pose,
-                    &mut graph.l_collider,
-                    &mut graph.l_rope,
-                    &mut graph.l_shape,
-                    &mut graph.graph,
+                    (
+                        &mut graph.graph,
+                        &mut graph.l_body,
+                        &mut graph.l_pose,
+                        &mut graph.l_collider,
+                        &mut graph.l_rope,
+                        &mut graph.l_shape,
+                    ),
                 );
                 match b1 {
                     Some(b1) => {

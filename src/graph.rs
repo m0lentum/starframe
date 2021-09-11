@@ -175,7 +175,7 @@ impl<'a, T> std::ops::Deref for NodeRef<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.item
+        self.item
     }
 }
 impl<'a, T> UnsafeNode for NodeRef<'a, T> {
@@ -207,7 +207,7 @@ impl<'a, T> std::ops::Deref for NodeRefMut<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.item
+        self.item
     }
 }
 impl<'a, T> std::ops::DerefMut for NodeRefMut<'a, T> {
@@ -567,8 +567,7 @@ impl Graph {
                 debug_assert!(
                     self.vacant_slots[node.layer_idx]
                         .iter()
-                        .find(|&&idx| idx == node.item_idx)
-                        .is_none(),
+                        .any(|&idx| idx == node.item_idx),
                     "Same slot marked vacant twice ({:?})",
                     node,
                 );

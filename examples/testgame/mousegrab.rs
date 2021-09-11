@@ -40,7 +40,7 @@ impl MouseGrabber {
                             &graph.l_body,
                             &graph.graph,
                         )
-                        .nth(0);
+                        .next();
                     if let Some((pose, _, rb)) = body {
                         let constr =
                             ConstraintBuilder::new(sf::graph::NodeRef::as_node(&rb, &graph.graph))
@@ -54,11 +54,9 @@ impl MouseGrabber {
                     }
                 }
             }
-        } else {
-            if let Some(handle) = self.constraint {
-                physics.remove_constraint(handle);
-                self.constraint = None;
-            }
+        } else if let Some(handle) = self.constraint {
+            physics.remove_constraint(handle);
+            self.constraint = None;
         }
     }
 }

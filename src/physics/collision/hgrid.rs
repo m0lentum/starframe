@@ -288,10 +288,7 @@ impl HGrid {
             })
     }
 
-    pub(crate) fn test_point<'a>(
-        &'a self,
-        point: m::Vec2,
-    ) -> impl 'a + Iterator<Item = StoredNode> {
+    pub(crate) fn test_point(&self, point: m::Vec2) -> impl '_ + Iterator<Item = StoredNode> {
         let point_worldspace = point;
         let point = point - self.bounds.min;
 
@@ -321,7 +318,7 @@ impl HGrid {
             })
     }
 
-    pub(crate) fn populated_cells<'a>(&'a self) -> impl 'a + Iterator<Item = GridCell> {
+    pub(crate) fn populated_cells(&self) -> impl '_ + Iterator<Item = GridCell> {
         let bitset_size = self.bitset_size;
         self.grids
             .iter()

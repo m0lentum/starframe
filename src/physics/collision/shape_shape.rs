@@ -936,6 +936,8 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
+    // cases here where exactly the bound value is expected
+    #[allow(clippy::float_cmp)]
     #[test]
     fn clip_various_edges() {
         // intersection

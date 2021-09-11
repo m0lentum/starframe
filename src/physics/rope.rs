@@ -1,7 +1,7 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    graph::{self, UnsafeNode},
+    graph::{self, Graph, Layer, UnsafeNode},
     graphics::Shape,
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
@@ -30,17 +30,20 @@ pub struct RopeProperties {
 
 /// Spawn a rope in the shape of the line, adjusting spacing so that a particle lands on both
 /// the start and end points.
+#[allow(clippy::type_complexity)]
 pub fn spawn_rope_line(
     mut rope: Rope,
     start: m::Vec2,
     end: m::Vec2,
     particle_mass: f64,
-    l_body: &mut graph::Layer<Body>,
-    l_pose: &mut graph::Layer<m::Pose>,
-    l_collider: &mut graph::Layer<Collider>,
-    l_rope: &mut graph::Layer<Rope>,
-    l_shape: &mut graph::Layer<Shape>,
-    graph: &mut graph::Graph,
+    (graph, l_body, l_pose, l_collider, l_rope, l_shape): (
+        &mut Graph,
+        &mut Layer<Body>,
+        &mut Layer<m::Pose>,
+        &mut Layer<Collider>,
+        &mut Layer<Rope>,
+        &mut Layer<Shape>,
+    ),
 ) -> RopeProperties {
     let dist = end - start;
     let dist_mag = dist.mag();

@@ -201,6 +201,11 @@ impl MyGraph {
         }
     }
 }
+impl Default for MyGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 //
 // State updates
@@ -354,14 +359,16 @@ impl game::GameState for State {
                 {
                     let grav = phys::forcefield::Gravity(self.scene.gravity.into());
                     self.physics.tick(
-                        &self.graph.graph,
-                        &mut self.graph.l_pose,
-                        &mut self.graph.l_body,
-                        &self.graph.l_collider,
-                        &self.graph.l_rope,
-                        &mut self.graph.evt_graph.sinks,
                         dt,
                         &grav,
+                        (
+                            &self.graph.graph,
+                            &mut self.graph.l_pose,
+                            &mut self.graph.l_body,
+                            &self.graph.l_collider,
+                            &self.graph.l_rope,
+                            &mut self.graph.evt_graph.sinks,
+                        ),
                     );
                 }
                 {

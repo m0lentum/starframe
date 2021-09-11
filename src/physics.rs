@@ -1,6 +1,6 @@
 use crate::{
     event::{Event, EventSink},
-    graph::{self, UnsafeNode},
+    graph::{self, Graph, Layer, UnsafeNode},
     math::{self as m, Angle},
 };
 
@@ -210,16 +210,19 @@ impl Physics {
     }
 
     /// Detect collisions, solve constraint forces and move bodies.
+    #[allow(clippy::type_complexity)]
     pub fn tick(
         &mut self,
-        graph: &graph::Graph,
-        l_pose: &mut graph::Layer<m::Pose>,
-        l_body: &mut graph::Layer<Body>,
-        l_collider: &graph::Layer<Collider>,
-        l_rope: &graph::Layer<Rope>,
-        l_evt_sink: &mut graph::Layer<EventSink>,
         frame_dt: f64,
         forcefield: &impl ForceField,
+        (graph, l_pose, l_body, l_collider, l_rope, l_evt_sink): (
+            &Graph,
+            &mut Layer<m::Pose>,
+            &mut Layer<Body>,
+            &Layer<Collider>,
+            &Layer<Rope>,
+            &mut Layer<EventSink>,
+        ),
     ) {
         let _main_span = tracy_span!("physics tick", "tick");
 
@@ -296,8 +299,8 @@ impl Physics {
 
         // remove constraints where one or both participating bodies have been destroyed
         self.user_constraints.retain(|_, c| {
-            c.owner.check(&graph).is_some()
-                && c.target.map(|t| t.check(&graph).is_some()).unwrap_or(true)
+            c.owner.check(graph).is_some()
+                && c.target.map(|t| t.check(graph).is_some()).unwrap_or(true)
         });
 
         // assuming here that slotmap's iteration order doesn't change if the
@@ -1138,8 +1141,8 @@ impl Physics {
                 if graph.get_generation(&coll) != stored_coll.gen {
                     return None;
                 }
-                let rb = graph.get_neighbor(&coll, &l_body)?;
-                let pose = graph.get_neighbor(&rb, &l_pose)?;
+                let rb = graph.get_neighbor(&coll, l_body)?;
+                let pose = graph.get_neighbor(&rb, l_pose)?;
                 if collision::query::point_collider_bool(point, &*pose, &*coll) {
                     Some((pose, coll, rb))
                 } else {
