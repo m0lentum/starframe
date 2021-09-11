@@ -377,12 +377,8 @@ struct Bitset<'a>(&'a [u64]);
 // these methods are useful in tests even though they're not used anywhere public atm
 #[allow(dead_code)]
 impl<'a> Bitset<'a> {
-    pub fn iter(&self) -> BitsetIter<Self> {
-        BitsetIter {
-            m: *self,
-            word_idx: 0,
-            seen_bits: 0,
-        }
+    pub fn iter(self) -> BitsetIter<Self> {
+        BitsetIter::new(self)
     }
 
     pub fn intersection(self, other: Self) -> BitsetIntersection<'a> {
@@ -418,12 +414,8 @@ impl<'a> BitsetMut<'a> {
 struct BitsetIntersection<'a>(&'a [u64], &'a [u64]);
 
 impl<'a> BitsetIntersection<'a> {
-    pub fn iter(&self) -> BitsetIter<Self> {
-        BitsetIter {
-            m: *self,
-            word_idx: 0,
-            seen_bits: 0,
-        }
+    pub fn iter(self) -> BitsetIter<Self> {
+        BitsetIter::new(self)
     }
 }
 
@@ -441,26 +433,38 @@ impl<'a> IterableBitset for BitsetIntersection<'a> {
 struct BitsetIter<Mask: IterableBitset> {
     m: Mask,
     word_idx: usize,
-    seen_bits: u64,
+    // copy each word into the iterator so we can remove bits from it
+    // instead of reading from the original bitset every time
+    curr_word: u64,
+}
+
+impl<Mask: IterableBitset> BitsetIter<Mask> {
+    fn new(m: Mask) -> Self {
+        let curr_word = m.get_word(0);
+        Self {
+            m,
+            word_idx: 0,
+            curr_word,
+        }
+    }
 }
 
 impl<Mask: IterableBitset> Iterator for BitsetIter<Mask> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.word_idx < self.m.len() {
-            let unseen_bits = self.m.get_word(self.word_idx) - self.seen_bits;
-            if unseen_bits > 0 {
-                let first_bit_idx = unseen_bits.trailing_zeros();
-                self.seen_bits |= 1 << first_bit_idx;
-
+        loop {
+            if self.curr_word != 0 {
+                let first_bit_idx = self.curr_word.trailing_zeros();
+                self.curr_word ^= 1 << first_bit_idx;
                 return Some(self.word_idx * 64 + first_bit_idx as usize);
             }
-
             self.word_idx += 1;
-            self.seen_bits = 0;
+            if self.word_idx >= self.m.len() {
+                return None;
+            }
+            self.curr_word = self.m.get_word(self.word_idx);
         }
-        None
     }
 }
 
