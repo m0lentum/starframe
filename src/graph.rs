@@ -243,13 +243,13 @@ impl<'a, T> NodeRefMut<'a, T> {
 /// The usual way to use this is to define a struct containing a `Graph` and a `Layer` for each component type:
 /// ```
 /// # use starframe::graph::{Graph, Layer};
-/// # use starframe::physics::{Collider, RigidBody};
+/// # use starframe::physics::{Collider, Body};
 /// # use starframe::math::Pose;
 /// struct MyGraph {
 ///     graph: Graph,
 ///     l_pose: Layer<Pose>,
 ///     l_collider: Layer<Collider>,
-///     l_body: Layer<RigidBody>,
+///     l_body: Layer<Body>,
 ///     // etc.
 /// }
 /// impl MyGraph {
@@ -732,9 +732,9 @@ impl<T> Layer<T> {
     ///
     /// You can use this with `Graph::get_neighbor` to iterate over patterns in the graph:
     /// ```
-    /// # use starframe::{math::Pose, physics::{Collider, RigidBody}, graph::{Graph, Layer}};
+    /// # use starframe::{math::Pose, physics::{Collider, Body}, graph::{Graph, Layer}};
     /// # let mut graph = Graph::new();
-    /// # let l_rigidbody: Layer<RigidBody> = graph.create_layer();
+    /// # let l_rigidbody: Layer<Body> = graph.create_layer();
     /// # let l_pose: Layer<Pose> = graph.create_layer();
     /// # let l_collider: Layer<Collider> = graph.create_layer();
     /// for body in l_rigidbody.iter(&graph) {
