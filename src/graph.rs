@@ -565,7 +565,7 @@ impl Graph {
             let node = vis_node.node;
             if self.refcounts[node.layer_idx][node.item_idx] == 0 {
                 debug_assert!(
-                    self.vacant_slots[node.layer_idx]
+                    !self.vacant_slots[node.layer_idx]
                         .iter()
                         .any(|&idx| idx == node.item_idx),
                     "Same slot marked vacant twice ({:?})",
