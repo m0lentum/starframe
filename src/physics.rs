@@ -13,6 +13,8 @@ pub mod collision;
 use collision::{shape_shape::intersection_check, HGrid};
 pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
 
+pub(crate) mod bitmatrix;
+
 mod constraint;
 pub use constraint::*;
 

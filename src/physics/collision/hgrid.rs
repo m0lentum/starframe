@@ -2,7 +2,10 @@
 //! intersecting objects for further, more accurate narrow phase inspection.
 
 use super::{MaskMatrix, AABB};
-use crate::math as m;
+use crate::{
+    math as m,
+    physics::bitmatrix::{BitMatrix, BitMatrixParams},
+};
 
 /// A hierarchical grid spatial index.
 /// Currently the only type of index implemented.
@@ -12,11 +15,6 @@ use crate::math as m;
 #[derive(Clone, Debug)]
 pub struct HGrid {
     pub(crate) bounds: AABB,
-    // bitsets for grid cells are stored as a contiguous buffer,
-    // interpreted in chunks of <mask_size> u64s.
-    // this lets us increase the size of a bitset at runtime
-    // when number of objects increases past the current limit.
-    bitset_size: usize,
     pub(crate) grids: Vec<Grid>,
     // timestamping used to keep track of which colliders were already checked by a query.
     curr_timestamp: u16,
@@ -34,8 +32,8 @@ pub(crate) struct Grid {
     has_objects: bool,
     pub(crate) column_count: usize,
     pub(crate) row_count: usize,
-    column_bits: Vec<u64>,
-    row_bits: Vec<u64>,
+    column_bits: BitMatrix,
+    row_bits: BitMatrix,
 }
 
 /// Parameters for the creation of a hierarchical grid.
@@ -108,11 +106,8 @@ impl HGrid {
         let bounds_w = bounds.width();
         let bounds_h = bounds.height();
 
-        let bitset_size = params.initial_capacity / 64 + 1;
-
         HGrid {
             bounds,
-            bitset_size,
             grids: spacings
                 .iter()
                 .map(|&spacing| {
@@ -123,8 +118,14 @@ impl HGrid {
                         has_objects: false,
                         column_count,
                         row_count,
-                        column_bits: vec![0; column_count * bitset_size],
-                        row_bits: vec![0; row_count * bitset_size],
+                        column_bits: BitMatrix::new(BitMatrixParams {
+                            bits_per_entry: params.initial_capacity,
+                            entry_count: column_count,
+                        }),
+                        row_bits: BitMatrix::new(BitMatrixParams {
+                            bits_per_entry: params.initial_capacity,
+                            entry_count: row_count,
+                        }),
                     }
                 })
                 .collect(),
@@ -140,24 +141,9 @@ impl HGrid {
     /// Also allocate more space if we need bigger bitsets and reset timestamps.
     pub(crate) fn prepare(&mut self, collider_count: usize) {
         for grid in &mut self.grids {
-            for col in &mut grid.column_bits {
-                *col = 0;
-            }
-            for row in &mut grid.row_bits {
-                *row = 0;
-            }
+            grid.column_bits.clear_and_resize(collider_count);
+            grid.row_bits.clear_and_resize(collider_count);
             grid.has_objects = false;
-        }
-
-        let required_bitset_size = collider_count / 64 + 1;
-        if required_bitset_size > self.bitset_size {
-            self.bitset_size = required_bitset_size;
-            for grid in &mut self.grids {
-                grid.column_bits
-                    .resize(required_bitset_size * grid.column_count, 0);
-                grid.row_bits
-                    .resize(required_bitset_size * grid.row_count, 0);
-            }
         }
 
         self.curr_timestamp = 0;
@@ -193,20 +179,14 @@ impl HGrid {
         for col in first_column..=last_column {
             // toroidal wrapping for things outside the grid
             let col = col.rem_euclid(grid_level.column_count as isize) as usize;
-            let m_start = col * self.bitset_size;
-            let mut col_bitset =
-                BitsetMut(&mut grid_level.column_bits[m_start..(m_start + self.bitset_size)]);
-            col_bitset.set(id);
+            grid_level.column_bits.entry_mut(col).set(id);
         }
 
         let first_row = (aabb.min.y / grid_level.spacing) as isize;
         let last_row = (aabb.max.y / grid_level.spacing) as isize;
         for row in first_row..=last_row {
             let row = row.rem_euclid(grid_level.row_count as isize) as usize;
-            let m_start = row * self.bitset_size;
-            let mut row_bitset =
-                BitsetMut(&mut grid_level.row_bits[m_start..(m_start + self.bitset_size)]);
-            row_bitset.set(id);
+            grid_level.row_bits.entry_mut(row).set(id);
         }
     }
 
@@ -235,7 +215,6 @@ impl HGrid {
         };
 
         // destructuring to move into closures
-        let bitset_size = self.bitset_size;
         let timestamps = &mut self.timestamps;
         let aabbs = &self.aabbs;
         let layers = &self.layers;
@@ -256,14 +235,10 @@ impl HGrid {
                     let col = col.rem_euclid(grid.column_count as isize) as usize;
                     row_range.clone().flat_map(move |row| {
                         let row = row.rem_euclid(grid.row_count as isize) as usize;
-
-                        let col_b = col * bitset_size;
-                        let row_b = row * bitset_size;
-                        BitsetIntersection(
-                            &grid.column_bits[col_b..col_b + bitset_size],
-                            &grid.row_bits[row_b..row_b + bitset_size],
-                        )
-                        .iter()
+                        grid.column_bits
+                            .entry(col)
+                            .intersection(grid.row_bits.entry(row))
+                            .iter()
                     })
                 })
             })
@@ -292,7 +267,6 @@ impl HGrid {
         let point_worldspace = point;
         let point = point - self.bounds.min;
 
-        let bitset_size = self.bitset_size;
         let aabbs = &self.aabbs;
         let generations = &self.generations;
         self.grids
@@ -303,13 +277,10 @@ impl HGrid {
                 let col = col.rem_euclid(grid.column_count as isize) as usize;
                 let row = (point.y / grid.spacing) as isize;
                 let row = row.rem_euclid(grid.row_count as isize) as usize;
-                let col_b = col * bitset_size;
-                let row_b = row * bitset_size;
-                BitsetIntersection(
-                    &grid.column_bits[col_b..col_b + bitset_size],
-                    &grid.row_bits[row_b..row_b + bitset_size],
-                )
-                .iter()
+                grid.column_bits
+                    .entry(col)
+                    .intersection(grid.row_bits.entry(row))
+                    .iter()
             })
             .filter(move |&id| aabbs[id].contains_point(point_worldspace))
             .map(move |id| StoredNode {
@@ -319,32 +290,29 @@ impl HGrid {
     }
 
     pub(crate) fn populated_cells(&self) -> impl '_ + Iterator<Item = GridCell> {
-        let bitset_size = self.bitset_size;
         self.grids
             .iter()
             .enumerate()
             .flat_map(move |(grid_idx, grid)| {
-                grid.column_bits.chunks(bitset_size).enumerate().flat_map(
-                    move |(col_idx, col_bits)| {
-                        grid.row_bits.chunks(bitset_size).enumerate().filter_map(
-                            move |(row_idx, row_bits)| {
-                                if BitsetIntersection(col_bits, row_bits)
+                grid.column_bits
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(col_idx, col_entry)| {
+                        grid.row_bits
+                            .iter()
+                            .enumerate()
+                            .filter_map(move |(row_idx, row_entry)| {
+                                col_entry
+                                    .intersection(row_entry)
                                     .iter()
                                     .next()
-                                    .is_none()
-                                {
-                                    None
-                                } else {
-                                    Some(GridCell {
+                                    .map(|_| GridCell {
                                         grid_idx,
                                         col_idx,
                                         row_idx,
                                     })
-                                }
-                            },
-                        )
-                    },
-                )
+                            })
+                    })
             })
     }
 }
@@ -360,145 +328,4 @@ pub(crate) struct GridCell {
     pub grid_idx: usize,
     pub col_idx: usize,
     pub row_idx: usize,
-}
-
-//
-// bitset ops
-//
-
-trait IterableBitset {
-    fn len(&self) -> usize;
-    fn get_word(&self, idx: usize) -> u64;
-}
-
-#[derive(Clone, Copy)]
-struct Bitset<'a>(&'a [u64]);
-
-// these methods are useful in tests even though they're not used anywhere public atm
-#[allow(dead_code)]
-impl<'a> Bitset<'a> {
-    pub fn iter(self) -> BitsetIter<Self> {
-        BitsetIter::new(self)
-    }
-
-    pub fn intersection(self, other: Self) -> BitsetIntersection<'a> {
-        BitsetIntersection(self.0, other.0)
-    }
-}
-
-impl<'a> IterableBitset for Bitset<'a> {
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn get_word(&self, idx: usize) -> u64 {
-        self.0[idx]
-    }
-}
-
-struct BitsetMut<'a>(&'a mut [u64]);
-
-impl<'a> BitsetMut<'a> {
-    /// Set the bit at an index.
-    ///
-    /// # Panics
-    /// Panics if the slice given to the bitmask is too small.
-    pub fn set(&mut self, idx: usize) {
-        let word_idx = idx / 64;
-        let bit_idx = idx % 64;
-        self.0[word_idx] |= 1_u64 << bit_idx;
-    }
-}
-
-#[derive(Clone, Copy)]
-struct BitsetIntersection<'a>(&'a [u64], &'a [u64]);
-
-impl<'a> BitsetIntersection<'a> {
-    pub fn iter(self) -> BitsetIter<Self> {
-        BitsetIter::new(self)
-    }
-}
-
-impl<'a> IterableBitset for BitsetIntersection<'a> {
-    fn len(&self) -> usize {
-        self.0.len().min(self.1.len())
-    }
-
-    fn get_word(&self, idx: usize) -> u64 {
-        self.0[idx] & self.1[idx]
-    }
-}
-
-#[derive(Clone, Copy)]
-struct BitsetIter<Mask: IterableBitset> {
-    m: Mask,
-    word_idx: usize,
-    // copy each word into the iterator so we can remove bits from it
-    // instead of reading from the original bitset every time
-    curr_word: u64,
-}
-
-impl<Mask: IterableBitset> BitsetIter<Mask> {
-    fn new(m: Mask) -> Self {
-        let curr_word = m.get_word(0);
-        Self {
-            m,
-            word_idx: 0,
-            curr_word,
-        }
-    }
-}
-
-impl<Mask: IterableBitset> Iterator for BitsetIter<Mask> {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.curr_word != 0 {
-                let first_bit_idx = self.curr_word.trailing_zeros();
-                self.curr_word ^= 1 << first_bit_idx;
-                return Some(self.word_idx * 64 + first_bit_idx as usize);
-            }
-            self.word_idx += 1;
-            if self.word_idx >= self.m.len() {
-                return None;
-            }
-            self.curr_word = self.m.get_word(self.word_idx);
-        }
-    }
-}
-
-//
-// tests
-//
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_bitset(idxs: &[usize]) -> Vec<u64> {
-        let mut ret = Vec::new();
-        for idx in idxs {
-            let word_idx = idx / 64;
-            if word_idx >= ret.len() {
-                ret.resize(word_idx + 1, 0);
-            }
-            BitsetMut(&mut ret).set(*idx);
-        }
-        ret
-    }
-
-    #[test]
-    fn set_iter() {
-        let m = make_bitset(&[0, 5, 3, 130, 120]);
-        itertools::assert_equal(Bitset(&m).iter(), [0, 3, 5, 120, 130].iter().cloned());
-    }
-
-    #[test]
-    fn set_intersection() {
-        let m1 = make_bitset(&[0, 5, 128, 191, 2500]);
-        let m2 = make_bitset(&[2, 5, 130, 120, 0, 191, 3000]);
-        let isect = Bitset(&m1).intersection(Bitset(&m2));
-        itertools::assert_equal(isect.iter(), [0, 5, 191].iter().cloned());
-    }
 }
