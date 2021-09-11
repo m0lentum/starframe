@@ -394,6 +394,8 @@ impl game::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut gx::Renderer) {
+        let g = &mut self.graph;
+
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
@@ -405,6 +407,12 @@ impl game::GameState for State {
         if self.debug_vis_active {
             self.debug_visualizer
                 .draw_spatial_index(&self.physics, &self.camera, &mut ctx);
+            self.debug_visualizer.draw_islands(
+                &self.physics,
+                &self.camera,
+                &mut ctx,
+                (&g.graph, &g.l_pose, &g.l_body, &g.l_collider),
+            );
         }
 
         self.shape_renderer.draw(

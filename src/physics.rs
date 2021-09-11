@@ -14,6 +14,7 @@ use collision::{shape_shape::intersection_check, HGrid};
 pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
 
 pub(crate) mod bitmatrix;
+use bitmatrix::{BitMatrix, BitMatrixParams};
 
 mod constraint;
 pub use constraint::*;
@@ -119,7 +120,8 @@ pub struct Physics {
     working_bufs: WorkingBuffers,
 }
 
-/// Cached buffers to avoid allocating a bunch of memory every frame
+/// Cached buffers to avoid allocating a bunch of memory every frame.
+/// Explanations in `tick` where populated
 struct WorkingBuffers {
     node_ref_map: Vec<usize>,
     rope_next_particles: Vec<Option<usize>>,
@@ -135,6 +137,8 @@ struct WorkingBuffers {
     coll_ctxs: Vec<ColliderContext>,
     contacts: Vec<ContactResult>,
     contact_lambdas: Vec<f64>,
+    island_ids: Vec<Option<usize>>,
+    islands: Vec<Island>,
 }
 impl WorkingBuffers {
     fn new() -> Self {
@@ -153,6 +157,8 @@ impl WorkingBuffers {
             coll_ctxs: Vec::new(),
             contacts: Vec::new(),
             contact_lambdas: Vec::new(),
+            island_ids: Vec::new(),
+            islands: Vec::new(),
         }
     }
 }
@@ -163,6 +169,12 @@ impl WorkingBuffers {
 enum ColliderContext {
     Body(usize),
     Static(m::Pose),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Island {
+    id: usize,
+    pub(crate) body_idxs: Vec<usize>,
 }
 
 impl Physics {
@@ -396,6 +408,85 @@ impl Physics {
         // store contact forces for friction purposes
         bufs.contact_lambdas.clear();
         bufs.contact_lambdas.resize(coll_pairs.len(), 0.0);
+
+        //
+        // Build constraint graph
+        //
+
+        let constr_graph = {
+            let _span = tracy_span!("build constraint graph", "tick");
+
+            let mut g = BitMatrix::new(BitMatrixParams {
+                bits_per_entry: body_refs.len(),
+                entry_count: body_refs.len(),
+            });
+            // rope constraints
+            for (curr, next) in bufs.rope_next_particles.iter().enumerate() {
+                if let Some(next) = *next {
+                    g.entry_mut(curr).set(next);
+                    g.entry_mut(next).set(curr);
+                }
+            }
+            // custom constraints
+            for (owner, target) in bufs.constraint_body_pairs.iter() {
+                if let Some(targ_dyn) = *target {
+                    g.entry_mut(*owner).set(targ_dyn);
+                    g.entry_mut(targ_dyn).set(*owner);
+                }
+            }
+            // potential contacts from spatial index.
+            // this doesn't necessarily cull as much as actually checking collisions,
+            // but that would require redoing this every substep which would be costly.
+            for pair in coll_pairs.iter() {
+                if let [ColliderContext::Body(b1), ColliderContext::Body(b2)] =
+                    pair.map(|c| bufs.coll_ctxs[c.pos().item_idx])
+                {
+                    g.entry_mut(b1).set(b2);
+                    g.entry_mut(b2).set(b1);
+                }
+            }
+            g
+        };
+
+        //
+        // Generate islands from graph
+        //
+
+        bufs.island_ids.clear();
+        bufs.island_ids.resize(body_refs.len(), None);
+        bufs.islands.clear();
+
+        let island_span = tracy_span!("build islands", "tick");
+
+        fn search(
+            island: &mut Island,
+            curr: usize,
+            island_ids: &mut [Option<usize>],
+            constr_graph: &BitMatrix,
+        ) {
+            if island_ids[curr].is_some() {
+                return;
+            }
+            island_ids[curr] = Some(island.id);
+            island.body_idxs.push(curr);
+            for connected_bi in constr_graph.entry(curr).iter() {
+                search(island, connected_bi, island_ids, constr_graph);
+            }
+        }
+
+        for bi in 0..body_refs.len() {
+            if bufs.island_ids[bi].is_some() {
+                continue;
+            }
+            let mut island = Island {
+                id: bi,
+                body_idxs: Vec::new(),
+            };
+            search(&mut island, bi, &mut bufs.island_ids, &constr_graph);
+            bufs.islands.push(island);
+        }
+
+        drop(island_span);
 
         //
         // Actual physics step
@@ -1151,6 +1242,10 @@ impl Physics {
                     None
                 }
             })
+    }
+
+    pub(crate) fn islands(&self) -> &[Island] {
+        &self.working_bufs.islands
     }
 }
 //
