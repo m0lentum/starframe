@@ -93,7 +93,7 @@ impl Collider {
     pub fn bounding_sphere_r(&self) -> f64 {
         match self.shape {
             ColliderShape::Circle { r } => r,
-            ColliderShape::Rect { hw, hh } => hw * hw + hh * hh,
+            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
             ColliderShape::Capsule { hl, r } => hl + r,
         }
     }
