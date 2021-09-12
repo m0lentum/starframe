@@ -244,16 +244,175 @@ impl Physics {
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
 
-        //
-        // Setting up buffers
-        //
-
-        // buffers for working variables, outside of body_refs
-        // to make it simpler to mutate things without breaking borrowing rules.
-        // indexed using the same index as for body_refs
         let bufs = &mut self.working_bufs;
 
-        let body_refs: Vec<graph::NodeRef<Body>> = l_body.iter(graph).collect();
+        //
+        // set up user-defined constraints
+        //
+
+        // remove constraints where one or both participating bodies have been destroyed
+        self.user_constraints.retain(|_, c| {
+            c.owner.check(graph).is_some()
+                && c.target.map(|t| t.check(graph).is_some()).unwrap_or(true)
+        });
+
+        //
+        // Prepare the spatial index
+        //
+
+        let spi_span = tracy_span!("build spatial index", "tick");
+
+        // constant for padding bounding volumes to fit movement during substeps,
+        // collisions may be missed if higher accelerations occur
+        const MAX_EXPECTED_ACCEL: f64 = 10.0;
+        let max_expected_accel_over_frame = MAX_EXPECTED_ACCEL * frame_dt;
+
+        self.spatial_index.prepare(l_collider.content.len());
+        // generate potentially colliding pairs,
+        // these will be used to re-detect collisions every substep.
+        let coll_pairs: Vec<[graph::NodeRef<Collider>; 2]> = {
+            let mut pairs = Vec::new();
+            for coll in l_collider.iter(graph) {
+                let pose = graph
+                    .get_neighbor(&coll, l_pose)
+                    .expect("A Collider didn't have a Pose");
+                let aabb = match graph.get_neighbor(&coll, l_body) {
+                    Some(b) => coll
+                        .aabb(&*pose)
+                        .extended(b.velocity.linear * frame_dt)
+                        .padded(max_expected_accel_over_frame),
+                    None => coll.aabb(&*pose),
+                };
+
+                let spatial_index = &mut self.spatial_index;
+                pairs.extend(
+                    spatial_index
+                        .test_and_insert(
+                            collision::hgrid::StoredNode {
+                                idx: coll.pos().item_idx,
+                                gen: graph.get_generation(&coll),
+                            },
+                            aabb,
+                            coll.layer,
+                            &self.mask_matrix,
+                        )
+                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other.idx)]),
+                );
+            }
+            pairs
+        };
+
+        #[cfg(feature = "tracy")]
+        {
+            COLLIDERS_PLOT.point(l_collider.iter(graph).count() as f64);
+            PAIRS_PLOT.point(coll_pairs.len() as f64);
+        }
+
+        drop(spi_span);
+
+        //
+        // Build constraint graph
+        //
+
+        let constr_graph = {
+            let _span = tracy_span!("build constraint graph", "tick");
+
+            // TODO: rethink the use of BitMatrix here, a tinyvec of indices per body would probably
+            // take a decent amount less memory in any large-ish scene
+            let mut g = BitMatrix::new(BitMatrixParams {
+                bits_per_entry: l_body.content.len(),
+                entry_count: l_body.content.len(),
+            });
+            // rope constraints
+            for rope_node in l_rope.iter(graph) {
+                let mut iter = RopeIter::new(rope_node, l_body, graph)
+                    .map(|node| node.pos().item_idx)
+                    .peekable();
+                while let Some(particle) = iter.next() {
+                    if let Some(&next_particle) = iter.peek() {
+                        g.entry_mut(particle).set(next_particle);
+                        g.entry_mut(next_particle).set(particle);
+                    }
+                }
+            }
+            // custom constraints
+            for constr in self.user_constraints.values() {
+                if let Some(target) = constr.target {
+                    let owner = constr.owner.pos().item_idx;
+                    let target = target.pos().item_idx;
+                    g.entry_mut(owner).set(target);
+                    g.entry_mut(target).set(owner);
+                }
+            }
+            // potential contacts from spatial index.
+            // this doesn't necessarily cull as much as actually checking collisions,
+            // but that would require redoing this every substep which would be costly.
+            for pair in coll_pairs.iter() {
+                if let [Some(b1), Some(b2)] =
+                    pair.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx))
+                {
+                    g.entry_mut(b1).set(b2);
+                    g.entry_mut(b2).set(b1);
+                }
+            }
+            g
+        };
+
+        //
+        // Generate islands from graph
+        //
+
+        bufs.island_ids.clear();
+        bufs.island_ids.resize(l_body.content.len(), None);
+        bufs.islands.clear();
+
+        let island_span = tracy_span!("build islands", "tick");
+
+        fn search(
+            island: &mut Island,
+            curr: usize,
+            island_ids: &mut [Option<usize>],
+            constr_graph: &BitMatrix,
+        ) {
+            if island_ids[curr].is_some() {
+                return;
+            }
+            island_ids[curr] = Some(island.id);
+            island.body_idxs.push(curr);
+            for connected_bi in constr_graph.entry(curr).iter() {
+                search(island, connected_bi, island_ids, constr_graph);
+            }
+        }
+
+        for body in l_body.iter(graph) {
+            let bi = body.pos().item_idx;
+            if bufs.island_ids[bi].is_some() {
+                continue;
+            }
+            let mut island = Island {
+                id: bi,
+                body_idxs: Vec::new(),
+            };
+            search(&mut island, bi, &mut bufs.island_ids, &constr_graph);
+            bufs.islands.push(island);
+        }
+
+        drop(island_span);
+
+        //
+        // Populate working buffers
+        //
+
+        let body_refs: Vec<graph::NodeRef<Body>> = bufs
+            .islands
+            .iter()
+            .flat_map(|island| {
+                island
+                    .body_idxs
+                    .iter()
+                    .map(|&bi| l_body.get_unchecked_by_item_idx(bi))
+            })
+            .collect();
 
         // node_ref_map maps from the position of a node in the graph layer
         // to the position of a node in body_refs
@@ -307,32 +466,12 @@ impl Physics {
         bufs.ext_f_accelerations
             .resize(body_refs.len(), m::Vec2::default());
 
-        //
-        // set up user-defined constraints
-        //
-
-        // remove constraints where one or both participating bodies have been destroyed
-        self.user_constraints.retain(|_, c| {
-            c.owner.check(graph).is_some()
-                && c.target.map(|t| t.check(graph).is_some()).unwrap_or(true)
-        });
-
-        // assuming here that slotmap's iteration order doesn't change if the
-        // contents don't change. it doesn't guarantee this in the docs so if
-        // constraints start jumping from one object to another this is why
-        bufs.constraint_body_pairs.clear();
-        let node_ref_map = &bufs.node_ref_map;
-        bufs.constraint_body_pairs
-            .extend(self.user_constraints.values().map(|c| {
-                (
-                    node_ref_map[c.owner.pos().item_idx],
-                    c.target.map(|t| node_ref_map[t.pos().item_idx]),
-                )
-            }));
-
-        //
-        // Set up collision detection
-        //
+        // store latest contacts for use in the velocity step
+        bufs.contacts.clear();
+        bufs.contacts.resize(coll_pairs.len(), ContactResult::Zero);
+        // store contact forces for friction purposes
+        bufs.contact_lambdas.clear();
+        bufs.contact_lambdas.resize(coll_pairs.len(), 0.0);
 
         bufs.coll_ctxs.resize(
             l_collider.content.len(),
@@ -353,140 +492,18 @@ impl Physics {
             };
         }
 
-        // prepare the spatial index
-
-        let spi_span = tracy_span!("build spatial index", "tick");
-
-        // constant for padding bounding volumes to fit movement during substeps,
-        // collisions may be missed if higher accelerations occur
-        const MAX_EXPECTED_ACCEL: f64 = 10.0;
-        let max_expected_accel_over_frame = MAX_EXPECTED_ACCEL * frame_dt;
-
-        self.spatial_index.prepare(l_collider.content.len());
-        // generate potentially colliding pairs,
-        // these will be used to re-detect collisions every substep.
-        let coll_pairs: Vec<[graph::NodeRef<Collider>; 2]> = {
-            let mut pairs = Vec::new();
-            for coll in l_collider.iter(graph) {
-                let aabb = match bufs.coll_ctxs[coll.pos().item_idx] {
-                    ColliderContext::Body(b) => coll
-                        .aabb(&bufs.poses[b])
-                        .extended(bufs.velocities[b].linear * frame_dt)
-                        .padded(max_expected_accel_over_frame),
-                    ColliderContext::Static(p) => coll.aabb(&p),
-                };
-
-                let spatial_index = &mut self.spatial_index;
-                pairs.extend(
-                    spatial_index
-                        .test_and_insert(
-                            collision::hgrid::StoredNode {
-                                idx: coll.pos().item_idx,
-                                gen: graph.get_generation(&coll),
-                            },
-                            aabb,
-                            coll.layer,
-                            &self.mask_matrix,
-                        )
-                        .map(move |other| [coll, l_collider.get_unchecked_by_item_idx(other.idx)]),
-                );
-            }
-            pairs
-        };
-
-        #[cfg(feature = "tracy")]
-        {
-            COLLIDERS_PLOT.point(l_collider.iter(graph).count() as f64);
-            PAIRS_PLOT.point(coll_pairs.len() as f64);
-        }
-
-        drop(spi_span);
-
-        // store latest contacts for use in the velocity step
-        bufs.contacts.clear();
-        bufs.contacts.resize(coll_pairs.len(), ContactResult::Zero);
-        // store contact forces for friction purposes
-        bufs.contact_lambdas.clear();
-        bufs.contact_lambdas.resize(coll_pairs.len(), 0.0);
-
-        //
-        // Build constraint graph
-        //
-
-        let constr_graph = {
-            let _span = tracy_span!("build constraint graph", "tick");
-
-            let mut g = BitMatrix::new(BitMatrixParams {
-                bits_per_entry: body_refs.len(),
-                entry_count: body_refs.len(),
-            });
-            // rope constraints
-            for (curr, next) in bufs.rope_next_particles.iter().enumerate() {
-                if let Some(next) = *next {
-                    g.entry_mut(curr).set(next);
-                    g.entry_mut(next).set(curr);
-                }
-            }
-            // custom constraints
-            for (owner, target) in bufs.constraint_body_pairs.iter() {
-                if let Some(targ_dyn) = *target {
-                    g.entry_mut(*owner).set(targ_dyn);
-                    g.entry_mut(targ_dyn).set(*owner);
-                }
-            }
-            // potential contacts from spatial index.
-            // this doesn't necessarily cull as much as actually checking collisions,
-            // but that would require redoing this every substep which would be costly.
-            for pair in coll_pairs.iter() {
-                if let [ColliderContext::Body(b1), ColliderContext::Body(b2)] =
-                    pair.map(|c| bufs.coll_ctxs[c.pos().item_idx])
-                {
-                    g.entry_mut(b1).set(b2);
-                    g.entry_mut(b2).set(b1);
-                }
-            }
-            g
-        };
-
-        //
-        // Generate islands from graph
-        //
-
-        bufs.island_ids.clear();
-        bufs.island_ids.resize(body_refs.len(), None);
-        bufs.islands.clear();
-
-        let island_span = tracy_span!("build islands", "tick");
-
-        fn search(
-            island: &mut Island,
-            curr: usize,
-            island_ids: &mut [Option<usize>],
-            constr_graph: &BitMatrix,
-        ) {
-            if island_ids[curr].is_some() {
-                return;
-            }
-            island_ids[curr] = Some(island.id);
-            island.body_idxs.push(curr);
-            for connected_bi in constr_graph.entry(curr).iter() {
-                search(island, connected_bi, island_ids, constr_graph);
-            }
-        }
-
-        for bi in 0..body_refs.len() {
-            if bufs.island_ids[bi].is_some() {
-                continue;
-            }
-            let mut island = Island {
-                id: bi,
-                body_idxs: Vec::new(),
-            };
-            search(&mut island, bi, &mut bufs.island_ids, &constr_graph);
-            bufs.islands.push(island);
-        }
-
-        drop(island_span);
+        // assuming here that slotmap's iteration order doesn't change if the
+        // contents don't change. it doesn't guarantee this in the docs so if
+        // constraints start jumping from one object to another this is why
+        bufs.constraint_body_pairs.clear();
+        let node_ref_map = &bufs.node_ref_map;
+        bufs.constraint_body_pairs
+            .extend(self.user_constraints.values().map(|c| {
+                (
+                    node_ref_map[c.owner.pos().item_idx],
+                    c.target.map(|t| node_ref_map[t.pos().item_idx]),
+                )
+            }));
 
         //
         // Actual physics step
@@ -528,7 +545,8 @@ impl Physics {
                 *c = None;
             });
             for rope in l_rope.iter(graph) {
-                let first_particle = graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx;
+                let first_particle =
+                    node_ref_map[graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx];
                 // solve constraints
                 let mut curr_particle = first_particle;
                 let mut next_particle = bufs.rope_next_particles[curr_particle].unwrap();
@@ -1113,7 +1131,8 @@ impl Physics {
             //
 
             for rope in l_rope.iter(graph) {
-                let first_particle = graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx;
+                let first_particle =
+                    node_ref_map[graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx];
                 let mut curr_particle = first_particle;
                 let mut next_particle = bufs.rope_next_particles[curr_particle].unwrap();
                 loop {
