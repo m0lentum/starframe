@@ -1,7 +1,7 @@
 use crate::{
     event::{Event, EventSink},
     graph::{self, Graph, Layer, UnsafeNode},
-    math::{self as m, Angle},
+    math as m,
 };
 
 use itertools::izip;
@@ -10,7 +10,7 @@ use slotmap as sm;
 //
 
 pub mod collision;
-use collision::{shape_shape::intersection_check, HGrid};
+use collision::HGrid;
 pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
 
 pub(crate) mod bitmatrix;
@@ -27,6 +27,9 @@ pub use body::*;
 
 mod rope;
 pub use rope::*;
+
+mod solver;
+use solver::ColliderContext;
 
 //
 
@@ -161,14 +164,6 @@ impl WorkingBuffers {
             islands: Vec::new(),
         }
     }
-}
-/// poses are in our temporary buffer for colliders attached to bodies,
-/// but for static colliders they're in the graph.
-/// because we don't modify non-body poses, we can get the poses for static colliders just once
-#[derive(Clone, Copy, Debug)]
-enum ColliderContext {
-    Body(usize),
-    Static(m::Pose),
 }
 
 #[derive(Clone, Debug)]
@@ -491,6 +486,9 @@ impl Physics {
                 }
             };
         }
+        bufs.rope_lateral_corrections.iter_mut().for_each(|c| {
+            *c = None;
+        });
 
         // assuming here that slotmap's iteration order doesn't change if the
         // contents don't change. it doesn't guarantee this in the docs so if
@@ -511,705 +509,30 @@ impl Physics {
 
         for _substep in 0..self.substeps {
             let _substep_span = tracy_span!("substep", "tick");
-            //
-            // apply external forces and estimate post-step pose with explicit Euler step
-            //
-            for (body, old_pose, pose, old_vel, vel, ext_accel) in izip!(
-                &body_refs,
-                &mut bufs.old_poses,
-                &mut bufs.poses,
-                &mut bufs.old_velocities,
-                &mut bufs.velocities,
-                &mut bufs.ext_f_accelerations
-            ) {
-                if let Mass::Finite { .. } = body.mass {
-                    // TODO: rename forcefield to accelerationfield or allow it to depend on mass
-                    let ff_accel = forcefield.value_at(pose.translation);
-                    vel.linear += ff_accel * dt;
-                    *ext_accel = ff_accel;
-                }
+            solver::solve(
+                forcefield,
+                solver::DataView {
+                    dt,
+                    inv_dt,
+                    inv_dt_sq,
+                    // TODO
+                },
+            );
 
-                // old_vel is velocity after external forces but before collisions
-                *old_vel = *vel;
-                *old_pose = *pose;
-                *pose = vel.apply_to_pose(dt, *pose);
-            }
-
-            //
-            // Rope constraints
-            //
-
-            let constr_span = tracy_span!("constraints", "tick");
-
-            bufs.rope_lateral_corrections.iter_mut().for_each(|c| {
-                *c = None;
-            });
-            for rope in l_rope.iter(graph) {
-                let first_particle =
-                    node_ref_map[graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx];
-                // solve constraints
-                let mut curr_particle = first_particle;
-                let mut next_particle = bufs.rope_next_particles[curr_particle].unwrap();
-                loop {
-                    let dist = bufs.poses[next_particle].translation
-                        - bufs.poses[curr_particle].translation;
-                    let dist_mag = dist.mag();
-                    let dir = dist / dist_mag;
-                    let error = rope.spacing - dist_mag;
-
-                    let lambda = -error
-                        / (body_refs[curr_particle].mass.inv()
-                            + body_refs[next_particle].mass.inv()
-                            + rope.compliance * inv_dt_sq);
-
-                    bufs.poses[curr_particle]
-                        .append_translation(body_refs[curr_particle].mass.inv() * lambda * dir);
-                    bufs.poses[next_particle]
-                        .append_translation(-body_refs[next_particle].mass.inv() * lambda * dir);
-
-                    let particle_after_next = match bufs.rope_next_particles[next_particle] {
-                        Some(next) => next,
-                        None => break,
-                    };
-
-                    // curvature constraint between last three particles
-
-                    let curr_to_next = bufs.poses[next_particle].translation
-                        - bufs.poses[curr_particle].translation;
-                    let next_to_after = bufs.poses[particle_after_next].translation
-                        - bufs.poses[next_particle].translation;
-                    let angle = next_to_after
-                        .normalized()
-                        .dot(curr_to_next.normalized())
-                        .acos();
-                    let error = angle - rope.bending_max_angle;
-                    if error > 0.0 {
-                        let lambda = -error
-                            / (body_refs[particle_after_next].mass.inv()
-                                + rope.bending_compliance * inv_dt_sq);
-
-                        let lambda_oriented =
-                            if m::left_normal(curr_to_next).dot(next_to_after) > 0.0 {
-                                lambda
-                            } else {
-                                -lambda
-                            };
-                        let correction = m::Rotor2::from_angle(
-                            lambda_oriented * body_refs[particle_after_next].mass.inv(),
-                        );
-                        let old_pos = bufs.poses[particle_after_next].translation;
-                        bufs.poses[particle_after_next].translation =
-                            bufs.poses[next_particle].translation + correction * next_to_after;
-
-                        bufs.rope_lateral_corrections[particle_after_next] =
-                            Some(bufs.poses[particle_after_next].translation - old_pos);
-                    }
-
-                    curr_particle = next_particle;
-                    next_particle = particle_after_next;
-                }
-            }
-
-            //
-            // User-defined constraints
-            //
-
-            for (constraint, pair) in
-                izip!(self.user_constraints.values(), &bufs.constraint_body_pairs)
-            {
-                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].mass.inv(), 0.0);
-                let inv_mom_inertias =
-                    map_semi_pair(*pair, |b| body_refs[*b].moment_of_inertia.inv(), 0.0);
-
-                match constraint.ty {
-                    ConstraintType::Distance { distance } => {
-                        let offsets_worldspace = [
-                            bufs.poses[pair.0] * constraint.offsets[0],
-                            pair.1
-                                .map(|p1| bufs.poses[p1] * constraint.offsets[1])
-                                .unwrap_or(constraint.offsets[1]),
-                        ];
-                        let actual_dist = offsets_worldspace[1] - offsets_worldspace[0];
-                        let actual_dist_mag = actual_dist.mag();
-                        let error = distance - actual_dist_mag;
-
-                        if match constraint.limit {
-                            ConstraintLimit::Eq => true,
-                            ConstraintLimit::Lt if error < 0.0 => true,
-                            ConstraintLimit::Gt if error > 0.0 => true,
-                            _ => false,
-                        } {
-                            let dir = if actual_dist_mag != 0.0 {
-                                actual_dist / actual_dist_mag
-                            } else {
-                                m::Vec2::unit_y()
-                            };
-
-                            match pair.1 {
-                                Some(p1) => {
-                                    let pair = [pair.0, p1];
-                                    let offsets_rotated = map_pair(&[0, 1], |i| {
-                                        bufs.poses[pair[*i]].rotation * constraint.offsets[*i]
-                                    });
-                                    let offsets_wedge_dir =
-                                        map_pair(&[0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
-                                    let eff_inv_masses = map_pair(&[0, 1], |i| {
-                                        inv_masses[*i]
-                                            + (offsets_wedge_dir[*i].powi(2) * inv_mom_inertias[*i])
-                                    });
-
-                                    let lambda = -error
-                                        / (eff_inv_masses[0]
-                                            + eff_inv_masses[1]
-                                            + constraint.compliance * inv_dt_sq);
-
-                                    bufs.poses[pair[0]]
-                                        .append_translation(inv_masses[0] * lambda * dir);
-                                    bufs.poses[pair[0]].prepend_rotation(
-                                        Angle::Rad(
-                                            inv_mom_inertias[0] * lambda * offsets_wedge_dir[0],
-                                        )
-                                        .into(),
-                                    );
-                                    bufs.poses[pair[1]]
-                                        .append_translation(-inv_masses[1] * lambda * dir);
-                                    bufs.poses[pair[1]].prepend_rotation(
-                                        Angle::Rad(
-                                            -inv_mom_inertias[1] * lambda * offsets_wedge_dir[1],
-                                        )
-                                        .into(),
-                                    );
-                                }
-                                None => {
-                                    // this is repetitive but kind of hard to abstract :thinking:
-                                    let offset_rotated =
-                                        bufs.poses[pair.0].rotation * constraint.offsets[0];
-                                    let offset_wedge_dir = offset_rotated.wedge(dir).xy;
-                                    let eff_inv_mass = inv_masses[0]
-                                        + offset_wedge_dir.powi(2) * inv_mom_inertias[0];
-
-                                    let lambda =
-                                        -error / (eff_inv_mass + constraint.compliance * inv_dt_sq);
-
-                                    bufs.poses[pair.0]
-                                        .append_translation(inv_masses[0] * lambda * dir);
-                                    bufs.poses[pair.0].prepend_rotation(
-                                        Angle::Rad(inv_mom_inertias[0] * lambda * offset_wedge_dir)
-                                            .into(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            drop(constr_span);
-
-            //
-            // Contacts
-            //
-
-            let cont_span = tracy_span!("contacts", "tick");
-            #[cfg(feature = "tracy")]
-            let mut contact_counter: usize = 0;
-
-            for (pose, pre_cont_pose) in izip!(&bufs.poses, &mut bufs.pre_contact_poses) {
-                *pre_cont_pose = *pose;
-            }
-
-            for (colls, contact, lambda_n) in
-                izip!(&coll_pairs, &mut bufs.contacts, &mut bufs.contact_lambdas)
-            {
-                let coll_ctxs = &bufs.coll_ctxs;
-                let ctxs = map_pair(colls, |c| coll_ctxs[c.pos().item_idx]);
-                if !match ctxs[0] {
-                    ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
-                    ColliderContext::Static(_) => false,
-                } && !match ctxs[1] {
-                    ColliderContext::Body(bi) => body_refs[bi].sees_forces(),
-                    ColliderContext::Static(_) => false,
-                } {
-                    // both bodies are kinematic or static, skip this pair
-                    *contact = ContactResult::Zero;
-                    continue;
-                }
-
-                // check for collision
-                let poses = &bufs.poses;
-                *contact = {
-                    let poses = map_pair(&ctxs, |ctx| match ctx {
-                        ColliderContext::Body(b) => poses[*b],
-                        ColliderContext::Static(pose) => *pose,
-                    });
-                    intersection_check(&poses[0], &*colls[0], &poses[1], &*colls[1])
-                };
-
-                #[cfg(feature = "tracy")]
-                {
-                    if !matches!(contact, ContactResult::Zero) {
-                        contact_counter += 1;
-                    }
-                }
-
-                // if one of the bodies is from a rope, adjust normal
-                // to perpendicular to the rope *before* any contacts
-                //
-                // (because rope colliders are circles, only the One case is possible here)
-                if let ContactResult::One(contact) = contact {
-                    for (ctx, normal_dir) in izip!(ctxs, [1.0, -1.0]) {
-                        if let ColliderContext::Body(bi) = ctx {
-                            if let (Some(prev), Some(next)) =
-                                (bufs.rope_prev_particles[bi], bufs.rope_next_particles[bi])
-                            {
-                                let normal_oriented = *contact.normal * normal_dir;
-                                let to_prev = bufs.pre_contact_poses[prev].translation
-                                    - bufs.pre_contact_poses[bi].translation;
-                                let to_next = bufs.pre_contact_poses[next].translation
-                                    - bufs.pre_contact_poses[bi].translation;
-                                let new_normal = if normal_oriented.dot(to_prev)
-                                    > normal_oriented.dot(to_next)
-                                {
-                                    m::Unit::new_normalize(m::left_normal(to_prev))
-                                } else {
-                                    m::Unit::new_normalize(m::left_normal(to_next))
-                                };
-                                contact.normal = if contact.normal.dot(*new_normal) > 0.0 {
-                                    new_normal
-                                } else {
-                                    -new_normal
-                                };
-                            }
-                        }
-                    }
-                }
-
-                let materials = match (colls[0].ty, colls[1].ty) {
-                    (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
-                    // one of the colliders was a trigger, no physics response
-                    _ => {
-                        continue;
-                    }
-                };
-
-                for contact in contact.iter() {
-                    // tangent for static friction
-                    let tangent = m::left_normal(*contact.normal);
-
-                    // gather variables into a struct because they're different
-                    // for static and dynamic bodies and this lets us get them in one match
-                    struct WorkingVars {
-                        // we can't return depth directly from collision detection because
-                        // earlier position corrections can change it,
-                        // thus we compute depth here from the points on each object's surface
-                        offset_worldspace: m::Vec2,
-                        offset_wedge_normal: f64,
-                        eff_inv_mass_n: f64,
-                        // for friction
-                        offset_worldspace_old: m::Vec2,
-                        offset_wedge_tan: f64,
-                        eff_inv_mass_tan: f64,
-                    }
-                    let poses = &bufs.poses;
-                    let old_poses = &bufs.old_poses;
-                    let vars = map_pair(&[0, 1], |i| {
-                        match ctxs[*i] {
-                            // no body attached -> static body, infinite mass
-                            ColliderContext::Static(pose) => {
-                                let offset_worldspace = pose * contact.offsets[*i];
-                                WorkingVars {
-                                    offset_worldspace,
-                                    offset_wedge_normal: 0.0,
-                                    eff_inv_mass_n: 0.0,
-                                    offset_worldspace_old: offset_worldspace,
-                                    offset_wedge_tan: 0.0,
-                                    eff_inv_mass_tan: 0.0,
-                                }
-                            }
-                            ColliderContext::Body(bi) => {
-                                let im = body_refs[bi].mass.inv();
-                                let imi = body_refs[bi].moment_of_inertia.inv();
-                                let offset_rotated = poses[bi].rotation * contact.offsets[*i];
-                                let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
-                                let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
-
-                                WorkingVars {
-                                    offset_worldspace: poses[bi] * contact.offsets[*i],
-                                    offset_wedge_normal,
-                                    eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
-                                    offset_worldspace_old: old_poses[bi] * contact.offsets[*i],
-                                    offset_wedge_tan,
-                                    eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
-                                }
-                            }
-                        }
-                    });
-
-                    let depth = (vars[0].offset_worldspace - vars[1].offset_worldspace)
-                        .dot(*contact.normal);
-
-                    if depth <= 0.0 {
-                        *lambda_n = 0.0;
-                        continue;
-                    }
-
-                    *lambda_n = -depth / (vars[0].eff_inv_mass_n + vars[1].eff_inv_mass_n);
-
-                    if let ColliderContext::Body(bi) = ctxs[0] {
-                        let im = body_refs[bi].mass.inv();
-                        let imi = body_refs[bi].moment_of_inertia.inv();
-                        bufs.poses[bi].append_translation(im * *lambda_n * *contact.normal);
-                        bufs.poses[bi].prepend_rotation(
-                            Angle::Rad(imi * *lambda_n * vars[0].offset_wedge_normal).into(),
-                        );
-                    }
-                    if let ColliderContext::Body(bi) = ctxs[1] {
-                        let im = body_refs[bi].mass.inv();
-                        let imi = body_refs[bi].moment_of_inertia.inv();
-                        bufs.poses[bi].append_translation(-im * *lambda_n * *contact.normal);
-                        bufs.poses[bi].prepend_rotation(
-                            Angle::Rad(-imi * *lambda_n * vars[1].offset_wedge_normal).into(),
-                        );
-                    }
-
-                    // static friction
-
-                    if let Some(friction_coef) = materials[0].static_friction_with(&materials[1]) {
-                        let offset_diff_motion = (vars[0].offset_worldspace
-                            - vars[0].offset_worldspace_old)
-                            - (vars[1].offset_worldspace - vars[1].offset_worldspace_old);
-                        let motion_along_tan = offset_diff_motion.dot(tangent);
-
-                        let max_coulomb_dx = *lambda_n * friction_coef;
-
-                        let lambda_t = -motion_along_tan
-                            / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
-
-                        if lambda_t < max_coulomb_dx {
-                            if let ColliderContext::Body(bi) = ctxs[0] {
-                                let im = body_refs[bi].mass.inv();
-                                let imi = body_refs[bi].moment_of_inertia.inv();
-                                bufs.poses[bi].append_translation(im * lambda_t * tangent);
-                                bufs.poses[bi].prepend_rotation(
-                                    Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
-                                );
-                            }
-                            if let ColliderContext::Body(bi) = ctxs[1] {
-                                let im = body_refs[bi].mass.inv();
-                                let imi = body_refs[bi].moment_of_inertia.inv();
-                                bufs.poses[bi].append_translation(-im * lambda_t * tangent);
-                                bufs.poses[bi].prepend_rotation(
-                                    Angle::Rad(-imi * lambda_t * vars[1].offset_wedge_tan).into(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-
-            #[cfg(feature = "tracy")]
-            CONTACTS_PLOT.point(contact_counter as f64);
-
-            drop(cont_span);
-
-            //
-            // update velocities from pose differences
-            //
-
-            for (old_pose, pose, vel) in izip!(&bufs.old_poses, &bufs.poses, &mut bufs.velocities) {
-                vel.linear = (pose.translation - old_pose.translation) * inv_dt;
-                // I'm sure there are more efficient ways to handle the angle but this'll do
-                vel.angular =
-                    Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * inv_dt;
-            }
-
-            //
-            // velocity step for dynamic friction and restitution on contacts + damping on other constraints
-            //
-
-            let vel_span = tracy_span!("velocity solve", "tick");
-
-            for (colls, contact, lambda_n) in
-                izip!(&coll_pairs, &bufs.contacts, &bufs.contact_lambdas)
-            {
-                let materials = match (colls[0].ty, colls[1].ty) {
-                    (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
-                    // one of the colliders was a trigger, no physics response
-                    _ => {
-                        continue;
-                    }
-                };
-                let ctxs = map_pair(colls, |c| bufs.coll_ctxs[c.pos().item_idx]);
-
-                for contact in contact.iter() {
-                    struct WorkingVars {
-                        inv_mass: f64,
-                        inv_mom_inertia: f64,
-                        offset_rotated: m::Vec2,
-                        point_vel: m::Vec2,
-                        old_point_vel: m::Vec2,
-                        ext_f_accel: m::Vec2,
-                    }
-                    let vars = map_pair(&[0, 1], |i| match ctxs[*i] {
-                        // no body => infinite mass
-                        ColliderContext::Static(pose) => WorkingVars {
-                            inv_mass: 0.0,
-                            inv_mom_inertia: 0.0,
-                            offset_rotated: pose.rotation * contact.offsets[*i],
-                            point_vel: m::Vec2::zero(),
-                            old_point_vel: m::Vec2::zero(),
-                            ext_f_accel: m::Vec2::zero(),
-                        },
-                        ColliderContext::Body(bi) => {
-                            let offset_rotated = bufs.poses[bi].rotation * contact.offsets[*i];
-                            WorkingVars {
-                                inv_mass: body_refs[bi].mass.inv(),
-                                inv_mom_inertia: body_refs[bi].moment_of_inertia.inv(),
-                                offset_rotated,
-                                point_vel: bufs.velocities[bi].point_velocity(offset_rotated),
-                                old_point_vel: bufs.old_velocities[bi]
-                                    .point_velocity(offset_rotated),
-                                ext_f_accel: bufs.ext_f_accelerations[bi],
-                            }
-                        }
-                    });
-
-                    let relative_vel_at_p = vars[0].point_vel - vars[1].point_vel;
-
-                    // restitution
-
-                    let normal_vel = relative_vel_at_p.dot(*contact.normal);
-                    let old_rel_vel = vars[0].old_point_vel - vars[1].old_point_vel;
-                    let old_normal_vel = old_rel_vel.dot(*contact.normal);
-                    let restitution_coef = if old_normal_vel * old_normal_vel
-                        < dt * dt * (vars[0].ext_f_accel + vars[1].ext_f_accel).mag_sq()
+            // TODO
+            for (colls, contact) in izip!(data.coll_pairs, data.contacts) {
+                if !matches!(contact, ContactResult::Zero) {
+                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
                     {
-                        // don't bounce if the normal velocity is very small to avoid jitter
-                        0.0
-                    } else {
-                        materials[0].restitution_with(&materials[1])
-                    };
-                    let delta_normal_vel = -normal_vel - restitution_coef * old_normal_vel.max(0.0);
-
-                    // dynamic friction
-
-                    let tangent = m::left_normal(*contact.normal);
-                    let delta_tan_vel = match materials[0].dynamic_friction_with(&materials[1]) {
-                        Some(friction_coef) => {
-                            let tangent_vel = relative_vel_at_p.dot(tangent);
-                            let max_coulomb_dv = inv_dt * lambda_n * friction_coef;
-                            tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum()
-                        }
-                        None => 0.0,
-                    };
-
-                    // apply impulse
-
-                    let total_vel_update =
-                        delta_normal_vel * *contact.normal + delta_tan_vel * tangent;
-                    let vel_update_mag = total_vel_update.mag();
-                    if vel_update_mag < 0.0001 {
-                        continue;
+                        sink.push(Event::Contact(ContactEvent {
+                            other_collider: graph::NodeRef::as_node(&colls[1], graph),
+                        }));
                     }
-                    let vel_update_dir = total_vel_update / vel_update_mag;
-                    let offsets_wedge_dv = map_pair(&[0, 1], |i| {
-                        vars[*i].offset_rotated.wedge(vel_update_dir).xy
-                    });
-                    let eff_inv_masses = map_pair(&[0, 1], |i| {
-                        vars[*i].inv_mass
-                            + (offsets_wedge_dv[*i].powi(2) * vars[*i].inv_mom_inertia)
-                    });
-                    let impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
-
-                    if let ColliderContext::Body(bi) = ctxs[0] {
-                        bufs.velocities[bi].linear +=
-                            vars[0].inv_mass * impulse_mag * vel_update_dir;
-                        bufs.velocities[bi].angular +=
-                            vars[0].inv_mom_inertia * impulse_mag * offsets_wedge_dv[0];
-                    }
-                    if let ColliderContext::Body(bi) = ctxs[1] {
-                        bufs.velocities[bi].linear -=
-                            vars[1].inv_mass * impulse_mag * vel_update_dir;
-                        bufs.velocities[bi].angular -=
-                            vars[1].inv_mom_inertia * impulse_mag * offsets_wedge_dv[1];
-                    }
-                }
-            }
-
-            // damping
-
-            for (constraint, pair) in
-                izip!(self.user_constraints.values(), &bufs.constraint_body_pairs)
-            {
-                let inv_masses = map_semi_pair(*pair, |b| body_refs[*b].mass.inv(), 0.0);
-                let inv_mom_inertias =
-                    map_semi_pair(*pair, |b| body_refs[*b].moment_of_inertia.inv(), 0.0);
-
-                match pair.1 {
-                    Some(p1) => {
-                        let pair = [pair.0, p1];
-                        let offsets_rotated = map_pair(&[0, 1], |i| {
-                            bufs.poses[pair[*i]].rotation * constraint.offsets[*i]
-                        });
-
-                        let relative_vel = bufs.velocities[pair[0]]
-                            .point_velocity(offsets_rotated[0])
-                            - bufs.velocities[pair[1]].point_velocity(offsets_rotated[1]);
-                        let relative_vel_mag = relative_vel.mag();
-                        if relative_vel_mag == 0.0 {
-                            continue;
-                        }
-                        let dir = relative_vel / relative_vel_mag;
-
-                        let offsets_wedge_dir =
-                            map_pair(&[0, 1], |i| offsets_rotated[*i].wedge(dir).xy);
-                        let eff_inv_masses = map_pair(&[0, 1], |i| {
-                            inv_masses[*i] + (offsets_wedge_dir[*i].powi(2) * inv_mom_inertias[*i])
-                        });
-
-                        let vel_update_mag =
-                            -relative_vel_mag * (constraint.linear_damping * dt).min(1.0);
-                        let linear_impulse_mag =
-                            vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
-
-                        bufs.velocities[pair[0]].linear += inv_masses[0] * linear_impulse_mag * dir;
-                        bufs.velocities[pair[0]].angular +=
-                            inv_mom_inertias[0] * linear_impulse_mag * offsets_wedge_dir[0];
-                        bufs.velocities[pair[1]].linear -= inv_masses[1] * linear_impulse_mag * dir;
-                        bufs.velocities[pair[1]].angular -=
-                            inv_mom_inertias[1] * linear_impulse_mag * offsets_wedge_dir[1];
-
-                        if constraint.angular_damping > 0.0 {
-                            let rel_angular_vel =
-                                bufs.velocities[pair[0]].angular - bufs.velocities[pair[1]].angular;
-                            let ang_vel_update_mag =
-                                -rel_angular_vel * (constraint.angular_damping * dt).min(1.0);
-                            let angular_impulse =
-                                ang_vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
-
-                            bufs.velocities[pair[1]].angular -=
-                                inv_mom_inertias[1] * angular_impulse;
-                            bufs.velocities[pair[0]].angular +=
-                                inv_mom_inertias[0] * angular_impulse;
-                        };
-                    }
-                    None => {
-                        let offset_rotated = bufs.poses[pair.0].rotation * constraint.offsets[0];
-
-                        let point_vel = bufs.velocities[pair.0].point_velocity(offset_rotated);
-                        let point_vel_mag = point_vel.mag();
-                        if point_vel_mag == 0.0 {
-                            continue;
-                        }
-                        let dir = point_vel / point_vel_mag;
-
-                        let offset_wedge_dir = offset_rotated.wedge(dir).xy;
-                        let eff_inv_mass =
-                            inv_masses[0] + offset_wedge_dir.powi(2) * inv_mom_inertias[0];
-
-                        let vel_update_mag =
-                            -point_vel_mag * (constraint.linear_damping * dt).min(1.0);
-                        let linear_impulse_mag = vel_update_mag / eff_inv_mass;
-
-                        bufs.velocities[pair.0].linear += inv_masses[0] * linear_impulse_mag * dir;
-                        bufs.velocities[pair.0].angular +=
-                            inv_mom_inertias[0] * linear_impulse_mag * offset_wedge_dir;
-
-                        if constraint.angular_damping > 0.0 {
-                            let ang_vel_update_mag = bufs.velocities[pair.0].angular
-                                * (constraint.angular_damping * dt).min(1.0);
-                            let angular_impulse = -ang_vel_update_mag / eff_inv_mass;
-                            bufs.velocities[pair.0].angular +=
-                                inv_mom_inertias[0] * angular_impulse;
-                        };
-                    }
-                }
-            }
-
-            //
-            // Damping and velocity correction for ropes
-            //
-
-            for rope in l_rope.iter(graph) {
-                let first_particle =
-                    node_ref_map[graph.get_neighbor(&rope, l_body).unwrap().pos().item_idx];
-                let mut curr_particle = first_particle;
-                let mut next_particle = bufs.rope_next_particles[curr_particle].unwrap();
-                loop {
-                    let relative_vel = bufs.velocities[curr_particle].linear
-                        - bufs.velocities[next_particle].linear;
-                    let relative_vel_mag = relative_vel.mag();
-                    if relative_vel_mag != 0.0 {
-                        let dir = relative_vel / relative_vel_mag;
-                        let vel_update_mag = -relative_vel_mag * (rope.damping * dt).min(1.0);
-
-                        let linear_impulse_mag = vel_update_mag
-                            / (body_refs[curr_particle].mass.inv()
-                                + body_refs[next_particle].mass.inv());
-
-                        bufs.velocities[curr_particle].linear +=
-                            body_refs[curr_particle].mass.inv() * linear_impulse_mag * dir;
-                        bufs.velocities[next_particle].linear -=
-                            body_refs[next_particle].mass.inv() * linear_impulse_mag * dir;
-                    }
-
-                    curr_particle = next_particle;
-                    next_particle = match bufs.rope_next_particles[next_particle] {
-                        Some(next) => next,
-                        None => break,
-                    };
-                }
-
-                // velocity correction to prevent bouncing if there was a lateral position correction
-                let mut particle = first_particle;
-                loop {
-                    if let Some(corr) = bufs.rope_lateral_corrections[particle] {
-                        let corr_mag = corr.mag();
-                        // velocity "created" by the correction, used as a maximum bound on
-                        // velocity correction to keep velocity from e.g. gravity
-                        let vel_from_corr = corr_mag * inv_dt;
-
-                        let dir = corr / corr_mag;
-                        let vel_in_dir = bufs.velocities[particle].linear.dot(dir);
-                        let vel_clamped = vel_in_dir.min(vel_from_corr).max(-vel_from_corr);
-
-                        let impulse_mag = -vel_clamped
-                            / (body_refs[particle].mass.inv() + rope.bending_compliance * inv_dt);
-                        bufs.velocities[particle].linear +=
-                            body_refs[particle].mass.inv() * impulse_mag * dir;
-                    }
-
-                    particle = match bufs.rope_next_particles[particle] {
-                        Some(next) => next,
-                        None => break,
-                    }
-                }
-            }
-
-            drop(vel_span);
-
-            //
-            // Event gathering
-            //
-
-            for (colls, contact) in izip!(&coll_pairs, &bufs.contacts) {
-                match contact {
-                    ContactResult::Zero => (),
-                    _ => {
-                        if let Some(mut sink) =
-                            graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
-                        {
-                            sink.push(Event::Contact(ContactEvent {
-                                other_collider: graph::NodeRef::as_node(&colls[1], graph),
-                            }));
-                        }
-                        if let Some(mut sink) =
-                            graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
-                        {
-                            sink.push(Event::Contact(ContactEvent {
-                                other_collider: graph::NodeRef::as_node(&colls[0], graph),
-                            }));
-                        }
+                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
+                    {
+                        sink.push(Event::Contact(ContactEvent {
+                            other_collider: graph::NodeRef::as_node(&colls[0], graph),
+                        }));
                     }
                 }
             }
@@ -1263,16 +586,8 @@ impl Physics {
             })
     }
 
+    // used by debug visualizer
     pub(crate) fn islands(&self) -> &[Island] {
         &self.working_bufs.islands
     }
-}
-//
-// helpers to reduce duplication when fetching info for pairs of objects
-fn map_pair<T, R>(pair: &[T; 2], f: impl Fn(&T) -> R) -> [R; 2] {
-    [f(&pair[0]), f(&pair[1])]
-}
-
-fn map_semi_pair<T, R>(pair: (T, Option<T>), f: impl Fn(&T) -> R, snd_default: R) -> [R; 2] {
-    [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
 }
