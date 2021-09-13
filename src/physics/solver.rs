@@ -22,22 +22,21 @@ pub struct DataView<'a> {
     pub inv_dt: f64,
     pub inv_dt_sq: f64,
     pub body_refs: &'a [graph::NodeRef<'a, Body>],
-    pub node_ref_map: &'a [usize],
     pub old_poses: &'a mut [m::Pose],
     pub pre_contact_poses: &'a mut [m::Pose],
     pub poses: &'a mut [m::Pose],
     pub old_velocities: &'a mut [Velocity],
     pub velocities: &'a mut [Velocity],
     pub ext_f_accelerations: &'a mut [m::Vec2],
-    pub ropes: &'a [RopeView],
+    pub ropes: Vec<RopeView>,
     pub rope_next_particles: &'a [Option<usize>],
     pub rope_prev_particles: &'a [Option<usize>],
     pub rope_lateral_corrections: &'a mut [Option<m::Vec2>],
-    pub constraints: &'a [Constraint],
-    pub constraint_body_pairs: &'a [(usize, Option<usize>)],
-    pub coll_pairs: &'a [[ColliderWithContext; 2]],
-    pub contacts: &'a mut [ContactResult],
-    pub contact_lambdas: &'a mut [f64],
+    // pub constraints: &'a [Constraint],
+    // pub constraint_body_pairs: &'a [(usize, Option<usize>)],
+    // pub coll_pairs: &'a [[ColliderWithContext; 2]],
+    // pub contacts: &'a mut [ContactResult],
+    // pub contact_lambdas: &'a mut [f64],
 }
 
 pub struct RopeView {
@@ -45,15 +44,15 @@ pub struct RopeView {
     pub start: usize,
 }
 
-pub fn solve(forcefield: &impl ForceField, data: DataView<'_>) {
+pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
     // apply external forces and estimate post-step pose with explicit Euler step
     for (body, old_pose, pose, old_vel, vel, ext_accel) in izip!(
         data.body_refs,
-        data.old_poses,
-        data.poses,
-        data.old_velocities,
-        data.velocities,
-        data.ext_f_accelerations
+        &mut *data.old_poses,
+        &mut *data.poses,
+        &mut *data.old_velocities,
+        &mut *data.velocities,
+        &mut *data.ext_f_accelerations
     ) {
         if let Mass::Finite { .. } = body.mass {
             // TODO: rename forcefield to accelerationfield or allow it to depend on mass
@@ -69,34 +68,34 @@ pub fn solve(forcefield: &impl ForceField, data: DataView<'_>) {
     }
 
     solve_ropes(data);
-    solve_constraints(data);
+    // solve_constraints(data);
 
-    for (pose, pre_cont_pose) in izip!(data.poses, data.pre_contact_poses) {
-        *pre_cont_pose = *pose;
-    }
-    solve_contacts(data);
+    // for (pose, pre_cont_pose) in izip!(data.poses, data.pre_contact_poses) {
+    //     *pre_cont_pose = *pose;
+    // }
+    // solve_contacts(data);
 
-    // update velocities from pose differences
-    for (old_pose, pose, vel) in izip!(data.old_poses, data.poses, data.velocities) {
-        vel.linear = (pose.translation - old_pose.translation) * data.inv_dt;
-        // I'm sure there are more efficient ways to handle the angle but this'll do
-        vel.angular =
-            m::Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
-    }
+    // // update velocities from pose differences
+    // for (old_pose, pose, vel) in izip!(data.old_poses, data.poses, data.velocities) {
+    //     vel.linear = (pose.translation - old_pose.translation) * data.inv_dt;
+    //     // I'm sure there are more efficient ways to handle the angle but this'll do
+    //     vel.angular =
+    //         m::Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
+    // }
 
-    contact_velocity_step(data);
-    constraint_damping(data);
-    rope_velocity_step(data);
+    // contact_velocity_step(data);
+    // constraint_damping(data);
+    // rope_velocity_step(data);
 }
 
 //
 // Solve ropes
 //
 
-fn solve_ropes(data: DataView<'_>) {
+fn solve_ropes(data: &mut DataView<'_>) {
     let _span = tracy_span!("solve ropes", "solve_ropes");
 
-    for rope in data.ropes {
+    for rope in &*data.ropes {
         let mut curr_particle = rope.start;
         let mut next_particle =
             data.rope_next_particles[curr_particle].expect("Rope only had one particle");
@@ -164,7 +163,8 @@ fn solve_ropes(data: DataView<'_>) {
 // Solve constraints
 //
 
-fn solve_constraints(data: DataView<'_>) {
+/*
+fn solve_constraints(data: &mut DataView<'_>) {
     let _span = tracy_span!("solve constraints", "solve_constraints");
 
     for (constraint, pair) in izip!(data.constraints, data.constraint_body_pairs) {
@@ -251,7 +251,7 @@ fn solve_constraints(data: DataView<'_>) {
 // Solve contacts
 //
 
-fn solve_contacts(data: DataView<'_>) {
+fn solve_contacts(data: &mut DataView<'_>) {
     let _span = tracy_span!("solve contacts", "solve_contacts");
 
     #[cfg(feature = "tracy")]
@@ -453,7 +453,7 @@ fn solve_contacts(data: DataView<'_>) {
 // Contact velocity step
 //
 
-fn contact_velocity_step(data: DataView<'_>) {
+fn contact_velocity_step(data: &mut DataView<'_>) {
     let _span = tracy_span!("contact velocity step", "contact_velocity_step");
 
     for (colls, contact, lambda_n) in izip!(data.coll_pairs, data.contacts, data.contact_lambdas) {
@@ -558,7 +558,7 @@ fn contact_velocity_step(data: DataView<'_>) {
 // Constraint damping
 //
 
-fn constraint_damping(data: DataView<'_>) {
+fn constraint_damping(data: &mut DataView<'_>) {
     let _span = tracy_span!("constraint damping", "constrain_damping");
 
     for (constraint, pair) in izip!(data.constraints, data.constraint_body_pairs) {
@@ -643,7 +643,7 @@ fn constraint_damping(data: DataView<'_>) {
 // Rope velocity step
 //
 
-fn rope_velocity_step(data: DataView<'_>) {
+fn rope_velocity_step(data: &mut DataView<'_>) {
     let _span = tracy_span!("rope velocity step", "rope_velocity_step");
 
     for rope in data.ropes {
@@ -704,4 +704,4 @@ fn rope_velocity_step(data: DataView<'_>) {
 
 fn map_semi_pair<T, R>(pair: (T, Option<T>), f: impl Fn(&T) -> R, snd_default: R) -> [R; 2] {
     [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
-}
+}*/

@@ -12,6 +12,7 @@ zerocopy = "0.6.0"
 futures = "0.3.17"
 ultraviolet = { version = "0.8.1", features = ["f64"] }
 itertools = "0.10.1"
+tinyvec = { version = "1.4.0", features = ["alloc"] }
 slotmap = "1.0.6"
 tracy-client = { version = "0.12.4", default-features = false }
 serde = { version = "1.0.130", features = ["derive"], optional = true }

@@ -6,6 +6,7 @@ use crate::{
 
 use itertools::izip;
 use slotmap as sm;
+use tinyvec::{tiny_vec, TinyVec};
 
 //
 
@@ -14,7 +15,6 @@ use collision::HGrid;
 pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
 
 pub(crate) mod bitmatrix;
-use bitmatrix::{BitMatrix, BitMatrixParams};
 
 mod constraint;
 pub use constraint::*;
@@ -170,6 +170,9 @@ impl WorkingBuffers {
 pub(crate) struct Island {
     id: usize,
     pub(crate) body_idxs: Vec<usize>,
+    rope_idxs: Vec<usize>,
+    constr_idxs: Vec<usize>,
+    coll_pair_idxs: Vec<usize>,
 }
 
 impl Physics {
@@ -309,45 +312,100 @@ impl Physics {
         // Build constraint graph
         //
 
+        const EDGES_IN_STACK: usize = 5;
+        type ConstraintGraphEdges = TinyVec<[Edge; EDGES_IN_STACK]>;
+        type ConstraintGraph = Vec<ConstraintGraphEdges>;
+
+        // storing types of edge so we can later partition constraints for islands
+        #[derive(Clone, Copy, Debug)]
+        enum Edge {
+            Rope {
+                body_idx: usize,
+                rope_node_idx: usize,
+            },
+            Constraint {
+                body_idx: usize,
+                constr_idx: usize,
+            },
+            Contact {
+                body_idx: usize,
+                pair_idx: usize,
+            },
+            // marking possible contacts with static objects as well
+            // so that we can get this knowledge into the island solver
+            StaticContact {
+                pair_idx: usize,
+            },
+        }
+        // default just to use with TinyVec
+        impl Default for Edge {
+            fn default() -> Self {
+                Edge::StaticContact { pair_idx: 0 }
+            }
+        }
+
         let constr_graph = {
             let _span = tracy_span!("build constraint graph", "tick");
 
-            // TODO: rethink the use of BitMatrix here, a tinyvec of indices per body would probably
-            // take a decent amount less memory in any large-ish scene
-            let mut g = BitMatrix::new(BitMatrixParams {
-                bits_per_entry: l_body.content.len(),
-                entry_count: l_body.content.len(),
-            });
+            let mut g: ConstraintGraph =
+                vec![tiny_vec!([Edge; EDGES_IN_STACK]); l_body.content.len()];
+
             // rope constraints
             for rope_node in l_rope.iter(graph) {
+                let rope_node_idx = rope_node.pos().item_idx;
                 let mut iter = RopeIter::new(rope_node, l_body, graph)
                     .map(|node| node.pos().item_idx)
                     .peekable();
                 while let Some(particle) = iter.next() {
                     if let Some(&next_particle) = iter.peek() {
-                        g.entry_mut(particle).set(next_particle);
-                        g.entry_mut(next_particle).set(particle);
+                        g[particle].push(Edge::Rope {
+                            body_idx: next_particle,
+                            rope_node_idx,
+                        });
+                        g[next_particle].push(Edge::Rope {
+                            body_idx: particle,
+                            rope_node_idx,
+                        });
                     }
                 }
             }
             // custom constraints
-            for constr in self.user_constraints.values() {
+            for (constr_idx, constr) in self.user_constraints.values().enumerate() {
                 if let Some(target) = constr.target {
                     let owner = constr.owner.pos().item_idx;
                     let target = target.pos().item_idx;
-                    g.entry_mut(owner).set(target);
-                    g.entry_mut(target).set(owner);
+                    g[owner].push(Edge::Constraint {
+                        body_idx: target,
+                        constr_idx,
+                    });
+                    g[target].push(Edge::Constraint {
+                        body_idx: owner,
+                        constr_idx,
+                    });
                 }
             }
             // potential contacts from spatial index.
             // this doesn't necessarily cull as much as actually checking collisions,
             // but that would require redoing this every substep which would be costly.
-            for pair in coll_pairs.iter() {
-                if let [Some(b1), Some(b2)] =
-                    pair.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx))
-                {
-                    g.entry_mut(b1).set(b2);
-                    g.entry_mut(b2).set(b1);
+            for (pair_idx, pair) in coll_pairs.iter().enumerate() {
+                match pair.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx)) {
+                    [Some(b1), Some(b2)] => {
+                        g[b1].push(Edge::Contact {
+                            body_idx: b2,
+                            pair_idx,
+                        });
+                        g[b2].push(Edge::Contact {
+                            body_idx: b1,
+                            pair_idx,
+                        });
+                    }
+                    [Some(b1), None] => {
+                        g[b1].push(Edge::StaticContact { pair_idx });
+                    }
+                    [None, Some(b2)] => {
+                        g[b2].push(Edge::StaticContact { pair_idx });
+                    }
+                    [None, None] => {}
                 }
             }
             g
@@ -367,15 +425,42 @@ impl Physics {
             island: &mut Island,
             curr: usize,
             island_ids: &mut [Option<usize>],
-            constr_graph: &BitMatrix,
+            constr_graph: &[ConstraintGraphEdges],
         ) {
             if island_ids[curr].is_some() {
                 return;
             }
             island_ids[curr] = Some(island.id);
             island.body_idxs.push(curr);
-            for connected_bi in constr_graph.entry(curr).iter() {
-                search(island, connected_bi, island_ids, constr_graph);
+            for edge in constr_graph[curr].iter() {
+                match edge {
+                    Edge::Rope {
+                        body_idx,
+                        rope_node_idx,
+                    } => {
+                        if !island.rope_idxs.iter().any(|&idx| idx == *rope_node_idx) {
+                            island.rope_idxs.push(*rope_node_idx);
+                        }
+
+                        search(island, *body_idx, island_ids, constr_graph);
+                    }
+                    Edge::Constraint {
+                        body_idx,
+                        constr_idx,
+                    } => {
+                        island.constr_idxs.push(*constr_idx);
+
+                        search(island, *body_idx, island_ids, constr_graph);
+                    }
+                    Edge::Contact { body_idx, pair_idx } => {
+                        island.coll_pair_idxs.push(*pair_idx);
+
+                        search(island, *body_idx, island_ids, constr_graph);
+                    }
+                    Edge::StaticContact { pair_idx } => {
+                        island.coll_pair_idxs.push(*pair_idx);
+                    }
+                }
             }
         }
 
@@ -387,6 +472,9 @@ impl Physics {
             let mut island = Island {
                 id: bi,
                 body_idxs: Vec::new(),
+                rope_idxs: Vec::new(),
+                constr_idxs: Vec::new(),
+                coll_pair_idxs: Vec::new(),
             };
             search(&mut island, bi, &mut bufs.island_ids, &constr_graph);
             bufs.islands.push(island);
@@ -398,6 +486,7 @@ impl Physics {
         // Populate working buffers
         //
 
+        // body_refs in island order, rest of the buffers based on these
         let body_refs: Vec<graph::NodeRef<Body>> = bufs
             .islands
             .iter()
@@ -504,38 +593,119 @@ impl Physics {
             }));
 
         //
+        // Slice buffers into island-specific views
+        //
+
+        let mut island_views: Vec<solver::DataView<'_>> = Vec::with_capacity(bufs.islands.len());
+
+        let mut body_refs_s = body_refs.as_slice();
+        let mut old_poses_s = bufs.old_poses.as_mut_slice();
+        let mut pre_cont_poses_s = bufs.pre_contact_poses.as_mut_slice();
+        let mut poses_s = bufs.poses.as_mut_slice();
+        let mut old_vels_s = bufs.old_velocities.as_mut_slice();
+        let mut vels_s = bufs.velocities.as_mut_slice();
+        let mut ext_f_acc_s = bufs.ext_f_accelerations.as_mut_slice();
+        let mut rope_next_p_s = bufs.rope_next_particles.as_mut_slice();
+        let mut rope_prev_p_s = bufs.rope_prev_particles.as_mut_slice();
+        let mut rope_lat_s = bufs.rope_lateral_corrections.as_mut_slice();
+
+        let mut island_start_idx = 0;
+
+        for island in &bufs.islands {
+            let len = island.body_idxs.len();
+            let (body_refs, br_rest) = body_refs_s.split_at(len);
+            body_refs_s = br_rest;
+            let (old_poses, old_pose_rest) = old_poses_s.split_at_mut(len);
+            old_poses_s = old_pose_rest;
+            let (pre_contact_poses, pcp_rest) = pre_cont_poses_s.split_at_mut(len);
+            pre_cont_poses_s = pcp_rest;
+            let (poses, pose_rest) = poses_s.split_at_mut(len);
+            poses_s = pose_rest;
+            let (old_velocities, old_v_rest) = old_vels_s.split_at_mut(len);
+            old_vels_s = old_v_rest;
+            let (velocities, vel_rest) = vels_s.split_at_mut(len);
+            vels_s = vel_rest;
+            let (ext_f_accelerations, ext_f_rest) = ext_f_acc_s.split_at_mut(len);
+            ext_f_acc_s = ext_f_rest;
+
+            let ropes: Vec<solver::RopeView> = island
+                .rope_idxs
+                .iter()
+                .map(|idx| {
+                    let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
+                    let first_particle = graph
+                        .get_neighbor(&rope_node, l_body)
+                        .expect("A Rope didn't have any particles");
+                    solver::RopeView {
+                        info: *rope_node,
+                        start: node_ref_map[first_particle.pos().item_idx] - island_start_idx,
+                    }
+                })
+                .collect();
+
+            let (rope_next_particles, rope_next_rest) = rope_next_p_s.split_at_mut(len);
+            rope_next_p_s = rope_next_rest;
+            let (rope_prev_particles, rope_prev_rest) = rope_prev_p_s.split_at_mut(len);
+            rope_prev_p_s = rope_prev_rest;
+            // shift indices by start of layer
+            for np in rope_next_particles.iter_mut().filter_map(Option::as_mut) {
+                *np -= island_start_idx;
+            }
+            for pp in rope_prev_particles.iter_mut().filter_map(Option::as_mut) {
+                *pp -= island_start_idx;
+            }
+
+            let (rope_lateral_corrections, rope_lat_rest) = rope_lat_s.split_at_mut(len);
+            rope_lat_s = rope_lat_rest;
+
+            island_views.push(solver::DataView {
+                dt,
+                inv_dt,
+                inv_dt_sq,
+                body_refs,
+                old_poses,
+                pre_contact_poses,
+                poses,
+                old_velocities,
+                velocities,
+                ext_f_accelerations,
+                ropes,
+                rope_next_particles,
+                rope_prev_particles,
+                rope_lateral_corrections,
+            });
+
+            island_start_idx += len;
+        }
+
+        //
         // Actual physics step
         //
 
         for _substep in 0..self.substeps {
             let _substep_span = tracy_span!("substep", "tick");
-            solver::solve(
-                forcefield,
-                solver::DataView {
-                    dt,
-                    inv_dt,
-                    inv_dt_sq,
-                    // TODO
-                },
-            );
-
-            // TODO
-            for (colls, contact) in izip!(data.coll_pairs, data.contacts) {
-                if !matches!(contact, ContactResult::Zero) {
-                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
-                    {
-                        sink.push(Event::Contact(ContactEvent {
-                            other_collider: graph::NodeRef::as_node(&colls[1], graph),
-                        }));
-                    }
-                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
-                    {
-                        sink.push(Event::Contact(ContactEvent {
-                            other_collider: graph::NodeRef::as_node(&colls[0], graph),
-                        }));
-                    }
-                }
+            for island_view in &mut island_views {
+                solver::solve(forcefield, island_view);
             }
+
+            // TODO: events
+            //
+            // for (colls, contact) in izip!(data.coll_pairs, data.contacts) {
+            //     if !matches!(contact, ContactResult::Zero) {
+            //         if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
+            //         {
+            //             sink.push(Event::Contact(ContactEvent {
+            //                 other_collider: graph::NodeRef::as_node(&colls[1], graph),
+            //             }));
+            //         }
+            //         if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
+            //         {
+            //             sink.push(Event::Contact(ContactEvent {
+            //                 other_collider: graph::NodeRef::as_node(&colls[0], graph),
+            //             }));
+            //         }
+            //     }
+            // }
         }
 
         //
