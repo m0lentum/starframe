@@ -265,59 +265,61 @@ impl DebugVisualizer {
         ctx: &mut super::RenderContext,
         (graph, l_pose, l_body, l_coll): (&Graph, &Layer<m::Pose>, &Layer<Body>, &Layer<Collider>),
     ) {
-        // update uniforms
+        // TODO fix pls
 
-        let uniforms = GlobalUniforms {
-            view: camera.view_matrix(ctx.target_size).into(),
-        };
-        ctx.queue
-            .write_buffer(&self.uniform_buf, 0, uniforms.as_bytes());
+        // // update uniforms
 
-        // draw boxes
+        // let uniforms = GlobalUniforms {
+        //     view: camera.view_matrix(ctx.target_size).into(),
+        // };
+        // ctx.queue
+        //     .write_buffer(&self.uniform_buf, 0, uniforms.as_bytes());
 
-        let verts: Vec<Vertex> = phys
-            .islands()
-            .iter()
-            .flat_map(|island| {
-                let color = [0.3, 0.5, 0.9, 0.5];
-                let mut enclosing_aabb = AABB {
-                    min: m::Vec2::new(std::f64::MAX, std::f64::MAX),
-                    max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
-                };
-                for bi in &island.body_idxs {
-                    let body = l_body.get_unchecked_by_item_idx(*bi);
-                    let pose = graph.get_neighbor(&body, l_pose).unwrap();
-                    let pos = pose.translation;
-                    let r = match graph.get_neighbor(&body, l_coll) {
-                        Some(coll) => coll.bounding_sphere_r(),
-                        None => 0.0,
-                    };
-                    let r = m::Vec2::new(r, r);
-                    enclosing_aabb.min = enclosing_aabb.min.min_by_component(pos - r);
-                    enclosing_aabb.max = enclosing_aabb.max.max_by_component(pos + r);
-                }
-                let min = [enclosing_aabb.min.x as f32, enclosing_aabb.min.y as f32];
-                let max = [enclosing_aabb.max.x as f32, enclosing_aabb.max.y as f32];
-                std::array::IntoIter::new([
-                    [min[0], min[1]],
-                    [max[0], min[1]],
-                    [min[0], max[1]],
-                    [max[0], max[1]],
-                    [min[0], max[1]],
-                    [max[0], min[1]],
-                ])
-                .map(move |position| Vertex { position, color })
-            })
-            .collect();
+        // // draw boxes
 
-        self.mesh_buf.write(ctx, &verts);
+        // let verts: Vec<Vertex> = phys
+        //     .islands()
+        //     .iter()
+        //     .flat_map(|island| {
+        //         let color = [0.3, 0.5, 0.9, 0.5];
+        //         let mut enclosing_aabb = AABB {
+        //             min: m::Vec2::new(std::f64::MAX, std::f64::MAX),
+        //             max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
+        //         };
+        //         for bi in &island.body_idxs {
+        //             let body = l_body.get_unchecked_by_item_idx(*bi);
+        //             let pose = graph.get_neighbor(&body, l_pose).unwrap();
+        //             let pos = pose.translation;
+        //             let r = match graph.get_neighbor(&body, l_coll) {
+        //                 Some(coll) => coll.bounding_sphere_r(),
+        //                 None => 0.0,
+        //             };
+        //             let r = m::Vec2::new(r, r);
+        //             enclosing_aabb.min = enclosing_aabb.min.min_by_component(pos - r);
+        //             enclosing_aabb.max = enclosing_aabb.max.max_by_component(pos + r);
+        //         }
+        //         let min = [enclosing_aabb.min.x as f32, enclosing_aabb.min.y as f32];
+        //         let max = [enclosing_aabb.max.x as f32, enclosing_aabb.max.y as f32];
+        //         std::array::IntoIter::new([
+        //             [min[0], min[1]],
+        //             [max[0], min[1]],
+        //             [min[0], max[1]],
+        //             [max[0], max[1]],
+        //             [min[0], max[1]],
+        //             [max[0], min[1]],
+        //         ])
+        //         .map(move |position| Vertex { position, color })
+        //     })
+        //     .collect();
 
-        {
-            let mut pass = ctx.pass();
-            pass.set_pipeline(&self.mesh_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.mesh_buf.slice());
-            pass.draw(0..self.mesh_buf.len() as u32, 0..1);
-        }
+        // self.mesh_buf.write(ctx, &verts);
+
+        // {
+        //     let mut pass = ctx.pass();
+        //     pass.set_pipeline(&self.mesh_pipeline);
+        //     pass.set_bind_group(0, &self.bind_group, &[]);
+        //     pass.set_vertex_buffer(0, self.mesh_buf.slice());
+        //     pass.draw(0..self.mesh_buf.len() as u32, 0..1);
+        // }
     }
 }

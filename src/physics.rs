@@ -126,6 +126,15 @@ pub struct Physics {
 /// Cached buffers to avoid allocating a bunch of memory every frame.
 /// Explanations in `tick` where populated
 struct WorkingBuffers {
+    // indices sorted by island for efficient island graph formation
+    // without individual Vecs for each island
+    sorted_body_idxs: Vec<usize>,
+    sorted_rope_idxs: Vec<usize>,
+    sorted_constr_idxs: Vec<usize>,
+    sorted_pair_idxs: Vec<usize>,
+    island_assigned: Vec<bool>,
+    islands: Vec<Island>,
+
     node_ref_map: Vec<usize>,
     rope_next_particles: Vec<Option<usize>>,
     rope_prev_particles: Vec<Option<usize>>,
@@ -140,12 +149,17 @@ struct WorkingBuffers {
     coll_ctxs: Vec<ColliderContext>,
     contacts: Vec<ContactResult>,
     contact_lambdas: Vec<f64>,
-    island_ids: Vec<Option<usize>>,
-    islands: Vec<Island>,
 }
 impl WorkingBuffers {
     fn new() -> Self {
         Self {
+            sorted_body_idxs: Vec::new(),
+            sorted_rope_idxs: Vec::new(),
+            sorted_constr_idxs: Vec::new(),
+            sorted_pair_idxs: Vec::new(),
+            island_assigned: Vec::new(),
+            islands: Vec::new(),
+
             node_ref_map: Vec::new(),
             rope_next_particles: Vec::new(),
             rope_prev_particles: Vec::new(),
@@ -160,19 +174,23 @@ impl WorkingBuffers {
             coll_ctxs: Vec::new(),
             contacts: Vec::new(),
             contact_lambdas: Vec::new(),
-            island_ids: Vec::new(),
-            islands: Vec::new(),
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Island {
+struct Island {
     id: usize,
-    pub(crate) body_idxs: Vec<usize>,
-    rope_idxs: Vec<usize>,
-    constr_idxs: Vec<usize>,
-    coll_pair_idxs: Vec<usize>,
+    // bodies, ropes, constraints and collider pairs belonging to the island,
+    // stored in sorted_* in WorkingBuffers
+    body_range_start: usize,
+    body_count: usize,
+    rope_range_start: usize,
+    rope_count: usize,
+    constr_range_start: usize,
+    constr_count: usize,
+    pair_range_start: usize,
+    pair_count: usize,
 }
 
 impl Physics {
@@ -415,50 +433,67 @@ impl Physics {
         // Generate islands from graph
         //
 
-        bufs.island_ids.clear();
-        bufs.island_ids.resize(l_body.content.len(), None);
+        bufs.island_assigned.clear();
+        bufs.island_assigned.resize(l_body.content.len(), false);
         bufs.islands.clear();
+        bufs.sorted_body_idxs.clear();
+        bufs.sorted_rope_idxs.clear();
+        bufs.sorted_constr_idxs.clear();
+        bufs.sorted_pair_idxs.clear();
 
         let island_span = tracy_span!("build islands", "tick");
 
-        fn search(
-            island: &mut Island,
-            curr: usize,
-            island_ids: &mut [Option<usize>],
-            constr_graph: &[ConstraintGraphEdges],
-        ) {
-            if island_ids[curr].is_some() {
+        struct SearchContext<'a> {
+            island: &'a mut Island,
+            island_assigned: &'a mut [bool],
+            sorted_body_idxs: &'a mut Vec<usize>,
+            sorted_rope_idxs: &'a mut Vec<usize>,
+            sorted_constr_idxs: &'a mut Vec<usize>,
+            sorted_pair_idxs: &'a mut Vec<usize>,
+            constr_graph: &'a [ConstraintGraphEdges],
+        }
+        fn search(body_idx: usize, ctx: &mut SearchContext<'_>) {
+            if ctx.island_assigned[body_idx] {
                 return;
             }
-            island_ids[curr] = Some(island.id);
-            island.body_idxs.push(curr);
-            for edge in constr_graph[curr].iter() {
+            ctx.island_assigned[body_idx] = true;
+            ctx.sorted_body_idxs.push(body_idx);
+            ctx.island.body_count += 1;
+            for edge in ctx.constr_graph[body_idx].iter() {
                 match edge {
                     Edge::Rope {
                         body_idx,
                         rope_node_idx,
                     } => {
-                        if !island.rope_idxs.iter().any(|&idx| idx == *rope_node_idx) {
-                            island.rope_idxs.push(*rope_node_idx);
+                        if !ctx.sorted_rope_idxs[ctx.island.rope_range_start
+                            ..ctx.island.rope_range_start + ctx.island.rope_count]
+                            .iter()
+                            .any(|&idx| idx == *rope_node_idx)
+                        {
+                            ctx.sorted_rope_idxs.push(*rope_node_idx);
+                            ctx.island.rope_count += 1;
                         }
 
-                        search(island, *body_idx, island_ids, constr_graph);
+                        search(*body_idx, ctx);
                     }
                     Edge::Constraint {
                         body_idx,
                         constr_idx,
                     } => {
-                        island.constr_idxs.push(*constr_idx);
+                        ctx.sorted_constr_idxs.push(*constr_idx);
+                        ctx.island.constr_count += 1;
 
-                        search(island, *body_idx, island_ids, constr_graph);
+                        search(*body_idx, ctx);
                     }
                     Edge::Contact { body_idx, pair_idx } => {
-                        island.coll_pair_idxs.push(*pair_idx);
+                        ctx.sorted_pair_idxs.push(*pair_idx);
+                        ctx.island.pair_count += 1;
 
-                        search(island, *body_idx, island_ids, constr_graph);
+                        search(*body_idx, ctx);
                     }
                     Edge::StaticContact { pair_idx } => {
-                        island.coll_pair_idxs.push(*pair_idx);
+                        ctx.sorted_pair_idxs.push(*pair_idx);
+                        ctx.island.pair_count += 1;
                     }
                 }
             }
@@ -466,17 +501,32 @@ impl Physics {
 
         for body in l_body.iter(graph) {
             let bi = body.pos().item_idx;
-            if bufs.island_ids[bi].is_some() {
+            if bufs.island_assigned[bi] {
                 continue;
             }
             let mut island = Island {
                 id: bi,
-                body_idxs: Vec::new(),
-                rope_idxs: Vec::new(),
-                constr_idxs: Vec::new(),
-                coll_pair_idxs: Vec::new(),
+                body_range_start: bufs.sorted_body_idxs.len(),
+                body_count: 0,
+                rope_range_start: bufs.sorted_rope_idxs.len(),
+                rope_count: 0,
+                constr_range_start: bufs.sorted_constr_idxs.len(),
+                constr_count: 0,
+                pair_range_start: bufs.sorted_pair_idxs.len(),
+                pair_count: 0,
             };
-            search(&mut island, bi, &mut bufs.island_ids, &constr_graph);
+            search(
+                bi,
+                &mut SearchContext {
+                    island: &mut island,
+                    island_assigned: &mut bufs.island_assigned,
+                    sorted_body_idxs: &mut bufs.sorted_body_idxs,
+                    sorted_rope_idxs: &mut bufs.sorted_rope_idxs,
+                    sorted_constr_idxs: &mut bufs.sorted_constr_idxs,
+                    sorted_pair_idxs: &mut bufs.sorted_pair_idxs,
+                    constr_graph: &constr_graph,
+                },
+            );
             bufs.islands.push(island);
         }
 
@@ -488,14 +538,9 @@ impl Physics {
 
         // body_refs in island order, rest of the buffers based on these
         let body_refs: Vec<graph::NodeRef<Body>> = bufs
-            .islands
+            .sorted_body_idxs
             .iter()
-            .flat_map(|island| {
-                island
-                    .body_idxs
-                    .iter()
-                    .map(|&bi| l_body.get_unchecked_by_item_idx(bi))
-            })
+            .map(|&bi| l_body.get_unchecked_by_item_idx(bi))
             .collect();
 
         // node_ref_map maps from the position of a node in the graph layer
@@ -612,7 +657,7 @@ impl Physics {
         let mut island_start_idx = 0;
 
         for island in &bufs.islands {
-            let len = island.body_idxs.len();
+            let len = island.body_count;
             let (body_refs, br_rest) = body_refs_s.split_at(len);
             body_refs_s = br_rest;
             let (old_poses, old_pose_rest) = old_poses_s.split_at_mut(len);
@@ -628,8 +673,8 @@ impl Physics {
             let (ext_f_accelerations, ext_f_rest) = ext_f_acc_s.split_at_mut(len);
             ext_f_acc_s = ext_f_rest;
 
-            let ropes: Vec<solver::RopeView> = island
-                .rope_idxs
+            let ropes: Vec<solver::RopeView> = bufs.sorted_rope_idxs
+                [island.rope_range_start..island.rope_range_start + island.rope_count]
                 .iter()
                 .map(|idx| {
                     let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
@@ -754,10 +799,5 @@ impl Physics {
                     None
                 }
             })
-    }
-
-    // used by debug visualizer
-    pub(crate) fn islands(&self) -> &[Island] {
-        &self.working_bufs.islands
     }
 }
