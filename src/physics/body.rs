@@ -82,6 +82,7 @@ impl From<f64> for Mass {
 
 impl Mass {
     /// Get the inverse of the mass, which is zero if the mass is infinite.
+    #[inline]
     pub fn inv(&self) -> f64 {
         match self {
             Mass::Finite { inverse, .. } => *inverse,

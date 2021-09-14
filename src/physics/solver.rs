@@ -15,8 +15,15 @@ pub struct ColliderWithContext {
     pub ctx: ColliderContext,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct RopeView {
+    pub info: Rope,
+    pub start: usize,
+}
+
 /// View into the working buffers created in physics::tick
 /// and some other data for a single island.
+#[derive(Debug)]
 pub struct DataView<'a> {
     pub dt: f64,
     pub inv_dt: f64,
@@ -28,20 +35,15 @@ pub struct DataView<'a> {
     pub old_velocities: &'a mut [Velocity],
     pub velocities: &'a mut [Velocity],
     pub ext_f_accelerations: &'a mut [m::Vec2],
-    pub ropes: Vec<RopeView>,
+    pub ropes: &'a mut [RopeView],
     pub rope_next_particles: &'a [Option<usize>],
     pub rope_prev_particles: &'a [Option<usize>],
     pub rope_lateral_corrections: &'a mut [Option<m::Vec2>],
-    // pub constraints: &'a [Constraint],
-    // pub constraint_body_pairs: &'a [(usize, Option<usize>)],
-    // pub coll_pairs: &'a [[ColliderWithContext; 2]],
-    // pub contacts: &'a mut [ContactResult],
-    // pub contact_lambdas: &'a mut [f64],
-}
-
-pub struct RopeView {
-    pub info: Rope,
-    pub start: usize,
+    pub constraints: &'a [Constraint],
+    pub constraint_body_pairs: &'a [(usize, Option<usize>)],
+    pub coll_pairs: &'a [[ColliderWithContext; 2]],
+    pub contacts: &'a mut [ContactResult],
+    pub contact_lambdas: &'a mut [f64],
 }
 
 pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
@@ -68,24 +70,28 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
     }
 
     solve_ropes(data);
-    // solve_constraints(data);
+    solve_constraints(data);
 
-    // for (pose, pre_cont_pose) in izip!(data.poses, data.pre_contact_poses) {
-    //     *pre_cont_pose = *pose;
-    // }
-    // solve_contacts(data);
+    for (pose, pre_cont_pose) in izip!(&mut *data.poses, &mut *data.pre_contact_poses) {
+        *pre_cont_pose = *pose;
+    }
+    solve_contacts(data);
 
-    // // update velocities from pose differences
-    // for (old_pose, pose, vel) in izip!(data.old_poses, data.poses, data.velocities) {
-    //     vel.linear = (pose.translation - old_pose.translation) * data.inv_dt;
-    //     // I'm sure there are more efficient ways to handle the angle but this'll do
-    //     vel.angular =
-    //         m::Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
-    // }
+    // update velocities from pose differences
+    for (old_pose, pose, vel) in izip!(
+        &mut *data.old_poses,
+        &mut *data.poses,
+        &mut *data.velocities
+    ) {
+        vel.linear = (pose.translation - old_pose.translation) * data.inv_dt;
+        // I'm sure there are more efficient ways to handle the angle but this'll do
+        vel.angular =
+            m::Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
+    }
 
-    // contact_velocity_step(data);
-    // constraint_damping(data);
-    // rope_velocity_step(data);
+    contact_velocity_step(data);
+    constraint_damping(data);
+    rope_velocity_step(data);
 }
 
 //
@@ -163,7 +169,6 @@ fn solve_ropes(data: &mut DataView<'_>) {
 // Solve constraints
 //
 
-/*
 fn solve_constraints(data: &mut DataView<'_>) {
     let _span = tracy_span!("solve constraints", "solve_constraints");
 
@@ -257,7 +262,11 @@ fn solve_contacts(data: &mut DataView<'_>) {
     #[cfg(feature = "tracy")]
     let mut contact_counter: usize = 0;
 
-    for (colls, contact, lambda_n) in izip!(data.coll_pairs, data.contacts, data.contact_lambdas) {
+    for (colls, contact, lambda_n) in izip!(
+        data.coll_pairs,
+        &mut *data.contacts,
+        &mut *data.contact_lambdas
+    ) {
         if !match colls[0].ctx {
             ColliderContext::Body(bi) => data.body_refs[bi].sees_forces(),
             ColliderContext::Static(_) => false,
@@ -272,8 +281,9 @@ fn solve_contacts(data: &mut DataView<'_>) {
 
         // check for collision
         *contact = {
+            let poses = &*data.poses;
             let poses = colls.map(|coll| match coll.ctx {
-                ColliderContext::Body(b) => data.poses[b],
+                ColliderContext::Body(b) => poses[b],
                 ColliderContext::Static(pose) => pose,
             });
             collision::shape_shape::intersection_check(
@@ -348,8 +358,9 @@ fn solve_contacts(data: &mut DataView<'_>) {
                 offset_wedge_tan: f64,
                 eff_inv_mass_tan: f64,
             }
-            let poses = &data.poses;
-            let old_poses = &data.old_poses;
+            let body_refs = &*data.body_refs;
+            let old_poses = &*data.old_poses;
+            let poses = &*data.poses;
             let vars = [0, 1].map(|i| {
                 match colls[i].ctx {
                     // no body attached -> static body, infinite mass
@@ -365,17 +376,17 @@ fn solve_contacts(data: &mut DataView<'_>) {
                         }
                     }
                     ColliderContext::Body(bi) => {
-                        let im = data.body_refs[bi].mass.inv();
-                        let imi = data.body_refs[bi].moment_of_inertia.inv();
+                        let im = body_refs[bi].mass.inv();
+                        let imi = body_refs[bi].moment_of_inertia.inv();
                         let offset_rotated = poses[bi].rotation * contact.offsets[i];
                         let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
                         let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
 
                         WorkingVars {
-                            offset_worldspace: data.poses[bi] * contact.offsets[i],
+                            offset_worldspace: poses[bi] * contact.offsets[i],
                             offset_wedge_normal,
                             eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
-                            offset_worldspace_old: data.old_poses[bi] * contact.offsets[i],
+                            offset_worldspace_old: old_poses[bi] * contact.offsets[i],
                             offset_wedge_tan,
                             eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
                         }
@@ -456,7 +467,9 @@ fn solve_contacts(data: &mut DataView<'_>) {
 fn contact_velocity_step(data: &mut DataView<'_>) {
     let _span = tracy_span!("contact velocity step", "contact_velocity_step");
 
-    for (colls, contact, lambda_n) in izip!(data.coll_pairs, data.contacts, data.contact_lambdas) {
+    for (colls, contact, lambda_n) in
+        izip!(&*data.coll_pairs, &*data.contacts, &*data.contact_lambdas)
+    {
         let materials = match (colls[0].coll.ty, colls[1].coll.ty) {
             (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
             // one of the colliders was a trigger, no physics response
@@ -646,7 +659,7 @@ fn constraint_damping(data: &mut DataView<'_>) {
 fn rope_velocity_step(data: &mut DataView<'_>) {
     let _span = tracy_span!("rope velocity step", "rope_velocity_step");
 
-    for rope in data.ropes {
+    for rope in &*data.ropes {
         let mut curr_particle = rope.start;
         let mut next_particle = data.rope_next_particles[curr_particle].unwrap();
         loop {
@@ -704,4 +717,4 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
 
 fn map_semi_pair<T, R>(pair: (T, Option<T>), f: impl Fn(&T) -> R, snd_default: R) -> [R; 2] {
     [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
-}*/
+}
