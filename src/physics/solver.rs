@@ -69,13 +69,19 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
         *pose = vel.apply_to_pose(data.dt, *pose);
     }
 
-    solve_ropes(data);
-    solve_constraints(data);
+    if !data.ropes.is_empty() {
+        solve_ropes(data);
+    }
+    if !data.constraints.is_empty() {
+        solve_constraints(data);
+    }
 
     for (pose, pre_cont_pose) in izip!(&mut *data.poses, &mut *data.pre_contact_poses) {
         *pre_cont_pose = *pose;
     }
-    solve_contacts(data);
+    if !data.contacts.is_empty() {
+        solve_contacts(data);
+    }
 
     // update velocities from pose differences
     for (old_pose, pose, vel) in izip!(
@@ -89,9 +95,15 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
             m::Angle::from(pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
     }
 
-    contact_velocity_step(data);
-    constraint_damping(data);
-    rope_velocity_step(data);
+    if !data.contacts.is_empty() {
+        contact_velocity_step(data);
+    }
+    if !data.constraints.is_empty() {
+        constraint_damping(data);
+    }
+    if !data.ropes.is_empty() {
+        rope_velocity_step(data);
+    }
 }
 
 //
