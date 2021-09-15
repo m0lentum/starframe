@@ -286,7 +286,11 @@ impl DebugVisualizer {
                     max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
                 };
                 for body in island {
-                    let pose = graph.get_neighbor(&body, l_pose).unwrap();
+                    let pose = match graph.get_neighbor(&body, l_pose) {
+                        Some(p) => p,
+                        // body was deleted
+                        None => break,
+                    };
                     let pos = pose.translation;
                     let r = match graph.get_neighbor(&body, l_coll) {
                         Some(coll) => coll.bounding_sphere_r(),
