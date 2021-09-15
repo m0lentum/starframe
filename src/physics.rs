@@ -177,6 +177,7 @@ struct WorkingBuffers {
     sorted_pair_idxs: Vec<usize>,
     island_assigned: Vec<bool>,
     islands: Vec<Island>,
+
     // constraints collected into a vec so they can be indexed
     // without iterating a slotmap
     user_constraints: Vec<Constraint>,
@@ -709,10 +710,27 @@ impl Physics {
             .resize(bufs.sorted_coll_pairs.len(), 0.0);
 
         //
-        // Slice buffers into island-specific views
+        // group islands into as many groups as we have threads
         //
 
-        let mut island_views: Vec<solver::DataView<'_>> = Vec::with_capacity(bufs.islands.len());
+        // constant for testing, TODO: use a threadpool and get the thread count of that
+        let thread_count = 4;
+
+        // for now, just putting an equal number of islands in each group.
+        // this could be optimized further by making sure each group gets
+        // roughly the same number of bodies
+        let chunk_size = if bufs.islands.len() <= thread_count {
+            1
+        } else {
+            (bufs.islands.len() + thread_count - 1) / thread_count
+        };
+        let island_groups = bufs.islands.chunks(chunk_size);
+
+        //
+        // Slice buffers into island-group-specific views
+        //
+
+        let mut island_group_views: Vec<solver::DataView<'_>> = Vec::with_capacity(thread_count);
 
         let mut body_refs_s = body_refs.as_slice();
         let mut old_poses_s = bufs.old_poses.as_mut_slice();
@@ -733,50 +751,52 @@ impl Physics {
 
         let mut island_start_idx = 0;
 
-        for island in &bufs.islands {
-            let (body_refs, br_rest) = body_refs_s.split_at(island.body_count);
+        for group in island_groups {
+            let body_count = group.iter().map(|isl| isl.body_count).sum();
+            let rope_count = group.iter().map(|isl| isl.rope_count).sum();
+            let constr_count = group.iter().map(|isl| isl.constr_count).sum();
+            let pair_count = group.iter().map(|isl| isl.pair_count).sum();
+
+            let (body_refs, br_rest) = body_refs_s.split_at(body_count);
             body_refs_s = br_rest;
-            let (old_poses, old_pose_rest) = old_poses_s.split_at_mut(island.body_count);
+            let (old_poses, old_pose_rest) = old_poses_s.split_at_mut(body_count);
             old_poses_s = old_pose_rest;
-            let (pre_contact_poses, pcp_rest) = pre_cont_poses_s.split_at_mut(island.body_count);
+            let (pre_contact_poses, pcp_rest) = pre_cont_poses_s.split_at_mut(body_count);
             pre_cont_poses_s = pcp_rest;
-            let (poses, pose_rest) = poses_s.split_at_mut(island.body_count);
+            let (poses, pose_rest) = poses_s.split_at_mut(body_count);
             poses_s = pose_rest;
-            let (old_velocities, old_v_rest) = old_vels_s.split_at_mut(island.body_count);
+            let (old_velocities, old_v_rest) = old_vels_s.split_at_mut(body_count);
             old_vels_s = old_v_rest;
-            let (velocities, vel_rest) = vels_s.split_at_mut(island.body_count);
+            let (velocities, vel_rest) = vels_s.split_at_mut(body_count);
             vels_s = vel_rest;
-            let (ext_f_accelerations, ext_f_rest) = ext_f_acc_s.split_at_mut(island.body_count);
+            let (ext_f_accelerations, ext_f_rest) = ext_f_acc_s.split_at_mut(body_count);
             ext_f_acc_s = ext_f_rest;
 
-            let (ropes, ropes_rest) = rope_s.split_at_mut(island.rope_count);
+            let (ropes, ropes_rest) = rope_s.split_at_mut(rope_count);
             rope_s = ropes_rest;
             // shift indices by start of layer
             for rope_view in ropes.iter_mut() {
                 rope_view.start -= island_start_idx;
             }
 
-            let (rope_next_particles, rope_next_rest) =
-                rope_next_p_s.split_at_mut(island.body_count);
+            let (rope_next_particles, rope_next_rest) = rope_next_p_s.split_at_mut(body_count);
             rope_next_p_s = rope_next_rest;
             for np in rope_next_particles.iter_mut().filter_map(Option::as_mut) {
                 *np -= island_start_idx;
             }
 
-            let (rope_prev_particles, rope_prev_rest) =
-                rope_prev_p_s.split_at_mut(island.body_count);
+            let (rope_prev_particles, rope_prev_rest) = rope_prev_p_s.split_at_mut(body_count);
             rope_prev_p_s = rope_prev_rest;
             for pp in rope_prev_particles.iter_mut().filter_map(Option::as_mut) {
                 *pp -= island_start_idx;
             }
 
-            let (rope_lateral_corrections, rope_lat_rest) =
-                rope_lat_s.split_at_mut(island.body_count);
+            let (rope_lateral_corrections, rope_lat_rest) = rope_lat_s.split_at_mut(body_count);
             rope_lat_s = rope_lat_rest;
-            let (constraints, constr_rest) = constr_s.split_at(island.constr_count);
+            let (constraints, constr_rest) = constr_s.split_at(constr_count);
             constr_s = constr_rest;
             let (constraint_body_pairs, constr_bod_rest) =
-                constr_bodies_s.split_at_mut(island.constr_count);
+                constr_bodies_s.split_at_mut(constr_count);
             constr_bodies_s = constr_bod_rest;
             for (b1, b2) in constraint_body_pairs.iter_mut() {
                 *b1 -= island_start_idx;
@@ -785,7 +805,7 @@ impl Physics {
                 }
             }
 
-            let (coll_pairs, coll_p_rest) = coll_pairs_s.split_at_mut(island.pair_count);
+            let (coll_pairs, coll_p_rest) = coll_pairs_s.split_at_mut(pair_count);
             coll_pairs_s = coll_p_rest;
             for pair in coll_pairs.iter_mut() {
                 for coll in pair {
@@ -794,12 +814,12 @@ impl Physics {
                     }
                 }
             }
-            let (contacts, contacts_rest) = contacts_s.split_at_mut(island.pair_count);
+            let (contacts, contacts_rest) = contacts_s.split_at_mut(pair_count);
             contacts_s = contacts_rest;
-            let (contact_lambdas, cont_l_rest) = cont_lambda_s.split_at_mut(island.pair_count);
+            let (contact_lambdas, cont_l_rest) = cont_lambda_s.split_at_mut(pair_count);
             cont_lambda_s = cont_l_rest;
 
-            island_views.push(solver::DataView {
+            island_group_views.push(solver::DataView {
                 dt,
                 inv_dt,
                 inv_dt_sq,
@@ -821,7 +841,7 @@ impl Physics {
                 contact_lambdas,
             });
 
-            island_start_idx += island.body_count;
+            island_start_idx += body_count;
         }
 
         //
@@ -830,7 +850,7 @@ impl Physics {
 
         for _substep in 0..self.substeps {
             let _substep_span = tracy_span!("substep", "tick");
-            for island_view in &mut island_views {
+            for island_view in &mut island_group_views {
                 solver::solve(forcefield, island_view);
 
                 for (colls, contact) in izip!(&*island_view.coll_pairs, &*island_view.contacts) {
