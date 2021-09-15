@@ -894,4 +894,16 @@ impl Physics {
                 }
             })
     }
+
+    /// For debug visualization
+    pub(crate) fn islands<'s, 'b: 's>(
+        &'s self,
+        l_body: &'b graph::Layer<Body>,
+    ) -> impl 's + Iterator<Item = impl 's + Iterator<Item = graph::NodeRef<Body>>> {
+        self.working_bufs.islands.iter().map(move |island| {
+            (island.body_range_start..island.body_range_start + island.body_count).map(move |bi| {
+                l_body.get_unchecked_by_item_idx(self.working_bufs.sorted_body_idxs[bi])
+            })
+        })
+    }
 }
