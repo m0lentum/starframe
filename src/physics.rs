@@ -650,12 +650,15 @@ impl Physics {
             // meaningless default to fill the gaps where colliders aren't actually alive,
             // we will not access these
             solver::ColliderWithContext {
+                node_idx: usize::MAX,
                 coll: Collider::new_circle(0.0),
                 ctx: ColliderContext::Static(m::Pose::default()),
             },
         );
         for coll in l_collider.iter(graph) {
-            bufs.colliders[coll.pos().item_idx] = solver::ColliderWithContext {
+            let node_idx = coll.pos().item_idx;
+            bufs.colliders[node_idx] = solver::ColliderWithContext {
+                node_idx,
                 coll: *coll,
                 ctx: match graph.get_neighbor_unchecked(&coll, l_body) {
                     Some(b) => ColliderContext::Body(bufs.node_ref_map[b.pos().item_idx]),
@@ -820,26 +823,28 @@ impl Physics {
             let _substep_span = tracy_span!("substep", "tick");
             for island_view in &mut island_views {
                 solver::solve(forcefield, island_view);
-            }
 
-            // TODO: events
-            //
-            // for (colls, contact) in izip!(data.coll_pairs, data.contacts) {
-            //     if !matches!(contact, ContactResult::Zero) {
-            //         if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
-            //         {
-            //             sink.push(Event::Contact(ContactEvent {
-            //                 other_collider: graph::NodeRef::as_node(&colls[1], graph),
-            //             }));
-            //         }
-            //         if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
-            //         {
-            //             sink.push(Event::Contact(ContactEvent {
-            //                 other_collider: graph::NodeRef::as_node(&colls[0], graph),
-            //             }));
-            //         }
-            //     }
-            // }
+                for (colls, contact) in izip!(&*island_view.coll_pairs, &*island_view.contacts) {
+                    if !matches!(contact, ContactResult::Zero) {
+                        let colls =
+                            colls.map(|coll| l_collider.get_unchecked_by_item_idx(coll.node_idx));
+                        if let Some(mut sink) =
+                            graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
+                        {
+                            sink.push(Event::Contact(ContactEvent {
+                                other_collider: graph::NodeRef::as_node(&colls[1], graph),
+                            }));
+                        }
+                        if let Some(mut sink) =
+                            graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
+                        {
+                            sink.push(Event::Contact(ContactEvent {
+                                other_collider: graph::NodeRef::as_node(&colls[0], graph),
+                            }));
+                        }
+                    }
+                }
+            }
         }
 
         //

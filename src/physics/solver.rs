@@ -11,6 +11,8 @@ pub enum ColliderContext {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct ColliderWithContext {
+    // index in the graph layer to identify collider for sending events
+    pub node_idx: usize,
     pub coll: Collider,
     pub ctx: ColliderContext,
 }
