@@ -115,11 +115,54 @@ sm::new_key_type! {
     pub struct ConstraintHandle;
 }
 
+//
+// constraint graph types
+//
+
+// storing types of edge so we can later partition constraints for islands
+#[derive(Clone, Copy, Debug)]
+enum Edge {
+    Rope {
+        body_idx: usize,
+        rope_node_idx: usize,
+    },
+    Constraint {
+        body_idx: usize,
+        constr_idx: usize,
+    },
+    Contact {
+        body_idx: usize,
+        pair_idx: usize,
+    },
+    // marking possible contacts and constraints with static objects as well
+    // so that we can get this knowledge into the island solver
+    StaticConstraint {
+        constr_idx: usize,
+    },
+    StaticContact {
+        pair_idx: usize,
+    },
+}
+// default just to use with TinyVec
+impl Default for Edge {
+    fn default() -> Self {
+        Edge::StaticContact { pair_idx: 0 }
+    }
+}
+// the cost of allocs is heavy if there are often more edges per object than this,
+// so it should be set as low as makes it statistically unlikely to go above it.
+// for now it's a constant set empirically by checking allocs in Tracy,
+// possibly should be user-controllable.
+const EDGES_IN_STACK: usize = 24;
+type ConstraintGraphEdges = TinyVec<[Edge; EDGES_IN_STACK]>;
+type ConstraintGraph = Vec<ConstraintGraphEdges>;
+
 pub struct Physics {
     pub substeps: usize,
     pub mask_matrix: collision::MaskMatrix,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
     pub(crate) spatial_index: HGrid,
+    constraint_graph: ConstraintGraph,
     working_bufs: WorkingBuffers,
 }
 
@@ -217,6 +260,7 @@ impl Physics {
             mask_matrix: Default::default(),
             user_constraints: sm::DenseSlotMap::with_key(),
             spatial_index: HGrid::new(grid_params),
+            constraint_graph: Vec::new(),
             working_bufs: WorkingBuffers::new(),
         }
     }
@@ -342,111 +386,76 @@ impl Physics {
         // Build constraint graph
         //
 
-        const EDGES_IN_STACK: usize = 5;
-        type ConstraintGraphEdges = TinyVec<[Edge; EDGES_IN_STACK]>;
-        type ConstraintGraph = Vec<ConstraintGraphEdges>;
+        let constr_graph_span = tracy_span!("build constraint graph", "tick");
 
-        // storing types of edge so we can later partition constraints for islands
-        #[derive(Clone, Copy, Debug)]
-        enum Edge {
-            Rope {
-                body_idx: usize,
-                rope_node_idx: usize,
-            },
-            Constraint {
-                body_idx: usize,
-                constr_idx: usize,
-            },
-            Contact {
-                body_idx: usize,
-                pair_idx: usize,
-            },
-            // marking possible contacts and constraints with static objects as well
-            // so that we can get this knowledge into the island solver
-            StaticConstraint {
-                constr_idx: usize,
-            },
-            StaticContact {
-                pair_idx: usize,
-            },
-        }
-        // default just to use with TinyVec
-        impl Default for Edge {
-            fn default() -> Self {
-                Edge::StaticContact { pair_idx: 0 }
+        self.constraint_graph.clear();
+        self.constraint_graph
+            .resize(l_body.content.len(), tiny_vec!([Edge; EDGES_IN_STACK]));
+
+        // rope constraints
+        for rope_node in l_rope.iter(graph) {
+            let rope_node_idx = rope_node.pos().item_idx;
+            let mut iter = RopeIter::new(rope_node, l_body, graph)
+                .map(|node| node.pos().item_idx)
+                .peekable();
+            while let Some(particle) = iter.next() {
+                if let Some(&next_particle) = iter.peek() {
+                    self.constraint_graph[particle].push(Edge::Rope {
+                        body_idx: next_particle,
+                        rope_node_idx,
+                    });
+                    self.constraint_graph[next_particle].push(Edge::Rope {
+                        body_idx: particle,
+                        rope_node_idx,
+                    });
+                }
             }
         }
-
-        let constr_graph = {
-            let _span = tracy_span!("build constraint graph", "tick");
-
-            let mut g: ConstraintGraph =
-                vec![tiny_vec!([Edge; EDGES_IN_STACK]); l_body.content.len()];
-
-            // rope constraints
-            for rope_node in l_rope.iter(graph) {
-                let rope_node_idx = rope_node.pos().item_idx;
-                let mut iter = RopeIter::new(rope_node, l_body, graph)
-                    .map(|node| node.pos().item_idx)
-                    .peekable();
-                while let Some(particle) = iter.next() {
-                    if let Some(&next_particle) = iter.peek() {
-                        g[particle].push(Edge::Rope {
-                            body_idx: next_particle,
-                            rope_node_idx,
-                        });
-                        g[next_particle].push(Edge::Rope {
-                            body_idx: particle,
-                            rope_node_idx,
-                        });
-                    }
+        // custom constraints
+        for (constr_idx, constr) in bufs.user_constraints.iter().enumerate() {
+            let owner = constr.owner.pos().item_idx;
+            match constr.target {
+                Some(target) => {
+                    let target = target.pos().item_idx;
+                    self.constraint_graph[owner].push(Edge::Constraint {
+                        body_idx: target,
+                        constr_idx,
+                    });
+                    self.constraint_graph[target].push(Edge::Constraint {
+                        body_idx: owner,
+                        constr_idx,
+                    });
                 }
+                None => self.constraint_graph[owner].push(Edge::StaticConstraint { constr_idx }),
             }
-            // custom constraints
-            for (constr_idx, constr) in bufs.user_constraints.iter().enumerate() {
-                let owner = constr.owner.pos().item_idx;
-                match constr.target {
-                    Some(target) => {
-                        let target = target.pos().item_idx;
-                        g[owner].push(Edge::Constraint {
-                            body_idx: target,
-                            constr_idx,
-                        });
-                        g[target].push(Edge::Constraint {
-                            body_idx: owner,
-                            constr_idx,
-                        });
-                    }
-                    None => g[owner].push(Edge::StaticConstraint { constr_idx }),
+        }
+        // potential contacts from spatial index.
+        // this doesn't necessarily cull as much as actually checking collisions,
+        // but that would require redoing this every substep which would be costly.
+        for (pair_idx, pair) in bufs.coll_pair_idxs.iter().enumerate() {
+            let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
+            match colls.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx)) {
+                [Some(b1), Some(b2)] => {
+                    self.constraint_graph[b1].push(Edge::Contact {
+                        body_idx: b2,
+                        pair_idx,
+                    });
+                    self.constraint_graph[b2].push(Edge::Contact {
+                        body_idx: b1,
+                        pair_idx,
+                    });
                 }
-            }
-            // potential contacts from spatial index.
-            // this doesn't necessarily cull as much as actually checking collisions,
-            // but that would require redoing this every substep which would be costly.
-            for (pair_idx, pair) in bufs.coll_pair_idxs.iter().enumerate() {
-                let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
-                match colls.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx)) {
-                    [Some(b1), Some(b2)] => {
-                        g[b1].push(Edge::Contact {
-                            body_idx: b2,
-                            pair_idx,
-                        });
-                        g[b2].push(Edge::Contact {
-                            body_idx: b1,
-                            pair_idx,
-                        });
-                    }
-                    [Some(b1), None] => {
-                        g[b1].push(Edge::StaticContact { pair_idx });
-                    }
-                    [None, Some(b2)] => {
-                        g[b2].push(Edge::StaticContact { pair_idx });
-                    }
-                    [None, None] => {}
+                [Some(b1), None] => {
+                    self.constraint_graph[b1].push(Edge::StaticContact { pair_idx });
                 }
+                [None, Some(b2)] => {
+                    self.constraint_graph[b2].push(Edge::StaticContact { pair_idx });
+                }
+                [None, None] => {}
             }
-            g
-        };
+        }
+
+        drop(constr_graph_span);
 
         //
         // Generate islands from graph
@@ -547,7 +556,7 @@ impl Physics {
                     sorted_rope_idxs: &mut bufs.sorted_rope_idxs,
                     sorted_constr_idxs: &mut bufs.sorted_constr_idxs,
                     sorted_pair_idxs: &mut bufs.sorted_pair_idxs,
-                    constr_graph: &constr_graph,
+                    constr_graph: &self.constraint_graph,
                 },
             );
             bufs.islands.push(island);
