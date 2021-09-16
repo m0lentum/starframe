@@ -6,7 +6,6 @@ use crate::{
 
 use itertools::izip;
 use slotmap as sm;
-use tinyvec::{tiny_vec, TinyVec};
 
 //
 
@@ -27,6 +26,9 @@ pub use body::*;
 
 mod rope;
 pub use rope::*;
+
+mod constraint_graph;
+use constraint_graph::*;
 
 mod solver;
 use solver::ColliderContext;
@@ -118,46 +120,8 @@ sm::new_key_type! {
 }
 
 //
-// constraint graph types
+// physics proper
 //
-
-// storing types of edge so we can later partition constraints for islands
-#[derive(Clone, Copy, Debug)]
-enum Edge {
-    Rope {
-        body_idx: usize,
-        rope_node_idx: usize,
-    },
-    Constraint {
-        body_idx: usize,
-        constr_idx: usize,
-    },
-    Contact {
-        body_idx: usize,
-        pair_idx: usize,
-    },
-    // marking possible contacts and constraints with static objects as well
-    // so that we can get this knowledge into the island solver
-    StaticConstraint {
-        constr_idx: usize,
-    },
-    StaticContact {
-        pair_idx: usize,
-    },
-}
-// default just to use with TinyVec
-impl Default for Edge {
-    fn default() -> Self {
-        Edge::StaticContact { pair_idx: 0 }
-    }
-}
-// the cost of allocs is heavy if there are often more edges per object than this,
-// so it should be set as low as makes it statistically unlikely to go above it.
-// for now it's a constant set empirically by checking allocs in Tracy,
-// possibly should be user-controllable.
-const EDGES_IN_STACK: usize = 24;
-type ConstraintGraphEdges = TinyVec<[Edge; EDGES_IN_STACK]>;
-type ConstraintGraph = Vec<ConstraintGraphEdges>;
 
 pub struct Physics {
     pub substeps: usize,
@@ -263,7 +227,11 @@ impl Physics {
             mask_matrix: Default::default(),
             user_constraints: sm::DenseSlotMap::with_key(),
             spatial_index: HGrid::new(grid_params),
-            constraint_graph: Vec::new(),
+            constraint_graph: ConstraintGraph {
+                first_nodes_per_body: Vec::new(),
+                last_nodes_per_body: Vec::new(),
+                nodes: Vec::new(),
+            },
             working_bufs: WorkingBuffers::new(),
         }
     }
@@ -392,8 +360,7 @@ impl Physics {
         let constr_graph_span = tracy_span!("build constraint graph", "tick");
 
         self.constraint_graph.clear();
-        self.constraint_graph
-            .resize(l_body.content.len(), tiny_vec!([Edge; EDGES_IN_STACK]));
+        self.constraint_graph.resize(l_body.content.len());
 
         // rope constraints
         for rope_node in l_rope.iter(graph) {
@@ -403,14 +370,20 @@ impl Physics {
                 .peekable();
             while let Some(particle) = iter.next() {
                 if let Some(&next_particle) = iter.peek() {
-                    self.constraint_graph[particle].push(Edge::Rope {
-                        body_idx: next_particle,
-                        rope_node_idx,
-                    });
-                    self.constraint_graph[next_particle].push(Edge::Rope {
-                        body_idx: particle,
-                        rope_node_idx,
-                    });
+                    self.constraint_graph.insert(
+                        particle,
+                        Edge::Rope {
+                            body_idx: next_particle,
+                            rope_node_idx,
+                        },
+                    );
+                    self.constraint_graph.insert(
+                        next_particle,
+                        Edge::Rope {
+                            body_idx: particle,
+                            rope_node_idx,
+                        },
+                    );
                 }
             }
         }
@@ -420,16 +393,24 @@ impl Physics {
             match constr.target {
                 Some(target) => {
                     let target = target.pos().item_idx;
-                    self.constraint_graph[owner].push(Edge::Constraint {
-                        body_idx: target,
-                        constr_idx,
-                    });
-                    self.constraint_graph[target].push(Edge::Constraint {
-                        body_idx: owner,
-                        constr_idx,
-                    });
+                    self.constraint_graph.insert(
+                        owner,
+                        Edge::Constraint {
+                            body_idx: target,
+                            constr_idx,
+                        },
+                    );
+                    self.constraint_graph.insert(
+                        target,
+                        Edge::Constraint {
+                            body_idx: owner,
+                            constr_idx,
+                        },
+                    );
                 }
-                None => self.constraint_graph[owner].push(Edge::StaticConstraint { constr_idx }),
+                None => self
+                    .constraint_graph
+                    .insert(owner, Edge::StaticConstraint { constr_idx }),
             }
         }
         // potential contacts from spatial index.
@@ -439,20 +420,28 @@ impl Physics {
             let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
             match colls.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx)) {
                 [Some(b1), Some(b2)] => {
-                    self.constraint_graph[b1].push(Edge::Contact {
-                        body_idx: b2,
-                        pair_idx,
-                    });
-                    self.constraint_graph[b2].push(Edge::Contact {
-                        body_idx: b1,
-                        pair_idx,
-                    });
+                    self.constraint_graph.insert(
+                        b1,
+                        Edge::Contact {
+                            body_idx: b2,
+                            pair_idx,
+                        },
+                    );
+                    self.constraint_graph.insert(
+                        b2,
+                        Edge::Contact {
+                            body_idx: b1,
+                            pair_idx,
+                        },
+                    );
                 }
                 [Some(b1), None] => {
-                    self.constraint_graph[b1].push(Edge::StaticContact { pair_idx });
+                    self.constraint_graph
+                        .insert(b1, Edge::StaticContact { pair_idx });
                 }
                 [None, Some(b2)] => {
-                    self.constraint_graph[b2].push(Edge::StaticContact { pair_idx });
+                    self.constraint_graph
+                        .insert(b2, Edge::StaticContact { pair_idx });
                 }
                 [None, None] => {}
             }
@@ -474,61 +463,57 @@ impl Physics {
 
         let island_span = tracy_span!("build islands", "tick");
 
-        struct SearchContext<'a> {
-            island: &'a mut Island,
-            island_assigned: &'a mut [bool],
-            sorted_body_idxs: &'a mut Vec<usize>,
-            sorted_rope_idxs: &'a mut Vec<usize>,
-            sorted_constr_idxs: &'a mut Vec<usize>,
-            sorted_pair_idxs: &'a mut Vec<usize>,
-            constr_graph: &'a [ConstraintGraphEdges],
-        }
-        fn search(body_idx: usize, ctx: &mut SearchContext<'_>) {
-            if ctx.island_assigned[body_idx] {
+        fn search(
+            body_idx: usize,
+            island: &mut Island,
+            constraint_graph: &ConstraintGraph,
+            bufs: &mut WorkingBuffers,
+        ) {
+            if bufs.island_assigned[body_idx] {
                 return;
             }
-            ctx.island_assigned[body_idx] = true;
-            ctx.sorted_body_idxs.push(body_idx);
-            ctx.island.body_count += 1;
-            for edge in ctx.constr_graph[body_idx].iter() {
+            bufs.island_assigned[body_idx] = true;
+            bufs.sorted_body_idxs.push(body_idx);
+            island.body_count += 1;
+            for edge in constraint_graph.iter(body_idx) {
                 match edge {
                     Edge::Rope {
                         body_idx,
                         rope_node_idx,
                     } => {
-                        if !ctx.sorted_rope_idxs[ctx.island.rope_range_start
-                            ..ctx.island.rope_range_start + ctx.island.rope_count]
+                        if !bufs.sorted_rope_idxs
+                            [island.rope_range_start..island.rope_range_start + island.rope_count]
                             .iter()
                             .any(|&idx| idx == *rope_node_idx)
                         {
-                            ctx.sorted_rope_idxs.push(*rope_node_idx);
-                            ctx.island.rope_count += 1;
+                            bufs.sorted_rope_idxs.push(*rope_node_idx);
+                            island.rope_count += 1;
                         }
 
-                        search(*body_idx, ctx);
+                        search(*body_idx, island, constraint_graph, bufs);
                     }
                     Edge::Constraint {
                         body_idx,
                         constr_idx,
                     } => {
-                        ctx.sorted_constr_idxs.push(*constr_idx);
-                        ctx.island.constr_count += 1;
+                        bufs.sorted_constr_idxs.push(*constr_idx);
+                        island.constr_count += 1;
 
-                        search(*body_idx, ctx);
+                        search(*body_idx, island, constraint_graph, bufs);
                     }
                     Edge::Contact { body_idx, pair_idx } => {
-                        ctx.sorted_pair_idxs.push(*pair_idx);
-                        ctx.island.pair_count += 1;
+                        bufs.sorted_pair_idxs.push(*pair_idx);
+                        island.pair_count += 1;
 
-                        search(*body_idx, ctx);
+                        search(*body_idx, island, constraint_graph, bufs);
                     }
                     Edge::StaticConstraint { constr_idx } => {
-                        ctx.sorted_constr_idxs.push(*constr_idx);
-                        ctx.island.constr_count += 1;
+                        bufs.sorted_constr_idxs.push(*constr_idx);
+                        island.constr_count += 1;
                     }
                     Edge::StaticContact { pair_idx } => {
-                        ctx.sorted_pair_idxs.push(*pair_idx);
-                        ctx.island.pair_count += 1;
+                        bufs.sorted_pair_idxs.push(*pair_idx);
+                        island.pair_count += 1;
                     }
                 }
             }
@@ -550,18 +535,7 @@ impl Physics {
                 pair_range_start: bufs.sorted_pair_idxs.len(),
                 pair_count: 0,
             };
-            search(
-                bi,
-                &mut SearchContext {
-                    island: &mut island,
-                    island_assigned: &mut bufs.island_assigned,
-                    sorted_body_idxs: &mut bufs.sorted_body_idxs,
-                    sorted_rope_idxs: &mut bufs.sorted_rope_idxs,
-                    sorted_constr_idxs: &mut bufs.sorted_constr_idxs,
-                    sorted_pair_idxs: &mut bufs.sorted_pair_idxs,
-                    constr_graph: &self.constraint_graph,
-                },
-            );
+            search(bi, &mut island, &self.constraint_graph, bufs);
             bufs.islands.push(island);
         }
 
