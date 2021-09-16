@@ -1,11 +1,11 @@
+use itertools::izip;
+use slotmap as sm;
+
 use crate::{
     event::{Event, EventSink},
     graph::{self, Graph, Layer, UnsafeNode},
     math as m,
 };
-
-use itertools::izip;
-use slotmap as sm;
 
 //
 
@@ -36,11 +36,16 @@ use solver::ColliderContext;
 //
 
 #[cfg(feature = "tracy")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(feature = "tracy")]
 static COLLIDERS_PLOT: tracy_client::Plot = tracy_client::create_plot!("colliders");
 #[cfg(feature = "tracy")]
 static PAIRS_PLOT: tracy_client::Plot = tracy_client::create_plot!("collider pairs tested");
 #[cfg(feature = "tracy")]
 static CONTACTS_PLOT: tracy_client::Plot = tracy_client::create_plot!("contacts");
+// atomic counter to collect contacts from all island groups
+#[cfg(feature = "tracy")]
+static CONTACT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Velocity of an object.
 ///
@@ -825,6 +830,9 @@ impl Physics {
         //
 
         for _substep in 0..self.substeps {
+            #[cfg(feature = "tracy")]
+            CONTACT_COUNTER.store(0, Ordering::Relaxed);
+
             let _substep_span = tracy_span!("substep", "tick");
             for island_view in &mut island_group_views {
                 solver::solve(forcefield, island_view);
@@ -850,6 +858,9 @@ impl Physics {
                     }
                 }
             }
+
+            #[cfg(feature = "tracy")]
+            CONTACTS_PLOT.point(CONTACT_COUNTER.load(Ordering::Relaxed) as f64);
         }
 
         //

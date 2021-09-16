@@ -472,7 +472,7 @@ fn solve_contacts(data: &mut DataView<'_>) {
     }
 
     #[cfg(feature = "tracy")]
-    CONTACTS_PLOT.point(contact_counter as f64);
+    super::CONTACT_COUNTER.fetch_add(contact_counter, std::sync::atomic::Ordering::Relaxed);
 }
 
 //
