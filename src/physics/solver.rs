@@ -218,11 +218,12 @@ fn solve_constraints(data: &mut DataView<'_>) {
                     match pair.1 {
                         Some(p1) => {
                             let pair = [pair.0, p1];
-                            let offsets_rotated = [0, 1]
-                                .map(|i| data.poses[pair[i]].rotation * constraint.offsets[i]);
+                            let offsets_rotated = map_pair(&[0, 1], |&i| {
+                                data.poses[pair[i]].rotation * constraint.offsets[i]
+                            });
                             let offsets_wedge_dir =
-                                [0, 1].map(|i| offsets_rotated[i].wedge(dir).xy);
-                            let eff_inv_masses = [0, 1].map(|i| {
+                                map_pair(&[0, 1], |&i| offsets_rotated[i].wedge(dir).xy);
+                            let eff_inv_masses = map_pair(&[0, 1], |&i| {
                                 inv_masses[i] + (offsets_wedge_dir[i].powi(2) * inv_mom_inertias[i])
                             });
 
@@ -296,7 +297,7 @@ fn solve_contacts(data: &mut DataView<'_>) {
         // check for collision
         *contact = {
             let poses = &*data.poses;
-            let poses = colls.map(|coll| match coll.ctx {
+            let poses = map_pair(colls, |coll| match coll.ctx {
                 ColliderContext::Body(b) => poses[b],
                 ColliderContext::Static(pose) => pose,
             });
@@ -375,7 +376,7 @@ fn solve_contacts(data: &mut DataView<'_>) {
             let body_refs = &*data.body_refs;
             let old_poses = &*data.old_poses;
             let poses = &*data.poses;
-            let vars = [0, 1].map(|i| {
+            let vars = map_pair(&[0, 1], |&i| {
                 match colls[i].ctx {
                     // no body attached -> static body, infinite mass
                     ColliderContext::Static(pose) => {
@@ -501,7 +502,7 @@ fn contact_velocity_step(data: &mut DataView<'_>) {
                 old_point_vel: m::Vec2,
                 ext_f_accel: m::Vec2,
             }
-            let vars = [0, 1].map(|i| match colls[i].ctx {
+            let vars = map_pair(&[0, 1], |&i| match colls[i].ctx {
                 // no body => infinite mass
                 ColliderContext::Static(pose) => WorkingVars {
                     inv_mass: 0.0,
@@ -561,8 +562,10 @@ fn contact_velocity_step(data: &mut DataView<'_>) {
                 continue;
             }
             let vel_update_dir = total_vel_update / vel_update_mag;
-            let offsets_wedge_dv = [0, 1].map(|i| vars[i].offset_rotated.wedge(vel_update_dir).xy);
-            let eff_inv_masses = [0, 1].map(|i| {
+            let offsets_wedge_dv = map_pair(&[0, 1], |&i| {
+                vars[i].offset_rotated.wedge(vel_update_dir).xy
+            });
+            let eff_inv_masses = map_pair(&[0, 1], |&i| {
                 vars[i].inv_mass + (offsets_wedge_dv[i].powi(2) * vars[i].inv_mom_inertia)
             });
             let impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
@@ -596,8 +599,9 @@ fn constraint_damping(data: &mut DataView<'_>) {
         match pair.1 {
             Some(p1) => {
                 let pair = [pair.0, p1];
-                let offsets_rotated =
-                    [0, 1].map(|i| data.poses[pair[i]].rotation * constraint.offsets[i]);
+                let offsets_rotated = map_pair(&[0, 1], |&i| {
+                    data.poses[pair[i]].rotation * constraint.offsets[i]
+                });
 
                 let relative_vel = data.velocities[pair[0]].point_velocity(offsets_rotated[0])
                     - data.velocities[pair[1]].point_velocity(offsets_rotated[1]);
@@ -607,9 +611,10 @@ fn constraint_damping(data: &mut DataView<'_>) {
                 }
                 let dir = relative_vel / relative_vel_mag;
 
-                let offsets_wedge_dir = [0, 1].map(|i| offsets_rotated[i].wedge(dir).xy);
-                let eff_inv_masses = [0, 1]
-                    .map(|i| inv_masses[i] + (offsets_wedge_dir[i].powi(2) * inv_mom_inertias[i]));
+                let offsets_wedge_dir = map_pair(&[0, 1], |&i| offsets_rotated[i].wedge(dir).xy);
+                let eff_inv_masses = map_pair(&[0, 1], |&i| {
+                    inv_masses[i] + (offsets_wedge_dir[i].powi(2) * inv_mom_inertias[i])
+                });
 
                 let vel_update_mag =
                     -relative_vel_mag * (constraint.linear_damping * data.dt).min(1.0);
@@ -729,6 +734,12 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
     }
 }
 
+#[inline]
+fn map_pair<T, R>(pair: &[T; 2], f: impl Fn(&T) -> R) -> [R; 2] {
+    [f(&pair[0]), f(&pair[1])]
+}
+
+#[inline]
 fn map_semi_pair<T, R>(pair: (T, Option<T>), f: impl Fn(&T) -> R, snd_default: R) -> [R; 2] {
     [f(&pair.0), pair.1.map(|x| f(&x)).unwrap_or(snd_default)]
 }
