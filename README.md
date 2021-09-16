@@ -55,7 +55,8 @@ Enter           - reload current scene
 P               - pause
 Space           - step one frame while paused
 Esc             - close the game
-G               - toggle debug visualizations
+G               - toggle spatial index visualization
+I               - toggle island visualization
 
 Arrows  - move the player
 LShift  - jump
