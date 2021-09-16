@@ -53,6 +53,7 @@ impl Body {
 
     /// Check whether the body has finite mass or moment of inertia, allowing forces to have an
     /// effect on it.
+    #[inline]
     pub fn sees_forces(&self) -> bool {
         !matches!(
             (self.mass, self.moment_of_inertia),
@@ -72,6 +73,7 @@ pub enum Mass {
 }
 
 impl From<f64> for Mass {
+    #[inline]
     fn from(mass: f64) -> Self {
         Mass::Finite {
             mass,
@@ -82,6 +84,7 @@ impl From<f64> for Mass {
 
 impl Mass {
     /// Get the inverse of the mass, which is zero if the mass is infinite.
+    #[inline]
     pub fn inv(&self) -> f64 {
         match self {
             Mass::Finite { inverse, .. } => *inverse,
