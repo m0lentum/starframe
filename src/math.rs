@@ -15,6 +15,7 @@ pub enum Angle {
 }
 impl Angle {
     /// Get the angle as degrees.
+    #[inline]
     pub fn deg(&self) -> f64 {
         match self {
             Angle::Rad(rad) => rad * 180.0 / PI,
@@ -23,6 +24,7 @@ impl Angle {
     }
 
     /// Get the angle as radians.
+    #[inline]
     pub fn rad(&self) -> f64 {
         match self {
             Angle::Rad(rad) => *rad,
@@ -36,11 +38,13 @@ impl Default for Angle {
     }
 }
 impl From<Angle> for Rotor2 {
+    #[inline]
     fn from(ang: Angle) -> Rotor2 {
         Rotor2::from_angle(ang.rad())
     }
 }
 impl From<Rotor2> for Angle {
+    #[inline]
     fn from(rotor: Rotor2) -> Self {
         Angle::Rad(-rotor.bv.xy.atan2(rotor.s) * 2.0)
     }
@@ -109,14 +113,17 @@ impl PoseBuilder {
             rotation: Angle::default(),
         }
     }
+    #[inline]
     pub fn with_position(mut self, pos: impl Into<[f64; 2]>) -> Self {
         self.position = pos.into();
         self
     }
+    #[inline]
     pub fn with_rotation(mut self, angle: Angle) -> Self {
         self.rotation = angle;
         self
     }
+    #[inline]
     pub fn build(self) -> Pose {
         Pose::new(
             Vec2::new(self.position[0], self.position[1]),
@@ -152,10 +159,11 @@ impl From<Angle> for PoseBuilder {
 
 // Vec2 utils
 
+#[inline]
 pub fn left_normal(v: Vec2) -> Vec2 {
     Vec2::new(-v.y, v.x)
 }
-
+#[inline]
 pub fn right_normal(v: Vec2) -> Vec2 {
     Vec2::new(v.y, -v.x)
 }

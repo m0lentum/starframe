@@ -62,11 +62,13 @@ impl Default for Velocity {
 
 impl Velocity {
     /// Get the linear velocity of a point offset from the center of mass.
+    #[inline]
     pub fn point_velocity(&self, offset: m::Vec2) -> m::Vec2 {
         let tangent = m::left_normal(offset) * self.angular;
         self.linear + tangent
     }
 
+    #[inline]
     pub fn apply_to_pose(&self, dt: f64, mut pose: m::Pose) -> m::Pose {
         let scaled = *self * dt;
         pose.append_translation(scaled.linear);
@@ -714,7 +716,7 @@ impl Physics {
         //
 
         // constant for testing, TODO: use a threadpool and get the thread count of that
-        let thread_count = 4;
+        let thread_count = 1;
 
         // for now, just putting an equal number of islands in each group.
         // this could be optimized further by making sure each group gets
