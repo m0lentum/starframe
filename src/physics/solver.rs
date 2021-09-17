@@ -48,6 +48,11 @@ pub struct DataView<'a> {
     pub contact_lambdas: &'a mut [f64],
 }
 
+// SAFETY: we only use these inside of the solver
+// where we make sure we don't drop anything before every view is solved
+unsafe impl<'a> Sync for DataView<'a> {}
+unsafe impl<'a> Send for DataView<'a> {}
+
 pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
     // apply external forces and estimate post-step pose with explicit Euler step
     for (body, old_pose, pose, old_vel, vel, ext_accel) in izip!(

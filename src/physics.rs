@@ -1,6 +1,9 @@
 use itertools::izip;
 use slotmap as sm;
 
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
 use crate::{
     event::{Event, EventSink},
     graph::{self, Graph, Layer, UnsafeNode},
@@ -694,12 +697,14 @@ impl Physics {
         // group islands into as many groups as we have threads
         //
 
-        // constant for testing, TODO: use a threadpool and get the thread count of that
+        #[cfg(feature = "parallel")]
+        let thread_count = rayon::current_num_threads();
+        #[cfg(not(feature = "parallel"))]
         let thread_count = 1;
 
         // for now, just putting an equal number of islands in each group.
         // this could be optimized further by making sure each group gets
-        // roughly the same number of bodies
+        // roughly the same number of bodies rather than islands
         let chunk_size = if bufs.islands.len() <= thread_count {
             1
         } else {
@@ -834,9 +839,18 @@ impl Physics {
             CONTACT_COUNTER.store(0, Ordering::Relaxed);
 
             let _substep_span = tracy_span!("substep", "tick");
-            for island_view in &mut island_group_views {
-                solver::solve(forcefield, island_view);
 
+            #[cfg(feature = "parallel")]
+            let island_iter = island_group_views.par_iter_mut();
+
+            #[cfg(not(feature = "parallel"))]
+            let island_iter = island_group_views.iter_mut();
+
+            island_iter.for_each(|island_view| {
+                solver::solve(forcefield, island_view);
+            });
+
+            for island_view in &island_group_views {
                 for (colls, contact) in izip!(&*island_view.coll_pairs, &*island_view.contacts) {
                     if !matches!(contact, ContactResult::Zero) {
                         let colls =
