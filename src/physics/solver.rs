@@ -45,6 +45,7 @@ pub struct DataView<'a> {
     pub constraint_body_pairs: &'a [(usize, Option<usize>)],
     pub coll_pairs: &'a [[ColliderWithContext; 2]],
     pub contacts: &'a mut [ContactResult],
+    pub contacts_during_frame: &'a mut [bool],
     pub contact_lambdas: &'a mut [f64],
 }
 
@@ -279,12 +280,10 @@ fn solve_constraints(data: &mut DataView<'_>) {
 fn solve_contacts(data: &mut DataView<'_>) {
     let _span = tracy_span!("solve contacts", "solve_contacts");
 
-    #[cfg(feature = "tracy")]
-    let mut contact_counter: usize = 0;
-
-    for (colls, contact, lambda_n) in izip!(
+    for (colls, contact, cont_during_frame, lambda_n) in izip!(
         data.coll_pairs,
         &mut *data.contacts,
+        &mut *data.contacts_during_frame,
         &mut *data.contact_lambdas
     ) {
         if !match colls[0].ctx {
@@ -313,12 +312,9 @@ fn solve_contacts(data: &mut DataView<'_>) {
                 &colls[1].coll,
             )
         };
-
-        #[cfg(feature = "tracy")]
-        {
-            if !matches!(contact, ContactResult::Zero) {
-                contact_counter += 1;
-            }
+        // mark contact happened during this frame; this will be used to send events
+        if !matches!(contact, ContactResult::Zero) {
+            *cont_during_frame = true;
         }
 
         // if one of the bodies is from a rope, adjust normal
@@ -475,9 +471,6 @@ fn solve_contacts(data: &mut DataView<'_>) {
             }
         }
     }
-
-    #[cfg(feature = "tracy")]
-    super::CONTACT_COUNTER.fetch_add(contact_counter, std::sync::atomic::Ordering::Relaxed);
 }
 
 //

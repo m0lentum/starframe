@@ -39,16 +39,11 @@ use solver::ColliderContext;
 //
 
 #[cfg(feature = "tracy")]
-use std::sync::atomic::{AtomicUsize, Ordering};
-#[cfg(feature = "tracy")]
 static COLLIDERS_PLOT: tracy_client::Plot = tracy_client::create_plot!("colliders");
 #[cfg(feature = "tracy")]
 static PAIRS_PLOT: tracy_client::Plot = tracy_client::create_plot!("collider pairs tested");
 #[cfg(feature = "tracy")]
 static CONTACTS_PLOT: tracy_client::Plot = tracy_client::create_plot!("contacts");
-// atomic counter to collect contacts from all island groups
-#[cfg(feature = "tracy")]
-static CONTACT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Velocity of an object.
 ///
@@ -175,6 +170,7 @@ struct WorkingBuffers {
     colliders: Vec<solver::ColliderWithContext>,
     coll_pair_idxs: Vec<[usize; 2]>,
     contacts: Vec<ContactResult>,
+    contacts_during_frame: Vec<bool>,
     contact_lambdas: Vec<f64>,
 }
 impl WorkingBuffers {
@@ -208,6 +204,7 @@ impl WorkingBuffers {
             colliders: Vec::new(),
             coll_pair_idxs: Vec::new(),
             contacts: Vec::new(),
+            contacts_during_frame: Vec::new(),
             contact_lambdas: Vec::new(),
         }
     }
@@ -688,6 +685,10 @@ impl Physics {
         bufs.contacts.clear();
         bufs.contacts
             .resize(bufs.sorted_coll_pairs.len(), ContactResult::Zero);
+        // collect pairs that had contacts for sending events after solving everything
+        bufs.contacts_during_frame.clear();
+        bufs.contacts_during_frame
+            .resize(bufs.sorted_coll_pairs.len(), false);
         // store contact forces for friction purposes
         bufs.contact_lambdas.clear();
         bufs.contact_lambdas
@@ -733,6 +734,7 @@ impl Physics {
         let mut constr_bodies_s = bufs.constraint_body_pairs.as_mut_slice();
         let mut coll_pairs_s = bufs.sorted_coll_pairs.as_mut_slice();
         let mut contacts_s = bufs.contacts.as_mut_slice();
+        let mut cont_during_frame_s = bufs.contacts_during_frame.as_mut_slice();
         let mut cont_lambda_s = bufs.contact_lambdas.as_mut_slice();
 
         let mut island_start_idx = 0;
@@ -802,6 +804,9 @@ impl Physics {
             }
             let (contacts, contacts_rest) = contacts_s.split_at_mut(pair_count);
             contacts_s = contacts_rest;
+            let (contacts_during_frame, cont_d_f_rest) =
+                cont_during_frame_s.split_at_mut(pair_count);
+            cont_during_frame_s = cont_d_f_rest;
             let (contact_lambdas, cont_l_rest) = cont_lambda_s.split_at_mut(pair_count);
             cont_lambda_s = cont_l_rest;
 
@@ -824,6 +829,7 @@ impl Physics {
                 constraint_body_pairs,
                 coll_pairs,
                 contacts,
+                contacts_during_frame,
                 contact_lambdas,
             });
 
@@ -834,48 +840,57 @@ impl Physics {
         // Actual physics step
         //
 
-        for _substep in 0..self.substeps {
-            #[cfg(feature = "tracy")]
-            CONTACT_COUNTER.store(0, Ordering::Relaxed);
+        #[cfg(feature = "parallel")]
+        let island_iter = island_group_views.par_iter_mut();
 
-            let _substep_span = tracy_span!("substep", "tick");
+        #[cfg(not(feature = "parallel"))]
+        let island_iter = island_group_views.iter_mut();
 
-            #[cfg(feature = "parallel")]
-            let island_iter = island_group_views.par_iter_mut();
+        let substeps = self.substeps;
+        island_iter.for_each(|island_view| {
+            for _substep in 0..substeps {
+                let _substep_span = tracy_span!("substep", "tick");
 
-            #[cfg(not(feature = "parallel"))]
-            let island_iter = island_group_views.iter_mut();
-
-            island_iter.for_each(|island_view| {
                 solver::solve(forcefield, island_view);
-            });
+            }
+        });
 
-            for island_view in &island_group_views {
-                for (colls, contact) in izip!(&*island_view.coll_pairs, &*island_view.contacts) {
-                    if !matches!(contact, ContactResult::Zero) {
-                        let colls =
-                            colls.map(|coll| l_collider.get_unchecked_by_item_idx(coll.node_idx));
-                        if let Some(mut sink) =
-                            graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
-                        {
-                            sink.push(Event::Contact(ContactEvent {
-                                other_collider: graph::NodeRef::as_node(&colls[1], graph),
-                            }));
-                        }
-                        if let Some(mut sink) =
-                            graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
-                        {
-                            sink.push(Event::Contact(ContactEvent {
-                                other_collider: graph::NodeRef::as_node(&colls[0], graph),
-                            }));
-                        }
+        //
+        // send events
+        //
+
+        for island_view in &island_group_views {
+            for (colls, contact_happened) in izip!(
+                &*island_view.coll_pairs,
+                &*island_view.contacts_during_frame
+            ) {
+                if *contact_happened {
+                    let colls =
+                        colls.map(|coll| l_collider.get_unchecked_by_item_idx(coll.node_idx));
+                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
+                    {
+                        sink.push(Event::Contact(ContactEvent {
+                            other_collider: graph::NodeRef::as_node(&colls[1], graph),
+                        }));
+                    }
+                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
+                    {
+                        sink.push(Event::Contact(ContactEvent {
+                            other_collider: graph::NodeRef::as_node(&colls[0], graph),
+                        }));
                     }
                 }
             }
-
-            #[cfg(feature = "tracy")]
-            CONTACTS_PLOT.point(CONTACT_COUNTER.load(Ordering::Relaxed) as f64);
         }
+
+        #[cfg(feature = "tracy")]
+        CONTACTS_PLOT.point(
+            island_group_views
+                .iter()
+                .flat_map(|island_view| island_view.contacts_during_frame.iter())
+                .filter(|c| **c)
+                .count() as f64,
+        );
 
         //
         // apply results back to state from temp buffers
