@@ -669,7 +669,7 @@ fn rect_capsule(
         // capsule normal direction
         2 => {
             let normal_worldspace = pose_rect.rotation * Unit::new_unchecked(cap_normal);
-            let rect_edge = if cap_normal.x.abs() > cap_normal.y.abs() {
+            let rect_edge = if cap_dir.x.abs() > cap_dir.y.abs() {
                 Edge {
                     start: m::Vec2::new(-hw, cap_normal.y.signum() * hh),
                     dir: Unit::new_unchecked(m::Vec2::unit_x()),
@@ -703,9 +703,10 @@ fn rect_capsule(
                     })
                 }
                 EdgeClipResult::Passes { enters, exits } => {
-                    let edge_dot_axis = rect_edge.dir.dot(cap_normal);
-                    let enter_depth = pen_cap_normal - enters * edge_dot_axis;
-                    let exit_depth = pen_cap_normal - exits * edge_dot_axis;
+                    let start_depth = r - (dist - rect_edge.start).dot(cap_normal).abs();
+                    let edge_dot_axis = -rect_edge.dir.dot(cap_normal);
+                    let enter_depth = start_depth - enters * edge_dot_axis;
+                    let exit_depth = start_depth - exits * edge_dot_axis;
                     if enter_depth <= 0.0 || exit_depth <= 0.0 {
                         return ContactResult::Zero;
                     }
