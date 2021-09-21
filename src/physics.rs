@@ -146,6 +146,8 @@ struct WorkingBuffers {
     sorted_pair_idxs: Vec<usize>,
     island_assigned: Vec<bool>,
     islands: Vec<Island>,
+    // islands grouped roughly evenly for efficient threading
+    island_group_sizes: Vec<usize>,
 
     // constraints collected into a vec so they can be indexed
     // without iterating a slotmap
@@ -182,6 +184,7 @@ impl WorkingBuffers {
             sorted_pair_idxs: Vec::new(),
             island_assigned: Vec::new(),
             islands: Vec::new(),
+            island_group_sizes: Vec::new(),
 
             user_constraints: Vec::new(),
             sorted_constraints: Vec::new(),
@@ -550,6 +553,8 @@ impl Physics {
         // Populate working buffers
         //
 
+        let buf_span = tracy_span!("populate buffers", "tick");
+
         // refs in island order, rest of the buffers based on these
         //
         // would be nice to have this as part of workingbuffers to avoid a few allocs
@@ -694,24 +699,68 @@ impl Physics {
         bufs.contact_lambdas
             .resize(bufs.sorted_coll_pairs.len(), 0.0);
 
+        drop(buf_span);
+
         //
-        // group islands into as many groups as we have threads
+        // group islands for parallel solving
         //
+
+        bufs.island_group_sizes.clear();
 
         #[cfg(feature = "parallel")]
         let thread_count = rayon::current_num_threads();
         #[cfg(not(feature = "parallel"))]
         let thread_count = 1;
 
-        // for now, just putting an equal number of islands in each group.
-        // this could be optimized further by making sure each group gets
-        // roughly the same number of bodies rather than islands
-        let chunk_size = if bufs.islands.len() <= thread_count {
-            1
-        } else {
-            (bufs.islands.len() + thread_count - 1) / thread_count
-        };
-        let island_groups = bufs.islands.chunks(chunk_size);
+        #[cfg(feature = "parallel")]
+        {
+            // threading isn't worth it in small scenes. minimum limit for bodies per thread
+            // to avoid doing more work splitting than actually solving
+            const MIN_BODIES_PER_THREAD: usize = 64;
+            let ideal_body_count = (body_refs.len() + thread_count - 1) / thread_count;
+            let ideal_body_count = ideal_body_count.max(MIN_BODIES_PER_THREAD);
+
+            let mut covered_body_count = 0;
+            let mut islands_in_group = 0;
+            let mut next_split = ideal_body_count;
+
+            let mut island_iter = bufs.islands.iter().peekable();
+            while let Some(island) = island_iter.next() {
+                let body_count_after = covered_body_count + island.body_count;
+
+                // special case for last island because it has to get pushed no matter what
+                if island_iter.peek().is_none() {
+                    bufs.island_group_sizes.push(islands_in_group + 1);
+                    continue;
+                }
+
+                if body_count_after < next_split {
+                    islands_in_group += 1;
+                } else {
+                    // pick the island boundary closer to the ideal
+                    if body_count_after - next_split < next_split - covered_body_count {
+                        // boundary after this island is closer,
+                        // current island goes in current group
+                        bufs.island_group_sizes.push(islands_in_group + 1);
+                        islands_in_group = 0;
+                    } else {
+                        // boundary before this island is closer,
+                        // current island goes in next group
+                        bufs.island_group_sizes.push(islands_in_group);
+                        islands_in_group = 1;
+                    }
+
+                    // set next split to first one after current island
+                    // (may skip some in case one island is larger than two ideal splits)
+                    while body_count_after > next_split {
+                        next_split += ideal_body_count;
+                    }
+                }
+                covered_body_count = body_count_after;
+            }
+        }
+        #[cfg(not(feature = "parallel"))]
+        bufs.island_group_sizes.push(bufs.islands.len());
 
         //
         // Slice buffers into island-group-specific views
@@ -739,7 +788,16 @@ impl Physics {
 
         let mut island_start_idx = 0;
 
-        for group in island_groups {
+        let islands = &bufs.islands;
+        for group in bufs
+            .island_group_sizes
+            .iter()
+            .scan(0, |group_start, group_size| {
+                let curr_group_start = *group_start;
+                *group_start += *group_size;
+                Some(&islands[curr_group_start..*group_start])
+            })
+        {
             let body_count = group.iter().map(|isl| isl.body_count).sum();
             let rope_count = group.iter().map(|isl| isl.rope_count).sum();
             let constr_count = group.iter().map(|isl| isl.constr_count).sum();
