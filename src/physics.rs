@@ -66,6 +66,11 @@ impl Default for Velocity {
 }
 
 impl Velocity {
+    #[inline]
+    pub fn mag_sq(&self) -> f64 {
+        self.linear.mag_sq() + self.angular * self.angular
+    }
+
     /// Get the linear velocity of a point offset from the center of mass.
     #[inline]
     pub fn point_velocity(&self, offset: m::Vec2) -> m::Vec2 {
@@ -122,6 +127,57 @@ sm::new_key_type! {
     pub struct ConstraintHandle;
 }
 
+/// A collection of bodies that's disjoint (in terms of constraints and contacts)
+/// from every body outside of it.
+#[derive(Clone, Copy, Debug)]
+struct Island {
+    id: IslandId,
+    // bodies, ropes, constraints and collider pairs belonging to the island,
+    // stored in sorted_* in WorkingBuffers
+    body_range_start: usize,
+    body_count: usize,
+    rope_range_start: usize,
+    rope_count: usize,
+    constr_range_start: usize,
+    constr_count: usize,
+    pair_range_start: usize,
+    pair_count: usize,
+    // some kinds of bodies (particles, mainly) may not ever want to sleep
+    can_sleep: bool,
+}
+
+/// Information to identify an island
+/// and check that its topology hasn't changed with reasonable confidence.
+///
+/// Used to set idle islands to sleep and keep them that way until they change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct IslandId {
+    first_body: usize,
+    // a "checksum" of all constraint graph edges in this island for topology checking.
+    edge_sum: usize,
+}
+#[derive(Clone, Copy, Debug)]
+struct SleepingIsland {
+    id: IslandId,
+    /// flag to allow removing islands that no longer exist
+    continues_sleeping: bool,
+    /// islands are monitored for a little while before actually skipping computing them
+    /// to avoid situations where constraints are working but velocity is briefly zero
+    ticks_slept: usize,
+}
+impl From<IslandId> for SleepingIsland {
+    fn from(id: IslandId) -> Self {
+        Self {
+            id,
+            continues_sleeping: false,
+            ticks_slept: 0,
+        }
+    }
+}
+
+const SLEEP_VEL_THRESHOLD: f64 = 0.001;
+const FALL_ASLEEP_FRAMES: usize = 10;
+
 //
 // physics proper
 //
@@ -132,6 +188,7 @@ pub struct Physics {
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
     pub(crate) spatial_index: HGrid,
     constraint_graph: ConstraintGraph,
+    sleeping_islands: Vec<SleepingIsland>,
     working_bufs: WorkingBuffers,
 }
 
@@ -139,11 +196,10 @@ pub struct Physics {
 /// Explanations in `tick` where populated
 struct WorkingBuffers {
     // indices sorted by island for efficient island graph formation
-    // without individual Vecs for each island
-    sorted_body_idxs: Vec<usize>,
-    sorted_rope_idxs: Vec<usize>,
-    sorted_constr_idxs: Vec<usize>,
-    sorted_pair_idxs: Vec<usize>,
+    // without individual Vecs for each island.
+    // two passes needed to first gather islands and then sort the islands
+    sorted_first_pass: SortedIndices,
+    sorted_second_pass: SortedIndices,
     island_assigned: Vec<bool>,
     islands: Vec<Island>,
     // islands grouped roughly evenly for efficient threading
@@ -175,13 +231,33 @@ struct WorkingBuffers {
     contacts_during_frame: Vec<bool>,
     contact_lambdas: Vec<f64>,
 }
+struct SortedIndices {
+    bodies: Vec<usize>,
+    ropes: Vec<usize>,
+    constraints: Vec<usize>,
+    coll_pairs: Vec<usize>,
+}
+impl SortedIndices {
+    fn new() -> Self {
+        Self {
+            bodies: Vec::new(),
+            ropes: Vec::new(),
+            constraints: Vec::new(),
+            coll_pairs: Vec::new(),
+        }
+    }
+    fn clear(&mut self) {
+        self.bodies.clear();
+        self.ropes.clear();
+        self.constraints.clear();
+        self.coll_pairs.clear();
+    }
+}
 impl WorkingBuffers {
     fn new() -> Self {
         Self {
-            sorted_body_idxs: Vec::new(),
-            sorted_rope_idxs: Vec::new(),
-            sorted_constr_idxs: Vec::new(),
-            sorted_pair_idxs: Vec::new(),
+            sorted_first_pass: SortedIndices::new(),
+            sorted_second_pass: SortedIndices::new(),
             island_assigned: Vec::new(),
             islands: Vec::new(),
             island_group_sizes: Vec::new(),
@@ -213,21 +289,6 @@ impl WorkingBuffers {
     }
 }
 
-#[derive(Clone, Debug)]
-struct Island {
-    id: usize,
-    // bodies, ropes, constraints and collider pairs belonging to the island,
-    // stored in sorted_* in WorkingBuffers
-    body_range_start: usize,
-    body_count: usize,
-    rope_range_start: usize,
-    rope_count: usize,
-    constr_range_start: usize,
-    constr_count: usize,
-    pair_range_start: usize,
-    pair_count: usize,
-}
-
 impl Physics {
     pub fn new(grid_params: collision::HGridParams) -> Self {
         Physics {
@@ -240,6 +301,7 @@ impl Physics {
                 last_nodes_per_body: Vec::new(),
                 nodes: Vec::new(),
             },
+            sleeping_islands: Vec::new(),
             working_bufs: WorkingBuffers::new(),
         }
     }
@@ -464,64 +526,77 @@ impl Physics {
         bufs.island_assigned.clear();
         bufs.island_assigned.resize(l_body.content.len(), false);
         bufs.islands.clear();
-        bufs.sorted_body_idxs.clear();
-        bufs.sorted_rope_idxs.clear();
-        bufs.sorted_constr_idxs.clear();
-        bufs.sorted_pair_idxs.clear();
+        bufs.sorted_first_pass.clear();
+        bufs.sorted_second_pass.clear();
 
         let island_span = tracy_span!("build islands", "tick");
 
         fn search(
-            body_idx: usize,
+            root_body_idx: usize,
             island: &mut Island,
             constraint_graph: &ConstraintGraph,
             bufs: &mut WorkingBuffers,
         ) {
-            if bufs.island_assigned[body_idx] {
+            if bufs.island_assigned[root_body_idx] {
                 return;
             }
-            bufs.island_assigned[body_idx] = true;
-            bufs.sorted_body_idxs.push(body_idx);
+            bufs.island_assigned[root_body_idx] = true;
+            bufs.sorted_first_pass.bodies.push(root_body_idx);
             island.body_count += 1;
-            for edge in constraint_graph.iter(body_idx) {
+            for edge in constraint_graph.iter(root_body_idx) {
                 match edge {
                     Edge::Rope {
                         body_idx,
                         rope_node_idx,
                     } => {
-                        if !bufs.sorted_rope_idxs
+                        // sleeping causes problems with current rope implementation
+                        // (indices are collected into buffers in a way that breaks with sleeping).
+                        // this could be fixed but ropes are so unlikely to stop moving anyway
+                        // that I'd rather just save some checking work and never even try to put them to sleep.
+                        island.can_sleep = false;
+                        if !bufs.sorted_first_pass.ropes
                             [island.rope_range_start..island.rope_range_start + island.rope_count]
                             .iter()
                             .any(|&idx| idx == *rope_node_idx)
                         {
-                            bufs.sorted_rope_idxs.push(*rope_node_idx);
+                            bufs.sorted_first_pass.ropes.push(*rope_node_idx);
                             island.rope_count += 1;
                         }
 
+                        island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
                         search(*body_idx, island, constraint_graph, bufs);
                     }
                     Edge::Constraint {
                         body_idx,
                         constr_idx,
                     } => {
-                        bufs.sorted_constr_idxs.push(*constr_idx);
+                        bufs.sorted_first_pass.constraints.push(*constr_idx);
                         island.constr_count += 1;
 
+                        island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
                         search(*body_idx, island, constraint_graph, bufs);
                     }
                     Edge::Contact { body_idx, pair_idx } => {
-                        bufs.sorted_pair_idxs.push(*pair_idx);
+                        bufs.sorted_first_pass.coll_pairs.push(*pair_idx);
                         island.pair_count += 1;
 
+                        island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
                         search(*body_idx, island, constraint_graph, bufs);
                     }
                     Edge::StaticConstraint { constr_idx } => {
-                        bufs.sorted_constr_idxs.push(*constr_idx);
+                        bufs.sorted_first_pass.constraints.push(*constr_idx);
                         island.constr_count += 1;
+
+                        // no guarantee constr_idx is stable between frames,
+                        // but we still need to stop sleeping when any constraint changes.
+                        // adding a root_body_idx should do the job
+                        island.id.edge_sum += root_body_idx;
                     }
                     Edge::StaticContact { pair_idx } => {
-                        bufs.sorted_pair_idxs.push(*pair_idx);
+                        bufs.sorted_first_pass.coll_pairs.push(*pair_idx);
                         island.pair_count += 1;
+
+                        island.id.edge_sum += root_body_idx;
                     }
                 }
             }
@@ -533,18 +608,89 @@ impl Physics {
                 continue;
             }
             let mut island = Island {
-                id: bi,
-                body_range_start: bufs.sorted_body_idxs.len(),
+                id: IslandId {
+                    first_body: bi,
+                    edge_sum: 0, // this is incremented during search
+                },
+                can_sleep: true,
+                body_range_start: bufs.sorted_first_pass.bodies.len(),
                 body_count: 0,
-                rope_range_start: bufs.sorted_rope_idxs.len(),
+                rope_range_start: bufs.sorted_first_pass.ropes.len(),
                 rope_count: 0,
-                constr_range_start: bufs.sorted_constr_idxs.len(),
+                constr_range_start: bufs.sorted_first_pass.constraints.len(),
                 constr_count: 0,
-                pair_range_start: bufs.sorted_pair_idxs.len(),
+                pair_range_start: bufs.sorted_first_pass.coll_pairs.len(),
                 pair_count: 0,
             };
             search(bi, &mut island, &self.constraint_graph, bufs);
             bufs.islands.push(island);
+        }
+
+        //
+        // sort islands by size and handle sleeping
+        //
+
+        for sleeping in &mut self.sleeping_islands {
+            sleeping.continues_sleeping = false;
+        }
+        // remove sleeping islands from computation and set them to keep sleeping
+        let sleeping_islands = &mut self.sleeping_islands;
+        let sorted_first_pass = &bufs.sorted_first_pass;
+        bufs.islands.retain(|isl| {
+            if let Some(sleeping) = sleeping_islands.iter_mut().find(|slep| slep.id == isl.id) {
+                // we need to check if anything started moving between frames due to user code
+                if sorted_first_pass.bodies
+                    [isl.body_range_start..isl.body_range_start + isl.body_count]
+                    .iter()
+                    .any(|bi| {
+                        l_body.get_unchecked_by_item_idx(*bi).velocity.mag_sq()
+                            >= SLEEP_VEL_THRESHOLD
+                    })
+                {
+                    return true;
+                }
+
+                sleeping.continues_sleeping = true;
+                // keep island in computations if it hasn't slept for long enough
+                sleeping.ticks_slept < FALL_ASLEEP_FRAMES
+            } else {
+                true
+            }
+        });
+        // remove sleeping island ids that weren't found
+        self.sleeping_islands.retain(|slep| slep.continues_sleeping);
+        // sort remaining islands by size for better work distribution over threads
+        bufs.islands
+            .sort_unstable_by_key(|isl| usize::MAX - isl.body_count);
+        // move indices associated with islands according to sorted island order
+        for isl in &mut bufs.islands {
+            let new_body_start = bufs.sorted_second_pass.bodies.len();
+            bufs.sorted_second_pass.bodies.extend_from_slice(
+                &bufs.sorted_first_pass.bodies
+                    [isl.body_range_start..isl.body_range_start + isl.body_count],
+            );
+            isl.body_range_start = new_body_start;
+
+            let new_rope_start = bufs.sorted_second_pass.ropes.len();
+            bufs.sorted_second_pass.ropes.extend_from_slice(
+                &bufs.sorted_first_pass.ropes
+                    [isl.rope_range_start..isl.rope_range_start + isl.rope_count],
+            );
+            isl.rope_range_start = new_rope_start;
+
+            let new_constr_start = bufs.sorted_second_pass.constraints.len();
+            bufs.sorted_second_pass.constraints.extend_from_slice(
+                &bufs.sorted_first_pass.constraints
+                    [isl.constr_range_start..isl.constr_range_start + isl.constr_count],
+            );
+            isl.constr_range_start = new_constr_start;
+
+            let new_pair_start = bufs.sorted_second_pass.coll_pairs.len();
+            bufs.sorted_second_pass.coll_pairs.extend_from_slice(
+                &bufs.sorted_first_pass.coll_pairs
+                    [isl.pair_range_start..isl.pair_range_start + isl.pair_count],
+            );
+            isl.pair_range_start = new_pair_start;
         }
 
         drop(island_span);
@@ -561,7 +707,8 @@ impl Physics {
         // but we can't persist references across frames
         // and it would take some unsafe shenanigans to hold on to these
         let body_refs: Vec<graph::NodeRef<Body>> = bufs
-            .sorted_body_idxs
+            .sorted_second_pass
+            .bodies
             .iter()
             .map(|&bi| l_body.get_unchecked_by_item_idx(bi))
             .collect();
@@ -576,7 +723,7 @@ impl Physics {
         bufs.sorted_rope_views.clear();
         let node_ref_map = &bufs.node_ref_map;
         bufs.sorted_rope_views
-            .extend(bufs.sorted_rope_idxs.iter().map(|idx| {
+            .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
                 let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
                 let first_particle = graph
                     .get_neighbor(&rope_node, l_body)
@@ -590,7 +737,8 @@ impl Physics {
         bufs.sorted_constraints.clear();
         let user_constraints = &bufs.user_constraints;
         bufs.sorted_constraints.extend(
-            bufs.sorted_constr_idxs
+            bufs.sorted_second_pass
+                .constraints
                 .iter()
                 .map(|&ci| user_constraints[ci]),
         );
@@ -682,7 +830,8 @@ impl Physics {
         let coll_pair_idxs = &bufs.coll_pair_idxs;
         let colliders = &bufs.colliders;
         bufs.sorted_coll_pairs.extend(
-            bufs.sorted_pair_idxs
+            bufs.sorted_second_pass
+                .coll_pairs
                 .iter()
                 .map(|pi| coll_pair_idxs[*pi].map(|ci| colliders[ci])),
         );
@@ -951,6 +1100,28 @@ impl Physics {
         );
 
         //
+        // set islands where movement was below a threshold to sleep
+        //
+
+        for isl in &bufs.islands {
+            if isl.can_sleep
+                && bufs.velocities[isl.body_range_start..isl.body_range_start + isl.body_count]
+                    .iter()
+                    .all(|vel| vel.mag_sq() < SLEEP_VEL_THRESHOLD)
+            {
+                if let Some(already_sleeping) = self
+                    .sleeping_islands
+                    .iter_mut()
+                    .find(|slep| slep.id == isl.id)
+                {
+                    already_sleeping.ticks_slept += 1;
+                } else {
+                    self.sleeping_islands.push(isl.id.into());
+                }
+            }
+        }
+
+        //
         // apply results back to state from temp buffers
         //
 
@@ -1005,7 +1176,7 @@ impl Physics {
     ) -> impl 's + Iterator<Item = impl 's + Iterator<Item = graph::NodeRef<Body>>> {
         self.working_bufs.islands.iter().map(move |island| {
             (island.body_range_start..island.body_range_start + island.body_count).map(move |bi| {
-                l_body.get_unchecked_by_item_idx(self.working_bufs.sorted_body_idxs[bi])
+                l_body.get_unchecked_by_item_idx(self.working_bufs.sorted_second_pass.bodies[bi])
             })
         })
     }
