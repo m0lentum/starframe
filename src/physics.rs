@@ -45,6 +45,10 @@ static PAIRS_PLOT: tracy_client::Plot = tracy_client::create_plot!("collider pai
 #[cfg(feature = "tracy")]
 static CONTACTS_PLOT: tracy_client::Plot = tracy_client::create_plot!("contacts");
 
+//
+// public types
+//
+
 /// Velocity of an object.
 ///
 // Equivalent to a Vec3 but with names for the translational and rotational part.
@@ -127,6 +131,10 @@ sm::new_key_type! {
     pub struct ConstraintHandle;
 }
 
+//
+// internal types
+//
+
 /// A collection of bodies that's disjoint (in terms of constraints and contacts)
 /// from every body outside of it.
 #[derive(Clone, Copy, Debug)]
@@ -173,23 +181,6 @@ impl From<IslandId> for SleepingIsland {
             ticks_slept: 0,
         }
     }
-}
-
-const SLEEP_VEL_THRESHOLD: f64 = 0.001;
-const FALL_ASLEEP_FRAMES: usize = 10;
-
-//
-// physics proper
-//
-
-pub struct Physics {
-    pub substeps: usize,
-    pub mask_matrix: collision::MaskMatrix,
-    user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
-    pub(crate) spatial_index: HGrid,
-    constraint_graph: ConstraintGraph,
-    sleeping_islands: Vec<SleepingIsland>,
-    working_bufs: WorkingBuffers,
 }
 
 /// Cached buffers to avoid allocating a bunch of memory every frame.
@@ -289,10 +280,64 @@ impl WorkingBuffers {
     }
 }
 
-impl Physics {
-    pub fn new(grid_params: collision::HGridParams) -> Self {
-        Physics {
+//
+// physics proper
+//
+
+/// Constants used to adjust various features of the physics solver.
+///
+/// Start with `Default::default()` and adjust as needed.
+pub struct TuningConstants {
+    /// The number of substeps per frame.
+    ///
+    /// Higher is more expensive and, up to a point, more accurate.
+    /// At a certain point floating point inaccuracy will begin to create significant error.
+    pub substeps: usize,
+    /// Maximum velocity of a body to be considered at rest.
+    pub sleep_vel_threshold: f64,
+    /// Number of frames (not substeps) before an island where every body is at rest
+    /// is set to sleep.
+    ///
+    /// Should be more than 1 to avoid
+    pub fall_asleep_frames: usize,
+    /// Highest acceleration expected to happen over a frame,
+    /// used to ensure all collisions are detected in every substep.
+    ///
+    /// If higher accelerations occur under just the right conditions,
+    /// this can cause a missed collision, leading to a deep collision the next frame
+    /// and bodies flying apart violently.
+    pub max_expected_acceleration: f64,
+    #[cfg(feature = "parallel")]
+    /// Minimum limit for bodies per thread to make sure work is divided efficiently.
+    pub min_bodies_per_thread: usize,
+}
+
+impl Default for TuningConstants {
+    fn default() -> Self {
+        Self {
             substeps: 10,
+            sleep_vel_threshold: 0.001,
+            fall_asleep_frames: 10,
+            max_expected_acceleration: 10.0,
+            min_bodies_per_thread: 64,
+        }
+    }
+}
+
+pub struct Physics {
+    pub consts: TuningConstants,
+    pub mask_matrix: collision::MaskMatrix,
+    user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
+    pub(crate) spatial_index: HGrid,
+    constraint_graph: ConstraintGraph,
+    sleeping_islands: Vec<SleepingIsland>,
+    working_bufs: WorkingBuffers,
+}
+
+impl Physics {
+    pub fn new(consts: TuningConstants, grid_params: collision::HGridParams) -> Self {
+        Physics {
+            consts,
             mask_matrix: Default::default(),
             user_constraints: sm::DenseSlotMap::with_key(),
             spatial_index: HGrid::new(grid_params),
@@ -304,12 +349,6 @@ impl Physics {
             sleeping_islands: Vec::new(),
             working_bufs: WorkingBuffers::new(),
         }
-    }
-
-    /// Set the number of substeps per frame.
-    pub fn with_substeps(mut self, substeps: usize) -> Self {
-        self.substeps = substeps;
-        self
     }
 
     /// Add a user-defined constraint to the system. Returns a handle that can be used to remove it later.
@@ -358,7 +397,7 @@ impl Physics {
     ) {
         let _main_span = tracy_span!("physics tick", "tick");
 
-        let dt = frame_dt / self.substeps as f64;
+        let dt = frame_dt / self.consts.substeps as f64;
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
 
@@ -380,8 +419,7 @@ impl Physics {
 
         // constant for padding bounding volumes to fit movement during substeps,
         // collisions may be missed if higher accelerations occur
-        const MAX_EXPECTED_ACCEL: f64 = 10.0;
-        let max_expected_accel_over_frame = MAX_EXPECTED_ACCEL * frame_dt;
+        let max_expected_accel_over_frame = self.consts.max_expected_acceleration * frame_dt;
 
         self.spatial_index.prepare(l_collider.content.len());
         bufs.coll_pair_idxs.clear();
@@ -642,6 +680,8 @@ impl Physics {
         // remove sleeping islands from computation and set them to keep sleeping
         let sleeping_islands = &mut self.sleeping_islands;
         let sorted_first_pass = &bufs.sorted_first_pass;
+        let sleep_vel_threshold = self.consts.sleep_vel_threshold;
+        let fall_asleep_frames = self.consts.fall_asleep_frames;
         bufs.islands.retain(|isl| {
             if let Some(sleeping) = sleeping_islands.iter_mut().find(|slep| slep.id == isl.id) {
                 // we need to check if anything started moving between frames due to user code
@@ -650,7 +690,7 @@ impl Physics {
                     .iter()
                     .any(|bi| {
                         l_body.get_unchecked_by_item_idx(*bi).velocity.mag_sq()
-                            >= SLEEP_VEL_THRESHOLD
+                            >= sleep_vel_threshold
                     })
                 {
                     return true;
@@ -658,7 +698,7 @@ impl Physics {
 
                 sleeping.continues_sleeping = true;
                 // keep island in computations if it hasn't slept for long enough
-                sleeping.ticks_slept < FALL_ASLEEP_FRAMES
+                sleeping.ticks_slept < fall_asleep_frames
             } else {
                 true
             }
@@ -869,11 +909,8 @@ impl Physics {
 
         #[cfg(feature = "parallel")]
         {
-            // threading isn't worth it in small scenes. minimum limit for bodies per thread
-            // to avoid doing more work splitting than actually solving
-            const MIN_BODIES_PER_THREAD: usize = 64;
             let ideal_body_count = (body_refs.len() + thread_count - 1) / thread_count;
-            let ideal_body_count = ideal_body_count.max(MIN_BODIES_PER_THREAD);
+            let ideal_body_count = ideal_body_count.max(self.consts.min_bodies_per_thread);
 
             let mut covered_body_count = 0;
             let mut islands_in_group = 0;
@@ -1059,7 +1096,7 @@ impl Physics {
         #[cfg(not(feature = "parallel"))]
         let island_iter = island_group_views.iter_mut();
 
-        let substeps = self.substeps;
+        let substeps = self.consts.substeps;
         island_iter.for_each(|island_view| {
             for _substep in 0..substeps {
                 let _substep_span = tracy_span!("substep", "tick");
@@ -1109,11 +1146,12 @@ impl Physics {
         // set islands where movement was below a threshold to sleep
         //
 
+        let sleep_vel_threshold = self.consts.sleep_vel_threshold;
         for isl in &bufs.islands {
             if isl.can_sleep
                 && bufs.velocities[isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
-                    .all(|vel| vel.mag_sq() < SLEEP_VEL_THRESHOLD)
+                    .all(|vel| vel.mag_sq() < sleep_vel_threshold)
             {
                 if let Some(already_sleeping) = self
                     .sleeping_islands

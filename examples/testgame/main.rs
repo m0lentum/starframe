@@ -65,16 +65,21 @@ impl State {
             player: player::PlayerController::new(),
             mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
-            physics: phys::Physics::new(phys::collision::HGridParams {
-                approx_bounds: phys::collision::AABB {
-                    min: m::Vec2::new(-40.0, -15.0),
-                    max: m::Vec2::new(40.0, 25.0),
+            physics: phys::Physics::new(
+                phys::TuningConstants {
+                    ..Default::default()
                 },
-                lowest_spacing: 0.5,
-                level_count: 2,
-                spacing_ratio: 3,
-                initial_capacity: 600,
-            }),
+                phys::collision::HGridParams {
+                    approx_bounds: phys::collision::AABB {
+                        min: m::Vec2::new(-40.0, -15.0),
+                        max: m::Vec2::new(40.0, 25.0),
+                    },
+                    lowest_spacing: 0.5,
+                    level_count: 2,
+                    spacing_ratio: 3,
+                    initial_capacity: 600,
+                },
+            ),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
                     width: 20.0,
@@ -226,13 +231,13 @@ impl game::GameState for State {
 
         // adjust physics substeps
         if game.input.is_key_pressed(Key::NumpadAdd, Some(0)) {
-            self.physics.substeps += 1;
-            println!("Substeps: {}", self.physics.substeps);
+            self.physics.consts.substeps += 1;
+            println!("Substeps: {}", self.physics.consts.substeps);
         } else if game.input.is_key_pressed(Key::NumpadSubtract, Some(0))
-            && self.physics.substeps > 1
+            && self.physics.consts.substeps > 1
         {
-            self.physics.substeps -= 1;
-            println!("Substeps: {}", self.physics.substeps);
+            self.physics.consts.substeps -= 1;
+            println!("Substeps: {}", self.physics.consts.substeps);
         }
 
         // toggle debug visualizers
