@@ -49,6 +49,7 @@ impl MouseGrabber {
                                 .with_compliance(0.01)
                                 .with_linear_damping(10.0)
                                 .with_angular_damping(0.5)
+                                .disable_sleeping()
                                 .build_attachment();
                         self.constraint = Some(physics.add_constraint(constr));
                     }

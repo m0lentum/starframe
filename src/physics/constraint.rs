@@ -28,6 +28,12 @@ pub struct Constraint {
     pub limit: ConstraintLimit,
     /// Type of the constraint.
     pub ty: ConstraintType,
+    /// Whether or not this constraint can be set to sleep when at rest.
+    ///
+    /// Most of the time this is safe to leave on.
+    /// However, if the constraint is modified at runtime while sleeping,
+    /// that will not wake it up.
+    pub can_sleep: bool,
 }
 
 /// Type-specific variables for constraints.
@@ -62,6 +68,7 @@ pub struct ConstraintBuilder {
     compliance: f64,
     linear_damping: f64,
     angular_damping: f64,
+    can_sleep: bool,
 }
 
 impl ConstraintBuilder {
@@ -79,6 +86,7 @@ impl ConstraintBuilder {
             compliance: 0.0,
             linear_damping: 0.1,
             angular_damping: 0.0,
+            can_sleep: true,
         }
     }
 
@@ -136,6 +144,14 @@ impl ConstraintBuilder {
         self
     }
 
+    /// Don't allow this constraint to be set to sleep when at rest.
+    ///
+    /// Generally you shouldn't do this unless you intend to modify the constraint at runtime.
+    pub fn disable_sleeping(mut self) -> Self {
+        self.can_sleep = false;
+        self
+    }
+
     /// Build a distance constraint.
     pub fn build_distance(self, distance: f64) -> Constraint {
         self.build(ConstraintType::Distance { distance })
@@ -156,6 +172,7 @@ impl ConstraintBuilder {
             angular_damping: self.angular_damping,
             offsets: self.offsets,
             limit: self.limit,
+            can_sleep: self.can_sleep,
             ty,
         }
     }

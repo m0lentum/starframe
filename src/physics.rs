@@ -573,6 +573,9 @@ impl Physics {
                         bufs.sorted_first_pass.constraints.push(*constr_idx);
                         island.constr_count += 1;
 
+                        if !bufs.user_constraints[*constr_idx].can_sleep {
+                            island.can_sleep = false;
+                        }
                         island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
                         search(*body_idx, island, constraint_graph, bufs);
                     }
@@ -587,6 +590,9 @@ impl Physics {
                         bufs.sorted_first_pass.constraints.push(*constr_idx);
                         island.constr_count += 1;
 
+                        if !bufs.user_constraints[*constr_idx].can_sleep {
+                            island.can_sleep = false;
+                        }
                         // no guarantee constr_idx is stable between frames,
                         // but we still need to stop sleeping when any constraint changes.
                         // adding a root_body_idx should do the job
