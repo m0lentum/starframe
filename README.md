@@ -2,10 +2,12 @@
 
 ## What
 
-In disc golf, a starframe occurs when every player in a group scores a birdie on the same hole.
+In disc golf, a starframe occurs when every player in a group scores a birdie
+on the same hole.
 
-This starframe, however, is a 2D game engine written in Rust as a solo hobby project.
-Its main feature is the physics engine, with design driven by sidescrolling action games.
+This starframe, however, is a 2D game engine written in Rust as a solo hobby
+project. Its main feature is the physics engine, with design driven by
+sidescrolling action games.
 
 ## Current features
 
@@ -13,33 +15,37 @@ Its main feature is the physics engine, with design driven by sidescrolling acti
 
 - Novel graph-based entity system inspired by [froggy](https://github.com/kvark/froggy)
   - [related blog post](https://moletrooper.github.io/blog/2020/08/starframe-1-architecture/)
-- 2D rigid body physics
-  - collision detection for boxes, circles, and capsules (more shapes coming!)
+- 2D rigid body and particle physics
+  - collider shapes: boxes, circles, and capsules
+  - particle-based ropes with full coupling with rigid bodies
   - constraint solver based on
     [Extended Position-Based Dynamics](https://matthias-research.github.io/pages/publications/PBDBodies.pdf)
     - [related blog post](https://moletrooper.github.io/blog/2021/03/starframe-devlog-constraints/)
 - Graphics
-  - Simple 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
+  - Basic 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
 
-See my [kanban](https://github.com/MoleTrooper/starframe/projects/1) for the most up-to-date and fine-grained goings-on.
+For more details, I organize my plans with Github issues on a [project
+board](https://github.com/MoleTrooper/starframe/projects/1).
 
 ## Blog
 
-I write about this project once in a blue moon on [my website](https://moletrooper.github.io/blog/).
+I write about this project once in a blue moon on [my website](https://moletrooper.me/blog/).
 
-## Running the test game
+## The test game
 
-There's not much to show here, but should you wish to check out my tiny test game
-where you bump physics blocks around, here's how:
+I have a little testing sandbox where you can throw blocks around with the
+mouse and move a rudimentary platformer character that shoots some rather heavy
+bullets. Here's how you can check it out:
 
 ### The manual way
 
 1. Install [Rust](https://www.rust-lang.org/learn/get-started)
-2. You may need to install `pkgconfig` and drivers for Vulkan, DX12, or Metal depending on your platform
+2. You may need to install `pkgconfig` and drivers for Vulkan, DX12, or Metal
+   depending on your platform
 3. Clone and navigate to this repository
 4. `cargo run --example testgame`
 
-### The easy way, using [Nix](https://nixos.org/nix/)
+### The easy way, using [Nix](https://nixos.org/nix/) (on Linux)
 
 1. Clone and navigate to this repository
 2. `nix-shell`
@@ -47,7 +53,8 @@ where you bump physics blocks around, here's how:
 
 ### Keybindings
 
-Disclaimer: these might be out of date - the test game changes in quick and dirty ways
+Disclaimer: these might be out of date - the test game changes in quick and
+dirty ways
 
 ```text
 Number keys 1-9 - load a scene
