@@ -16,7 +16,7 @@
 //! Most edges (connections between nodes) should go both ways, but because the graph is directed, one-directional edges
 //! such as from Sprite to Texture in the above diagram can also be made.
 //! This is important to the way object boundaries are determined by the deletion algorithm
-//! (see `Graph::delete` for details).
+//! (see [`delete`][self::Graph::delete] for details).
 //! This comes into play when sharing one component between multiple objects.
 //!
 //! Similarly to how systems in ECS iterate over specific sets of components,
@@ -32,6 +32,9 @@ use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard, RwLockWriteGua
 mod component_defs;
 pub use crate::make_graph;
 pub use component_defs::BUILTIN_LAYER_COUNT;
+
+mod layer_bundle;
+pub use layer_bundle::LayerBundle;
 
 //
 // Index & ref types
@@ -459,16 +462,34 @@ impl Graph {
     }
 
     pub fn get_layer<T: Component>(&self) -> LayerView<'_, T> {
+        let err = || {
+            // not sure if panic here is the right call,
+            // but it's surely better than having it hang forever in case of a conflict
+            panic!(
+                "Could not lock layer for reading: {}",
+                std::any::type_name::<T>()
+            )
+        };
         LayerView {
-            meta: RwLockReadGuard::map(self.layers[T::LAYER_INDEX].read(), |l| &l.meta),
-            components: RwLockReadGuard::map(self.layers[T::LAYER_INDEX].read(), |l| {
-                l.components.downcast_slice().unwrap()
-            }),
+            meta: RwLockReadGuard::map(
+                self.layers[T::LAYER_INDEX].try_read().unwrap_or_else(err),
+                |l| &l.meta,
+            ),
+            components: RwLockReadGuard::map(
+                self.layers[T::LAYER_INDEX].try_read().unwrap_or_else(err),
+                |l| l.components.downcast_slice().unwrap(),
+            ),
         }
     }
 
     pub fn get_layer_mut<T: Component>(&self) -> LayerViewMut<'_, T> {
-        let mut guard = self.layers[T::LAYER_INDEX].write();
+        let err = || {
+            panic!(
+                "Could not lock layer for writing: {}",
+                std::any::type_name::<T>()
+            )
+        };
+        let mut guard = self.layers[T::LAYER_INDEX].try_write().unwrap_or_else(err);
         // taking references to things inside the lock for the sake of API.
         // SAFETY: the guard will drop at the same time as the references
         // and we never access the guard itself.
@@ -481,6 +502,10 @@ impl Graph {
                 _guard: guard,
             }
         }
+    }
+
+    pub fn get_layer_bundle<'a, B: LayerBundle<'a>>(&'a self) -> B {
+        B::get_from_graph(self)
     }
 
     /// Delete a whole _object_ from the graph, beginning from the given node.
@@ -529,7 +554,7 @@ impl Graph {
             .iter()
             .map(|lock| {
                 lock.try_write()
-                    .expect("Could not lock a layer for writing")
+                    .expect("One or more layers were in use when trying to delete")
             })
             .collect();
 
@@ -686,6 +711,24 @@ mod tests {
         }
     }
 
+    // shorthands for layer views because we have to repeat this stuff a lot here
+    type L<'a, T> = LayerView<'a, T>;
+    type LM<'a, T> = LayerViewMut<'a, T>;
+    type AllLayers<'a> = (
+        L<'a, Pose>,
+        L<'a, Velocity>,
+        L<'a, Body>,
+        L<'a, Shape>,
+        L<'a, Subshape>,
+    );
+    type AllLayersMut<'a> = (
+        LM<'a, Pose>,
+        LM<'a, Velocity>,
+        LM<'a, Body>,
+        LM<'a, Shape>,
+        LM<'a, Subshape>,
+    );
+
     /// Nodes can be connected and then queried for their neighbors.
     /// Multiple ownership works.
     #[test]
@@ -696,55 +739,52 @@ mod tests {
 
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
-            let mut poses = graph.get_layer_mut::<Pose>();
-            let mut vels = graph.get_layer_mut::<Velocity>();
-            let mut bodies = graph.get_layer_mut::<Body>();
-            let mut shapes = graph.get_layer_mut::<Shape>();
-            let mut everyones_shape = &mut shapes.get_mut(everyones_shape).unwrap();
+            let pose_key;
+            let rb_key;
+            {
+                let (mut poses, mut vels, mut bodies, mut shapes, _) =
+                    graph.get_layer_bundle::<AllLayersMut>();
 
-            let mut pose_node = poses.insert(Pose(i));
-            let mut vel_node = vels.insert(Velocity(i));
-            let mut body_node = bodies.insert(Body(i));
-            vel_node.connect(&mut pose_node);
-            body_node.connect(&mut pose_node);
-            body_node.connect(&mut vel_node);
-            body_node.connect_oneway(&mut everyones_shape);
-            // refcounts
-            assert_eq!(pose_node.layer_meta.refcounts[pose_node.idx], 2);
-            assert_eq!(body_node.layer_meta.refcounts[body_node.idx], 2);
-            assert_eq!(
-                everyones_shape.layer_meta.refcounts[everyones_shape.idx],
-                i + 1
-            );
-            // neighbors are found
-            // (getting them is cumbersome here because we have to juggle layer references
-            // back and forth to drop mutable refs, but this won't be done in real code)
-            let pose_key = pose_node.key();
-            let rb_key = body_node.key();
-            drop(poses);
-            drop(bodies);
-            drop(shapes);
-            let poses = graph.get_layer::<Pose>();
-            let bodies = graph.get_layer::<Body>();
-            let shapes = graph.get_layer::<Shape>();
-            assert_eq!(
-                *bodies.get(rb_key).unwrap().get_neighbor(&shapes).unwrap().c,
-                Shape(69)
-            );
-            assert_eq!(
-                *poses
-                    .get(pose_key)
-                    .unwrap()
-                    .get_neighbor(&bodies)
-                    .unwrap()
-                    .c,
-                Body(i)
-            );
-            assert!(poses.get(pose_key).unwrap().get_neighbor(&shapes).is_none());
+                let mut everyones_shape = &mut shapes.get_mut(everyones_shape).unwrap();
 
-            drop(poses);
-            drop(bodies);
-            drop(shapes);
+                let mut pose_node = poses.insert(Pose(i));
+                let mut vel_node = vels.insert(Velocity(i));
+                let mut body_node = bodies.insert(Body(i));
+                vel_node.connect(&mut pose_node);
+                body_node.connect(&mut pose_node);
+                body_node.connect(&mut vel_node);
+                body_node.connect_oneway(&mut everyones_shape);
+                // refcounts
+                assert_eq!(pose_node.layer_meta.refcounts[pose_node.idx], 2);
+                assert_eq!(body_node.layer_meta.refcounts[body_node.idx], 2);
+                assert_eq!(
+                    everyones_shape.layer_meta.refcounts[everyones_shape.idx],
+                    i + 1
+                );
+                // neighbors are found
+                // (getting them is cumbersome here because we have to juggle layer references
+                // back and forth to drop mutable refs, but this won't be done in real code)
+                pose_key = pose_node.key();
+                rb_key = body_node.key();
+            }
+            {
+                let (poses, _, bodies, shapes, _) = graph.get_layer_bundle::<AllLayers>();
+                assert_eq!(
+                    *bodies.get(rb_key).unwrap().get_neighbor(&shapes).unwrap().c,
+                    Shape(69)
+                );
+                assert_eq!(
+                    *poses
+                        .get(pose_key)
+                        .unwrap()
+                        .get_neighbor(&bodies)
+                        .unwrap()
+                        .c,
+                    Body(i)
+                );
+                assert!(poses.get(pose_key).unwrap().get_neighbor(&shapes).is_none());
+            }
+
             // spawn something with different connections in between
             let mut poses = graph.get_layer_mut::<Pose>();
             let mut shapes = graph.get_layer_mut::<Shape>();
@@ -770,10 +810,8 @@ mod tests {
     #[test]
     fn iterate() {
         let graph = graph();
-        let mut poses = graph.get_layer_mut::<Pose>();
-        let mut vels = graph.get_layer_mut::<Velocity>();
-        let mut bodies = graph.get_layer_mut::<Body>();
-        let mut shapes = graph.get_layer_mut::<Shape>();
+        let (mut poses, mut vels, mut bodies, mut shapes, _) =
+            graph.get_layer_bundle::<AllLayersMut>();
 
         let everyones_shape = shapes.insert(Shape(69)).key();
 
@@ -851,51 +889,42 @@ mod tests {
     #[test]
     fn delete() {
         let mut graph = graph();
-        let mut poses = graph.get_layer_mut::<Pose>();
-        let mut vels = graph.get_layer_mut::<Velocity>();
-        let mut bodies = graph.get_layer_mut::<Body>();
-        let mut shapes = graph.get_layer_mut::<Shape>();
-        let mut sub_shapes = graph.get_layer_mut::<Subshape>();
 
-        let mut everyones_shape = shapes.insert(Shape(69));
-        let mut shape_owns_thing = sub_shapes.insert(Subshape(42));
-        everyones_shape.connect(&mut shape_owns_thing);
+        let vels_to_del: Vec<NodeKey<Velocity>> = {
+            let (mut poses, mut vels, mut bodies, mut shapes, mut sub_shapes) =
+                graph.get_layer_bundle::<AllLayersMut>();
 
-        for i in 0..10 {
-            let mut pose_node = poses.insert(Pose(i));
-            let mut vel_node = vels.insert(Velocity(i));
-            let mut body_node = bodies.insert(Body(0));
-            body_node.connect(&mut pose_node);
-            if i % 2 == 0 {
-                pose_node.connect(&mut vel_node);
-            } else {
-                let mut subshape = sub_shapes.insert(Subshape(i));
-                vel_node.connect(&mut subshape);
+            let mut everyones_shape = shapes.insert(Shape(69));
+            let mut shape_owns_thing = sub_shapes.insert(Subshape(42));
+            everyones_shape.connect(&mut shape_owns_thing);
+
+            for i in 0..10 {
+                let mut pose_node = poses.insert(Pose(i));
+                let mut vel_node = vels.insert(Velocity(i));
+                let mut body_node = bodies.insert(Body(0));
+                body_node.connect(&mut pose_node);
+                if i % 2 == 0 {
+                    pose_node.connect(&mut vel_node);
+                } else {
+                    let mut subshape = sub_shapes.insert(Subshape(i));
+                    vel_node.connect(&mut subshape);
+                }
+                if i % 3 == 0 {
+                    body_node.connect_oneway(&mut everyones_shape);
+                }
             }
-            if i % 3 == 0 {
-                body_node.connect_oneway(&mut everyones_shape);
-            }
-        }
 
-        assert_eq!(vels.iter().count(), 10);
-        let vels_to_del: Vec<_> = vels.iter().map(|v| v.key()).collect();
-        // every layer lock needs to be dropped before deleting
-        drop(poses);
-        drop(vels);
-        drop(bodies);
-        drop(shapes);
-        drop(sub_shapes);
+            assert_eq!(vels.iter().count(), 10);
+
+            vels.iter().map(|v| v.key()).collect()
+        };
         for vel_to_del in vels_to_del {
             graph.delete(vel_to_del);
         }
-        let vels = graph.get_layer::<Velocity>();
-        let poses = graph.get_layer::<Pose>();
         // all vels deleted (== have 0 referrers)
-        assert_eq!(vels.iter().count(), 0);
+        assert_eq!(graph.get_layer::<Velocity>().iter().count(), 0);
         // half of poses had vels attached and have also been deleted
-        assert_eq!(poses.iter().count(), 5);
-        drop(vels);
-        drop(poses);
+        assert_eq!(graph.get_layer::<Pose>().iter().count(), 5);
 
         let bodies_to_del: Vec<NodeKey<Body>> = graph
             .get_layer::<Body>()
@@ -955,28 +984,25 @@ mod tests {
                 graph.delete(pose_node);
             }
             for j in 0..10 {
-                let mut poses = graph.get_layer_mut::<Pose>();
-                let mut vels = graph.get_layer_mut::<Velocity>();
-                let mut bodies = graph.get_layer_mut::<Body>();
-                let mut shapes = graph.get_layer_mut::<Shape>();
+                let pose_key;
+                {
+                    let (mut poses, mut vels, mut bodies, mut shapes, _) =
+                        graph.get_layer_bundle::<AllLayersMut>();
 
-                let id = i * 20 + j;
-                let mut pose_node = poses.insert(Pose(id));
-                let mut vel_node = vels.insert(Velocity(id));
-                let mut rb_node = bodies.insert(Body(id));
-                pose_node.connect(&mut vel_node);
-                vel_node.connect(&mut rb_node);
-                pose_node.connect_oneway(
-                    &mut shapes
-                        .get_mut(everyones_shape)
-                        .expect("everyones_shape was deleted"),
-                );
+                    let id = i * 20 + j;
+                    let mut pose_node = poses.insert(Pose(id));
+                    let mut vel_node = vels.insert(Velocity(id));
+                    let mut rb_node = bodies.insert(Body(id));
+                    pose_node.connect(&mut vel_node);
+                    vel_node.connect(&mut rb_node);
+                    pose_node.connect_oneway(
+                        &mut shapes
+                            .get_mut(everyones_shape)
+                            .expect("everyones_shape was deleted"),
+                    );
 
-                let pose_key = pose_node.key();
-                drop(poses);
-                drop(vels);
-                drop(bodies);
-                drop(shapes);
+                    pose_key = pose_node.key();
+                }
                 // delete and replace on every other loop
                 if i % 2 == 0 {
                     let pose_len_before = graph.get_layer::<Pose>().components.len();
@@ -1005,10 +1031,7 @@ mod tests {
             }
         }
 
-        let poses = graph.get_layer::<Pose>();
-        let vels = graph.get_layer::<Velocity>();
-        let bodies = graph.get_layer::<Body>();
-        let shapes = graph.get_layer::<Shape>();
+        let (poses, vels, bodies, shapes, _) = graph.get_layer_bundle::<AllLayers>();
         println!("poses.content: {:?}", &poses.components);
         println!("vels.content: {:?}", &vels.components);
         println!("bodies.content: {:?}", &bodies.components);
