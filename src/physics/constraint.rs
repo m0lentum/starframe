@@ -12,10 +12,10 @@ use crate::{graph, math as m};
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
     /// The body that owns this constraint.
-    pub owner: graph::Node<Body>,
+    pub owner: graph::NodeKey<Body>,
     /// The body this constraint is attached to.
     /// `None` represents ground.
-    pub target: Option<graph::Node<Body>>,
+    pub target: Option<graph::NodeKey<Body>>,
     /// Inverse of stiffness, or how much the constraint resists violation.
     pub compliance: f64,
     /// Damping coefficient for linear velocity.
@@ -61,8 +61,8 @@ pub enum ConstraintLimit {
 /// A builder that allows ergonomic construction of different constraints.
 #[derive(Clone, Copy, Debug)]
 pub struct ConstraintBuilder {
-    owner: graph::Node<Body>,
-    target: Option<graph::Node<Body>>,
+    owner: graph::NodeKey<Body>,
+    target: Option<graph::NodeKey<Body>>,
     offsets: [m::Vec2; 2],
     limit: ConstraintLimit,
     compliance: f64,
@@ -77,7 +77,7 @@ impl ConstraintBuilder {
     /// An owning body is required.
     /// If you don't connect the constraint to another body with
     /// `with_target`, it will be connected to ground, i.e. the world origin.
-    pub fn new(owner: graph::Node<Body>) -> Self {
+    pub fn new(owner: graph::NodeKey<Body>) -> Self {
         Self {
             owner,
             target: None,
@@ -91,7 +91,7 @@ impl ConstraintBuilder {
     }
 
     /// Attach the constraint to another body.
-    pub fn with_target(mut self, target: graph::Node<Body>) -> Self {
+    pub fn with_target(mut self, target: graph::NodeKey<Body>) -> Self {
         self.target = Some(target);
         self
     }

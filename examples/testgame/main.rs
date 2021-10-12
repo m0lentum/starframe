@@ -6,9 +6,9 @@ static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
 use rand::{distributions as distr, distributions::Distribution};
 
 use starframe::{
-    self as sf,
     game::{self, Game},
-    graph, graphics as gx,
+    graph::{self, make_graph},
+    graphics as gx,
     input::{Key, MouseButton},
     math::{self as m, uv},
     physics as phys,
@@ -45,7 +45,7 @@ pub enum StateEnum {
 pub struct State {
     scene: Scene,
     state: StateEnum,
-    graph: MyGraph,
+    graph: graph::Graph,
     player: player::PlayerController,
     mouse_mode: MouseMode,
     mouse_grabber: MouseGrabber,
@@ -61,7 +61,9 @@ impl State {
         State {
             scene: Scene::default(),
             state: StateEnum::Playing,
-            graph: MyGraph::new(),
+            graph: make_graph! {
+                player::Player,
+            },
             player: player::PlayerController::new(),
             mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
@@ -95,7 +97,7 @@ impl State {
 
     fn reset(&mut self) {
         self.physics.clear_constraints();
-        self.graph = MyGraph::new();
+        self.graph.reset();
     }
 
     fn read_scene(&mut self, file_idx: usize) {
@@ -121,7 +123,7 @@ impl State {
     }
 
     fn instantiate_scene(&mut self) {
-        self.scene.instantiate(&mut self.graph, &mut self.physics);
+        self.scene.instantiate(&mut self.physics, &self.graph);
     }
 }
 
@@ -168,49 +170,10 @@ impl Scene {
         Scene::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
+    pub fn instantiate(&self, physics: &mut phys::Physics, graph: &graph::Graph) {
         for recipe in &self.recipes {
-            recipe.spawn(graph, physics);
+            recipe.spawn(physics, graph);
         }
-    }
-}
-
-/// The entity graph.
-pub struct MyGraph {
-    graph: graph::Graph,
-    l_pose: graph::Layer<m::Pose>,
-    l_collider: graph::Layer<phys::Collider>,
-    l_body: graph::Layer<phys::Body>,
-    l_rope: graph::Layer<phys::Rope>,
-    l_shape: graph::Layer<gx::Shape>,
-    l_player: graph::Layer<player::Player>,
-    evt_graph: sf::event::EventGraph<MyGraph>,
-}
-impl MyGraph {
-    pub fn new() -> Self {
-        let mut graph = graph::Graph::new();
-        let l_pose = graph.create_layer();
-        let l_collider = graph.create_layer();
-        let l_body = graph.create_layer();
-        let l_rope = graph.create_layer();
-        let l_shape = graph.create_layer();
-        let l_player = graph.create_layer();
-        let evt_graph = sf::event::EventGraph::new(&mut graph);
-        MyGraph {
-            graph,
-            l_pose,
-            l_collider,
-            l_body,
-            l_rope,
-            l_shape,
-            l_player,
-            evt_graph,
-        }
-    }
-}
-impl Default for MyGraph {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -332,7 +295,7 @@ impl game::GameState for State {
                 height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
                 is_static: false,
             })
-            .spawn(&mut self.graph, &mut self.physics);
+            .spawn(&mut self.physics, &self.graph);
         }
         if game.input.is_key_pressed(Key::T, Some(0)) {
             Recipe::Ball(recipes::Ball {
@@ -342,7 +305,7 @@ impl game::GameState for State {
                 start_velocity: random_vel(),
                 is_static: false,
             })
-            .spawn(&mut self.graph, &mut self.physics);
+            .spawn(&mut self.physics, &self.graph);
         }
         if game.input.is_key_pressed(Key::D, Some(0)) {
             Recipe::Capsule(recipes::Capsule {
@@ -353,7 +316,7 @@ impl game::GameState for State {
                 radius: distr::Uniform::from(0.1..0.5).sample(&mut rng),
                 is_static: false,
             })
-            .spawn(&mut self.graph, &mut self.physics);
+            .spawn(&mut self.physics, &self.graph);
         }
 
         match (&self.state, game.input.is_key_pressed(Key::Space, Some(0))) {
@@ -368,24 +331,11 @@ impl game::GameState for State {
 
                 {
                     let grav = phys::forcefield::Gravity(self.scene.gravity.into());
-                    self.physics.tick(
-                        dt,
-                        &grav,
-                        (
-                            &self.graph.graph,
-                            &mut self.graph.l_pose,
-                            &mut self.graph.l_body,
-                            &self.graph.l_collider,
-                            &self.graph.l_rope,
-                            &mut self.graph.evt_graph.sinks,
-                        ),
-                    );
+                    self.physics.tick(dt, &grav, self.graph.get_layer_bundle());
                 }
                 {
-                    self.player.tick(&mut self.graph, &game.input);
+                    self.player.tick(&game.input, self.graph.get_layer_bundle());
                 }
-
-                self.graph.evt_graph.flush(&self.graph.graph)(&mut self.graph);
 
                 Some(())
             }
@@ -404,8 +354,6 @@ impl game::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut gx::Renderer) {
-        let g = &mut self.graph;
-
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
@@ -423,17 +371,12 @@ impl game::GameState for State {
                 &self.physics,
                 &self.camera,
                 &mut ctx,
-                (&g.graph, &g.l_pose, &g.l_body, &g.l_collider),
+                self.graph.get_layer_bundle(),
             );
         }
 
-        self.shape_renderer.draw(
-            &self.graph.l_shape,
-            &self.graph.l_pose,
-            &self.graph.graph,
-            &self.camera,
-            &mut ctx,
-        );
+        self.shape_renderer
+            .draw(&self.camera, &mut ctx, self.graph.get_layer_bundle());
 
         ctx.submit();
     }

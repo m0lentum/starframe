@@ -1,5 +1,7 @@
 use starframe::{
-    self as sf, graphics as gx, math as m,
+    self as sf,
+    graph::LayerViewMut,
+    graphics as gx, math as m,
     physics::{self as phys, Material},
 };
 
@@ -94,31 +96,37 @@ impl Default for Block {
     }
 }
 
-fn spawn_block(block: Block, g: &mut crate::MyGraph) -> Option<sf::graph::Node<phys::Body>> {
-    let pose_node = g.l_pose.insert(block.pose.into(), &mut g.graph);
+type Layers<'a> = (
+    LayerViewMut<'a, m::Pose>,
+    LayerViewMut<'a, phys::Collider>,
+    LayerViewMut<'a, phys::Body>,
+    LayerViewMut<'a, gx::Shape>,
+);
+
+fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::Body>> {
+    let (mut l_pose, mut l_collider, mut l_body, mut l_shape) = layers;
+
+    let mut pose_node = l_pose.insert(block.pose.into());
     let coll = phys::Collider::new_rect(block.width, block.height);
-    let coll_node = g.l_collider.insert(coll, &mut g.graph);
-    let shape_node = g.l_shape.insert(
-        gx::Shape::Rect {
-            w: block.width,
-            h: block.height,
-            color: if block.is_static {
-                [0.7; 4]
-            } else {
-                random_color()
-            },
+    let mut coll_node = l_collider.insert(coll);
+    let mut shape_node = l_shape.insert(gx::Shape::Rect {
+        w: block.width,
+        h: block.height,
+        color: if block.is_static {
+            [0.7; 4]
+        } else {
+            random_color()
         },
-        &mut g.graph,
-    );
-    g.graph.connect(&pose_node, &coll_node);
-    g.graph.connect(&pose_node, &shape_node);
+    });
+    pose_node.connect(&mut coll_node);
+    pose_node.connect(&mut shape_node);
 
     if !block.is_static {
         let body = phys::Body::new_dynamic(&coll, 0.5);
-        let body_node = g.l_body.insert(body, &mut g.graph);
-        g.graph.connect(&body_node, &coll_node);
-        g.graph.connect(&pose_node, &body_node);
-        Some(sf::graph::NodeRef::as_node(&body_node, &g.graph))
+        let mut body_node = l_body.insert(body);
+        body_node.connect(&mut coll_node);
+        pose_node.connect(&mut body_node);
+        Some(body_node.key())
     } else {
         None
     }
@@ -131,42 +139,38 @@ struct Solid {
     color: [f32; 4],
 }
 
-fn spawn_static(solid: Solid, g: &mut crate::MyGraph) {
-    let pose_node = g.l_pose.insert(solid.pose, &mut g.graph);
-    let coll_node = g.l_collider.insert(solid.coll, &mut g.graph);
-    let shape_node = g.l_shape.insert(
-        gx::Shape::from_collider(&solid.coll, solid.color),
-        &mut g.graph,
-    );
-    g.graph.connect(&pose_node, &coll_node);
-    g.graph.connect(&pose_node, &shape_node);
+fn spawn_static(solid: Solid, layers: Layers) {
+    let (mut l_pose, mut l_collider, _, mut l_shape) = layers;
+
+    let mut pose_node = l_pose.insert(solid.pose);
+    let mut coll_node = l_collider.insert(solid.coll);
+    let mut shape_node = l_shape.insert(gx::Shape::from_collider(&solid.coll, solid.color));
+    pose_node.connect(&mut coll_node);
+    pose_node.connect(&mut shape_node);
 }
 
-fn spawn_body(solid: Solid, g: &mut crate::MyGraph) -> sf::graph::Node<phys::Body> {
-    let pose_node = g.l_pose.insert(solid.pose, &mut g.graph);
-    let coll_node = g.l_collider.insert(solid.coll, &mut g.graph);
-    let shape_node = g.l_shape.insert(
-        gx::Shape::from_collider(&solid.coll, solid.color),
-        &mut g.graph,
-    );
-    let body_node = g
-        .l_body
-        .insert(phys::Body::new_dynamic(&solid.coll, 0.5), &mut g.graph);
+fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
+    let (mut l_pose, mut l_collider, mut l_body, mut l_shape) = layers;
 
-    g.graph.connect(&pose_node, &coll_node);
-    g.graph.connect(&pose_node, &shape_node);
-    g.graph.connect(&body_node, &coll_node);
-    g.graph.connect(&pose_node, &body_node);
+    let mut pose_node = l_pose.insert(solid.pose);
+    let mut coll_node = l_collider.insert(solid.coll);
+    let mut shape_node = l_shape.insert(gx::Shape::from_collider(&solid.coll, solid.color));
+    let mut body_node = l_body.insert(phys::Body::new_dynamic(&solid.coll, 0.5));
 
-    sf::graph::NodeRef::as_node(&body_node, &g.graph)
+    pose_node.connect(&mut coll_node);
+    pose_node.connect(&mut shape_node);
+    body_node.connect(&mut coll_node);
+    pose_node.connect(&mut body_node);
+
+    body_node.key()
 }
 
 impl Recipe {
-    pub fn spawn(&self, graph: &mut crate::MyGraph, physics: &mut phys::Physics) {
+    pub fn spawn(&self, physics: &mut phys::Physics, graph: &sf::graph::Graph) {
         match self {
-            Recipe::Player(p_rec) => p_rec.spawn(graph),
+            Recipe::Player(p_rec) => p_rec.spawn(graph.get_layer_bundle()),
             Recipe::Block(block) => {
-                spawn_block(*block, graph);
+                spawn_block(*block, graph.get_layer_bundle());
             }
             Recipe::Ball(Ball {
                 radius,
@@ -186,12 +190,14 @@ impl Recipe {
                     color: random_color(),
                 };
                 if *is_static {
-                    spawn_static(solid, graph);
+                    spawn_static(solid, graph.get_layer_bundle());
                 } else {
-                    let body = spawn_body(solid, graph);
+                    let body = spawn_body(solid, graph.get_layer_bundle());
                     graph
-                        .l_body
-                        .get_mut(body.check(&graph.graph).unwrap())
+                        .get_layer_mut::<phys::Body>()
+                        .get_mut(body)
+                        .unwrap()
+                        .c
                         .velocity
                         .linear = start_velocity.into();
                 }
@@ -208,9 +214,9 @@ impl Recipe {
                     color: random_color(),
                 };
                 if *is_static {
-                    spawn_static(solid, graph);
+                    spawn_static(solid, graph.get_layer_bundle());
                 } else {
-                    spawn_body(solid, graph);
+                    spawn_body(solid, graph.get_layer_bundle());
                 }
             }
             Recipe::Blockchain {
@@ -231,7 +237,7 @@ impl Recipe {
                 let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
-                let mut prev_block: Option<(sf::graph::Node<phys::Body>, f64)> = None;
+                let mut prev_block: Option<(sf::graph::NodeKey<phys::Body>, f64)> = None;
                 while let (Some(link1), Some(link2)) = (links_iter.next(), links_iter.peek()) {
                     let distance = *link2 - link1;
                     let dist_norm = distance.mag();
@@ -248,7 +254,7 @@ impl Recipe {
                             coll: phys::Collider::new_capsule(caps_full_length - width, radius),
                             color: random_color(),
                         },
-                        graph,
+                        graph.get_layer_bundle(),
                     );
                     let caps_length_half = caps_full_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
@@ -302,7 +308,7 @@ impl Recipe {
                         pose: m::PoseBuilder::new().with_position(position + offset),
                         is_static: false,
                     },
-                    graph,
+                    graph.get_layer_bundle(),
                 )
                 .unwrap();
                 let b2 = spawn_block(
@@ -312,7 +318,7 @@ impl Recipe {
                         pose: m::PoseBuilder::new().with_position(position - offset),
                         is_static: false,
                     },
-                    graph,
+                    graph.get_layer_bundle(),
                 )
                 .unwrap();
                 physics.add_constraint(
@@ -329,8 +335,8 @@ impl Recipe {
                 block2,
                 offset2,
             } => {
-                let b1 = spawn_block(*block1, graph);
-                let b2 = spawn_block(*block2, graph);
+                let b1 = spawn_block(*block1, graph.get_layer_bundle());
+                let b2 = spawn_block(*block2, graph.get_layer_bundle());
                 let rope_end_1 = block1.pose.build() * m::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
                 let rope = phys::spawn_rope_line(
@@ -350,14 +356,7 @@ impl Recipe {
                     rope_end_1,
                     rope_end_2,
                     0.02,
-                    (
-                        &mut graph.graph,
-                        &mut graph.l_body,
-                        &mut graph.l_pose,
-                        &mut graph.l_collider,
-                        &mut graph.l_rope,
-                        &mut graph.l_shape,
-                    ),
+                    graph.get_layer_bundle(),
                 );
                 match b1 {
                     Some(b1) => {

@@ -1,7 +1,7 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    graph::{self, Graph, Layer, UnsafeNode},
+    graph::{self, LayerView, LayerViewMut},
     graphics::Shape,
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
@@ -23,9 +23,9 @@ pub struct Rope {
 #[derive(Clone, Copy, Debug)]
 pub struct RopeProperties {
     pub particle_count: usize,
-    pub rope_node: graph::Node<Rope>,
-    pub first_particle: graph::Node<Body>,
-    pub last_particle: graph::Node<Body>,
+    pub rope_node: graph::NodeKey<Rope>,
+    pub first_particle: graph::NodeKey<Body>,
+    pub last_particle: graph::NodeKey<Body>,
 }
 
 /// Spawn a rope in the shape of the line, adjusting spacing so that a particle lands on both
@@ -36,13 +36,12 @@ pub fn spawn_rope_line(
     start: m::Vec2,
     end: m::Vec2,
     particle_mass: f64,
-    (graph, l_body, l_pose, l_collider, l_rope, l_shape): (
-        &mut Graph,
-        &mut Layer<Body>,
-        &mut Layer<m::Pose>,
-        &mut Layer<Collider>,
-        &mut Layer<Rope>,
-        &mut Layer<Shape>,
+    (mut l_body, mut l_pose, mut l_collider, mut l_rope, mut l_shape): (
+        LayerViewMut<Body>,
+        LayerViewMut<m::Pose>,
+        LayerViewMut<Collider>,
+        LayerViewMut<Rope>,
+        LayerViewMut<Shape>,
     ),
 ) -> RopeProperties {
     let dist = end - start;
@@ -68,41 +67,46 @@ pub fn spawn_rope_line(
         color: [0.729, 0.855, 0.333, 1.0],
     };
 
-    let rope_node = l_rope.insert(rope, graph);
-    let first_body = l_body.insert(body_proto, graph);
-    let first_pose = l_pose.insert(m::Pose::new(start, Default::default()), graph);
-    let first_coll = l_collider.insert(collider_proto, graph);
-    let first_shape = l_shape.insert(shape_proto, graph);
-    graph.connect(&first_body, &first_pose);
-    graph.connect(&first_body, &first_coll);
-    graph.connect(&first_pose, &first_coll);
-    graph.connect(&first_pose, &first_shape);
-    graph.connect_oneway(&rope_node, &first_body);
-    let first_body = first_body.pos();
+    let mut rope_node = l_rope.insert(rope);
+    let mut first_body = l_body.insert(body_proto);
+    let mut first_pose = l_pose.insert(m::Pose::new(start, Default::default()));
+    let mut first_coll = l_collider.insert(collider_proto);
+    let mut first_shape = l_shape.insert(shape_proto);
+    first_body.connect(&mut first_pose);
+    first_body.connect(&mut first_coll);
+    first_pose.connect(&mut first_coll);
+    first_pose.connect(&mut first_shape);
+    rope_node.connect_oneway(&mut first_body);
+    let first_body = first_body.key();
 
     let mut next_pos: m::Vec2 = start + step;
-    let mut prev_body: graph::NodePosition = first_body.pos();
+    let mut prev_body: graph::NodeKey<Body> = first_body;
     for _ in 1..particle_count {
-        let body = l_body.insert(body_proto, graph);
-        let pose = l_pose.insert(m::Pose::new(next_pos, Default::default()), graph);
-        let coll = l_collider.insert(collider_proto, graph);
-        let shape = l_shape.insert(shape_proto, graph);
-        graph.connect(&body, &pose);
-        graph.connect(&pose, &coll);
-        graph.connect(&body, &coll);
-        graph.connect(&pose, &shape);
-        graph.connect_oneway_unchecked(&prev_body, &body);
+        let mut body = l_body.insert(body_proto);
+        let mut pose = l_pose.insert(m::Pose::new(next_pos, Default::default()));
+        let mut coll = l_collider.insert(collider_proto);
+        let mut shape = l_shape.insert(shape_proto);
+        body.connect(&mut pose);
+        pose.connect(&mut coll);
+        body.connect(&mut coll);
+        pose.connect(&mut shape);
+        let body = body.key();
+        l_body
+            .get_mut_unchecked(prev_body)
+            .connect_oneway_by_key(body);
 
         next_pos += step;
-        prev_body = body.pos();
+        prev_body = body;
     }
-    graph.connect_oneway_unchecked(&prev_body, &rope_node);
+    l_body
+        .get_mut_unchecked(prev_body)
+        .connect_oneway(&mut rope_node);
 
     RopeProperties {
         particle_count,
-        rope_node: graph::NodeRef::as_node(&rope_node, graph),
-        first_particle: graph::NodeRef::as_node(&l_body.get_unchecked(first_body), graph),
-        last_particle: graph::NodeRef::as_node(&l_body.get_unchecked(prev_body), graph),
+        rope_node: rope_node.key(),
+        first_particle: first_body,
+        last_particle: prev_body,
     }
 }
 
@@ -111,22 +115,16 @@ pub struct RopeIter<'a> {
     rope_node: graph::NodeRef<'a, Rope>,
     has_started: bool,
     curr_body: Option<graph::NodeRef<'a, Body>>,
-    l_body: &'a graph::Layer<Body>,
-    graph: &'a graph::Graph,
+    l_body: &'a LayerView<'a, Body>,
 }
 
 impl<'a> RopeIter<'a> {
-    pub fn new(
-        rope_node: graph::NodeRef<'a, Rope>,
-        l_body: &'a graph::Layer<Body>,
-        graph: &'a graph::Graph,
-    ) -> Self {
+    pub fn new(rope_node: graph::NodeRef<'a, Rope>, l_body: &'a LayerView<'a, Body>) -> Self {
         Self {
             rope_node,
             has_started: false,
             curr_body: None,
             l_body,
-            graph,
         }
     }
 }
@@ -136,10 +134,10 @@ impl<'a> Iterator for RopeIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(curr) = &self.curr_body {
-            self.curr_body = self.graph.get_neighbor(curr, self.l_body)
+            self.curr_body = curr.get_neighbor(self.l_body)
         } else if !self.has_started {
             self.has_started = true;
-            self.curr_body = self.graph.get_neighbor(&self.rope_node, self.l_body);
+            self.curr_body = self.rope_node.get_neighbor(self.l_body);
         }
         self.curr_body
     }

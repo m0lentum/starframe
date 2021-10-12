@@ -1,6 +1,6 @@
 use crate::{
     graphics::{self as gx, util::GlslMat3},
-    {graph, math as m},
+    {graph::LayerView, math as m},
 };
 
 use std::borrow::Cow;
@@ -267,11 +267,9 @@ impl ShapeRenderer {
     /// Draw all the alive [`Shape`][self::Shape]s that have associated [`Pose`][crate::math::Pose]s.
     pub fn draw(
         &mut self,
-        l_shape: &graph::Layer<Shape>,
-        l_pose: &graph::Layer<m::Pose>,
-        graph: &graph::Graph,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,
+        (l_shape, l_pose): (LayerView<Shape>, LayerView<m::Pose>),
     ) {
         //
         // Update the uniform buffer
@@ -288,8 +286,8 @@ impl ShapeRenderer {
         //
 
         let verts: Vec<Vertex> = l_shape
-            .iter(graph)
-            .filter_map(|s| graph.get_neighbor(&s, l_pose).map(|tr| s.verts(&*tr)))
+            .iter()
+            .filter_map(|s| s.get_neighbor(&l_pose).map(|tr| s.c.verts(tr.c)))
             .flatten()
             .collect();
         if verts.is_empty() {

@@ -3,8 +3,12 @@
 
 use super::{MaskMatrix, AABB};
 use crate::{
+    graph::NodeKey,
     math as m,
-    physics::bitmatrix::{BitMatrix, BitMatrixParams},
+    physics::{
+        bitmatrix::{BitMatrix, BitMatrixParams},
+        Collider,
+    },
 };
 
 /// A hierarchical grid spatial index.
@@ -156,7 +160,7 @@ impl HGrid {
         self.generations.resize(collider_count, 0);
     }
 
-    pub(crate) fn insert(&mut self, node: StoredNode, aabb: AABB, layer: u64) {
+    pub(crate) fn insert(&mut self, node: NodeKey<Collider>, aabb: AABB, layer: u64) {
         let id = node.idx;
         self.aabbs[id] = aabb;
         self.layers[id] = layer;
@@ -192,11 +196,11 @@ impl HGrid {
 
     pub(crate) fn test_and_insert<'a>(
         &'a mut self,
-        node: StoredNode,
+        node: NodeKey<Collider>,
         aabb: AABB,
         layer: u64,
         mask_matrix: &'a MaskMatrix,
-    ) -> impl 'a + Iterator<Item = StoredNode> {
+    ) -> impl 'a + Iterator<Item = NodeKey<Collider>> {
         self.insert(node, aabb, layer);
         self.timestamps[node.idx] = self.curr_timestamp + 1;
         self.test_aabb(aabb, layer, mask_matrix)
@@ -207,7 +211,7 @@ impl HGrid {
         aabb: AABB,
         layer: u64,
         mask_matrix: &'a MaskMatrix,
-    ) -> impl 'a + Iterator<Item = StoredNode> {
+    ) -> impl 'a + Iterator<Item = NodeKey<Collider>> {
         let aabb_worldspace = aabb;
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
@@ -248,12 +252,11 @@ impl HGrid {
                     if mask_matrix.get(layers[id], layer) {
                         // aabb check to quickly cull things that are in the same square because of
                         // wrapping or just far enough apart
-                        aabb_worldspace
-                            .intersection(&aabbs[id])
-                            .map(|_| StoredNode {
-                                idx: id,
-                                gen: generations[id],
-                            })
+                        aabb_worldspace.intersection(&aabbs[id]).map(|_| NodeKey {
+                            idx: id,
+                            gen: generations[id],
+                            _marker: std::marker::PhantomData,
+                        })
                     } else {
                         None
                     }
@@ -263,7 +266,10 @@ impl HGrid {
             })
     }
 
-    pub(crate) fn test_point(&self, point: m::Vec2) -> impl '_ + Iterator<Item = StoredNode> {
+    pub(crate) fn test_point(
+        &self,
+        point: m::Vec2,
+    ) -> impl '_ + Iterator<Item = NodeKey<Collider>> {
         let point_worldspace = point;
         let point = point - self.bounds.min;
 
@@ -283,9 +289,10 @@ impl HGrid {
                     .iter()
             })
             .filter(move |&id| aabbs[id].contains_point(point_worldspace))
-            .map(move |id| StoredNode {
+            .map(move |id| NodeKey {
                 idx: id,
                 gen: generations[id],
+                _marker: std::marker::PhantomData,
             })
     }
 
@@ -315,12 +322,6 @@ impl HGrid {
                     })
             })
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct StoredNode {
-    pub idx: usize,
-    pub gen: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

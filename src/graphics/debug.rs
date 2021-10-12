@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
 use crate::{
-    graph::{Graph, Layer},
+    graph::LayerView,
     math as m,
     physics::{collision::AABB, Body, Collider},
 };
@@ -265,7 +265,7 @@ impl DebugVisualizer {
         phys: &crate::Physics,
         camera: &impl super::camera::Camera,
         ctx: &mut super::RenderContext,
-        (graph, l_pose, l_body, l_coll): (&Graph, &Layer<m::Pose>, &Layer<Body>, &Layer<Collider>),
+        (l_pose, l_body, l_coll): (LayerView<m::Pose>, LayerView<Body>, LayerView<Collider>),
     ) {
         // update uniforms
 
@@ -278,7 +278,7 @@ impl DebugVisualizer {
         // draw boxes
 
         let verts: Vec<Vertex> = phys
-            .islands(l_body)
+            .islands(&l_body)
             .flat_map(|island| {
                 let color = [0.3, 0.5, 0.9, 1.0];
                 let mut enclosing_aabb = AABB {
@@ -286,14 +286,14 @@ impl DebugVisualizer {
                     max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
                 };
                 for body in island {
-                    let pose = match graph.get_neighbor(&body, l_pose) {
+                    let pose = match body.get_neighbor(&l_pose) {
                         Some(p) => p,
                         // body was deleted
                         None => break,
                     };
-                    let pos = pose.translation;
-                    let r = match graph.get_neighbor(&body, l_coll) {
-                        Some(coll) => coll.bounding_sphere_r(),
+                    let pos = pose.c.translation;
+                    let r = match body.get_neighbor(&l_coll) {
+                        Some(coll) => coll.c.bounding_sphere_r(),
                         None => 0.0,
                     };
                     let r = m::Vec2::new(r, r);

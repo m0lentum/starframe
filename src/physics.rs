@@ -5,8 +5,7 @@ use slotmap as sm;
 use rayon::prelude::*;
 
 use crate::{
-    event::{Event, EventSink},
-    graph::{self, Graph, Layer, UnsafeNode},
+    graph::{self, LayerView, LayerViewMut},
     math as m,
 };
 
@@ -114,17 +113,6 @@ impl std::ops::Mul<f64> for Velocity {
             angular: self.angular * rhs,
         }
     }
-}
-
-/// Events produced by the physics system when two physics objects collide.
-///
-/// Note: for now this doesn't tell you anything except which body the contact was with.
-/// This isn't great, but that's the only thing I've needed so far.
-/// More info will be added when needed in a project.
-#[derive(Clone, Copy, Debug)]
-pub struct ContactEvent {
-    /// The collider that this body was in contact with.
-    pub other_collider: graph::Node<Collider>,
 }
 
 sm::new_key_type! {
@@ -381,21 +369,21 @@ impl Physics {
     }
 
     /// Detect collisions, solve constraint forces and move bodies.
-    #[allow(clippy::type_complexity)]
     pub fn tick(
         &mut self,
         frame_dt: f64,
         forcefield: &impl ForceField,
-        (graph, l_pose, l_body, l_collider, l_rope, l_evt_sink): (
-            &Graph,
-            &mut Layer<m::Pose>,
-            &mut Layer<Body>,
-            &Layer<Collider>,
-            &Layer<Rope>,
-            &mut Layer<EventSink>,
+        (mut l_pose, mut l_body, l_collider, l_rope): (
+            LayerViewMut<m::Pose>,
+            LayerViewMut<Body>,
+            LayerView<Collider>,
+            LayerView<Rope>,
         ),
     ) {
         let _main_span = tracy_span!("physics tick", "tick");
+
+        let l_pose_immut = l_pose.as_view();
+        let l_body_immut = l_body.as_view();
 
         let dt = frame_dt / self.consts.substeps as f64;
         let inv_dt = 1.0 / dt;
@@ -405,8 +393,10 @@ impl Physics {
 
         // remove constraints where one or both participating bodies have been destroyed
         self.user_constraints.retain(|_, c| {
-            c.owner.check(graph).is_some()
-                && c.target.map(|t| t.check(graph).is_some()).unwrap_or(true)
+            l_body_immut.get(c.owner).is_some()
+                && c.target
+                    .map(|t| l_body_immut.get(t).is_some())
+                    .unwrap_or(true)
         });
         bufs.user_constraints.clear();
         bufs.user_constraints.extend(self.user_constraints.values());
@@ -421,41 +411,34 @@ impl Physics {
         // collisions may be missed if higher accelerations occur
         let max_expected_accel_over_frame = self.consts.max_expected_acceleration * frame_dt;
 
-        self.spatial_index.prepare(l_collider.content.len());
+        self.spatial_index.prepare(l_collider.components.len());
         bufs.coll_pair_idxs.clear();
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
-        for coll in l_collider.iter(graph) {
-            let pose = graph
-                .get_neighbor(&coll, l_pose)
+        for coll in l_collider.iter() {
+            let pose = coll
+                .get_neighbor(&l_pose_immut)
                 .expect("A Collider didn't have a Pose");
-            let aabb = match graph.get_neighbor(&coll, l_body) {
+            let aabb = match coll.get_neighbor(&l_body_immut) {
                 Some(b) => coll
-                    .aabb(&*pose)
-                    .extended(b.velocity.linear * frame_dt)
+                    .c
+                    .aabb(pose.c)
+                    .extended(b.c.velocity.linear * frame_dt)
                     .padded(max_expected_accel_over_frame),
-                None => coll.aabb(&*pose),
+                None => coll.c.aabb(pose.c),
             };
 
-            let coll_idx = coll.pos().item_idx;
+            let coll_idx = coll.key().idx;
             bufs.coll_pair_idxs.extend(
                 self.spatial_index
-                    .test_and_insert(
-                        collision::hgrid::StoredNode {
-                            idx: coll.pos().item_idx,
-                            gen: graph.get_generation(&coll),
-                        },
-                        aabb,
-                        coll.layer,
-                        &self.mask_matrix,
-                    )
+                    .test_and_insert(coll.key(), aabb, coll.c.layer, &self.mask_matrix)
                     .map(move |other| [coll_idx, other.idx]),
             )
         }
 
         #[cfg(feature = "tracy")]
         {
-            COLLIDERS_PLOT.point(l_collider.iter(graph).count() as f64);
+            COLLIDERS_PLOT.point(l_collider.iter().count() as f64);
             PAIRS_PLOT.point(bufs.coll_pair_idxs.len() as f64);
         }
 
@@ -468,13 +451,13 @@ impl Physics {
         let constr_graph_span = tracy_span!("build constraint graph", "tick");
 
         self.constraint_graph.clear();
-        self.constraint_graph.resize(l_body.content.len());
+        self.constraint_graph.resize(l_body_immut.components.len());
 
         // rope constraints
-        for rope_node in l_rope.iter(graph) {
-            let rope_node_idx = rope_node.pos().item_idx;
-            let mut iter = RopeIter::new(rope_node, l_body, graph)
-                .map(|node| node.pos().item_idx)
+        for rope_node in l_rope.iter() {
+            let rope_node_idx = rope_node.key().idx;
+            let mut iter = RopeIter::new(rope_node, &l_body_immut)
+                .map(|node| node.key().idx)
                 .peekable();
             while let Some(particle) = iter.next() {
                 if let Some(&next_particle) = iter.peek() {
@@ -497,10 +480,10 @@ impl Physics {
         }
         // custom constraints
         for (constr_idx, constr) in bufs.user_constraints.iter().enumerate() {
-            let owner = constr.owner.pos().item_idx;
+            let owner = constr.owner.idx;
             match constr.target {
                 Some(target) => {
-                    let target = target.pos().item_idx;
+                    let target = target.idx;
                     self.constraint_graph.insert(
                         owner,
                         Edge::Constraint {
@@ -526,7 +509,7 @@ impl Physics {
         // but that would require redoing this every substep which would be costly.
         for (pair_idx, pair) in bufs.coll_pair_idxs.iter().enumerate() {
             let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
-            match colls.map(|c| graph.get_neighbor(&c, l_body).map(|b| b.pos().item_idx)) {
+            match colls.map(|c| c.get_neighbor(&l_body_immut).map(|b| b.key().idx)) {
                 [Some(b1), Some(b2)] => {
                     self.constraint_graph.insert(
                         b1,
@@ -562,7 +545,8 @@ impl Physics {
         //
 
         bufs.island_assigned.clear();
-        bufs.island_assigned.resize(l_body.content.len(), false);
+        bufs.island_assigned
+            .resize(l_body_immut.components.len(), false);
         bufs.islands.clear();
         bufs.sorted_first_pass.clear();
         bufs.sorted_second_pass.clear();
@@ -646,8 +630,8 @@ impl Physics {
             }
         }
 
-        for body in l_body.iter(graph) {
-            let bi = body.pos().item_idx;
+        for body in l_body_immut.iter() {
+            let bi = body.key().idx;
             if bufs.island_assigned[bi] {
                 continue;
             }
@@ -689,7 +673,11 @@ impl Physics {
                     [isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
                     .any(|bi| {
-                        l_body.get_unchecked_by_item_idx(*bi).velocity.mag_sq()
+                        l_body_immut
+                            .get_unchecked_by_item_idx(*bi)
+                            .c
+                            .velocity
+                            .mag_sq()
                             >= sleep_vel_threshold
                     })
                 {
@@ -756,14 +744,14 @@ impl Physics {
             .sorted_second_pass
             .bodies
             .iter()
-            .map(|&bi| l_body.get_unchecked_by_item_idx(bi))
+            .map(|&bi| l_body_immut.get_unchecked_by_item_idx(bi))
             .collect();
         // node_ref_map maps from the position of a node in the graph layer
         // to the position of a node in body_refs
         // we don't need to clear it because gaps will just never be touched
-        bufs.node_ref_map.resize(l_body.content.len(), 0);
+        bufs.node_ref_map.resize(l_body_immut.components.len(), 0);
         for (ref_pos, node) in body_refs.iter().enumerate() {
-            bufs.node_ref_map[node.pos().item_idx] = ref_pos;
+            bufs.node_ref_map[node.key().idx] = ref_pos;
         }
 
         bufs.sorted_rope_views.clear();
@@ -771,12 +759,12 @@ impl Physics {
         bufs.sorted_rope_views
             .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
                 let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
-                let first_particle = graph
-                    .get_neighbor(&rope_node, l_body)
+                let first_particle = rope_node
+                    .get_neighbor(&l_body_immut)
                     .expect("A Rope didn't have any particles");
                 solver::RopeView {
-                    info: *rope_node,
-                    start: node_ref_map[first_particle.pos().item_idx],
+                    info: *rope_node.c,
+                    start: node_ref_map[first_particle.key().idx],
                 }
             }));
 
@@ -794,10 +782,10 @@ impl Physics {
         bufs.rope_next_particles.resize(body_refs.len(), None);
         bufs.rope_prev_particles.clear();
         bufs.rope_prev_particles.resize(body_refs.len(), None);
-        for rope_node in l_rope.iter(graph) {
+        for rope_node in l_rope.iter() {
             let node_ref_map = &bufs.node_ref_map;
-            let mut iter = RopeIter::new(rope_node, l_body, graph)
-                .map(|node| node_ref_map[node.pos().item_idx])
+            let mut iter = RopeIter::new(rope_node, &l_body_immut)
+                .map(|node| node_ref_map[node.key().idx])
                 .peekable();
             while let Some(particle) = iter.next() {
                 if let Some(next_particle) = iter.peek() {
@@ -811,11 +799,11 @@ impl Physics {
         bufs.rope_lateral_corrections.resize(body_refs.len(), None);
 
         bufs.old_poses.clear();
-        bufs.old_poses.extend(
-            body_refs
-                .iter()
-                .map(|b| *(graph.get_neighbor(b, l_pose)).expect("A Body didn't have a Pose")),
-        );
+        bufs.old_poses.extend(body_refs.iter().map(|b| {
+            *(b.get_neighbor(&l_pose_immut))
+                .expect("A Body didn't have a Pose")
+                .c
+        }));
         // poses after velocity and constraints are applied, used for rope normal correction
         bufs.pre_contact_poses.clear();
         bufs.pre_contact_poses.extend_from_slice(&bufs.old_poses);
@@ -825,7 +813,7 @@ impl Physics {
         // old velocities used for restitution
         bufs.old_velocities.clear();
         bufs.old_velocities
-            .extend(body_refs.iter().map(|body| body.velocity));
+            .extend(body_refs.iter().map(|body| body.c.velocity));
 
         bufs.velocities.clear();
         bufs.velocities.extend_from_slice(&bufs.old_velocities);
@@ -836,7 +824,7 @@ impl Physics {
 
         bufs.colliders.clear();
         bufs.colliders.resize(
-            l_collider.content.len(),
+            l_collider.components.len(),
             // meaningless default to fill the gaps where colliders aren't actually alive,
             // we will not access these
             solver::ColliderWithContext {
@@ -845,19 +833,17 @@ impl Physics {
                 ctx: ColliderContext::Static(m::Pose::default()),
             },
         );
-        for coll in l_collider.iter(graph) {
-            let node_idx = coll.pos().item_idx;
+        for coll in l_collider.iter() {
+            let node_idx = coll.key().idx;
             bufs.colliders[node_idx] = solver::ColliderWithContext {
                 node_idx,
-                coll: *coll,
-                ctx: match graph.get_neighbor_unchecked(&coll, l_body) {
-                    Some(b) => ColliderContext::Body(bufs.node_ref_map[b.pos().item_idx]),
-                    None => {
-                        ColliderContext::Static(match graph.get_neighbor_unchecked(&coll, l_pose) {
-                            Some(pose) => *pose,
-                            None => m::Pose::default(),
-                        })
-                    }
+                coll: *coll.c,
+                ctx: match coll.get_neighbor(&l_body_immut) {
+                    Some(b) => ColliderContext::Body(bufs.node_ref_map[b.key().idx]),
+                    None => ColliderContext::Static(match coll.get_neighbor(&l_pose_immut) {
+                        Some(pose) => *pose.c,
+                        None => m::Pose::default(),
+                    }),
                 },
             };
         }
@@ -867,8 +853,8 @@ impl Physics {
         bufs.constraint_body_pairs
             .extend(bufs.sorted_constraints.iter().map(|c| {
                 (
-                    node_ref_map[c.owner.pos().item_idx],
-                    c.target.map(|t| node_ref_map[t.pos().item_idx]),
+                    node_ref_map[c.owner.idx],
+                    c.target.map(|t| node_ref_map[t.idx]),
                 )
             }));
 
@@ -1105,34 +1091,6 @@ impl Physics {
             }
         });
 
-        //
-        // send events
-        //
-
-        for island_view in &island_group_views {
-            for (colls, contact_happened) in izip!(
-                &*island_view.coll_pairs,
-                &*island_view.contacts_during_frame
-            ) {
-                if *contact_happened {
-                    let colls =
-                        colls.map(|coll| l_collider.get_unchecked_by_item_idx(coll.node_idx));
-                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[0], l_evt_sink)
-                    {
-                        sink.push(Event::Contact(ContactEvent {
-                            other_collider: graph::NodeRef::as_node(&colls[1], graph),
-                        }));
-                    }
-                    if let Some(mut sink) = graph.get_neighbor_mut_unchecked(&colls[1], l_evt_sink)
-                    {
-                        sink.push(Event::Contact(ContactEvent {
-                            other_collider: graph::NodeRef::as_node(&colls[0], graph),
-                        }));
-                    }
-                }
-            }
-        }
-
         #[cfg(feature = "tracy")]
         CONTACTS_PLOT.point(
             island_group_views
@@ -1169,14 +1127,17 @@ impl Physics {
         // apply results back to state from temp buffers
         //
 
-        // drop body_refs so we can get mutable references
-        let body_nodes: Vec<graph::NodePosition> =
-            body_refs.into_iter().map(|br| br.pos()).collect();
+        // drop body_refs and immutable views so we can get mutable references
+        let body_nodes: Vec<graph::NodeKey<Body>> =
+            body_refs.into_iter().map(|br| br.key()).collect();
+        drop(l_body_immut);
+        drop(l_pose_immut);
+
         for (body, pose_result, vel_result) in izip!(body_nodes, &bufs.poses, &bufs.velocities) {
             let mut body = l_body.get_mut_unchecked(body);
-            let mut pose = graph.get_neighbor_mut_unchecked(&body, l_pose).unwrap();
-            body.velocity = *vel_result;
-            *pose = *pose_result;
+            let pose = body.get_neighbor_mut(&mut l_pose).unwrap();
+            body.c.velocity = *vel_result;
+            *pose.c = *pose_result;
         }
     }
 
@@ -1184,10 +1145,11 @@ impl Physics {
     pub fn query_point_body<'p, 'g: 'p>(
         &'p self,
         point: m::Vec2,
-        l_pose: &'g graph::Layer<m::Pose>,
-        l_collider: &'g graph::Layer<Collider>,
-        l_body: &'g graph::Layer<Body>,
-        graph: &'g graph::Graph,
+        (l_pose, l_collider, l_body): &'g (
+            graph::LayerView<'g, m::Pose>,
+            graph::LayerView<'g, Collider>,
+            graph::LayerView<'g, Body>,
+        ),
     ) -> impl 'p
            + Iterator<
         Item = (
@@ -1199,14 +1161,14 @@ impl Physics {
         self.spatial_index
             .test_point(point)
             .filter_map(move |stored_coll| {
-                let coll = l_collider.get_unchecked_by_item_idx(stored_coll.idx);
-                if graph.get_generation(&coll) != stored_coll.gen {
-                    return None;
-                }
-                let rb = graph.get_neighbor(&coll, l_body)?;
-                let pose = graph.get_neighbor(&rb, l_pose)?;
-                if collision::query::point_collider_bool(point, &*pose, &*coll) {
-                    Some((pose, coll, rb))
+                let coll = match l_collider.get(stored_coll) {
+                    Some(coll) => coll,
+                    None => return None,
+                };
+                let body = coll.get_neighbor(l_body)?;
+                let pose = body.get_neighbor(l_pose)?;
+                if collision::query::point_collider_bool(point, pose.c, coll.c) {
+                    Some((pose, coll, body))
                 } else {
                     None
                 }
@@ -1216,7 +1178,7 @@ impl Physics {
     /// For debug visualization
     pub(crate) fn islands<'s, 'b: 's>(
         &'s self,
-        l_body: &'b graph::Layer<Body>,
+        l_body: &'b graph::LayerView<Body>,
     ) -> impl 's + Iterator<Item = impl 's + Iterator<Item = graph::NodeRef<Body>>> {
         self.working_bufs.islands.iter().map(move |island| {
             (island.body_range_start..island.body_range_start + island.body_count).map(move |bi| {

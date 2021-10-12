@@ -20,7 +20,7 @@ impl MouseGrabber {
         camera: &impl Camera,
         viewport_size: (u32, u32),
         physics: &mut sf::Physics,
-        graph: &crate::MyGraph,
+        graph: &sf::graph::Graph,
     ) {
         if input.is_mouse_button_pressed(sf::input::MouseButton::Left, None) {
             let target_point =
@@ -32,25 +32,17 @@ impl MouseGrabber {
                     }
                 }
                 None => {
-                    let body = physics
-                        .query_point_body(
-                            target_point,
-                            &graph.l_pose,
-                            &graph.l_collider,
-                            &graph.l_body,
-                            &graph.graph,
-                        )
-                        .next();
+                    let layers = graph.get_layer_bundle();
+                    let body = physics.query_point_body(target_point, &layers).next();
                     if let Some((pose, _, rb)) = body {
-                        let constr =
-                            ConstraintBuilder::new(sf::graph::NodeRef::as_node(&rb, &graph.graph))
-                                .with_origin(pose.inversed() * target_point)
-                                .with_target_origin(target_point)
-                                .with_compliance(0.01)
-                                .with_linear_damping(10.0)
-                                .with_angular_damping(0.5)
-                                .disable_sleeping()
-                                .build_attachment();
+                        let constr = ConstraintBuilder::new(rb.key())
+                            .with_origin(pose.c.inversed() * target_point)
+                            .with_target_origin(target_point)
+                            .with_compliance(0.01)
+                            .with_linear_damping(10.0)
+                            .with_angular_damping(0.5)
+                            .disable_sleeping()
+                            .build_attachment();
                         self.constraint = Some(physics.add_constraint(constr));
                     }
                 }

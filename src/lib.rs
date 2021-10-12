@@ -8,10 +8,6 @@ mod tracy_helpers {
 }
 
 pub mod graph;
-pub mod graph_new;
-
-pub mod event;
-pub use event::Event;
 
 pub mod game;
 pub use game::Game;
