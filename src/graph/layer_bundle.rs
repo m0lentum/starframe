@@ -1,5 +1,7 @@
 use super::{Component, Graph, LayerView, LayerViewMut};
 
+/// Trait allowing tuples of layer views to be accessed from a [`Graph`][super::Graph]
+/// in one call using [`Graph::get_layer_bundle`][super::Graph::get_layer_bundle].
 pub trait LayerBundle<'a> {
     fn get_from_graph(graph: &'a Graph) -> Self;
 }

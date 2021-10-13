@@ -93,7 +93,7 @@ pub fn spawn_rope_line(
         let body = body.key();
         l_body
             .get_mut_unchecked(prev_body)
-            .connect_oneway_by_key(body);
+            .connect_oneway_same_layer(body);
 
         next_pos += step;
         prev_body = body;

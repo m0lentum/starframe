@@ -301,7 +301,8 @@ pub struct TuningConstants {
     /// Number of frames (not substeps) before an island where every body is at rest
     /// is set to sleep.
     ///
-    /// Should be more than 1 to avoid
+    /// Should be more than 1 to avoid situations where something is set to sleep when it
+    /// briefly stops but isn't at rest.
     pub fall_asleep_frames: usize,
     /// Highest acceleration expected to happen over a frame,
     /// used to ensure all collisions are detected in every substep.

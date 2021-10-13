@@ -1,4 +1,4 @@
-//! Tools for representing, storing, and connecting game objects.
+//! Starframe's entity system, i.e. the data structure representing game objects.
 //!
 //! A game object in Starframe is a _directed graph_ of components.
 //! Conceptually, one may look something like this:
@@ -21,6 +21,70 @@
 //!
 //! Similarly to how systems in ECS iterate over specific sets of components,
 //! systems using the graph iterate over specific *patterns* of connected nodes.
+//!
+//! # Usage example
+//! ```
+//! # use starframe::{graph::{make_graph, LayerViewMut}, math::Pose};
+//!
+//! struct Player;
+//! enum Hat {
+//!     Fedora,
+//!     PropellerHat,
+//! }
+//! struct Sword {
+//!     coolness_level: usize,
+//! }
+//!
+//! let graph = make_graph! {
+//!     Player,
+//!     Hat,
+//!     Sword,
+//! };
+//!
+//! fn spawn_player(
+//!     pose: Pose,
+//!     hat: Hat,
+//!     sword: Sword,
+//!     (mut l_pose, mut l_player, mut l_hat, mut l_sword): (
+//!         LayerViewMut<Pose>,
+//!         LayerViewMut<Player>,
+//!         LayerViewMut<Hat>,
+//!         LayerViewMut<Sword>,
+//!     )
+//! ) {
+//!     let mut pose_node = l_pose.insert(pose);
+//!     let mut player_node = l_player.insert(Player);
+//!     let mut hat_node = l_hat.insert(hat);
+//!     let mut sword_node = l_sword.insert(sword);
+//!
+//!     player_node.connect(&mut pose_node);
+//!     player_node.connect(&mut hat_node);
+//!     player_node.connect(&mut sword_node);
+//! }
+//!
+//! spawn_player(
+//!     Pose::default(),
+//!     Hat::PropellerHat,
+//!     Sword { coolness_level: 9001 },
+//!     graph.get_layer_bundle(),
+//! );
+//! spawn_player(
+//!     Pose::default(),
+//!     Hat::Fedora,
+//!     Sword { coolness_level: 1 },
+//!     graph.get_layer_bundle(),
+//! );
+//!
+//! let l_player = graph.get_layer::<Player>();
+//! let l_sword = graph.get_layer::<Sword>();
+//! for player_node in l_player.iter() {
+//!     if let Some(sword) = player_node.get_neighbor(&l_sword) {
+//!         println!("Watch out, this guy's got a lvl {} sword", sword.c.coolness_level);
+//!     }
+//! }
+//! ```
+//!
+//! See individual types' documentation for details.
 
 use std::{any::Any, collections::VecDeque, marker::PhantomData};
 
@@ -31,6 +95,7 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 #[macro_use]
 mod component_defs;
 pub use crate::make_graph;
+#[doc(hidden)]
 pub use component_defs::BUILTIN_LAYER_COUNT;
 
 mod layer_bundle;
@@ -44,10 +109,16 @@ type ComponentIdx = usize;
 type GenerationIdx = usize;
 type Refcount = usize;
 
+/// Allows types to be inserted into the graph.
+/// Implemented for custom types using the [`make_graph`][self::make_graph] macro;
+/// do not implement manually!
 pub trait Component: 'static + Send + Sync {
+    /// Address of this type's graph layer.
     const LAYER_INDEX: usize;
 }
 
+/// Node position without generation info, used internally to traverse the graph
+/// without knowing types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct BareNodeKey {
     layer: usize,
@@ -62,6 +133,7 @@ impl<T: Component> From<NodeKey<T>> for BareNodeKey {
     }
 }
 
+/// An identifier for looking up a specific node.
 pub struct NodeKey<T: Component> {
     pub(crate) idx: usize,
     pub(crate) gen: usize,
@@ -116,16 +188,18 @@ impl<T: Component> std::hash::Hash for NodeKey<T> {
     }
 }
 
-/// A reference to a component in a `Layer`
-/// that knows its position in the graph and can be used in graph operations.
+/// An immutable reference to a node in the graph.
 #[derive(Clone, Copy, Debug)]
 pub struct NodeRef<'a, T: Component> {
+    /// The component that this node points to.
     pub c: &'a T,
     idx: usize,
     layer_meta: &'a LayerMetadata,
 }
 
 impl<'a, T: Component> NodeRef<'a, T> {
+    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// get a reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor<'lr, 'l, Target: Component>(
         &self,
@@ -134,6 +208,8 @@ impl<'a, T: Component> NodeRef<'a, T> {
         get_neighbor(self.layer_meta, self.idx, layer)
     }
 
+    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// get a mutable reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
         &self,
@@ -142,6 +218,7 @@ impl<'a, T: Component> NodeRef<'a, T> {
         get_neighbor_mut(self.layer_meta, self.idx, layer)
     }
 
+    /// Get a key that can be used to access this node later.
     #[inline]
     pub fn key(&self) -> NodeKey<T> {
         NodeKey {
@@ -152,22 +229,43 @@ impl<'a, T: Component> NodeRef<'a, T> {
     }
 }
 
-/// A mutable reference to a component in a `Layer`
-/// that knows its position in the graph and can be used in graph operations.
+/// A mutable reference to a node in the graph.
 pub struct NodeRefMut<'a, T: Component> {
-    /// The component this reference points to.
+    /// The component that this node points to.
     pub c: &'a mut T,
     idx: usize,
     layer_meta: &'a mut LayerMetadata,
 }
 
 impl<'a, T: Component> NodeRefMut<'a, T> {
+    /// Add an edge going both ways between this and another node.
+    ///
+    /// This makes both nodes hierarchically equal parts of the same object.
+    /// Both nodes can find each other with [`get_neighbor`][Self::get_neighbor],
+    /// and both will (in most cases) be deleted if `Graph::delete` is called on either one.
+    ///
+    /// Internally this calls [`connect_oneway`][Self::connect_oneway] twice, so all the same caveats apply.
+    ///
+    /// # Panics
+    /// Panics if either edge this creates would make `connect_oneway` panic.
     #[inline]
     pub fn connect<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
         self.connect_oneway(other);
         other.connect_oneway(self);
     }
 
+    /// Create an edge from this node to another, only going in that direction.
+    ///
+    /// In a sense, this makes the other node hierarchically lower than this one.
+    /// If the lower node is deleted, this one won't be, but if this one is deleted,
+    /// the lower one will be too, unless there are other nodes also pointing to it with
+    /// a one-directional edge.
+    ///
+    /// # Panics
+    /// The current graph implementation is limited to one edge per node per layer.
+    /// If an edge from this node to somewhere in the other's layer already exists,
+    /// this function will panic, because this signals
+    /// that you're creating a malformed object that won't work the way you expect.
     pub fn connect_oneway<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
         if self.layer_meta.edges.len() <= Other::LAYER_INDEX {
             self.layer_meta
@@ -186,7 +284,22 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         other.layer_meta.refcounts[other.idx] += 1;
     }
 
-    pub fn connect_oneway_by_key(&mut self, other: NodeKey<T>) {
+    /// Like [`connect_oneway`][Self::connect_oneway], but for the special case
+    /// of connecting to a node in the same layer.
+    ///
+    /// This isn't possible otherwise because `NodeRefMut` mutably borrows the layer
+    /// it points to. It's a little finicky, but fortunately this is a relatively rare case.
+    /// # Example
+    /// ```
+    /// # use starframe::{graph::make_graph, physics::Body};
+    /// # let graph = make_graph!{};
+    /// let mut l_body = graph.get_layer_mut::<Body>();
+    /// let b2 = l_body.insert(Body::new_particle(1.0));
+    /// let b2 = b2.key();
+    /// let mut b1 = l_body.insert(Body::new_particle(1.0));
+    /// b1.connect_oneway_same_layer(b2);
+    /// ```
+    pub fn connect_oneway_same_layer(&mut self, other: NodeKey<T>) {
         if other.gen != self.layer_meta.generations[other.idx] {
             return;
         }
@@ -202,6 +315,8 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         self.layer_meta.refcounts[other.idx] += 1;
     }
 
+    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// get a reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor<'lr, 'l, Target: Component>(
         &self,
@@ -210,6 +325,8 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         get_neighbor(self.layer_meta, self.idx, layer)
     }
 
+    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// get a mutable reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
         &self,
@@ -218,6 +335,7 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         get_neighbor_mut(self.layer_meta, self.idx, layer)
     }
 
+    /// Get a key that can be used to access this node later.
     #[inline]
     pub fn key(&self) -> NodeKey<T> {
         NodeKey {
@@ -269,6 +387,7 @@ fn get_neighbor_mut<'lr, 'l, Target: Component>(
 // Layers
 //
 
+/// Tracking edges, refcounts, generations and vacant slots for a single layer.
 #[derive(Debug)]
 struct LayerMetadata {
     edges: Vec<Vec<Option<ComponentIdx>>>,
@@ -287,6 +406,8 @@ impl LayerMetadata {
     }
 }
 
+/// Storage type allowing us to store all layers in a single Vec
+/// and access their metadata without having to know their type.
 #[derive(Debug)]
 struct TypeErasedLayer {
     meta: LayerMetadata,
@@ -301,10 +422,15 @@ impl TypeErasedLayer {
     }
 }
 
+/// An immutable view into a single layer of the graph.
+///
+/// Acquired with [`Graph::get_layer`][self::Graph::get_layer_mut] or as a part of
+/// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
 pub struct LayerView<'a, T: Component> {
     meta: &'a LayerMetadata,
     pub(crate) components: &'a [T],
-    // Using the same pattern as with `LayerViewMut`.
+    // Using the same unsafe pattern as with `LayerViewMut`,
+    // even though it's not _strictly_ necessary here.
     // The reason why (and why it's in an Option) is so that we can implement
     // borrowing a LayerView from a LayerViewMut so we're not restricted to one or the other
     // in function parameters.
@@ -312,6 +438,7 @@ pub struct LayerView<'a, T: Component> {
 }
 
 impl<'a, T: Component> LayerView<'a, T> {
+    /// Get an immutable reference to a node if it still exists, otherwise return None.
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
         if self.meta.generations[key.idx] != key.gen {
             None
@@ -320,11 +447,14 @@ impl<'a, T: Component> LayerView<'a, T> {
         }
     }
 
+    /// Get an immutable reference to a node without checking if it still exists.
+    /// Use with caution.
     #[inline]
     pub fn get_unchecked(&self, key: NodeKey<T>) -> NodeRef<'_, T> {
         self.get_unchecked_by_item_idx(key.idx)
     }
 
+    #[doc(hidden)]
     #[inline]
     pub fn get_unchecked_by_item_idx(&self, idx: usize) -> NodeRef<'_, T> {
         NodeRef {
@@ -342,6 +472,10 @@ impl<'a, T: Component> LayerView<'a, T> {
     }
 }
 
+/// A mutable view into a single layer of the graph.
+///
+/// Acquired with [`Graph::get_layer_mut`][self::Graph::get_layer_mut] or as a part of
+/// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
 pub struct LayerViewMut<'a, T: Component> {
     meta: &'a mut LayerMetadata,
     pub(crate) components: list_any::VecAnyGuard<'a, T, dyn Any + Send + Sync + 'static>,
@@ -354,6 +488,20 @@ pub struct LayerViewMut<'a, T: Component> {
 }
 
 impl<'a, T: Component> LayerViewMut<'a, T> {
+    /// Insert a component into the layer.
+    ///
+    /// This returns a reference to the node that was created,
+    /// which you can use to connect it to other nodes.
+    /// # Example
+    /// ```
+    /// # use starframe::{graph::{make_graph, Graph}, math::Pose, physics::Collider};
+    /// # let graph = make_graph!{};
+    /// let mut l_pose = graph.get_layer_mut::<Pose>();
+    /// let mut l_collider = graph.get_layer_mut::<Collider>();
+    /// let mut pose_node = l_pose.insert(Pose::default());
+    /// let mut collider_node = l_collider.insert(Collider::new_circle(1.0));
+    /// pose_node.connect(&mut collider_node);
+    /// ```
     pub fn insert(&mut self, component: T) -> NodeRefMut<'_, T> {
         let item_idx = if let Some(vacant_slot) = self.meta.vacant_slots.pop_front() {
             // no generation increment here, that happens on delete
@@ -373,6 +521,7 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         }
     }
 
+    /// Get an immutable reference to a node if it still exists, otherwise return None.
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
         if self.meta.generations[key.idx] != key.gen {
             None
@@ -381,11 +530,14 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         }
     }
 
+    /// Get an immutable reference to a node without checking if it still exists.
+    /// Use with caution.
     #[inline]
     pub fn get_unchecked(&self, key: NodeKey<T>) -> NodeRef<'_, T> {
         self.get_unchecked_by_item_idx(key.idx)
     }
 
+    #[doc(hidden)]
     #[inline]
     pub fn get_unchecked_by_item_idx(&self, idx: usize) -> NodeRef<'_, T> {
         NodeRef {
@@ -395,6 +547,7 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         }
     }
 
+    /// Get a mutable reference to a node if it still exists, otherwise return None.
     pub fn get_mut(&mut self, key: NodeKey<T>) -> Option<NodeRefMut<'_, T>> {
         if self.meta.generations[key.idx] != key.gen {
             None
@@ -403,11 +556,14 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         }
     }
 
+    /// Get a mutable reference to a node without checking if it still exists.
+    /// Use with caution.
     #[inline]
     pub fn get_mut_unchecked(&mut self, key: NodeKey<T>) -> NodeRefMut<'_, T> {
         self.get_mut_unchecked_by_item_idx(key.idx)
     }
 
+    #[doc(hidden)]
     #[inline]
     pub fn get_mut_unchecked_by_item_idx(&mut self, idx: usize) -> NodeRefMut<'_, T> {
         NodeRefMut {
@@ -431,6 +587,7 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         }
     }
 
+    /// Take an immutable view into this mutable view.
     pub fn as_view(&self) -> LayerView<'_, T> {
         LayerView {
             meta: self.meta,
@@ -444,6 +601,10 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 // Iterators
 //
 
+/// An immutable iterator over components in a single layer.
+///
+/// Create with the `iter` method on [`LayerView`][self::LayerView]
+/// or [`LayerViewMut`][self::LayerViewMut].
 pub struct LayerIter<'a, T: Component> {
     layer_meta: &'a LayerMetadata,
     comp_iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
@@ -467,6 +628,9 @@ impl<'a, T: Component> Iterator for LayerIter<'a, T> {
     }
 }
 
+/// A mutable iterator over components in a single layer.
+///
+/// Create with the `iter_mut` method on [`LayerViewMut`][self::LayerViewMut].
 pub struct LayerIterMut<'a, T: Component> {
     layer_meta: &'a mut LayerMetadata,
     comp_iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
@@ -500,14 +664,24 @@ impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
 // Graph
 //
 
-/// TODO: Redocument if refactor successful
+/// The component graph itself.
+///
+/// Use the [`make_graph`][self::make_graph] macro to create one.
+/// See that macro's documentation for an example and some talk of limitations.
+///
+/// A graph is built out of _layers_, one per type of component stored.
+/// Layers contain _nodes_ representing individual components,
+/// and these are connected to other components with _edges_.
 #[derive(Debug)]
 pub struct Graph {
     layers: Vec<RwLock<TypeErasedLayer>>,
 }
 
 impl Graph {
-    pub fn new(layer_count: usize) -> Self {
+    #[doc(hidden)]
+    /// Used by the `make_graph` macro to reserve the right amount of space for layers.
+    /// Do not use manually.
+    pub fn with_layer_count(layer_count: usize) -> Self {
         let mut layers = Vec::new();
         layers.resize_with(layer_count, || {
             RwLock::new(TypeErasedLayer::new(layer_count))
@@ -515,6 +689,9 @@ impl Graph {
         Self { layers }
     }
 
+    /// Lock a layer for reading.
+    /// # Panics
+    /// Panics if the layer is currently locked for writing.
     pub fn get_layer<T: Component>(&self) -> LayerView<'_, T> {
         let err = || {
             // not sure if panic here is the right call,
@@ -539,6 +716,9 @@ impl Graph {
         }
     }
 
+    /// Lock a layer for writing.
+    /// # Panics
+    /// Panics if the layer is currently locked for reading or writing.
     pub fn get_layer_mut<T: Component>(&self) -> LayerViewMut<'_, T> {
         let err = || {
             panic!(
@@ -561,6 +741,31 @@ impl Graph {
         }
     }
 
+    /// Get a tuple of layer views in one call.
+    /// This is a common pattern in arguments for functions that manipulate the graph.
+    /// # Example
+    /// ```
+    /// # use starframe::{
+    /// #    math::Pose,
+    /// #    physics::{Body, Collider},
+    /// #    graph::{LayerView, LayerViewMut, Graph, make_graph}
+    /// # };
+    /// # let graph = make_graph!{};
+    ///
+    /// fn do_things_with_bodies(
+    ///     how_many_things: usize,
+    ///     for_how_long: usize,
+    ///     (l_pose, l_body, l_collider): (
+    ///         LayerViewMut<Pose>,
+    ///         LayerViewMut<Body>,
+    ///         LayerView<Collider>,
+    ///     ),
+    /// ) {
+    ///     // do stuff...
+    /// }
+    ///
+    /// do_things_with_bodies(42, 69, graph.get_layer_bundle());
+    /// ```
     pub fn get_layer_bundle<'a, B: LayerBundle<'a>>(&'a self) -> B {
         B::get_from_graph(self)
     }
@@ -575,6 +780,7 @@ impl Graph {
             .collect()
     }
 
+    /// Drop all content and recreate the graph from scratch.
     pub fn reset(&mut self) {
         let layer_count = self.layers.len();
         for mut layer in self.write_all_layers() {
@@ -583,6 +789,7 @@ impl Graph {
     }
 
     /// Delete a whole _object_ from the graph, beginning from the given node.
+    /// This needs write access to all layers, so every layer must be unlocked.
     ///
     /// What constitutes a single object in the graph isn't quite straightforward due to the
     /// number of ways in which nodes can be connected.
@@ -608,6 +815,9 @@ impl Graph {
     /// There are a lot of nuances to this depending on object structure, but the vast majority of the time
     /// objects will just be their own islands in the graph where everything is connected with bidirectional edges.
     /// In these cases, the whole island will be deleted regardless of which node you start on.
+    ///
+    /// # Panics
+    /// Panics if any layer is locked for reading or writing.
     pub fn delete<T: Component>(&mut self, root: NodeKey<T>) {
         #[derive(Clone, Copy, Debug)]
         struct VisitedNode {
