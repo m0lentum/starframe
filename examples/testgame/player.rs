@@ -1,18 +1,23 @@
-use sf::graph::LayerViewMut;
 use starframe::{
-    self as sf, graphics as gx,
+    self as sf,
+    graph::{LayerViewMut, NodeKey},
+    graphics as gx,
     input::{Key, KeyAxisState},
     math as m, physics as phys,
 };
 
-#[derive(Clone, Copy, Debug)]
+const MAX_SIMULTANEOUS_BULLETS: usize = 5;
+
+#[derive(Clone, Debug)]
 pub struct Player {
     facing: Facing,
+    active_bullets: Vec<sf::graph::NodeKey<phys::Collider>>,
 }
 impl Player {
     fn new() -> Self {
         Player {
             facing: Facing::Left,
+            active_bullets: Vec::with_capacity(MAX_SIMULTANEOUS_BULLETS),
         }
     }
 }
@@ -88,8 +93,15 @@ impl PlayerController {
         }
     }
 
-    pub fn tick(&mut self, input: &sf::InputCache, mut layers: Layers) {
-        let (ref mut l_pose, _, ref mut l_body, _, ref mut l_player) = layers;
+    pub fn tick(
+        &mut self,
+        input: &sf::InputCache,
+        physics: &phys::Physics,
+        graph: &mut sf::graph::Graph,
+    ) {
+        let mut layers = graph.get_layer_bundle::<Layers>();
+        let (ref mut l_pose, ref mut l_collider, ref mut l_body, ref mut l_shape, ref mut l_player) =
+            layers;
 
         let (target_facing, target_hdir) = match input.get_key_axis_state(Key::Right, Key::Left) {
             KeyAxisState::Zero => (None, 0.0),
@@ -97,7 +109,8 @@ impl PlayerController {
             KeyAxisState::Neg => (Some(Facing::Left), -1.0),
         };
 
-        let mut bullet_queue: Vec<(m::Pose, phys::Velocity)> = Vec::new();
+        let mut bullet_delete_queue: Vec<sf::graph::NodeKey<phys::Collider>> = Vec::new();
+
         for mut player in l_player.iter_mut() {
             let mut player_body = player.get_neighbor_mut(l_body).unwrap();
             let player_tr = player.get_neighbor_mut(l_pose).unwrap();
@@ -122,10 +135,23 @@ impl PlayerController {
                 player_body.c.velocity.linear.y = 4.0;
             }
 
+            // delete bullets that collided with something
+
+            player.c.active_bullets.retain(|&bullet| {
+                if physics.contacts_for_collider(bullet).next().is_none() {
+                    true
+                } else {
+                    bullet_delete_queue.push(bullet);
+                    false
+                }
+            });
+
             // shoot
 
-            if input.is_key_pressed(Key::Z, Some(0)) {
-                bullet_queue.push((
+            if player.c.active_bullets.len() < MAX_SIMULTANEOUS_BULLETS
+                && input.is_key_pressed(Key::Z, Some(0))
+            {
+                player.c.active_bullets.push(Self::spawn_bullet(
                     m::PoseBuilder::new()
                         .with_position(
                             player_tr.c.translation
@@ -136,20 +162,29 @@ impl PlayerController {
                         angular: 0.0,
                         linear: player.c.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
                     },
+                    (l_pose, l_collider, l_body, l_shape),
                 ));
             }
         }
 
-        for (bullet_tr, bullet_vel) in bullet_queue {
-            Self::spawn_bullet(bullet_tr, bullet_vel, &mut layers);
+        drop(layers);
+        for bullet in bullet_delete_queue {
+            graph.delete(bullet);
         }
     }
 
-    fn spawn_bullet(tr: m::Pose, vel: phys::Velocity, layers: &mut Layers) {
-        let (ref mut l_pose, ref mut l_collider, ref mut l_body, ref mut l_shape, _) = layers;
-
+    fn spawn_bullet(
+        pose: m::Pose,
+        vel: phys::Velocity,
+        (l_pose, l_collider, l_body, l_shape): (
+            &mut LayerViewMut<m::Pose>,
+            &mut LayerViewMut<phys::Collider>,
+            &mut LayerViewMut<phys::Body>,
+            &mut LayerViewMut<gx::Shape>,
+        ),
+    ) -> NodeKey<phys::Collider> {
         const R: f64 = 0.05;
-        let mut pose_node = l_pose.insert(tr);
+        let mut pose_node = l_pose.insert(pose);
         let mut shape_node = l_shape.insert(gx::Shape::Circle {
             r: R,
             points: 5,
@@ -164,5 +199,7 @@ impl PlayerController {
         pose_node.connect(&mut coll_node);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut shape_node);
+
+        coll_node.key()
     }
 }

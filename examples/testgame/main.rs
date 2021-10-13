@@ -334,7 +334,8 @@ impl game::GameState for State {
                     self.physics.tick(dt, &grav, self.graph.get_layer_bundle());
                 }
                 {
-                    self.player.tick(&game.input, self.graph.get_layer_bundle());
+                    self.player
+                        .tick(&game.input, &self.physics, &mut self.graph);
                 }
 
                 Some(())

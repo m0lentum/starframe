@@ -23,6 +23,10 @@ impl ContactResult {
             ContactResult::Two(c1, c2) => ContactResult::Two(f(c1), f(c2)),
         }
     }
+
+    pub fn is_zero(&self) -> bool {
+        matches!(self, ContactResult::Zero)
+    }
 }
 
 /// An iterator over the contacts in a ContactResult.
@@ -50,7 +54,7 @@ impl<'a> Iterator for ContactIterator<'a> {
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
-    /// The normal, facing away from obj1
+    /// The normal, facing away from the first object
     pub normal: m::Unit<m::Vec2>,
     /// Points of contact on the surface of each object, in object-local space.
     pub offsets: [m::Vec2; 2],

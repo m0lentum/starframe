@@ -3,21 +3,21 @@
 //! A game object in Starframe is a _directed graph_ of components.
 //! Conceptually, one may look something like this:
 //! ```text
-//!   Pose <----> RigidBody <----> Collider
-//!    ^              ^
-//!    |              |
-//!    v              v
-//!  Sprite       EventSink
+//!   Pose <----> Body <----> Collider
+//!    ^            ^
+//!    |            |
+//!    v            v
+//!  Sprite     EventSink
 //!    |
 //!    |
 //!    v
 //! Texture
 //! ```
-//! Most edges (connections between nodes) should go both ways, but because the graph is directed, one-directional edges
-//! such as from Sprite to Texture in the above diagram can also be made.
-//! This is important to the way object boundaries are determined by the deletion algorithm
-//! (see [`delete`][self::Graph::delete] for details).
-//! This comes into play when sharing one component between multiple objects.
+//! Most edges (connections between nodes) should go both ways, but because the graph is directed,
+//! one-directional edges such as from Sprite to Texture in the above diagram can also be made.
+//! This is important to the way object boundaries are determined by the deletion algorithm (see
+//! [`delete`][self::Graph::delete] for details). This comes into play when sharing one component
+//! between multiple objects.
 //!
 //! Similarly to how systems in ECS iterate over specific sets of components,
 //! systems using the graph iterate over specific *patterns* of connected nodes.
@@ -65,7 +65,7 @@ impl<T: Component> From<NodeKey<T>> for BareNodeKey {
 pub struct NodeKey<T: Component> {
     pub(crate) idx: usize,
     pub(crate) gen: usize,
-    pub(crate) _marker: PhantomData<*const T>,
+    pub(crate) _marker: PhantomData<T>,
 }
 impl<'a, T: Component> From<NodeRef<'a, T>> for NodeKey<T> {
     fn from(node: NodeRef<'a, T>) -> Self {
@@ -226,13 +226,6 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
             _marker: PhantomData,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum AdjacentConnection {
-    To,
-    From,
-    Both,
 }
 
 fn get_neighbor_idx<Target: Component>(

@@ -45,7 +45,7 @@ pub struct DataView<'a> {
     pub constraint_body_pairs: &'a [(usize, Option<usize>)],
     pub coll_pairs: &'a [[ColliderWithContext; 2]],
     pub contacts: &'a mut [ContactResult],
-    pub contacts_during_frame: &'a mut [bool],
+    pub last_contacts: &'a mut [ContactResult],
     pub contact_lambdas: &'a mut [f64],
 }
 
@@ -280,10 +280,10 @@ fn solve_constraints(data: &mut DataView<'_>) {
 fn solve_contacts(data: &mut DataView<'_>) {
     let _span = tracy_span!("solve contacts", "solve_contacts");
 
-    for (colls, contact, cont_during_frame, lambda_n) in izip!(
+    for (colls, contact, last_contact, lambda_n) in izip!(
         data.coll_pairs,
         &mut *data.contacts,
-        &mut *data.contacts_during_frame,
+        &mut *data.last_contacts,
         &mut *data.contact_lambdas
     ) {
         if !match colls[0].ctx {
@@ -312,9 +312,10 @@ fn solve_contacts(data: &mut DataView<'_>) {
                 &colls[1].coll,
             )
         };
-        // mark contact happened during this frame; this will be used to send events
+        // mark latest contact that wasn't zero;
+        // this will be available to be queried by the user later
         if !matches!(contact, ContactResult::Zero) {
-            *cont_during_frame = true;
+            *last_contact = *contact;
         }
 
         // if one of the bodies is from a rope, adjust normal

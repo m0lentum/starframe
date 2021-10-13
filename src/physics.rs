@@ -119,6 +119,21 @@ sm::new_key_type! {
     pub struct ConstraintHandle;
 }
 
+/// Pertinent information about a contact between two colliders.
+#[derive(Clone, Copy, Debug)]
+pub struct ContactInfo {
+    pub colliders: [graph::NodeKey<Collider>; 2],
+    pub normal: m::Unit<m::Vec2>,
+}
+impl ContactInfo {
+    pub(self) fn flip(self) -> Self {
+        Self {
+            colliders: [self.colliders[1], self.colliders[0]],
+            normal: -self.normal,
+        }
+    }
+}
+
 //
 // internal types
 //
@@ -207,7 +222,7 @@ struct WorkingBuffers {
     colliders: Vec<solver::ColliderWithContext>,
     coll_pair_idxs: Vec<[usize; 2]>,
     contacts: Vec<ContactResult>,
-    contacts_during_frame: Vec<bool>,
+    last_contacts: Vec<ContactResult>,
     contact_lambdas: Vec<f64>,
 }
 struct SortedIndices {
@@ -262,7 +277,7 @@ impl WorkingBuffers {
             colliders: Vec::new(),
             coll_pair_idxs: Vec::new(),
             contacts: Vec::new(),
-            contacts_during_frame: Vec::new(),
+            last_contacts: Vec::new(),
             contact_lambdas: Vec::new(),
         }
     }
@@ -320,6 +335,7 @@ pub struct Physics {
     constraint_graph: ConstraintGraph,
     sleeping_islands: Vec<SleepingIsland>,
     working_bufs: WorkingBuffers,
+    contacts: Vec<ContactInfo>,
 }
 
 impl Physics {
@@ -336,6 +352,7 @@ impl Physics {
             },
             sleeping_islands: Vec::new(),
             working_bufs: WorkingBuffers::new(),
+            contacts: Vec::new(),
         }
     }
 
@@ -872,9 +889,9 @@ impl Physics {
         bufs.contacts
             .resize(bufs.sorted_coll_pairs.len(), ContactResult::Zero);
         // collect pairs that had contacts for sending events after solving everything
-        bufs.contacts_during_frame.clear();
-        bufs.contacts_during_frame
-            .resize(bufs.sorted_coll_pairs.len(), false);
+        bufs.last_contacts.clear();
+        bufs.last_contacts
+            .resize(bufs.sorted_coll_pairs.len(), ContactResult::Zero);
         // store contact forces for friction purposes
         bufs.contact_lambdas.clear();
         bufs.contact_lambdas
@@ -961,7 +978,7 @@ impl Physics {
         let mut constr_bodies_s = bufs.constraint_body_pairs.as_mut_slice();
         let mut coll_pairs_s = bufs.sorted_coll_pairs.as_mut_slice();
         let mut contacts_s = bufs.contacts.as_mut_slice();
-        let mut cont_during_frame_s = bufs.contacts_during_frame.as_mut_slice();
+        let mut last_contacts_s = bufs.last_contacts.as_mut_slice();
         let mut cont_lambda_s = bufs.contact_lambdas.as_mut_slice();
 
         let mut island_start_idx = 0;
@@ -1040,9 +1057,8 @@ impl Physics {
             }
             let (contacts, contacts_rest) = contacts_s.split_at_mut(pair_count);
             contacts_s = contacts_rest;
-            let (contacts_during_frame, cont_d_f_rest) =
-                cont_during_frame_s.split_at_mut(pair_count);
-            cont_during_frame_s = cont_d_f_rest;
+            let (last_contacts, last_conts_rest) = last_contacts_s.split_at_mut(pair_count);
+            last_contacts_s = last_conts_rest;
             let (contact_lambdas, cont_l_rest) = cont_lambda_s.split_at_mut(pair_count);
             cont_lambda_s = cont_l_rest;
 
@@ -1065,7 +1081,7 @@ impl Physics {
                 constraint_body_pairs,
                 coll_pairs,
                 contacts,
-                contacts_during_frame,
+                last_contacts,
                 contact_lambdas,
             });
 
@@ -1095,8 +1111,8 @@ impl Physics {
         CONTACTS_PLOT.point(
             island_group_views
                 .iter()
-                .flat_map(|island_view| island_view.contacts_during_frame.iter())
-                .filter(|c| **c)
+                .flat_map(|island_view| island_view.last_contacts.iter())
+                .filter(|c| !c.is_zero())
                 .count() as f64,
         );
 
@@ -1139,6 +1155,39 @@ impl Physics {
             body.c.velocity = *vel_result;
             *pose.c = *pose_result;
         }
+
+        //
+        // store contacts for querying
+        //
+        self.contacts.clear();
+        self.contacts.extend(
+            izip!(&bufs.sorted_coll_pairs, &bufs.last_contacts).filter_map(|(pair, contact)| {
+                contact.iter().next().map(|cont| ContactInfo {
+                    colliders: pair.map(|c| l_collider.get_unchecked_by_item_idx(c.node_idx).key()),
+                    normal: cont.normal,
+                })
+            }),
+        );
+    }
+
+    /// Get all contacts that the given collider participated in during the last frame.
+    ///
+    /// All returned [`ContactInfo`][self::ContactInfo] objects are oriented such that the
+    /// collider being searched for is the first item in `colliders` and `normal`
+    /// faces away from it.
+    pub fn contacts_for_collider(
+        &self,
+        coll: graph::NodeKey<Collider>,
+    ) -> impl '_ + Iterator<Item = ContactInfo> {
+        self.contacts.iter().filter_map(move |&cont| {
+            if cont.colliders[0] == coll {
+                Some(cont)
+            } else if cont.colliders[1] == coll {
+                Some(cont.flip())
+            } else {
+                None
+            }
+        })
     }
 
     /// Find every rigid body that intersects with the given point.
