@@ -440,7 +440,7 @@ pub struct LayerView<'a, T: Component> {
 impl<'a, T: Component> LayerView<'a, T> {
     /// Get an immutable reference to a node if it still exists, otherwise return None.
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
-        if self.meta.generations[key.idx] != key.gen {
+        if self.meta.generations.len() <= key.idx || self.meta.generations[key.idx] != key.gen {
             None
         } else {
             Some(self.get_unchecked(key))
@@ -549,7 +549,7 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 
     /// Get a mutable reference to a node if it still exists, otherwise return None.
     pub fn get_mut(&mut self, key: NodeKey<T>) -> Option<NodeRefMut<'_, T>> {
-        if self.meta.generations[key.idx] != key.gen {
+        if self.meta.generations.len() <= key.idx || self.meta.generations[key.idx] != key.gen {
             None
         } else {
             Some(self.get_mut_unchecked(key))
@@ -836,8 +836,11 @@ impl Graph {
         let mut locked_layers = self.write_all_layers();
 
         // check if the node is already considered deleted before doing anything
-        if locked_layers[T::LAYER_INDEX].meta.generations[root.idx] != root.gen
-            || locked_layers[T::LAYER_INDEX].meta.refcounts[root.idx] == 0
+        let start_layer = &locked_layers[T::LAYER_INDEX].meta;
+        if start_layer.generations.len() <= root.idx
+            || start_layer.generations[root.idx] != root.gen
+            || start_layer.refcounts.len() <= root.idx
+            || start_layer.refcounts[root.idx] == 0
         {
             return;
         }
