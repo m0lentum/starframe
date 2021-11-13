@@ -769,16 +769,26 @@ fn capsule_capsule(
     // get the closest points on the line segments defining the capsules
     let closest_points = if cap2_dir.y == 0.0 {
         // the capsules are perfectly collinear.
-        // pick one end of cap2 and the closest point to it on cap1
-        let closer_cap2_end = if cap2_dir.x.signum() == dist.x.signum() {
-            dist - cap2_dir * hl2
+        // pick one end of the *shorter* capsule (this is important, otherwise we may not get the
+        // actual closest points) and the closest point to it on the other
+        if hl2 > hl1 {
+            let closer_cap1_end_x = hl1.copysign(dist.x);
+            let closest_on_cap2_x = closer_cap1_end_x.min(dist.x + hl2).max(dist.x - hl2);
+            [
+                m::Vec2::new(closer_cap1_end_x, 0.0),
+                m::Vec2::new(closest_on_cap2_x, dist.y),
+            ]
         } else {
-            dist + cap2_dir * hl2
-        };
-        [
-            m::Vec2::new(closer_cap2_end.x.max(-hl1).min(hl1), 0.0),
-            closer_cap2_end,
-        ]
+            let closer_cap2_end = if cap2_dir.x.signum() == dist.x.signum() {
+                dist - cap2_dir * hl2
+            } else {
+                dist + cap2_dir * hl2
+            };
+            [
+                m::Vec2::new(closer_cap2_end.x.max(-hl1).min(hl1), 0.0),
+                closer_cap2_end,
+            ]
+        }
     } else {
         // intersection of the whole lines from cap 2's POV,
         // clamped to the extents of the line segment
