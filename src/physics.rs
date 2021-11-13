@@ -124,12 +124,15 @@ sm::new_key_type! {
 pub struct ContactInfo {
     pub colliders: [graph::NodeKey<Collider>; 2],
     pub normal: m::Unit<m::Vec2>,
+    // island id stored to allow retaining of sleeping contacts
+    island_id: IslandId,
 }
 impl ContactInfo {
     pub(self) fn flip(self) -> Self {
         Self {
             colliders: [self.colliders[1], self.colliders[0]],
             normal: -self.normal,
+            island_id: self.island_id,
         }
     }
 }
@@ -358,16 +361,19 @@ impl Physics {
     }
 
     /// Add a user-defined constraint to the system. Returns a handle that can be used to remove it later.
+    #[inline]
     pub fn add_constraint(&mut self, constraint: Constraint) -> ConstraintHandle {
         self.user_constraints.insert(constraint)
     }
 
     /// Access a constraint if it still exists.
+    #[inline]
     pub fn get_constraint(&self, handle: ConstraintHandle) -> Option<&Constraint> {
         self.user_constraints.get(handle)
     }
 
     /// Mutably access a constraint if it still exists.
+    #[inline]
     pub fn get_constraint_mut(&mut self, handle: ConstraintHandle) -> Option<&mut Constraint> {
         self.user_constraints.get_mut(handle)
     }
@@ -377,11 +383,13 @@ impl Physics {
     /// Constraints can also disappear on their own if the objects they're associated with
     /// are destroyed, so it's not guaranteed the constraint will exist
     /// even if it hasn't been explicitly removed before.
+    #[inline]
     pub fn remove_constraint(&mut self, handle: ConstraintHandle) -> Option<Constraint> {
         self.user_constraints.remove(handle)
     }
 
     /// Remove all constraints.
+    #[inline]
     pub fn clear_constraints(&mut self) {
         self.user_constraints.clear();
     }
@@ -1118,6 +1126,40 @@ impl Physics {
         );
 
         //
+        // store contacts for user queries and other systems
+        //
+
+        let sleeping_islands = &self.sleeping_islands;
+        let fall_asleep_frames = self.consts.fall_asleep_frames;
+        self.contacts.retain(|cont| {
+            // contacts that are part of sleeping islands are conceptually still there,
+            // but not generated because we skip collision detection.
+            // keep them in the buffer so they keep getting returned from queries
+            // as the user would expect
+            sleeping_islands
+                .iter()
+                .any(|isl| isl.id == cont.island_id && isl.ticks_slept >= fall_asleep_frames)
+        });
+        for isl in &bufs.islands {
+            self.contacts.extend(
+                izip!(
+                    &bufs.sorted_coll_pairs
+                        [isl.pair_range_start..isl.pair_range_start + isl.pair_count],
+                    &bufs.last_contacts
+                        [isl.pair_range_start..isl.pair_range_start + isl.pair_count]
+                )
+                .filter_map(|(pair, contact)| {
+                    contact.iter().next().map(|cont| ContactInfo {
+                        colliders: pair
+                            .map(|c| l_collider.get_unchecked_by_item_idx(c.node_idx).key()),
+                        normal: cont.normal,
+                        island_id: isl.id,
+                    })
+                }),
+            );
+        }
+
+        //
         // set islands where movement was below a threshold to sleep
         //
 
@@ -1156,19 +1198,6 @@ impl Physics {
             body.c.velocity = *vel_result;
             *pose.c = *pose_result;
         }
-
-        //
-        // store contacts for querying
-        //
-        self.contacts.clear();
-        self.contacts.extend(
-            izip!(&bufs.sorted_coll_pairs, &bufs.last_contacts).filter_map(|(pair, contact)| {
-                contact.iter().next().map(|cont| ContactInfo {
-                    colliders: pair.map(|c| l_collider.get_unchecked_by_item_idx(c.node_idx).key()),
-                    normal: cont.normal,
-                })
-            }),
-        );
     }
 
     /// Get all contacts that the given collider participated in during the last frame.
