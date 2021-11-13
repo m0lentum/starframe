@@ -66,21 +66,35 @@ impl InputCache {
 
     /// True if the requested key is currently pressed
     /// (for fewer frames than age_limit if provided), false otherwise.
+    #[inline]
     pub fn is_key_pressed(&self, key: Key, age_limit: Option<u32>) -> bool {
+        self.is_key_in_state(key, ElementState::Pressed, age_limit)
+    }
+
+    /// True if the requested key is currently released
+    /// (for fewer frames than age_limit if provided), false otherwise.
+    #[inline]
+    pub fn is_key_released(&self, key: Key, age_limit: Option<u32>) -> bool {
+        self.is_key_in_state(key, ElementState::Released, age_limit)
+    }
+
+    fn is_key_in_state(
+        &self,
+        key: Key,
+        wanted_state: ElementState,
+        age_limit: Option<u32>,
+    ) -> bool {
         match self.get_key_state(key) {
             None => false,
-            Some(AgedState {
-                state: ElementState::Released,
-                ..
-            }) => false,
-            Some(AgedState {
-                age,
-                state: ElementState::Pressed,
-            }) => {
-                if let Some(al) = age_limit {
-                    *age <= al
+            Some(AgedState { state, age }) => {
+                if *state == wanted_state {
+                    if let Some(al) = age_limit {
+                        *age <= al
+                    } else {
+                        true
+                    }
                 } else {
-                    true
+                    false
                 }
             }
         }
