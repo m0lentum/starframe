@@ -4,6 +4,8 @@ use crate::math as m;
 /// A component that allows a game object to collide with others
 /// or act as a trigger.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde-types", serde(default))]
 pub struct Collider {
     pub shape: ColliderShape,
     pub ty: ColliderType,
@@ -11,14 +13,22 @@ pub struct Collider {
     /// Defaults to 0.
     pub layer: u64,
 }
+impl Default for Collider {
+    fn default() -> Self {
+        Self {
+            shape: ColliderShape::Circle { r: 1.0 },
+            ty: ColliderType::default(),
+            layer: 0,
+        }
+    }
+}
 
 impl Collider {
     /// Create a solid circle collider from a radius.
     pub fn new_circle(radius: f64) -> Self {
-        Collider {
+        Self {
             shape: ColliderShape::Circle { r: radius },
-            ty: ColliderType::default(),
-            layer: 0,
+            ..Self::default()
         }
     }
 
@@ -31,22 +41,20 @@ impl Collider {
     pub fn new_rect(width: f64, height: f64) -> Self {
         let hw = width / 2.0;
         let hh = height / 2.0;
-        Collider {
+        Self {
             shape: ColliderShape::Rect { hw, hh },
-            ty: ColliderType::default(),
-            layer: 0,
+            ..Self::default()
         }
     }
 
     /// Create a solid capsule collider (a rectangle with semicircles at the ends on the x-axis).
     pub fn new_capsule(length: f64, radius: f64) -> Self {
-        Collider {
+        Self {
             shape: ColliderShape::Capsule {
                 hl: length / 2.0,
                 r: radius,
             },
-            ty: ColliderType::default(),
-            layer: 0,
+            ..Self::default()
         }
     }
 
@@ -119,6 +127,7 @@ impl Collider {
 
 /// The physical shape of a collider.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub enum ColliderShape {
     Circle {
         r: f64,
@@ -139,6 +148,7 @@ pub enum ColliderShape {
 /// Type of a collider. Solid ones respond to collisions when attached to bodies.
 /// Triggers only cause an event to be sent.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub enum ColliderType {
     Solid(Material),
     Trigger,
@@ -156,6 +166,8 @@ impl Default for ColliderType {
 /// coefficients (rather than the realistic model where every pair of materials
 /// would have its own coefficients).
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde-types", serde(default))]
 pub struct Material {
     /// Coefficient of static friction.
     /// Set to None to opt out of static friction.
