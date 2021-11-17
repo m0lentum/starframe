@@ -13,7 +13,7 @@ use crate::{
 
 pub mod collision;
 use collision::HGrid;
-pub use collision::{Collider, ColliderType, Contact, ContactResult, Material};
+pub use collision::{Collider, ColliderType, Contact, ContactResult, Material, Ray};
 
 pub(crate) mod bitmatrix;
 
@@ -135,6 +135,24 @@ impl ContactInfo {
             island_id: self.island_id,
         }
     }
+}
+
+/// Result of a [`raycast`][self::Physics::raycast].
+#[derive(Clone, Debug)]
+pub struct RayHit {
+    /// A key to the collider that was hit.
+    ///
+    /// Given as a key to avoid lifetime problems with graph layers.
+    pub collider: graph::NodeKey<Collider>,
+    /// The point in world space where the ray intersected the collider.
+    pub point: m::Vec2,
+    /// The parameter `t` in the ray equation `start + t * dir`
+    /// for the point where the ray intersected the collider.
+    ///
+    /// Useful with the ray's [`point_at_t`][self::Ray::point_at_t] method,
+    /// e.g. if you want to step backward along the ray from the contact point
+    /// or sample the whole distance travelled by the ray.
+    pub t: f64,
 }
 
 //
@@ -1252,6 +1270,43 @@ impl Physics {
                     None
                 }
             })
+    }
+
+    /// Find the first solid collider intersected by the given ray.
+    pub fn raycast<'p, 'g: 'p>(
+        &'p self,
+        ray: Ray,
+        max_distance: f64,
+        (l_pose, l_collider): (
+            graph::LayerView<'g, m::Pose>,
+            graph::LayerView<'g, Collider>,
+        ),
+    ) -> Option<RayHit> {
+        // TODO: check spatial index, don't brute force
+        let mut t_min = max_distance;
+        let mut found_coll: Option<graph::NodeRef<Collider>> = None;
+        for coll in l_collider.iter() {
+            if !coll.c.is_solid() {
+                continue;
+            }
+            let pose = match coll.get_neighbor(&l_pose) {
+                Some(pose) => pose,
+                None => continue,
+            };
+            let t = match collision::query::ray_collider(ray, pose.c, coll.c) {
+                Some(t) => t,
+                None => continue,
+            };
+            if t < t_min {
+                t_min = t;
+                found_coll = Some(coll);
+            }
+        }
+        found_coll.map(|c| RayHit {
+            collider: c.key(),
+            point: ray.start + t_min * *ray.dir,
+            t: t_min,
+        })
     }
 
     /// For debug visualization

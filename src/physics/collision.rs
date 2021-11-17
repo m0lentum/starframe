@@ -8,6 +8,7 @@ pub mod shape_shape;
 pub use shape_shape::{Contact, ContactIterator, ContactResult};
 
 pub mod query;
+pub use query::Ray;
 
 //
 
