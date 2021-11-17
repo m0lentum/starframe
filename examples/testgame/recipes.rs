@@ -341,21 +341,10 @@ impl Recipe {
                 let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
                 let rope = phys::spawn_rope_line(
                     phys::Rope {
-                        spacing: 0.1,
-                        thickness: 0.12,
-                        compliance: 0.0000001,
-                        bending_max_angle: m::Angle::Deg(15.0).rad(),
-                        bending_compliance: 0.08,
-                        damping: 20.0,
-                        material: phys::Material {
-                            static_friction_coef: None,
-                            dynamic_friction_coef: Some(1.5),
-                            restitution_coef: 0.0,
-                        },
+                        ..Default::default()
                     },
                     rope_end_1,
                     rope_end_2,
-                    0.02,
                     graph.get_layer_bundle(),
                 );
                 match b1 {

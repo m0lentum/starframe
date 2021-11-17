@@ -17,6 +17,25 @@ pub struct Rope {
     pub bending_compliance: f64,
     pub damping: f64,
     pub material: Material,
+    pub particle_mass: f64,
+}
+impl Default for Rope {
+    fn default() -> Self {
+        Self {
+            spacing: 0.1,
+            thickness: 0.12,
+            compliance: 0.0000001,
+            bending_max_angle: m::Angle::Deg(15.0).rad(),
+            bending_compliance: 0.08,
+            damping: 20.0,
+            material: Material {
+                static_friction_coef: None,
+                dynamic_friction_coef: Some(1.5),
+                restitution_coef: 0.0,
+            },
+            particle_mass: 0.02,
+        }
+    }
 }
 
 /// Information returned from the creation of a rope, useful for e.g. constraining the rope's ends.
@@ -35,7 +54,6 @@ pub fn spawn_rope_line(
     mut rope: Rope,
     start: m::Vec2,
     end: m::Vec2,
-    particle_mass: f64,
     (mut l_body, mut l_pose, mut l_collider, mut l_rope, mut l_shape): (
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
@@ -54,7 +72,7 @@ pub fn spawn_rope_line(
 
     let body_proto = Body {
         velocity: Default::default(),
-        mass: Mass::from(particle_mass),
+        mass: Mass::from(rope.particle_mass),
         moment_of_inertia: Mass::Infinite,
     };
     let collider_proto = Collider::new_circle(rope.thickness / 2.0)
