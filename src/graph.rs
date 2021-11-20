@@ -35,11 +35,12 @@
 //!     coolness_level: usize,
 //! }
 //!
-//! let graph = make_graph! {
+//! type MyGraph = make_graph! {
 //!     Player,
 //!     Hat,
 //!     Sword,
 //! };
+//! let graph = MyGraph::new();
 //!
 //! fn spawn_player(
 //!     pose: Pose,
@@ -292,7 +293,8 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     /// # Example
     /// ```
     /// # use starframe::{graph::make_graph, physics::Body};
-    /// # let graph = make_graph!{};
+    /// # type Graph = make_graph!{};
+    /// # let graph = Graph::new();
     /// let mut l_body = graph.get_layer_mut::<Body>();
     /// let b2 = l_body.insert(Body::new_particle(1.0));
     /// let b2 = b2.key();
@@ -494,8 +496,9 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
     /// which you can use to connect it to other nodes.
     /// # Example
     /// ```
-    /// # use starframe::{graph::{make_graph, Graph}, math::Pose, physics::Collider};
-    /// # let graph = make_graph!{};
+    /// # use starframe::{graph::make_graph, math::Pose, physics::Collider};
+    /// # type MyGraph = make_graph!{};
+    /// # let graph = MyGraph::new();
     /// let mut l_pose = graph.get_layer_mut::<Pose>();
     /// let mut l_collider = graph.get_layer_mut::<Collider>();
     /// let mut pose_node = l_pose.insert(Pose::default());
@@ -666,25 +669,28 @@ impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
 
 /// The component graph itself.
 ///
-/// Use the [`make_graph`][self::make_graph] macro to create one.
+/// Use the [`make_graph`][self::make_graph] macro to automatically create one
+/// with the correct layer count.
 /// See that macro's documentation for an example and some talk of limitations.
 ///
 /// A graph is built out of _layers_, one per type of component stored.
 /// Layers contain _nodes_ representing individual components,
 /// and these are connected to other components with _edges_.
 #[derive(Debug)]
-pub struct Graph {
+pub struct Graph<const LAYER_COUNT: usize> {
     layers: Vec<RwLock<TypeErasedLayer>>,
 }
 
-impl Graph {
-    #[doc(hidden)]
-    /// Used by the `make_graph` macro to reserve the right amount of space for layers.
-    /// Do not use manually.
-    pub fn with_layer_count(layer_count: usize) -> Self {
+impl<const LAYER_COUNT: usize> Default for Graph<LAYER_COUNT> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
+    pub fn new() -> Self {
         let mut layers = Vec::new();
-        layers.resize_with(layer_count, || {
-            RwLock::new(TypeErasedLayer::new(layer_count))
+        layers.resize_with(LAYER_COUNT, || {
+            RwLock::new(TypeErasedLayer::new(LAYER_COUNT))
         });
         Self { layers }
     }
@@ -748,9 +754,10 @@ impl Graph {
     /// # use starframe::{
     /// #    math::Pose,
     /// #    physics::{Body, Collider},
-    /// #    graph::{LayerView, LayerViewMut, Graph, make_graph}
+    /// #    graph::{LayerView, LayerViewMut, make_graph}
     /// # };
-    /// # let graph = make_graph!{};
+    /// # type MyGraph = make_graph!{};
+    /// # let graph = MyGraph::new();
     ///
     /// fn do_things_with_bodies(
     ///     how_many_things: usize,
@@ -981,15 +988,13 @@ mod tests {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct Subshape(usize);
 
-    fn graph() -> Graph {
-        make_graph! {
-            Pose,
-            Velocity,
-            Body,
-            Shape,
-            Subshape,
-        }
-    }
+    type Graph = make_graph! {
+        Pose,
+        Velocity,
+        Body,
+        Shape,
+        Subshape,
+    };
 
     // shorthands for layer views because we have to repeat this stuff a lot here
     type L<'a, T> = LayerView<'a, T>;
@@ -1013,7 +1018,7 @@ mod tests {
     /// Multiple ownership works.
     #[test]
     fn connect_nodes() {
-        let graph = graph();
+        let graph = Graph::new();
 
         let everyones_shape = graph.get_layer_mut().insert(Shape(69)).key();
 
@@ -1089,7 +1094,7 @@ mod tests {
 
     #[test]
     fn iterate() {
-        let graph = graph();
+        let graph = Graph::new();
         let (mut poses, mut vels, mut bodies, mut shapes, _) =
             graph.get_layer_bundle::<AllLayersMut>();
 
@@ -1168,7 +1173,7 @@ mod tests {
 
     #[test]
     fn delete() {
-        let mut graph = graph();
+        let mut graph = Graph::new();
 
         let vels_to_del: Vec<NodeKey<Velocity>> = {
             let (mut poses, mut vels, mut bodies, mut shapes, mut sub_shapes) =
@@ -1236,7 +1241,7 @@ mod tests {
 
     #[test]
     fn reuse_deleted_slots() {
-        let mut graph = graph();
+        let mut graph = Graph::new();
 
         let mut shapes = graph.get_layer_mut::<Shape>();
         let mut subshapes = graph.get_layer_mut::<Subshape>();

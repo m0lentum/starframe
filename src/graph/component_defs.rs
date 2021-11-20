@@ -34,7 +34,8 @@ impl_components! {
 
 // user-facing version of the above macro for users to add their own types to the graph
 
-/// Create a [`Graph`][super::Graph] with layers for the given custom types.
+/// Create a [`Graph`][super::Graph] type with layers for the given custom types
+/// and the correct size parameter set.
 /// All Starframe types that are meant to be used as components will also receive layers.
 ///
 /// DO NOT invoke this more than once. You will get either confusing compile errors
@@ -47,11 +48,12 @@ impl_components! {
 /// struct Enemy;
 /// struct ReallyCoolGameMechanic;
 ///
-/// let graph = make_graph! {
+/// type MyGraph = make_graph! {
 ///     PlayerController,
 ///     Enemy,
-///     ReallyCoolGameMechanic,
+///     ReallyCoolGameMechanic, // trailing commas are required!
 /// };
+/// let graph = MyGraph::new();
 /// ```
 /// # Limitations
 ///
@@ -63,23 +65,13 @@ impl_components! {
 ///
 /// This is also the reason why you can't invoke this macro more than once
 /// — the graph structure is defined at compile time and multiple invocations would break it.
-/// It is, however, possible (though not advised) to have multiple graphs with the same structure
-/// like this:
-/// ```
-/// # use starframe::graph::{make_graph, Graph};
-/// fn graph() -> Graph {
-///     make_graph! {
-///         // ...
-///     }
-/// }
-/// let graph = graph();
 /// ```
 #[macro_export]
 macro_rules! make_graph {
     ($head:ty, $($tail:ty,)*) => {
-        {
+        $crate::graph::Graph::<{
             make_graph!{{$crate::graph::BUILTIN_LAYER_COUNT}, $head, $($tail,)*}
-        }
+        }>
     };
     ($count:expr, $head:ty, $($tail:ty,)+) => {
         impl $crate::graph::Component for $head {
@@ -91,10 +83,10 @@ macro_rules! make_graph {
         impl $crate::graph::Component for $last {
             const LAYER_INDEX: usize = $count;
         }
-        $crate::graph::Graph::with_layer_count($count + 1)
+        ($count + 1)
     };
     // no custom types to add
     () => {
-        $crate::graph::Graph::with_layer_count($crate::graph::BUILTIN_LAYER_COUNT)
+        $crate::graph::Graph<{$crate::graph::BUILTIN_LAYER_COUNT}>
     }
 }

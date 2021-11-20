@@ -166,7 +166,7 @@ fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
 }
 
 impl Recipe {
-    pub fn spawn(&self, physics: &mut phys::Physics, graph: &sf::graph::Graph) {
+    pub fn spawn(&self, physics: &mut phys::Physics, graph: &super::MyGraph) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(graph.get_layer_bundle()),
             Recipe::Block(block) => {

@@ -97,7 +97,7 @@ impl PlayerController {
         &mut self,
         input: &sf::InputCache,
         physics: &phys::Physics,
-        graph: &mut sf::graph::Graph,
+        graph: &mut super::MyGraph,
     ) {
         let mut layers = graph.get_layer_bundle::<Layers>();
         let (ref mut l_pose, ref mut l_collider, ref mut l_body, ref mut l_shape, ref mut l_player) =

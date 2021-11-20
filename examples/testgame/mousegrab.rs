@@ -20,7 +20,7 @@ impl MouseGrabber {
         camera: &impl Camera,
         viewport_size: (u32, u32),
         physics: &mut sf::Physics,
-        graph: &sf::graph::Graph,
+        graph: &super::MyGraph,
     ) {
         if input.is_mouse_button_pressed(sf::input::MouseButton::Left, None) {
             let target_point =
