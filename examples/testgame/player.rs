@@ -100,8 +100,7 @@ impl PlayerController {
         graph: &mut super::MyGraph,
     ) {
         let mut layers = graph.get_layer_bundle::<Layers>();
-        let (ref mut l_pose, ref mut l_collider, ref mut l_body, ref mut l_shape, ref mut l_player) =
-            layers;
+        let (l_pose, l_collider, l_body, l_shape, l_player) = &mut layers;
 
         let (target_facing, target_hdir) = match input.get_key_axis_state(Key::Right, Key::Left) {
             KeyAxisState::Zero => (None, 0.0),

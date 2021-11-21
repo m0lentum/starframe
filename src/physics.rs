@@ -426,8 +426,8 @@ impl Physics {
     ) {
         let _main_span = tracy_span!("physics tick", "tick");
 
-        let l_pose_immut = l_pose.as_view();
-        let l_body_immut = l_body.as_view();
+        let l_pose_immut = l_pose.subview();
+        let l_body_immut = l_body.subview();
 
         let dt = frame_dt / self.consts.substeps as f64;
         let inv_dt = 1.0 / dt;

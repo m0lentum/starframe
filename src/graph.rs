@@ -413,13 +413,40 @@ impl LayerMetadata {
 #[derive(Debug)]
 struct TypeErasedLayer {
     meta: LayerMetadata,
-    components: list_any::VecAny,
+    components: ComponentStorage,
 }
 impl TypeErasedLayer {
     fn new(layer_count: usize) -> Self {
         Self {
             meta: LayerMetadata::new(layer_count),
-            components: list_any::VecAny::deferred(),
+            components: ComponentStorage(None),
+        }
+    }
+}
+
+/// Dynamically typed, lazily initialized storage for component buffers.
+#[derive(Debug)]
+struct ComponentStorage(Option<Box<dyn Any>>);
+
+impl ComponentStorage {
+    fn downcast<T: 'static>(&self) -> &[T] {
+        match self.0 {
+            Some(ref already_inited) => (*already_inited)
+                .downcast_ref::<Vec<T>>()
+                .unwrap()
+                .as_slice(),
+            None => &[],
+        }
+    }
+
+    fn downcast_mut<T: Sized + 'static>(&mut self) -> &mut Vec<T> {
+        if let Some(ref mut already_inited) = self.0 {
+            return already_inited.downcast_mut::<Vec<T>>().unwrap();
+        }
+        self.0 = Some(Box::new(Vec::<T>::new()));
+        match self.0 {
+            Some(ref mut arst) => arst.downcast_mut().unwrap(),
+            None => unreachable!(),
         }
     }
 }
@@ -435,7 +462,7 @@ pub struct LayerView<'a, T: Component> {
     // even though it's not _strictly_ necessary here.
     // The reason why (and why it's in an Option) is so that we can implement
     // borrowing a LayerView from a LayerViewMut so we're not restricted to one or the other
-    // in function parameters.
+    // in function parameters, and can forward views to nested functions if needed.
     _guard: Option<RwLockReadGuard<'a, TypeErasedLayer>>,
 }
 
@@ -472,6 +499,17 @@ impl<'a, T: Component> LayerView<'a, T> {
             comp_iter: self.components.iter().enumerate(),
         }
     }
+
+    /// Take a sub-view into this view.
+    ///
+    /// Useful for forwarding the view to other functions without moving it.
+    pub fn subview(&self) -> LayerView<'_, T> {
+        LayerView {
+            meta: self.meta,
+            components: self.components,
+            _guard: None,
+        }
+    }
 }
 
 /// A mutable view into a single layer of the graph.
@@ -480,13 +518,14 @@ impl<'a, T: Component> LayerView<'a, T> {
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
 pub struct LayerViewMut<'a, T: Component> {
     meta: &'a mut LayerMetadata,
-    pub(crate) components: list_any::VecAnyGuard<'a, T, dyn Any + Send + Sync + 'static>,
+    pub(crate) components: &'a mut Vec<T>,
     // Storing the lock guard inside this
     // because I can't figure out a way to map it cleanly to a view like this.
     // This requires unsafe and is ugly :(
     // SAFETY: never access the guard, only use above fields.
     // Because it's in the same struct as the references to its inside, all drop at the same time
-    _guard: RwLockWriteGuard<'a, TypeErasedLayer>,
+    // (in an option to allow subviews)
+    _guard: Option<RwLockWriteGuard<'a, TypeErasedLayer>>,
 }
 
 impl<'a, T: Component> LayerViewMut<'a, T> {
@@ -590,11 +629,22 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         }
     }
 
-    /// Take an immutable view into this mutable view.
-    pub fn as_view(&self) -> LayerView<'_, T> {
+    /// Take an immutable sub-view into this mutable view.
+    pub fn subview(&self) -> LayerView<'_, T> {
         LayerView {
             meta: self.meta,
-            components: &self.components,
+            components: self.components,
+            _guard: None,
+        }
+    }
+
+    /// Take a mutable sub-view into this mutable view.
+    ///
+    /// Useful for forwarding the view to other functions without moving it.
+    pub fn subview_mut(&mut self) -> LayerViewMut<'_, T> {
+        LayerViewMut {
+            meta: self.meta,
+            components: self.components,
             _guard: None,
         }
     }
@@ -713,10 +763,10 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
         // and we never access the guard itself.
         unsafe {
             let meta: *const LayerMetadata = &guard.meta;
-            let components: *const list_any::VecAny = &guard.components;
+            let components: *const ComponentStorage = &guard.components;
             LayerView {
                 meta: &*meta,
-                components: (&*components).downcast_slice().unwrap(),
+                components: (&*components).downcast(),
                 _guard: Some(guard),
             }
         }
@@ -738,11 +788,11 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
         // and we never access the guard itself.
         unsafe {
             let meta: *mut LayerMetadata = &mut guard.meta;
-            let components: *mut list_any::VecAny = &mut guard.components;
+            let components: *mut ComponentStorage = &mut guard.components;
             LayerViewMut {
                 meta: &mut *meta,
-                components: (&mut *components).downcast_mut().unwrap(),
-                _guard: guard,
+                components: (&mut *components).downcast_mut(),
+                _guard: Some(guard),
             }
         }
     }
