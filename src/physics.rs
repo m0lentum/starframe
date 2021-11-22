@@ -1273,40 +1273,45 @@ impl Physics {
     }
 
     /// Find the first solid collider intersected by the given ray.
-    pub fn raycast<'p, 'g: 'p>(
-        &'p self,
+    pub fn raycast<'p>(
+        // Mutable reference required
+        // because spatial index traversal uses mutation for timestamping.
+        // TODO: think about using interior mutability here
+        &'p mut self,
         ray: Ray,
         max_distance: f64,
-        (l_pose, l_collider): (
-            graph::LayerView<'g, m::Pose>,
-            graph::LayerView<'g, Collider>,
-        ),
+        (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
     ) -> Option<RayHit> {
-        // TODO: check spatial index, don't brute force
-        let mut t_min = max_distance;
-        let mut found_coll: Option<graph::NodeRef<Collider>> = None;
-        for coll in l_collider.iter() {
-            if !coll.c.is_solid() {
-                continue;
+        let mut traversal = self.spatial_index.traverse_ray(ray, max_distance);
+        while let Some(cell_iter) = traversal.step() {
+            let mut t_min = max_distance;
+            let mut found_coll: Option<graph::NodeRef<Collider>> = None;
+            for coll in cell_iter.filter_map(|coll_key| l_collider.get(coll_key)) {
+                if !coll.c.is_solid() {
+                    continue;
+                }
+                let pose = match coll.get_neighbor(&l_pose) {
+                    Some(pose) => pose,
+                    None => continue,
+                };
+                let t = match collision::query::ray_collider(ray, pose.c, coll.c) {
+                    Some(t) => t,
+                    None => continue,
+                };
+                if t < t_min {
+                    t_min = t;
+                    found_coll = Some(coll);
+                }
             }
-            let pose = match coll.get_neighbor(&l_pose) {
-                Some(pose) => pose,
-                None => continue,
-            };
-            let t = match collision::query::ray_collider(ray, pose.c, coll.c) {
-                Some(t) => t,
-                None => continue,
-            };
-            if t < t_min {
-                t_min = t;
-                found_coll = Some(coll);
+            if let Some(coll) = found_coll {
+                return Some(RayHit {
+                    collider: coll.key(),
+                    point: ray.start + t_min * *ray.dir,
+                    t: t_min,
+                });
             }
         }
-        found_coll.map(|c| RayHit {
-            collider: c.key(),
-            point: ray.start + t_min * *ray.dir,
-            t: t_min,
-        })
+        None
     }
 
     /// For debug visualization

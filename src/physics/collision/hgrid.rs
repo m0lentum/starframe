@@ -1,27 +1,30 @@
 //! The spatial index is responsible for detecting pairs of possibly
 //! intersecting objects for further, more accurate narrow phase inspection.
 
-use super::{MaskMatrix, AABB};
+use super::{MaskMatrix, Ray, AABB};
 use crate::{
     graph::NodeKey,
     math as m,
     physics::{
-        bitmatrix::{BitMatrix, BitMatrixParams},
+        bitmatrix::{BitMatrix, BitMatrixParams, EntryIntersection, EntryIter},
         Collider,
     },
 };
 
 /// A hierarchical grid spatial index.
-/// Currently the only type of index implemented.
 ///
 /// This is optimized for fairly small worlds with a low object count (in the thousands at most).
 /// If the object count or world size is very large, it will eat up a lot of memory.
+///
+/// No other spatial index algorithms are currently implemented,
+/// so if this doesn't work for you you're out of luck for now.
 #[derive(Clone, Debug)]
 pub struct HGrid {
     pub(crate) bounds: AABB,
     pub(crate) grids: Vec<Grid>,
+    spacing_ratio: usize,
     // timestamping used to keep track of which colliders were already checked by a query.
-    curr_timestamp: u16,
+    last_timestamp: u16,
     timestamps: Vec<u16>,
     // cache AABBs that colliders were inserted with, their layers to cull ignored layer pairs
     // quickly, and their generations in the graph to allow safe user-facing queries
@@ -58,10 +61,11 @@ pub struct HGridParams {
     /// A likely good value is a little (10-50%) larger than the smallest objects in your scene.
     pub lowest_spacing: f64,
     /// Number of grid levels. Increasing it increases required memory and
-    /// may speed up collision detection if there's high variance in object size.
+    /// usually speeds up raycasts (particularly ones over long distances) and point queries.
+    /// It may also speed up collision detection if there's high variance in object size.
     ///
-    /// NOTE: for now, little optimization involving multiple grid levels has been done.
-    /// You're probably best off setting this to 1.
+    /// Two or three should be sufficient depending on the size distribution of your objects.
+    /// Anything more is probably too much.
     pub level_count: usize,
     /// The number to multiply spacing by for subsequent grid levels after `lowest_spacing`.
     ///
@@ -80,7 +84,7 @@ impl Default for HGridParams {
                 max: m::Vec2::new(40.0, 10.0),
             },
             lowest_spacing: 1.0,
-            level_count: 1,
+            level_count: 2,
             spacing_ratio: 2,
             initial_capacity: 0,
         }
@@ -133,7 +137,8 @@ impl HGrid {
                     }
                 })
                 .collect(),
-            curr_timestamp: 0,
+            spacing_ratio: params.spacing_ratio,
+            last_timestamp: 0,
             timestamps: vec![0; params.initial_capacity],
             aabbs: vec![AABB::zero(); params.initial_capacity],
             layers: vec![0; params.initial_capacity],
@@ -150,7 +155,7 @@ impl HGrid {
             grid.has_objects = false;
         }
 
-        self.curr_timestamp = 0;
+        self.last_timestamp = 0;
         for ts in &mut self.timestamps {
             *ts = 0;
         }
@@ -202,7 +207,7 @@ impl HGrid {
         mask_matrix: &'a MaskMatrix,
     ) -> impl 'a + Iterator<Item = NodeKey<Collider>> {
         self.insert(node, aabb, layer);
-        self.timestamps[node.idx] = self.curr_timestamp + 1;
+        self.timestamps[node.idx] = self.last_timestamp + 1;
         self.test_aabb(aabb, layer, mask_matrix)
     }
 
@@ -224,8 +229,8 @@ impl HGrid {
         let layers = &self.layers;
         let generations = &self.generations;
 
-        self.curr_timestamp += 1;
-        let curr_timestamp = self.curr_timestamp;
+        self.last_timestamp += 1;
+        let curr_timestamp = self.last_timestamp;
 
         self.grids
             .iter()
@@ -247,22 +252,20 @@ impl HGrid {
                 })
             })
             .filter_map(move |id| {
-                if timestamps[id] != curr_timestamp {
-                    timestamps[id] = curr_timestamp;
-                    if mask_matrix.get(layers[id], layer) {
-                        // aabb check to quickly cull things that are in the same square because of
-                        // wrapping or just far enough apart
-                        aabb_worldspace.intersection(&aabbs[id]).map(|_| NodeKey {
-                            idx: id,
-                            gen: generations[id],
-                            _marker: std::marker::PhantomData,
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
+                if timestamps[id] == curr_timestamp {
+                    return None;
                 }
+                timestamps[id] = curr_timestamp;
+                if !mask_matrix.get(layers[id], layer) {
+                    return None;
+                }
+                // aabb check to quickly cull things that are in the same square because of
+                // wrapping or just far enough apart
+                aabb_worldspace.intersection(&aabbs[id]).map(|_| NodeKey {
+                    idx: id,
+                    gen: generations[id],
+                    _marker: std::marker::PhantomData,
+                })
             })
     }
 
@@ -296,6 +299,36 @@ impl HGrid {
             })
     }
 
+    pub(crate) fn traverse_ray(&mut self, ray: Ray, dist_limit: f64) -> RayTraversal<'_> {
+        let ray_worldspace = ray;
+        let ray_start_in_grid = ray_worldspace.start - self.bounds.min;
+        // wrap ray start to the grid
+        let ray_start_in_grid = m::Vec2::new(
+            ray_start_in_grid.x.rem_euclid(self.bounds.width()),
+            ray_start_in_grid.y.rem_euclid(self.bounds.height()),
+        );
+        let ray_gridspace = Ray {
+            start: ray_start_in_grid,
+            dir: ray_worldspace.dir,
+        };
+
+        let top_grid = &self.grids[self.grids.len() - 1];
+        // no need to wrap these because we wrapped ray.start
+        let start_col = (ray_gridspace.start.x / top_grid.spacing) as usize;
+        let start_row = (ray_gridspace.start.y / top_grid.spacing) as usize;
+        RayTraversal {
+            hgrid: self,
+            dist_limit,
+            ray_gridspace,
+            curr_cell: (start_col, start_row),
+            last_axis_crossed: None,
+            t: 0.0,
+            t_past: 0.0,
+            first_returned: false,
+        }
+    }
+
+    // for debug visualization
     pub(crate) fn populated_cells(&self) -> impl '_ + Iterator<Item = GridCell> {
         self.grids
             .iter()
@@ -329,4 +362,355 @@ pub(crate) struct GridCell {
     pub grid_idx: usize,
     pub col_idx: usize,
     pub row_idx: usize,
+}
+
+//
+// raycasting
+// (woah, this took a lot more lines than I expected)
+//
+
+// track last crossed axis to figure out where we are when recursing to lower grid levels
+#[derive(Clone, Copy, Debug)]
+enum Axis {
+    X,
+    Y,
+}
+
+pub(crate) struct RayTraversal<'a> {
+    // params
+    hgrid: &'a mut HGrid,
+    dist_limit: f64,
+
+    // state
+    ray_gridspace: Ray,
+    curr_cell: (usize, usize),
+    last_axis_crossed: Option<Axis>,
+    /// ray_gridspace is moved whenever it wraps around, t since that last happened
+    t: f64,
+    /// total t stored to determine stop condition
+    t_past: f64,
+    first_returned: bool,
+}
+
+impl<'a> RayTraversal<'a> {
+    /// Step to the next cell of the top-level grid
+    /// and return an iterator over all colliders in that area on any of the grid levels.
+    pub fn step(&mut self) -> Option<CellRayIter<'_>> {
+        if !self.first_returned {
+            self.first_returned = true;
+            return Some(CellRayIter::new(self));
+        }
+        let top_grid = &self.hgrid.grids[self.hgrid.grids.len() - 1];
+
+        let next_xlim = if self.ray_gridspace.dir.x >= 0.0 {
+            self.curr_cell.0 + 1
+        } else {
+            // we're at the rightmost edge of the cell coming backwards
+            self.curr_cell.0
+        };
+        let next_xlim = next_xlim as f64 * top_grid.spacing;
+        let next_ylim = if self.ray_gridspace.dir.y >= 0.0 {
+            self.curr_cell.1 + 1
+        } else {
+            self.curr_cell.1
+        };
+        let next_ylim = next_ylim as f64 * top_grid.spacing;
+
+        let t_to_x = (next_xlim - self.ray_gridspace.start.x) / self.ray_gridspace.dir.x;
+        let t_to_y = (next_ylim - self.ray_gridspace.start.y) / self.ray_gridspace.dir.y;
+        // pick the closer boundary.
+        // if dir.y is 0, x is picked.
+        // if dir.x is 0, dir.y isn't 0 and t_to_x is inf -> both these are false so y is picked.
+        if self.ray_gridspace.dir.y == 0.0 || t_to_x < t_to_y {
+            self.t = t_to_x;
+            self.last_axis_crossed = Some(Axis::Y);
+            if self.t + self.t_past >= self.dist_limit {
+                return None;
+            }
+            if self.ray_gridspace.dir.x >= 0.0 {
+                if self.curr_cell.0 + 1 == top_grid.column_count {
+                    // wrap right to left
+                    self.curr_cell.0 = 0;
+                    self.ray_gridspace.start.y += self.t * self.ray_gridspace.dir.y;
+                    self.ray_gridspace.start.x = 0.0;
+                    self.t_past += self.t;
+                    self.t = 0.0;
+                } else {
+                    // move right
+                    self.curr_cell.0 += 1;
+                }
+            } else if self.curr_cell.0 == 0 {
+                // wrap left to right
+                self.curr_cell.0 = top_grid.column_count - 1;
+                self.ray_gridspace.start.y += self.t * self.ray_gridspace.dir.y;
+                self.ray_gridspace.start.x = self.hgrid.bounds.width();
+                self.t_past += self.t;
+                self.t = 0.0;
+            } else {
+                // move left
+                self.curr_cell.0 -= 1;
+            }
+        } else {
+            self.t = t_to_y;
+            self.last_axis_crossed = Some(Axis::X);
+            if self.t + self.t_past >= self.dist_limit {
+                return None;
+            }
+            if self.ray_gridspace.dir.y >= 0.0 {
+                if self.curr_cell.1 + 1 == top_grid.row_count {
+                    // wrap top to bottom
+                    self.curr_cell.1 = 0;
+                    self.ray_gridspace.start.x += self.t * self.ray_gridspace.dir.x;
+                    self.ray_gridspace.start.y = 0.0;
+                    self.t_past += self.t;
+                    self.t = 0.0;
+                } else {
+                    // move upward
+                    self.curr_cell.1 += 1;
+                }
+            } else if self.curr_cell.1 == 0 {
+                // wrap bottom to top
+                self.curr_cell.1 = top_grid.row_count - 1;
+                self.ray_gridspace.start.x += self.t * self.ray_gridspace.dir.x;
+                self.ray_gridspace.start.y = self.hgrid.bounds.height();
+                self.t_past += self.t;
+                self.t = 0.0;
+            } else {
+                // move downward
+                self.curr_cell.1 -= 1;
+            }
+        }
+
+        Some(CellRayIter::new(self))
+    }
+}
+
+/// Iterator that recursively traverses every grid level below a cell of the top-level grid.
+pub(crate) struct CellRayIter<'a> {
+    // destructured borrows from hgrid and ray needed for lifetime purposes
+    ray: Ray,
+    grids: &'a [Grid],
+    ray_timestamp: u16,
+    timestamps: &'a mut [u16],
+    generations: &'a [usize],
+    spacing_ratio: usize,
+
+    sub_iter: SubgridRayIter<'a>,
+}
+
+/// The recursive part of the cell iterator, iterating over a region in a subgrid.
+struct SubgridRayIter<'a> {
+    grid_level: usize,
+    bound_cells: (usize, usize),
+    curr_cell: (usize, usize),
+    t: f64,
+    last_axis_crossed: Option<Axis>,
+    stage: CellIterStage<'a>,
+}
+
+enum CellIterStage<'a> {
+    Cell(EntryIter<EntryIntersection<'a>>),
+    // box required for recursive type, unfortunately
+    Subcells(Box<SubgridRayIter<'a>>),
+}
+
+impl<'a> CellRayIter<'a> {
+    fn new(ray_tr: &'a mut RayTraversal<'_>) -> Self {
+        let grids = &ray_tr.hgrid.grids;
+        let top_grid_lvl = grids.len() - 1;
+        let top_grid = &grids[top_grid_lvl];
+        let ray = ray_tr.ray_gridspace;
+        let top_lvl_cell_iter = top_grid
+            .column_bits
+            .entry(ray_tr.curr_cell.0)
+            .intersection(top_grid.row_bits.entry(ray_tr.curr_cell.1))
+            .iter();
+
+        ray_tr.hgrid.last_timestamp += 1;
+
+        Self {
+            ray,
+            grids,
+            ray_timestamp: ray_tr.hgrid.last_timestamp,
+            timestamps: &mut ray_tr.hgrid.timestamps,
+            generations: &ray_tr.hgrid.generations,
+            spacing_ratio: ray_tr.hgrid.spacing_ratio,
+            sub_iter: SubgridRayIter {
+                grid_level: top_grid_lvl,
+                // use current cell as bounds, this will stop traversal immediately regardless of direction
+                bound_cells: ray_tr.curr_cell,
+                curr_cell: ray_tr.curr_cell,
+                t: ray_tr.t,
+                last_axis_crossed: ray_tr.last_axis_crossed,
+                stage: CellIterStage::Cell(top_lvl_cell_iter),
+            },
+        }
+    }
+}
+
+impl<'a> Iterator for CellRayIter<'a> {
+    type Item = NodeKey<Collider>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.sub_iter.next(
+            &mut SubgridStepParams {
+                ray: self.ray,
+                spacing_ratio: self.spacing_ratio,
+                generations: self.generations,
+                ray_timestamp: self.ray_timestamp,
+                timestamps: self.timestamps,
+            },
+            self.grids,
+        )
+    }
+}
+
+struct SubgridStepParams<'p> {
+    ray: Ray,
+    spacing_ratio: usize,
+    generations: &'p [usize],
+    ray_timestamp: u16,
+    timestamps: &'p mut [u16],
+}
+
+impl<'a> SubgridRayIter<'a> {
+    fn next(
+        &mut self,
+        p: &mut SubgridStepParams<'_>,
+        grids: &'a [Grid],
+    ) -> Option<NodeKey<Collider>> {
+        loop {
+            // we might step to next either when we're at the bottom level of the grid
+            // or when subgrid iterator runs out, so we switch on this after the match
+            let mut step_to_next_cell = false;
+
+            match &mut self.stage {
+                CellIterStage::Cell(cell_iter) => {
+                    for coll_idx in cell_iter {
+                        if p.timestamps[coll_idx] == p.ray_timestamp {
+                            continue;
+                        }
+                        p.timestamps[coll_idx] = p.ray_timestamp;
+                        // probably not worth doing an AABB check here, ray-shape queries
+                        // for the actual collider shapes are close to as fast
+                        return Some(NodeKey {
+                            idx: coll_idx,
+                            gen: p.generations[coll_idx],
+                            _marker: std::marker::PhantomData,
+                        });
+                    }
+
+                    // ran out of colliders in current cell, recurse to next level of the grid.
+                    // TODO: add flags to check if there's anything on the lower levels, skip if not
+                    if self.grid_level > 0 {
+                        let next_lvl = self.grid_level - 1;
+                        // bounds are inclusive
+                        // so that we don't end up with negative numbers at the low edges
+                        let bound_col = if p.ray.dir.x >= 0.0 {
+                            (self.curr_cell.0 + 1) * p.spacing_ratio - 1
+                        } else {
+                            self.curr_cell.0 * p.spacing_ratio
+                        };
+                        let bound_row = if p.ray.dir.y >= 0.0 {
+                            (self.curr_cell.1 + 1) * p.spacing_ratio - 1
+                        } else {
+                            self.curr_cell.1 * p.spacing_ratio
+                        };
+
+                        let first_subcell_col = match self.last_axis_crossed {
+                            Some(Axis::Y) if p.ray.dir.x >= 0.0 => {
+                                self.curr_cell.0 * p.spacing_ratio
+                            }
+                            Some(Axis::Y) => (self.curr_cell.0 + 1) * p.spacing_ratio - 1,
+                            Some(Axis::X) | None => {
+                                (p.ray.point_at_t(self.t).x / grids[next_lvl].spacing) as usize
+                            }
+                        };
+                        let first_subcell_row = match self.last_axis_crossed {
+                            Some(Axis::X) if p.ray.dir.y >= 0.0 => {
+                                self.curr_cell.1 * p.spacing_ratio
+                            }
+                            Some(Axis::X) => (self.curr_cell.1 + 1) * p.spacing_ratio - 1,
+                            Some(Axis::Y) | None => {
+                                (p.ray.point_at_t(self.t).y / grids[next_lvl].spacing) as usize
+                            }
+                        };
+
+                        self.stage = CellIterStage::Subcells(Box::new(SubgridRayIter {
+                            grid_level: next_lvl,
+                            bound_cells: (bound_col, bound_row),
+                            curr_cell: (first_subcell_col, first_subcell_row),
+                            t: self.t,
+                            last_axis_crossed: self.last_axis_crossed,
+                            stage: CellIterStage::Cell(
+                                grids[next_lvl]
+                                    .column_bits
+                                    .entry(first_subcell_col)
+                                    .intersection(grids[next_lvl].row_bits.entry(first_subcell_row))
+                                    .iter(),
+                            ),
+                        }));
+                    } else {
+                        step_to_next_cell = true;
+                    }
+                }
+                CellIterStage::Subcells(sub_iter) => {
+                    if let Some(coll) = sub_iter.next(p, grids) {
+                        return Some(coll);
+                    }
+                    step_to_next_cell = true;
+                }
+            }
+
+            if step_to_next_cell {
+                let next_xlim = if p.ray.dir.x >= 0.0 {
+                    self.curr_cell.0 + 1
+                } else {
+                    self.curr_cell.0
+                };
+                let next_xlim = next_xlim as f64 * grids[self.grid_level].spacing;
+                let next_ylim = if p.ray.dir.y >= 0.0 {
+                    self.curr_cell.1 + 1
+                } else {
+                    self.curr_cell.1
+                };
+                let next_ylim = next_ylim as f64 * grids[self.grid_level].spacing;
+
+                let t_to_x = (next_xlim - p.ray.start.x) / p.ray.dir.x;
+                let t_to_y = (next_ylim - p.ray.start.y) / p.ray.dir.y;
+                // see comment on RayTraversal
+                if p.ray.dir.y == 0.0 || t_to_x < t_to_y {
+                    if self.curr_cell.0 == self.bound_cells.0 {
+                        return None;
+                    }
+                    self.t = t_to_x;
+                    self.last_axis_crossed = Some(Axis::Y);
+                    if p.ray.dir.x >= 0.0 {
+                        self.curr_cell.0 += 1;
+                    } else {
+                        self.curr_cell.0 -= 1;
+                    }
+                } else {
+                    if self.curr_cell.1 == self.bound_cells.1 {
+                        // bound reached, return to the previous grid level
+                        return None;
+                    }
+                    self.t = t_to_y;
+                    self.last_axis_crossed = Some(Axis::X);
+                    if p.ray.dir.y >= 0.0 {
+                        self.curr_cell.1 += 1;
+                    } else {
+                        self.curr_cell.1 -= 1;
+                    }
+                }
+                self.stage = CellIterStage::Cell(
+                    grids[self.grid_level]
+                        .column_bits
+                        .entry(self.curr_cell.0)
+                        .intersection(grids[self.grid_level].row_bits.entry(self.curr_cell.1))
+                        .iter(),
+                );
+            }
+        }
+    }
 }
