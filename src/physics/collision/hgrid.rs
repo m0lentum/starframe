@@ -36,11 +36,13 @@ pub struct HGrid {
 #[derive(Clone, Debug)]
 pub(crate) struct Grid {
     pub(crate) spacing: f64,
-    has_objects: bool,
     pub(crate) column_count: usize,
     pub(crate) row_count: usize,
     column_bits: BitMatrix,
     row_bits: BitMatrix,
+    // bitmask with bit per cell of a grid,
+    // indicating whether objects exist below that cell on lower grid levels.
+    subgrid_mask: Option<BitMatrix>,
 }
 
 /// Parameters for the creation of a hierarchical grid.
@@ -114,29 +116,39 @@ impl HGrid {
         let bounds_w = bounds.width();
         let bounds_h = bounds.height();
 
+        let mut grids: Vec<Grid> = spacings
+            .iter()
+            .map(|&spacing| {
+                let column_count = (bounds_w / spacing).round() as usize;
+                let row_count = (bounds_h / spacing).round() as usize;
+                Grid {
+                    spacing,
+                    column_count,
+                    row_count,
+                    column_bits: BitMatrix::new(BitMatrixParams {
+                        bits_per_entry: params.initial_capacity,
+                        entry_count: column_count,
+                    }),
+                    row_bits: BitMatrix::new(BitMatrixParams {
+                        bits_per_entry: params.initial_capacity,
+                        entry_count: row_count,
+                    }),
+                    subgrid_mask: None,
+                }
+            })
+            .collect();
+
+        // set subgrid mask for all except smallest grid
+        for grid in grids.iter_mut().skip(1) {
+            grid.subgrid_mask = Some(BitMatrix::new(BitMatrixParams {
+                bits_per_entry: grid.row_count,
+                entry_count: grid.column_count,
+            }))
+        }
+
         HGrid {
             bounds,
-            grids: spacings
-                .iter()
-                .map(|&spacing| {
-                    let column_count = (bounds_w / spacing).round() as usize;
-                    let row_count = (bounds_h / spacing).round() as usize;
-                    Grid {
-                        spacing,
-                        has_objects: false,
-                        column_count,
-                        row_count,
-                        column_bits: BitMatrix::new(BitMatrixParams {
-                            bits_per_entry: params.initial_capacity,
-                            entry_count: column_count,
-                        }),
-                        row_bits: BitMatrix::new(BitMatrixParams {
-                            bits_per_entry: params.initial_capacity,
-                            entry_count: row_count,
-                        }),
-                    }
-                })
-                .collect(),
+            grids,
             spacing_ratio: params.spacing_ratio,
             last_timestamp: 0,
             timestamps: vec![0; params.initial_capacity],
@@ -152,7 +164,9 @@ impl HGrid {
         for grid in &mut self.grids {
             grid.column_bits.clear_and_resize(collider_count);
             grid.row_bits.clear_and_resize(collider_count);
-            grid.has_objects = false;
+            if let Some(mask) = &mut grid.subgrid_mask {
+                mask.clear();
+            }
         }
 
         self.last_timestamp = 0;
@@ -177,25 +191,50 @@ impl HGrid {
         };
         // select grid level based on smaller extent of the aabb
         let aabb_size = aabb.width().min(aabb.height());
-        let grid_level = match self.grids.iter_mut().find(|g| g.spacing > aabb_size) {
-            Some(first_bigger) => first_bigger,
-            None => self.grids.last_mut().unwrap(),
-        };
-        grid_level.has_objects = true;
+        let last_grid_idx = self.grids.len() - 1;
+        // iterator that starts at the first grid level larger than the object
+        let mut grids = self
+            .grids
+            .iter_mut()
+            .enumerate()
+            .skip_while(|(i, g)| g.spacing < aabb_size && *i < last_grid_idx)
+            .map(|(_, g)| g);
 
-        let first_column = (aabb.min.x / grid_level.spacing) as isize;
-        let last_column = (aabb.max.x / grid_level.spacing) as isize;
+        let placement_grid = grids.next().unwrap();
+
+        let first_column = (aabb.min.x / placement_grid.spacing) as isize;
+        let last_column = (aabb.max.x / placement_grid.spacing) as isize;
         for col in first_column..=last_column {
             // toroidal wrapping for things outside the grid
-            let col = col.rem_euclid(grid_level.column_count as isize) as usize;
-            grid_level.column_bits.entry_mut(col).set(id);
+            let col = col.rem_euclid(placement_grid.column_count as isize) as usize;
+            placement_grid.column_bits.entry_mut(col).set(id);
         }
 
-        let first_row = (aabb.min.y / grid_level.spacing) as isize;
-        let last_row = (aabb.max.y / grid_level.spacing) as isize;
+        let first_row = (aabb.min.y / placement_grid.spacing) as isize;
+        let last_row = (aabb.max.y / placement_grid.spacing) as isize;
         for row in first_row..=last_row {
-            let row = row.rem_euclid(grid_level.row_count as isize) as usize;
-            grid_level.row_bits.entry_mut(row).set(id);
+            let row = row.rem_euclid(placement_grid.row_count as isize) as usize;
+            placement_grid.row_bits.entry_mut(row).set(id);
+        }
+
+        // mark above grids as having something below them.
+        // we can get cells on subsequent grids by dividing by spacing ratio
+        let mut spacing = 1;
+        for grid in grids {
+            spacing *= self.spacing_ratio;
+            // masks are guaranteed to exist because this can't be the first grid
+            let mask = grid.subgrid_mask.as_mut().unwrap();
+            let fst_c = first_column / spacing as isize;
+            let last_c = last_column / spacing as isize;
+            let fst_r = first_row / spacing as isize;
+            let last_r = last_row / spacing as isize;
+            for col in fst_c..=last_c {
+                let col = col.rem_euclid(grid.column_count as isize) as usize;
+                for row in fst_r..=last_r {
+                    let row = row.rem_euclid(grid.row_count as isize) as usize;
+                    mask.entry_mut(col).set(row);
+                }
+            }
         }
     }
 
@@ -234,7 +273,6 @@ impl HGrid {
 
         self.grids
             .iter()
-            .filter(|grid| grid.has_objects)
             .flat_map(move |grid| {
                 let col_range =
                     ((aabb.min.x / grid.spacing) as isize)..=((aabb.max.x / grid.spacing) as isize);
@@ -276,21 +314,34 @@ impl HGrid {
         let point_worldspace = point;
         let point = point - self.bounds.min;
 
+        // a bit of a monster iterator but I really didn't feel like
+        // making a new type and impling Iterator by hand :^)
         let aabbs = &self.aabbs;
         let generations = &self.generations;
         self.grids
             .iter()
-            .filter(|grid| grid.has_objects)
-            .flat_map(move |grid| {
+            .rev()
+            .scan(false, move |empty_below, grid| {
+                if *empty_below {
+                    return None;
+                }
                 let col = (point.x / grid.spacing) as isize;
                 let col = col.rem_euclid(grid.column_count as isize) as usize;
                 let row = (point.y / grid.spacing) as isize;
                 let row = row.rem_euclid(grid.row_count as isize) as usize;
-                grid.column_bits
-                    .entry(col)
-                    .intersection(grid.row_bits.entry(row))
-                    .iter()
+                if let Some(mask) = &grid.subgrid_mask {
+                    if !mask.entry(col).has(row) {
+                        *empty_below = true;
+                    }
+                }
+                Some(
+                    grid.column_bits
+                        .entry(col)
+                        .intersection(grid.row_bits.entry(row))
+                        .iter(),
+                )
             })
+            .flatten()
             .filter(move |&id| aabbs[id].contains_point(point_worldspace))
             .map(move |id| NodeKey {
                 idx: id,
@@ -601,57 +652,62 @@ impl<'a> SubgridRayIter<'a> {
                     }
 
                     // ran out of colliders in current cell, recurse to next level of the grid.
-                    // TODO: add flags to check if there's anything on the lower levels, skip if not
-                    if self.grid_level > 0 {
-                        let next_lvl = self.grid_level - 1;
-                        // bounds are inclusive
-                        // so that we don't end up with negative numbers at the low edges
-                        let bound_col = if p.ray.dir.x >= 0.0 {
-                            (self.curr_cell.0 + 1) * p.spacing_ratio - 1
-                        } else {
-                            self.curr_cell.0 * p.spacing_ratio
-                        };
-                        let bound_row = if p.ray.dir.y >= 0.0 {
-                            (self.curr_cell.1 + 1) * p.spacing_ratio - 1
-                        } else {
-                            self.curr_cell.1 * p.spacing_ratio
-                        };
-
-                        let first_subcell_col = match self.last_axis_crossed {
-                            Some(Axis::Y) if p.ray.dir.x >= 0.0 => {
+                    match &grids[self.grid_level].subgrid_mask {
+                        // check if there's anything here on the levels below, skip if not
+                        Some(mask) if mask.entry(self.curr_cell.0).has(self.curr_cell.1) => {
+                            let next_lvl = self.grid_level - 1;
+                            // bounds are inclusive
+                            // so that we don't end up with negative numbers at the low edges
+                            let bound_col = if p.ray.dir.x >= 0.0 {
+                                (self.curr_cell.0 + 1) * p.spacing_ratio - 1
+                            } else {
                                 self.curr_cell.0 * p.spacing_ratio
-                            }
-                            Some(Axis::Y) => (self.curr_cell.0 + 1) * p.spacing_ratio - 1,
-                            Some(Axis::X) | None => {
-                                (p.ray.point_at_t(self.t).x / grids[next_lvl].spacing) as usize
-                            }
-                        };
-                        let first_subcell_row = match self.last_axis_crossed {
-                            Some(Axis::X) if p.ray.dir.y >= 0.0 => {
+                            };
+                            let bound_row = if p.ray.dir.y >= 0.0 {
+                                (self.curr_cell.1 + 1) * p.spacing_ratio - 1
+                            } else {
                                 self.curr_cell.1 * p.spacing_ratio
-                            }
-                            Some(Axis::X) => (self.curr_cell.1 + 1) * p.spacing_ratio - 1,
-                            Some(Axis::Y) | None => {
-                                (p.ray.point_at_t(self.t).y / grids[next_lvl].spacing) as usize
-                            }
-                        };
+                            };
 
-                        self.stage = CellIterStage::Subcells(Box::new(SubgridRayIter {
-                            grid_level: next_lvl,
-                            bound_cells: (bound_col, bound_row),
-                            curr_cell: (first_subcell_col, first_subcell_row),
-                            t: self.t,
-                            last_axis_crossed: self.last_axis_crossed,
-                            stage: CellIterStage::Cell(
-                                grids[next_lvl]
-                                    .column_bits
-                                    .entry(first_subcell_col)
-                                    .intersection(grids[next_lvl].row_bits.entry(first_subcell_row))
-                                    .iter(),
-                            ),
-                        }));
-                    } else {
-                        step_to_next_cell = true;
+                            let first_subcell_col = match self.last_axis_crossed {
+                                Some(Axis::Y) if p.ray.dir.x >= 0.0 => {
+                                    self.curr_cell.0 * p.spacing_ratio
+                                }
+                                Some(Axis::Y) => (self.curr_cell.0 + 1) * p.spacing_ratio - 1,
+                                Some(Axis::X) | None => {
+                                    (p.ray.point_at_t(self.t).x / grids[next_lvl].spacing) as usize
+                                }
+                            };
+                            let first_subcell_row = match self.last_axis_crossed {
+                                Some(Axis::X) if p.ray.dir.y >= 0.0 => {
+                                    self.curr_cell.1 * p.spacing_ratio
+                                }
+                                Some(Axis::X) => (self.curr_cell.1 + 1) * p.spacing_ratio - 1,
+                                Some(Axis::Y) | None => {
+                                    (p.ray.point_at_t(self.t).y / grids[next_lvl].spacing) as usize
+                                }
+                            };
+
+                            self.stage = CellIterStage::Subcells(Box::new(SubgridRayIter {
+                                grid_level: next_lvl,
+                                bound_cells: (bound_col, bound_row),
+                                curr_cell: (first_subcell_col, first_subcell_row),
+                                t: self.t,
+                                last_axis_crossed: self.last_axis_crossed,
+                                stage: CellIterStage::Cell(
+                                    grids[next_lvl]
+                                        .column_bits
+                                        .entry(first_subcell_col)
+                                        .intersection(
+                                            grids[next_lvl].row_bits.entry(first_subcell_row),
+                                        )
+                                        .iter(),
+                                ),
+                            }));
+                        }
+                        _ => {
+                            step_to_next_cell = true;
+                        }
                     }
                 }
                 CellIterStage::Subcells(sub_iter) => {

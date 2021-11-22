@@ -73,6 +73,12 @@ impl<'a> Entry<'a> {
     pub fn intersection(self, other: Self) -> EntryIntersection<'a> {
         EntryIntersection(self.0, other.0)
     }
+
+    pub fn has(&self, idx: usize) -> bool {
+        let word_idx = idx / 64;
+        let bit_idx = idx % 64;
+        self.0[word_idx] & (1_u64 << bit_idx) != 0
+    }
 }
 
 impl<'a> IterableEntry for Entry<'a> {
