@@ -61,7 +61,7 @@ pub trait IterableEntry {
 }
 
 /// A view into a single entry in a bit matrix.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Entry<'a>(&'a [u64]);
 
 #[allow(dead_code)] // single entry iter is currently only used in tests
@@ -91,6 +91,7 @@ impl<'a> IterableEntry for Entry<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct EntryMut<'a>(&'a mut [u64]);
 
 impl<'a> EntryMut<'a> {
@@ -105,7 +106,7 @@ impl<'a> EntryMut<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct EntryIntersection<'a>(&'a [u64], &'a [u64]);
 
 impl<'a> EntryIntersection<'a> {
@@ -124,7 +125,7 @@ impl<'a> IterableEntry for EntryIntersection<'a> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct EntryIter<Mask: IterableEntry> {
     m: Mask,
     word_idx: usize,
