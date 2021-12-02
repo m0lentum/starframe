@@ -361,10 +361,14 @@ pub struct Physics {
 }
 
 impl Physics {
-    pub fn new(consts: TuningConstants, grid_params: collision::HGridParams) -> Self {
+    pub fn new(
+        consts: TuningConstants,
+        grid_params: collision::HGridParams,
+        mask_matrix: collision::MaskMatrix,
+    ) -> Self {
         Physics {
             consts,
-            mask_matrix: Default::default(),
+            mask_matrix,
             user_constraints: sm::DenseSlotMap::with_key(),
             spatial_index: HGrid::new(grid_params),
             constraint_graph: ConstraintGraph {

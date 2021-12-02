@@ -83,6 +83,7 @@ impl State {
                     spacing_ratio: 3,
                     initial_capacity: 600,
                 },
+                phys::collision::MaskMatrix::default(),
             ),
             camera: gx::camera::MouseDragCamera::new(
                 gx::camera::ScalingStrategy::ConstantDisplayArea {
