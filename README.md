@@ -7,7 +7,9 @@ on the same hole.
 
 This starframe, however, is a 2D game engine written in Rust as a solo hobby
 project. Its main feature is the physics engine, with design driven by
-sidescrolling action games.
+sidescrolling action games. It is currently being developed alongside
+[Flamegrower](https://github.com/MoleTrooper/flamegrower), a platformer
+about vines and fire.
 
 ## Current features
 
