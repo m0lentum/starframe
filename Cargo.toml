@@ -21,7 +21,7 @@ rayon = { version = "1.5.1", optional = true }
 [features]
 default = ["serde-types", "parallel"]
 parallel = ["rayon"]
-serde-types = ["serde", "ultraviolet/serde"]
+serde-types = ["serde", "ultraviolet/serde", "winit/serde"]
 tracy = ["tracy-client/enable"]
 
 [dev-dependencies]
