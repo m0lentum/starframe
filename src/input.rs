@@ -1,6 +1,5 @@
 use crate::math as m;
 
-use std::collections::HashMap;
 use winit::dpi::PhysicalPosition;
 
 use winit::event as ev;
@@ -13,7 +12,9 @@ pub use ev::VirtualKeyCode as Key;
 /// instead of moving window events around.
 #[derive(Clone, Debug)]
 pub struct InputCache {
-    keyboard: HashMap<Key, AgedState>,
+    // keyboard stored as an array addressed by `Key as usize`.
+    // when updating winit, make sure this is as big as the enum!
+    keyboard: [AgedState; 163],
     mouse_buttons: MouseButtonState,
     cursor_pos: CursorPosition,
     scroll_delta: f64,
@@ -23,8 +24,7 @@ pub struct InputCache {
 impl InputCache {
     pub fn new() -> Self {
         InputCache {
-            // immediately allocate enough space to fit every key the user presses
-            keyboard: HashMap::with_capacity(128),
+            keyboard: [AgedState::default(); 163],
             mouse_buttons: Default::default(),
             cursor_pos: CursorPosition::OutOfWindow(PhysicalPosition::new(0.0, 0.0)),
             scroll_delta: 0.0,
@@ -34,8 +34,10 @@ impl InputCache {
 
     /// Do maintenance such as updating the ages of pressed keys.
     /// Call this at the end of every frame.
-    pub fn tick(&mut self) {
-        for state in self.keyboard.values_mut() {
+    ///
+    /// Calling is handled internally by [`Game`][crate::game::Game].
+    pub(crate) fn tick(&mut self) {
+        for state in &mut self.keyboard {
             state.age += 1;
         }
 
@@ -59,22 +61,21 @@ impl InputCache {
     //
 
     /// Get the state of a keyboard key along with the number of frames since it last changed.
-    /// Returns None if the key has never been touched.
-    pub fn get_key_state(&self, key: Key) -> Option<&AgedState> {
-        self.keyboard.get(&key)
+    pub fn get_key_state(&self, key: Key) -> AgedState {
+        self.keyboard[key as usize]
     }
 
     /// True if the requested key is currently pressed
     /// (for fewer frames than age_limit if provided), false otherwise.
     #[inline]
-    pub fn is_key_pressed(&self, key: Key, age_limit: Option<u32>) -> bool {
+    pub fn is_key_pressed(&self, key: Key, age_limit: Option<usize>) -> bool {
         self.is_key_in_state(key, ElementState::Pressed, age_limit)
     }
 
     /// True if the requested key is currently released
     /// (for fewer frames than age_limit if provided), false otherwise.
     #[inline]
-    pub fn is_key_released(&self, key: Key, age_limit: Option<u32>) -> bool {
+    pub fn is_key_released(&self, key: Key, age_limit: Option<usize>) -> bool {
         self.is_key_in_state(key, ElementState::Released, age_limit)
     }
 
@@ -82,36 +83,30 @@ impl InputCache {
         &self,
         key: Key,
         wanted_state: ElementState,
-        age_limit: Option<u32>,
+        age_limit: Option<usize>,
     ) -> bool {
-        match self.get_key_state(key) {
-            None => false,
-            Some(AgedState { state, age }) => {
-                if *state == wanted_state {
-                    if let Some(al) = age_limit {
-                        *age <= al
-                    } else {
-                        true
-                    }
-                } else {
-                    false
-                }
+        let AgedState { state, age } = self.get_key_state(key);
+        if state == wanted_state {
+            if let Some(al) = age_limit {
+                age <= al
+            } else {
+                true
             }
+        } else {
+            false
         }
     }
 
     /// Get the state of an axis defined by a positive and negavite key.
     /// Prefers the positive key if both are pressed.
     pub fn get_key_axis_state(&self, pos_key: Key, neg_key: Key) -> KeyAxisState {
-        use ElementState::*;
-        use KeyAxisState::*;
         match (
-            self.get_key_state(pos_key).map(|s| s.state),
-            self.get_key_state(neg_key).map(|s| s.state),
+            self.get_key_state(pos_key).state,
+            self.get_key_state(neg_key).state,
         ) {
-            (Some(Pressed), _) => Pos,
-            (_, Some(Pressed)) => Neg,
-            _ => Zero,
+            (ElementState::Pressed, _) => KeyAxisState::Pos,
+            (_, ElementState::Pressed) => KeyAxisState::Neg,
+            _ => KeyAxisState::Zero,
         }
     }
 
@@ -120,7 +115,11 @@ impl InputCache {
     /// # Panics
     /// Panics if the requested mouse button is not tracked.
     /// Left, Middle and Right are tracked by default.
-    pub fn is_mouse_button_pressed(&self, button: ev::MouseButton, age_limit: Option<u32>) -> bool {
+    pub fn is_mouse_button_pressed(
+        &self,
+        button: ev::MouseButton,
+        age_limit: Option<usize>,
+    ) -> bool {
         let AgedState { age, state } = self
             .mouse_buttons
             .get(button)
@@ -158,21 +157,10 @@ impl InputCache {
     /// Track the effect of a keyboard event.
     pub fn track_keyboard(&mut self, evt: ev::KeyboardInput) {
         if let Some(code) = evt.virtual_keycode {
-            self.keyboard
-                .entry(code)
-                .and_modify(|e| match evt.state {
-                    ElementState::Pressed => {
-                        if let ElementState::Released = e.state {
-                            *e = AgedState::new(ElementState::Pressed);
-                        }
-                    }
-                    ElementState::Released => {
-                        if let ElementState::Pressed = e.state {
-                            *e = AgedState::new(ElementState::Released);
-                        }
-                    }
-                })
-                .or_insert_with(|| AgedState::new(evt.state));
+            let cached_key = &mut self.keyboard[code as usize];
+            if evt.state != cached_key.state {
+                *cached_key = AgedState::new(evt.state);
+            }
         }
     }
 
@@ -262,7 +250,7 @@ impl Default for InputCache {
 #[derive(Clone, Copy, Debug)]
 pub struct AgedState {
     pub state: ElementState,
-    pub age: u32,
+    pub age: usize,
 }
 
 impl AgedState {
