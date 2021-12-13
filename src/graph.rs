@@ -268,11 +268,6 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     /// this function will panic, because this signals
     /// that you're creating a malformed object that won't work the way you expect.
     pub fn connect_oneway<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
-        if self.layer_meta.edges.len() <= Other::LAYER_INDEX {
-            self.layer_meta
-                .edges
-                .resize_with(Other::LAYER_INDEX + 1, Vec::new);
-        }
         let edges = &mut self.layer_meta.edges[Other::LAYER_INDEX];
         if edges.len() <= self.idx {
             edges.resize(self.idx + 1, None);
@@ -317,6 +312,25 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         self.layer_meta.refcounts[other.idx] += 1;
     }
 
+    /// Remove the edge pointing from `self` to `other`.
+    ///
+    /// This takes ownership of `other` because if this is the last edge pointing to it,
+    /// this causes it to become deleted, invalidating the ref.
+    pub fn disconnect_oneway<Other: Component>(&mut self, other: NodeRefMut<'_, Other>) {
+        let edges = &mut self.layer_meta.edges[Other::LAYER_INDEX];
+        if edges.len() <= self.idx {
+            return;
+        }
+        if edges[self.idx] == Some(other.idx) {
+            edges[self.idx] = None;
+            other.layer_meta.refcounts[other.idx] -= 1;
+            if other.layer_meta.refcounts[other.idx] == 0 {
+                other.layer_meta.generations[other.idx] += 1;
+                other.layer_meta.vacant_slots.push_back(other.idx);
+            }
+        }
+    }
+
     /// If there's an edge starting from this node and ending at a node of the given type,
     /// get a reference to that node, otherwise return None.
     #[inline]
@@ -344,6 +358,16 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
             idx: self.idx,
             gen: self.layer_meta.generations[self.idx],
             _marker: PhantomData,
+        }
+    }
+
+    /// Get an immutable `NodeRef` from the `NodeRefMut`.
+    #[inline]
+    pub fn subview(&self) -> NodeRef<'_, T> {
+        NodeRef {
+            c: self.c,
+            idx: self.idx,
+            layer_meta: self.layer_meta,
         }
     }
 }
@@ -1142,6 +1166,7 @@ mod tests {
         }
     }
 
+    /// Iterating over nodes hits every alive node and only every alive node.
     #[test]
     fn iterate() {
         let graph = Graph::new();
@@ -1221,6 +1246,7 @@ mod tests {
         }
     }
 
+    /// Deleting hits every intended node.
     #[test]
     fn delete() {
         let mut graph = Graph::new();
@@ -1289,6 +1315,7 @@ mod tests {
         }
     }
 
+    /// Slots left over by `delete` are reused when spawning more components.
     #[test]
     fn reuse_deleted_slots() {
         let mut graph = Graph::new();
@@ -1375,5 +1402,42 @@ mod tests {
         assert_eq!(vels.components.len(), 30);
         // everyones_shape was never deleted
         assert_eq!(shapes.components.len(), 1);
+    }
+
+    /// Disconnecting nodes causes edges to be removed
+    /// and can cause a node to become deleted.
+    #[test]
+    fn disconnect() {
+        let graph = Graph::new();
+
+        let mut l_pose = graph.get_layer_mut::<Pose>();
+        let mut l_body = graph.get_layer_mut::<Body>();
+        let mut l_shape = graph.get_layer_mut::<Shape>();
+
+        let mut pose_node = l_pose.insert(Pose(0));
+        let mut body_node = l_body.insert(Body(0));
+        let mut shape_node = l_shape.insert(Shape(0));
+
+        pose_node.connect(&mut body_node);
+        body_node.connect(&mut shape_node);
+        shape_node.connect(&mut pose_node);
+
+        let pose_key = pose_node.key();
+        let shape_key = shape_node.key();
+
+        pose_node.disconnect_oneway(shape_node);
+        assert!(pose_node.get_neighbor_mut(&mut l_shape).is_none());
+
+        let mut shape_node = l_shape.get_mut(shape_key).unwrap();
+        drop(pose_node);
+        assert!(shape_node.get_neighbor_mut(&mut l_pose).is_some());
+
+        let pose_node = l_pose.get_mut(pose_key).unwrap();
+        shape_node.disconnect_oneway(pose_node);
+        assert!(shape_node.get_neighbor_mut(&mut l_pose).is_none());
+
+        body_node.disconnect_oneway(shape_node);
+        assert!(l_shape.meta.vacant_slots.len() == 1);
+        assert!(l_shape.meta.refcounts[0] == 0);
     }
 }

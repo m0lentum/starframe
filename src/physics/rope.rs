@@ -8,6 +8,9 @@ use crate::{
 };
 
 /// A rope built out of connected particles.
+///
+/// The representation of a rope in the graph is a loop that starts at a Rope node,
+/// goes through every particle in the rope in order and ends at the same Rope node.
 #[derive(Clone, Copy, Debug)]
 pub struct Rope {
     pub spacing: f64,
@@ -54,7 +57,7 @@ pub fn spawn_rope_line(
     mut rope: Rope,
     start: m::Vec2,
     end: m::Vec2,
-    (mut l_body, mut l_pose, mut l_collider, mut l_rope, mut l_shape): (
+    (mut l_body, l_pose, l_collider, mut l_rope, l_shape): (
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
@@ -70,22 +73,110 @@ pub fn spawn_rope_line(
     let dir = dist / dist_mag;
     let step = rope.spacing * dir;
 
+    let mut rope_node = l_rope.insert(rope);
+    let [first_body, last_body] = build_rope_line(
+        rope_node.subview(),
+        start,
+        step,
+        particle_count,
+        (l_body.subview_mut(), l_pose, l_collider, l_shape),
+    );
+    // connect the particles to the rope node
+    rope_node.connect_oneway(&mut l_body.get_mut_unchecked(first_body));
+    l_body
+        .get_mut_unchecked(last_body)
+        .connect_oneway(&mut rope_node);
+
+    RopeProperties {
+        particle_count,
+        rope_node: rope_node.key(),
+        first_particle: first_body,
+        last_particle: last_body,
+    }
+}
+
+/// Add `count` particles to the end of an existing rope in a line.
+pub fn extend_rope_line(
+    mut rope_node: graph::NodeRefMut<Rope>,
+    dir: m::Unit<m::Vec2>,
+    count: usize,
+    (mut l_body, l_pose, l_collider, l_shape): (
+        LayerViewMut<Body>,
+        LayerViewMut<m::Pose>,
+        LayerViewMut<Collider>,
+        LayerViewMut<Shape>,
+    ),
+) -> RopeProperties {
+    let l_body_sub = l_body.subview();
+    let mut rope_iter = RopeIter::new(rope_node.subview(), &l_body_sub).enumerate();
+    let first_particle = rope_iter.next().expect("Rope had no particles").1;
+    let (last_particle_idx, last_particle) = rope_iter.last().unwrap_or((0, first_particle));
+
+    let last_particle_pos = last_particle
+        .get_neighbor(&l_pose.subview())
+        .expect("Rope particle had no Pose")
+        .c
+        .translation;
+    let step = *dir * rope_node.c.spacing;
+    let first_new_pos = last_particle_pos + step;
+
+    let first_particle = first_particle.key();
+    let last_particle = last_particle.key();
+    drop(l_body_sub);
+
+    let [first_new, last_new] = build_rope_line(
+        rope_node.subview(),
+        first_new_pos,
+        step,
+        count,
+        (l_body.subview_mut(), l_pose, l_collider, l_shape),
+    );
+
+    let rope_key = rope_node.key();
+
+    l_body
+        .get_mut_unchecked(last_new)
+        .connect_oneway(&mut rope_node);
+    let mut last_particle = l_body.get_mut_unchecked(last_particle);
+    last_particle.connect_oneway_same_layer(first_new);
+    last_particle.disconnect_oneway(rope_node);
+
+    RopeProperties {
+        particle_count: last_particle_idx + 1 + count,
+        rope_node: rope_key,
+        first_particle,
+        last_particle: last_new,
+    }
+}
+
+/// Spawn `count` particles in a line, connect them, and return keys to the first and last one.
+fn build_rope_line(
+    rope_node: graph::NodeRef<Rope>,
+    start: m::Vec2,
+    step: m::Vec2,
+    count: usize,
+    (mut l_body, mut l_pose, mut l_collider, mut l_shape): (
+        LayerViewMut<Body>,
+        LayerViewMut<m::Pose>,
+        LayerViewMut<Collider>,
+        LayerViewMut<Shape>,
+    ),
+) -> [graph::NodeKey<Body>; 2] {
     let body_proto = Body {
         velocity: Default::default(),
-        mass: Mass::from(rope.particle_mass),
+        mass: Mass::from(rope_node.c.particle_mass),
         moment_of_inertia: Mass::Infinite,
     };
-    let collider_proto = Collider::new_circle(rope.thickness / 2.0)
+    let collider_proto = Collider::new_circle(rope_node.c.thickness / 2.0)
         .with_layer(ROPE_LAYER)
-        .with_material(rope.material);
+        .with_material(rope_node.c.material);
     // temporary visualisation with Shapes until I get something more bespoke for this
     let shape_proto = Shape::Circle {
-        r: rope.thickness / 2.0,
+        r: rope_node.c.thickness / 2.0,
         points: 8,
         color: [0.729, 0.855, 0.333, 1.0],
     };
 
-    let mut rope_node = l_rope.insert(rope);
     let mut first_body = l_body.insert(body_proto);
     let mut first_pose = l_pose.insert(m::Pose::new(start, Default::default()));
     let mut first_coll = l_collider.insert(collider_proto);
@@ -94,12 +185,10 @@ pub fn spawn_rope_line(
     first_body.connect(&mut first_coll);
     first_pose.connect(&mut first_coll);
     first_pose.connect(&mut first_shape);
-    rope_node.connect_oneway(&mut first_body);
     let first_body = first_body.key();
-
     let mut next_pos: m::Vec2 = start + step;
     let mut prev_body: graph::NodeKey<Body> = first_body;
-    for _ in 1..particle_count {
+    for _ in 1..count {
         let mut body = l_body.insert(body_proto);
         let mut pose = l_pose.insert(m::Pose::new(next_pos, Default::default()));
         let mut coll = l_collider.insert(collider_proto);
@@ -116,16 +205,7 @@ pub fn spawn_rope_line(
         next_pos += step;
         prev_body = body;
     }
-    l_body
-        .get_mut_unchecked(prev_body)
-        .connect_oneway(&mut rope_node);
-
-    RopeProperties {
-        particle_count,
-        rope_node: rope_node.key(),
-        first_particle: first_body,
-        last_particle: prev_body,
-    }
+    [first_body, prev_body]
 }
 
 /// An iterator over the particles in a particular rope, in order from start to end.
