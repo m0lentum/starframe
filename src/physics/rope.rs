@@ -10,7 +10,8 @@ use crate::{
 /// A rope built out of connected particles.
 ///
 /// The representation of a rope in the graph is a loop that starts at a Rope node,
-/// goes through every particle in the rope in order and ends at the same Rope node.
+/// goes through every particle Body in the rope in order.
+/// Every particle is connected back to the Rope node.
 #[derive(Clone, Copy, Debug)]
 pub struct Rope {
     pub spacing: f64,
@@ -75,17 +76,15 @@ pub fn spawn_rope_line(
 
     let mut rope_node = l_rope.insert(rope);
     let [first_body, last_body] = build_rope_line(
-        rope_node.subview(),
+        &mut rope_node,
         start,
         step,
         particle_count,
         (l_body.subview_mut(), l_pose, l_collider, l_shape),
     );
-    // connect the particles to the rope node
+    // outgoing connection from the rope node.
+    // incoming connections from each particle are created by `build_rope_line`
     rope_node.connect_oneway(&mut l_body.get_mut_unchecked(first_body));
-    l_body
-        .get_mut_unchecked(last_body)
-        .connect_oneway(&mut rope_node);
 
     RopeProperties {
         particle_count,
@@ -97,7 +96,7 @@ pub fn spawn_rope_line(
 
 /// Add `count` particles to the end of an existing rope in a line.
 pub fn extend_rope_line(
-    mut rope_node: graph::NodeRefMut<Rope>,
+    rope_node: &mut graph::NodeRefMut<Rope>,
     dir: m::Unit<m::Vec2>,
     count: usize,
     (mut l_body, l_pose, l_collider, l_shape): (
@@ -125,25 +124,19 @@ pub fn extend_rope_line(
     drop(l_body_sub);
 
     let [first_new, last_new] = build_rope_line(
-        rope_node.subview(),
+        rope_node,
         first_new_pos,
         step,
         count,
         (l_body.subview_mut(), l_pose, l_collider, l_shape),
     );
 
-    let rope_key = rope_node.key();
-
-    l_body
-        .get_mut_unchecked(last_new)
-        .connect_oneway(&mut rope_node);
-    let mut last_particle = l_body.get_mut_unchecked(last_particle);
-    last_particle.connect_oneway_same_layer(first_new);
-    last_particle.disconnect_oneway(rope_node);
+    let mut last_old = l_body.get_mut_unchecked(last_particle);
+    last_old.connect_oneway_same_layer(first_new);
 
     RopeProperties {
         particle_count: last_particle_idx + 1 + count,
-        rope_node: rope_key,
+        rope_node: rope_node.key(),
         first_particle,
         last_particle: last_new,
     }
@@ -151,7 +144,7 @@ pub fn extend_rope_line(
 
 /// Spawn `count` particles in a line, connect them, and return keys to the first and last one.
 fn build_rope_line(
-    rope_node: graph::NodeRef<Rope>,
+    rope_node: &mut graph::NodeRefMut<Rope>,
     start: m::Vec2,
     step: m::Vec2,
     count: usize,
@@ -185,6 +178,7 @@ fn build_rope_line(
     first_body.connect(&mut first_coll);
     first_pose.connect(&mut first_coll);
     first_pose.connect(&mut first_shape);
+    first_body.connect_oneway(rope_node);
     let first_body = first_body.key();
     let mut next_pos: m::Vec2 = start + step;
     let mut prev_body: graph::NodeKey<Body> = first_body;
@@ -197,6 +191,7 @@ fn build_rope_line(
         pose.connect(&mut coll);
         body.connect(&mut coll);
         pose.connect(&mut shape);
+        body.connect_oneway(rope_node);
         let body = body.key();
         l_body
             .get_mut_unchecked(prev_body)
