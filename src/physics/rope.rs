@@ -28,8 +28,8 @@ impl Default for Rope {
             spacing: 0.1,
             thickness: 0.12,
             compliance: 0.0000001,
-            bending_max_angle: m::Angle::Deg(15.0).rad(),
-            bending_compliance: 0.08,
+            bending_max_angle: m::Angle::Deg(30.0).rad(),
+            bending_compliance: 0.2,
             damping: 20.0,
             material: Material {
                 static_friction_coef: None,
