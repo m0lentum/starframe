@@ -29,7 +29,7 @@ pub struct HGrid {
     // cache AABBs that colliders were inserted with, their layers to cull ignored layer pairs
     // quickly, and their generations in the graph to allow safe user-facing queries
     aabbs: Vec<AABB>,
-    layers: Vec<u64>,
+    layers: Vec<usize>,
     generations: Vec<usize>,
 }
 
@@ -179,7 +179,7 @@ impl HGrid {
         self.generations.resize(collider_count, 0);
     }
 
-    pub(crate) fn insert(&mut self, node: NodeKey<Collider>, aabb: AABB, layer: u64) {
+    pub(crate) fn insert(&mut self, node: NodeKey<Collider>, aabb: AABB, layer: usize) {
         let id = node.idx;
         self.aabbs[id] = aabb;
         self.layers[id] = layer;
@@ -242,20 +242,20 @@ impl HGrid {
         &'a mut self,
         node: NodeKey<Collider>,
         aabb: AABB,
-        layer: u64,
+        layer: usize,
         mask_matrix: &'a MaskMatrix,
     ) -> impl 'a + Iterator<Item = NodeKey<Collider>> {
         self.insert(node, aabb, layer);
+        // pre-increment timestamp so it's ignored by the check
         self.timestamps[node.idx] = self.last_timestamp + 1;
-        self.test_aabb(aabb, layer, mask_matrix)
+        self.test_aabb(aabb, mask_matrix.get_mask(layer))
     }
 
-    pub(crate) fn test_aabb<'a>(
-        &'a mut self,
+    pub(crate) fn test_aabb(
+        &mut self,
         aabb: AABB,
-        layer: u64,
-        mask_matrix: &'a MaskMatrix,
-    ) -> impl 'a + Iterator<Item = NodeKey<Collider>> {
+        layer_mask: super::LayerMask,
+    ) -> impl '_ + Iterator<Item = NodeKey<Collider>> {
         let aabb_worldspace = aabb;
         let aabb = AABB {
             min: aabb.min - self.bounds.min,
@@ -294,7 +294,7 @@ impl HGrid {
                     return None;
                 }
                 timestamps[id] = curr_timestamp;
-                if !mask_matrix.get(layers[id], layer) {
+                if !layer_mask.get(layers[id]) {
                     return None;
                 }
                 // aabb check to quickly cull things that are in the same square because of

@@ -204,34 +204,78 @@ fn build_rope_line(
 }
 
 /// An iterator over the particles in a particular rope, in order from start to end.
-pub struct RopeIter<'a> {
+pub struct RopeIter<'a, 'l: 'a> {
     rope_node: graph::NodeRef<'a, Rope>,
     has_started: bool,
-    curr_body: Option<graph::NodeRef<'a, Body>>,
-    l_body: &'a LayerView<'a, Body>,
+    curr_body_idx: Option<usize>,
+    l_body: &'a LayerView<'l, Body>,
 }
 
-impl<'a> RopeIter<'a> {
-    pub fn new(rope_node: graph::NodeRef<'a, Rope>, l_body: &'a LayerView<'a, Body>) -> Self {
+impl<'a, 'l: 'a> RopeIter<'a, 'l> {
+    pub fn new(rope_node: graph::NodeRef<'a, Rope>, l_body: &'a LayerView<'l, Body>) -> Self {
         Self {
             rope_node,
             has_started: false,
-            curr_body: None,
+            curr_body_idx: None,
             l_body,
         }
     }
 }
 
-impl<'a> Iterator for RopeIter<'a> {
+impl<'a, 'l: 'a> Iterator for RopeIter<'a, 'l> {
     type Item = graph::NodeRef<'a, Body>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(curr) = &self.curr_body {
-            self.curr_body = curr.get_neighbor(self.l_body)
+        if let Some(curr) = self.curr_body_idx {
+            self.curr_body_idx = graph::get_neighbor_idx::<Body>(self.l_body.meta, curr);
         } else if !self.has_started {
             self.has_started = true;
-            self.curr_body = self.rope_node.get_neighbor(self.l_body);
+            self.curr_body_idx = self
+                .rope_node
+                .get_neighbor(self.l_body)
+                .map(|node| node.key().idx);
         }
-        self.curr_body
+        self.curr_body_idx
+            .map(|i| self.l_body.get_unchecked_by_item_idx(i))
+    }
+}
+
+/// A [`RopeIter`][self::RopeIter] but it yields mutable references.
+pub struct RopeIterMut<'a, 'l: 'a> {
+    rope_node: graph::NodeRef<'a, Rope>,
+    has_started: bool,
+    curr_body_idx: Option<usize>,
+    l_body: &'a mut LayerViewMut<'l, Body>,
+}
+
+impl<'a, 'l: 'a> RopeIterMut<'a, 'l> {
+    pub fn new(
+        rope_node: graph::NodeRef<'a, Rope>,
+        l_body: &'a mut LayerViewMut<'l, Body>,
+    ) -> Self {
+        Self {
+            rope_node,
+            has_started: false,
+            curr_body_idx: None,
+            l_body,
+        }
+    }
+
+    /// Unfortunately Iterator can't be implemented for this due to lifetime trouble,
+    /// as Iterator doesn't allow tying the lifetime of yielded references to
+    /// the `'_` lifetime of the `next` method. Call this by hand instead.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<graph::NodeRefMut<'_, Body>> {
+        if let Some(curr) = self.curr_body_idx {
+            self.curr_body_idx = graph::get_neighbor_idx::<Body>(self.l_body.meta, curr);
+        } else if !self.has_started {
+            self.has_started = true;
+            self.curr_body_idx = self
+                .rope_node
+                .get_neighbor(&self.l_body.subview())
+                .map(|node| node.key().idx);
+        }
+        self.curr_body_idx
+            .map(move |i| self.l_body.get_mut_unchecked_by_item_idx(i))
     }
 }

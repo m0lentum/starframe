@@ -54,6 +54,15 @@ impl Shape {
         }
     }
 
+    pub fn set_color(&mut self, color: Color) {
+        let my_color = match self {
+            Shape::Circle { color, .. } => color,
+            Shape::Rect { color, .. } => color,
+            Shape::Capsule { color, .. } => color,
+        };
+        *my_color = color;
+    }
+
     pub(self) fn verts(&self, pose: &m::Pose) -> Vec<Vertex> {
         // generate a triangle mesh
         fn as_verts(pts: &[m::Vec2], pose: &m::Pose, color: Color) -> Vec<Vertex> {

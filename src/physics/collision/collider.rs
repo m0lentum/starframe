@@ -11,7 +11,7 @@ pub struct Collider {
     pub ty: ColliderType,
     /// Collision layer, see [`MaskMatrix`][super::MaskMatrix] for info.
     /// Defaults to 0.
-    pub layer: u64,
+    pub layer: usize,
 }
 impl Default for Collider {
     fn default() -> Self {
@@ -70,58 +70,34 @@ impl Collider {
         self
     }
 
-    pub fn with_layer(mut self, layer: u64) -> Self {
+    pub fn with_layer(mut self, layer: usize) -> Self {
         self.layer = layer;
         self
     }
 
+    #[inline]
     pub fn area(&self) -> f64 {
-        match self.shape {
-            ColliderShape::Circle { r } => std::f64::consts::PI * r * r,
-            ColliderShape::Rect { hw, hh } => 4.0 * hw * hh,
-            ColliderShape::Capsule { hl, r } => (std::f64::consts::PI * r * r) + (4.0 * hl * r),
-        }
+        self.shape.area()
     }
 
+    #[inline]
     pub fn moment_of_inertia_coef(&self) -> f64 {
-        // from https://en.wikipedia.org/wiki/List_of_moments_of_inertia
-        match self.shape {
-            ColliderShape::Circle { r } => r * r / 2.0,
-            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
-            // rough estimation as a rectangle, since an accurate formula is not on wikipedia.
-            // TODO: calculate a formula by hand
-            ColliderShape::Capsule { hl, r } => (hl * hl + r * r) / 3.0,
-        }
+        self.shape.moment_of_inertia_coef()
     }
 
+    #[inline]
     pub fn is_solid(&self) -> bool {
         matches!(self.ty, ColliderType::Solid(_))
     }
 
+    #[inline]
     pub fn bounding_sphere_r(&self) -> f64 {
-        match self.shape {
-            ColliderShape::Circle { r } => r,
-            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
-            ColliderShape::Capsule { hl, r } => hl + r,
-        }
+        self.shape.bounding_sphere_r()
     }
 
+    #[inline]
     pub fn aabb(&self, pose: &m::Pose) -> AABB {
-        // for symmetrical shapes, the box is one vector mirrored both ways
-        let extent = match self.shape {
-            ColliderShape::Circle { r } => m::Vec2::new(r, r),
-            ColliderShape::Rect { hw, hh } => {
-                (pose.rotation * m::Vec2::new(hw, 0.0)).abs()
-                    + (pose.rotation * m::Vec2::new(0.0, hh)).abs()
-            }
-            ColliderShape::Capsule { hl, r } => {
-                (pose.rotation * m::Vec2::new(hl, 0.0)).abs() + m::Vec2::new(r, r)
-            }
-        };
-        AABB {
-            min: pose.translation - extent,
-            max: pose.translation + extent,
-        }
+        self.shape.aabb(pose)
     }
 }
 
@@ -143,6 +119,68 @@ pub enum ColliderShape {
         hl: f64,
         r: f64,
     },
+}
+
+impl ColliderShape {
+    #[inline]
+    pub fn area(&self) -> f64 {
+        match *self {
+            ColliderShape::Circle { r } => std::f64::consts::PI * r * r,
+            ColliderShape::Rect { hw, hh } => 4.0 * hw * hh,
+            ColliderShape::Capsule { hl, r } => (std::f64::consts::PI * r * r) + (4.0 * hl * r),
+        }
+    }
+
+    #[inline]
+    pub fn moment_of_inertia_coef(&self) -> f64 {
+        // from https://en.wikipedia.org/wiki/List_of_moments_of_inertia
+        match *self {
+            ColliderShape::Circle { r } => r * r / 2.0,
+            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
+            // rough estimation as a rectangle, since an accurate formula is not on wikipedia.
+            // TODO: calculate a formula by hand
+            ColliderShape::Capsule { hl, r } => (hl * hl + r * r) / 3.0,
+        }
+    }
+
+    #[inline]
+    pub fn bounding_sphere_r(&self) -> f64 {
+        match *self {
+            ColliderShape::Circle { r } => r,
+            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
+            ColliderShape::Capsule { hl, r } => hl + r,
+        }
+    }
+
+    pub fn aabb(&self, pose: &m::Pose) -> AABB {
+        // for symmetrical shapes, the box is one vector mirrored both ways
+        let extent = match *self {
+            ColliderShape::Circle { r } => m::Vec2::new(r, r),
+            ColliderShape::Rect { hw, hh } => {
+                (pose.rotation * m::Vec2::new(hw, 0.0)).abs()
+                    + (pose.rotation * m::Vec2::new(0.0, hh)).abs()
+            }
+            ColliderShape::Capsule { hl, r } => {
+                (pose.rotation * m::Vec2::new(hl, 0.0)).abs() + m::Vec2::new(r, r)
+            }
+        };
+        AABB {
+            min: pose.translation - extent,
+            max: pose.translation + extent,
+        }
+    }
+
+    /// Enlarge the shape by the same amount in all normal directions.
+    pub fn expanded(&self, amount: f64) -> Self {
+        match *self {
+            ColliderShape::Circle { r } => ColliderShape::Circle { r: r + amount },
+            ColliderShape::Rect { hw, hh } => ColliderShape::Rect {
+                hw: hw + amount,
+                hh: hh + amount,
+            },
+            ColliderShape::Capsule { hl, r } => ColliderShape::Capsule { hl, r: r + amount },
+        }
+    }
 }
 
 /// Type of a collider. Solid ones respond to collisions when attached to bodies.

@@ -1,6 +1,5 @@
 use super::collider::ColliderShape;
 use crate::math::{self as m, Pose, Unit};
-use crate::physics::Collider;
 
 /// 0-2 points of contact can occur between two 2D objects.
 #[derive(Clone, Copy, Debug)]
@@ -63,12 +62,12 @@ pub struct Contact {
 /// Checks two colliders for intersection.
 pub fn intersection_check(
     pose1: &Pose,
-    coll1: &Collider,
+    coll1: &ColliderShape,
     pose2: &Pose,
-    coll2: &Collider,
+    coll2: &ColliderShape,
 ) -> ContactResult {
     use ColliderShape::*;
-    match (coll1.shape, coll2.shape) {
+    match (*coll1, *coll2) {
         (Circle { r: r1 }, Circle { r: r2 }) => circle_circle(pose1, r1, pose2, r2),
         (Circle { r }, Rect { hw, hh }) => flip_contacts(rect_circle(pose2, hw, hh, pose1, r)),
         (Rect { hw, hh }, Circle { r }) => rect_circle(pose1, hw, hh, pose2, r),

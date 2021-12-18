@@ -13,7 +13,9 @@ use crate::{
 
 pub mod collision;
 use collision::HGrid;
-pub use collision::{Collider, ColliderType, Contact, ContactResult, Material, Ray};
+pub use collision::{
+    Collider, ColliderShape, ColliderType, Contact, ContactResult, LayerMask, Material, Ray,
+};
 
 pub(crate) mod bitmatrix;
 
@@ -1272,6 +1274,36 @@ impl Physics {
                     Some((pose, coll, body))
                 } else {
                     None
+                }
+            })
+    }
+
+    /// Get all colliders that intersect with the given shape.
+    pub fn query_shape<'p, 'g: 'p>(
+        &'p mut self,
+        pose: m::Pose,
+        shape: ColliderShape,
+        mask: LayerMask,
+        (l_pose, l_collider): &'g (
+            graph::LayerView<'g, m::Pose>,
+            graph::LayerView<'g, Collider>,
+        ),
+    ) -> impl '_ + Iterator<Item = graph::NodeRef<'g, Collider>> {
+        self.spatial_index
+            .test_aabb(shape.aabb(&pose), mask)
+            .filter_map(move |coll_key| {
+                let their_coll = l_collider.get(coll_key)?;
+                let their_pose = their_coll.get_neighbor(l_pose)?;
+                let result = collision::shape_shape::intersection_check(
+                    &pose,
+                    &shape,
+                    their_pose.c,
+                    &their_coll.c.shape,
+                );
+                if result.is_zero() {
+                    None
+                } else {
+                    Some(their_coll)
                 }
             })
     }

@@ -372,7 +372,8 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     }
 }
 
-fn get_neighbor_idx<Target: Component>(
+// exposed to crate for some trickery in rope iterators
+pub(crate) fn get_neighbor_idx<Target: Component>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
 ) -> Option<usize> {
@@ -415,7 +416,7 @@ fn get_neighbor_mut<'lr, 'l, Target: Component>(
 
 /// Tracking edges, refcounts, generations and vacant slots for a single layer.
 #[derive(Debug)]
-struct LayerMetadata {
+pub(crate) struct LayerMetadata {
     edges: Vec<Vec<Option<ComponentIdx>>>,
     refcounts: Vec<Refcount>,
     generations: Vec<GenerationIdx>,
@@ -480,7 +481,7 @@ impl ComponentStorage {
 /// Acquired with [`Graph::get_layer`][self::Graph::get_layer_mut] or as a part of
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
 pub struct LayerView<'a, T: Component> {
-    meta: &'a LayerMetadata,
+    pub(crate) meta: &'a LayerMetadata,
     pub(crate) components: &'a [T],
     // Using the same unsafe pattern as with `LayerViewMut`,
     // even though it's not _strictly_ necessary here.
@@ -541,7 +542,7 @@ impl<'a, T: Component> LayerView<'a, T> {
 /// Acquired with [`Graph::get_layer_mut`][self::Graph::get_layer_mut] or as a part of
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
 pub struct LayerViewMut<'a, T: Component> {
-    meta: &'a mut LayerMetadata,
+    pub(crate) meta: &'a mut LayerMetadata,
     pub(crate) components: &'a mut Vec<T>,
     // Storing the lock guard inside this
     // because I can't figure out a way to map it cleanly to a view like this.

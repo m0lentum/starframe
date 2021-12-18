@@ -94,11 +94,27 @@ impl AABB {
 ///
 /// There are 64 collision layers; using a value greater than that on any operation
 /// will cause an out of bounds error.
+#[derive(Clone, Copy, Debug)]
 pub struct MaskMatrix([u64; 64]);
 
+/// A mask determining which collision layers are considered in a query.
+#[derive(Clone, Copy, Debug)]
+pub struct LayerMask(pub u64);
+impl Default for LayerMask {
+    fn default() -> Self {
+        Self(!0)
+    }
+}
+impl LayerMask {
+    /// Check whether the given layer is enabled in this mask.
+    pub fn get(&self, other_layer: usize) -> bool {
+        self.0 & (1 << other_layer) != 0
+    }
+}
+
 /// A reserved layer for ropes. By default, all ropes are on the same layer
-/// and thus do not collide with each other.
-pub const ROPE_LAYER: u64 = 63;
+/// and do not collide with each other.
+pub const ROPE_LAYER: usize = 63;
 
 impl Default for MaskMatrix {
     fn default() -> Self {
@@ -110,18 +126,27 @@ impl Default for MaskMatrix {
 
 impl MaskMatrix {
     /// Stop collision detection between a pair of collision layers.
-    pub fn ignore(&mut self, layer1: u64, layer2: u64) {
+    #[inline]
+    pub fn ignore(&mut self, layer1: usize, layer2: usize) {
         self.0[layer1 as usize] &= !(1 << layer2);
         self.0[layer2 as usize] &= !(1 << layer1);
     }
 
     /// Stop collision detection between members of the same layer.
-    pub fn ignore_within(&mut self, layer: u64) {
+    #[inline]
+    pub fn ignore_within(&mut self, layer: usize) {
         self.0[layer as usize] &= !(1 << layer);
     }
 
     /// Check whether or not two layers have collision enabled between them.
-    pub fn get(&self, layer1: u64, layer2: u64) -> bool {
+    #[inline]
+    pub fn get(&self, layer1: usize, layer2: usize) -> bool {
         self.0[layer1 as usize] & (1 << layer2) != 0
+    }
+
+    /// Get the mask for a single layer.
+    #[inline]
+    pub fn get_mask(&self, layer: usize) -> LayerMask {
+        LayerMask(self.0[layer as usize])
     }
 }

@@ -307,9 +307,9 @@ fn solve_contacts(data: &mut DataView<'_>) {
             });
             collision::shape_shape::intersection_check(
                 &poses[0],
-                &colls[0].coll,
+                &colls[0].coll.shape,
                 &poses[1],
-                &colls[1].coll,
+                &colls[1].coll.shape,
             )
         };
         // mark latest contact that wasn't zero;
