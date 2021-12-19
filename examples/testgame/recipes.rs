@@ -2,7 +2,7 @@ use starframe::{
     self as sf,
     graph::LayerViewMut,
     graphics as gx, math as m,
-    physics::{self as phys, Material},
+    physics::{self as phys, rope, Material},
 };
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -339,8 +339,8 @@ impl Recipe {
                 let b2 = spawn_block(*block2, graph.get_layer_bundle());
                 let rope_end_1 = block1.pose.build() * m::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
-                let rope = phys::spawn_rope_line(
-                    phys::Rope {
+                let rope = rope::spawn_line(
+                    rope::Rope {
                         ..Default::default()
                     },
                     rope_end_1,

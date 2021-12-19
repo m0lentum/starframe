@@ -54,7 +54,7 @@ pub struct RopeProperties {
 /// Spawn a rope in the shape of the line, adjusting spacing so that a particle lands on both
 /// the start and end points.
 #[allow(clippy::type_complexity)]
-pub fn spawn_rope_line(
+pub fn spawn_line(
     mut rope: Rope,
     start: m::Vec2,
     end: m::Vec2,
@@ -75,7 +75,7 @@ pub fn spawn_rope_line(
     let step = rope.spacing * dir;
 
     let mut rope_node = l_rope.insert(rope);
-    let [first_body, last_body] = build_rope_line(
+    let [first_body, last_body] = build_line(
         &mut rope_node,
         start,
         step,
@@ -95,7 +95,7 @@ pub fn spawn_rope_line(
 }
 
 /// Add `count` particles to the end of an existing rope in a line.
-pub fn extend_rope_line(
+pub fn extend_line(
     rope_node: &mut graph::NodeRefMut<Rope>,
     dir: m::Unit<m::Vec2>,
     count: usize,
@@ -123,7 +123,7 @@ pub fn extend_rope_line(
     let last_particle = last_particle.key();
     drop(l_body_sub);
 
-    let [first_new, last_new] = build_rope_line(
+    let [first_new, last_new] = build_line(
         rope_node,
         first_new_pos,
         step,
@@ -143,7 +143,7 @@ pub fn extend_rope_line(
 }
 
 /// Spawn `count` particles in a line, connect them, and return keys to the first and last one.
-fn build_rope_line(
+fn build_line(
     rope_node: &mut graph::NodeRefMut<Rope>,
     start: m::Vec2,
     step: m::Vec2,

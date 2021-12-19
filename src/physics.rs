@@ -28,8 +28,7 @@ pub use forcefield::ForceField;
 mod body;
 pub use body::*;
 
-mod rope;
-pub use rope::*;
+pub mod rope;
 
 mod constraint_graph;
 use constraint_graph::*;
@@ -427,7 +426,7 @@ impl Physics {
             LayerViewMut<m::Pose>,
             LayerViewMut<Body>,
             LayerView<Collider>,
-            LayerView<Rope>,
+            LayerView<rope::Rope>,
         ),
     ) {
         let _main_span = tracy_span!("physics tick", "tick");
@@ -506,7 +505,7 @@ impl Physics {
         // rope constraints
         for rope_node in l_rope.iter() {
             let rope_node_idx = rope_node.key().idx;
-            let mut iter = RopeIter::new(rope_node, &l_body_immut)
+            let mut iter = rope::RopeIter::new(rope_node, &l_body_immut)
                 .map(|node| node.key().idx)
                 .peekable();
             while let Some(particle) = iter.next() {
@@ -834,7 +833,7 @@ impl Physics {
         bufs.rope_prev_particles.resize(body_refs.len(), None);
         for rope_node in l_rope.iter() {
             let node_ref_map = &bufs.node_ref_map;
-            let mut iter = RopeIter::new(rope_node, &l_body_immut)
+            let mut iter = rope::RopeIter::new(rope_node, &l_body_immut)
                 .map(|node| node_ref_map[node.key().idx])
                 .peekable();
             while let Some(particle) = iter.next() {

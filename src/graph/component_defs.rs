@@ -27,7 +27,7 @@ impl_components! {
     // physics
     crate::physics::Collider,
     crate::physics::Body,
-    crate::physics::Rope,
+    crate::physics::rope::Rope,
     // graphics
     crate::graphics::Shape,
 }

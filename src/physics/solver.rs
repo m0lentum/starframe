@@ -19,7 +19,7 @@ pub struct ColliderWithContext {
 
 #[derive(Clone, Copy, Debug)]
 pub struct RopeView {
-    pub info: Rope,
+    pub info: rope::Rope,
     pub start: usize,
 }
 
