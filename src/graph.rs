@@ -331,6 +331,27 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         }
     }
 
+    /// Remove the edge pointing from `self` to another node on the same layer.
+    ///
+    /// See [`connect_oneway_same_layer`][Self::connect_oneway_same_layer] for more information.
+    pub fn disconnect_oneway_same_layer(&mut self, other: NodeKey<T>) {
+        if other.gen != self.layer_meta.generations[other.idx] {
+            return;
+        }
+        let edges = &mut self.layer_meta.edges[T::LAYER_INDEX];
+        if edges.len() <= self.idx {
+            return;
+        }
+        if edges[self.idx] == Some(other.idx) {
+            edges[self.idx] = None;
+            self.layer_meta.refcounts[other.idx] -= 1;
+            if self.layer_meta.refcounts[other.idx] == 0 {
+                self.layer_meta.generations[other.idx] += 1;
+                self.layer_meta.vacant_slots.push_back(other.idx);
+            }
+        }
+    }
+
     /// If there's an edge starting from this node and ending at a node of the given type,
     /// get a reference to that node, otherwise return None.
     #[inline]
