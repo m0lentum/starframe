@@ -168,7 +168,7 @@ impl PlayerController {
 
         drop(layers);
         for bullet in bullet_delete_queue {
-            graph.delete(bullet);
+            graph.gather(bullet).delete();
         }
     }
 

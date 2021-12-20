@@ -86,9 +86,6 @@ pub fn spawn_line(
         particle_count,
         (l_body.subview_mut(), l_pose, l_collider, l_shape),
     );
-    // outgoing connection from the rope node.
-    // incoming connections from each particle are created by `build_rope_line`
-    rope_node.connect_oneway(&mut l_body.get_mut_unchecked(first_body));
 
     RopeProperties {
         particle_count,
@@ -135,9 +132,6 @@ pub fn extend_line(
         (l_body.subview_mut(), l_pose, l_collider, l_shape),
     );
 
-    let mut last_old = l_body.get_mut_unchecked(last_particle);
-    last_old.connect_oneway_same_layer(first_new);
-
     RopeProperties {
         particle_count: last_particle_idx + 1 + count,
         rope_node: rope_node.key(),
@@ -182,7 +176,7 @@ fn build_line(
     first_body.connect(&mut first_coll);
     first_pose.connect(&mut first_coll);
     first_pose.connect(&mut first_shape);
-    first_body.connect_oneway(rope_node);
+    first_body.connect(rope_node);
     let first_body = first_body.key();
     let mut next_pos: m::Vec2 = start + step;
     let mut prev_body: graph::NodeKey<Body> = first_body;
@@ -195,14 +189,10 @@ fn build_line(
         pose.connect(&mut coll);
         body.connect(&mut coll);
         pose.connect(&mut shape);
-        body.connect_oneway(rope_node);
-        let body = body.key();
-        l_body
-            .get_mut_unchecked(prev_body)
-            .connect_oneway_same_layer(body);
+        body.connect(rope_node);
 
         next_pos += step;
-        prev_body = body;
+        prev_body = body.key();
     }
     [first_body, prev_body]
 }
@@ -217,99 +207,8 @@ pub fn detach_particle(
     particle: graph::NodeKey<Body>,
     (mut l_body, mut l_rope): (LayerViewMut<Body>, LayerViewMut<Rope>),
 ) -> Option<[RopeProperties; 2]> {
-    //
-    // this whole thing is some really unsavory and error-prone code,
-    // I hope to come up with a better graph API to make stuff like this easier
-    // but for the time being, it works
-    //
-
-    let particle_node = l_body.get(particle)?;
-    let rope_node = particle_node.get_neighbor_mut(&mut l_rope)?;
-    // iterating by hand instead of rope iter here due to borrowing and mutating shenanigans
-    let first = rope_node.get_neighbor_mut(&mut l_body)?.key();
-    let rope_key = rope_node.key();
-
-    // special case for first particle
-
-    if first == particle {
-        let mut rope = l_rope.get_mut_unchecked(rope_key);
-        rope.disconnect_oneway(l_body.get_mut(first)?);
-        l_body.get_mut_unchecked(first).disconnect_oneway(rope);
-
-        if let Some(second_idx) = graph::get_neighbor_idx::<Body>(l_body.meta, first.idx) {
-            let mut second = l_body.get_mut_unchecked_by_item_idx(second_idx);
-            l_rope
-                .get_mut_unchecked(rope_key)
-                .connect_oneway(&mut second);
-            let second = second.key();
-            l_body
-                .get_mut_unchecked(first)
-                .disconnect_oneway_same_layer(second);
-        }
-        return None;
-    }
-
-    // general case
-
-    let mut curr = first;
-    let new_rope: graph::NodeKey<Rope>;
-    // find the particle being detached, do it and create a new rope if we're in the middle
-    loop {
-        let next_idx = graph::get_neighbor_idx::<Body>(l_body.meta, curr.idx)?;
-        let next_key = l_body.get_unchecked_by_item_idx(next_idx).key();
-
-        if next_key == particle {
-            l_body
-                .get_mut_unchecked(curr)
-                .disconnect_oneway_same_layer(next_key);
-            l_body
-                .get_mut_unchecked(next_key)
-                .disconnect_oneway(l_rope.get_mut_unchecked(rope_key));
-
-            if let Some(rope_continues) = graph::get_neighbor_idx::<Body>(l_body.meta, next_key.idx)
-            {
-                let next_next_key = l_body.get_unchecked_by_item_idx(rope_continues).key();
-
-                let rope_copy = *l_rope.get_unchecked(rope_key).c;
-                let mut new_rope_node = l_rope.insert(rope_copy);
-                new_rope_node.connect_oneway(&mut l_body.get_mut_unchecked(next_next_key));
-                l_body
-                    .get_mut_unchecked(next_key)
-                    .disconnect_oneway_same_layer(next_next_key);
-
-                new_rope = new_rope_node.key();
-                curr = next_next_key;
-                break;
-            }
-        }
-        curr = next_key;
-    }
-
-    // connect new stuff to new rope node
-    loop {
-        let mut particle = l_body.get_mut_unchecked_by_item_idx(curr.idx);
-        particle.disconnect_oneway(l_rope.get_mut_unchecked(rope_key));
-        particle.connect_oneway(&mut l_rope.get_mut_unchecked(new_rope));
-
-        curr = match graph::get_neighbor_idx::<Body>(l_body.meta, curr.idx) {
-            Some(next) => l_body.get_unchecked_by_item_idx(next).key(),
-            None => {
-                return Some([rope_key, new_rope].map(|rope| {
-                    let l_body_sub = l_body.subview();
-                    let mut iter =
-                        RopeIter::new(l_rope.get_unchecked(rope), &l_body_sub).enumerate();
-                    let fst = iter.next().unwrap().1;
-                    let (last_idx, last) = iter.last().unwrap_or((0, fst));
-                    RopeProperties {
-                        particle_count: last_idx + 1,
-                        rope_node: rope,
-                        first_particle: fst.key(),
-                        last_particle: last.key(),
-                    }
-                }));
-            }
-        };
-    }
+    // TODO reimplement with new graph
+    None
 }
 
 //
