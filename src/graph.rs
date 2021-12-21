@@ -442,9 +442,9 @@ fn get_neighbor_mut<'lr, 'l, Target: Component>(
 /// Tracking edges, refcounts, generations and vacant slots for a single layer.
 #[derive(Debug)]
 pub(crate) struct LayerMetadata {
-    edges: Vec<Vec<Option<EdgeListNode>>>,
-    secondary_edges: Vec<EdgeListNode>,
-    vacant_edge_slots: VecDeque<usize>,
+    pub(crate) edges: Vec<Vec<Option<EdgeListNode>>>,
+    pub(crate) secondary_edges: Vec<EdgeListNode>,
+    pub(crate) vacant_edge_slots: VecDeque<usize>,
 
     statuses: Vec<NodeStatus>,
     vacant_comp_slots: VecDeque<ComponentIdx>,
@@ -471,9 +471,9 @@ struct NodeStatus {
 
 /// Intrusive list node for secondary edges
 #[derive(Clone, Copy, Debug)]
-struct EdgeListNode {
-    target: ComponentIdx,
-    next_edge: Option<usize>,
+pub(crate) struct EdgeListNode {
+    pub(crate) target: ComponentIdx,
+    pub(crate) next_edge: Option<usize>,
 }
 
 /// An iterator over all edges from a node to nodes in a specific layer.
