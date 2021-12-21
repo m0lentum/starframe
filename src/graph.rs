@@ -1025,6 +1025,8 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
 
         let result = Self::run(&mut self.inner, &mut locked_layers);
 
+        // delete edges
+
         for (edge_start, edge_end) in result.edges {
             let layer_meta = &mut locked_layers[edge_start.layer].meta;
 
@@ -1079,7 +1081,19 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
                 }
             }
         }
-        for node in result.nodes {
+
+        // delete nodes
+
+        'node: for node in result.nodes {
+            if self.inner.stop_at_layers.contains(&node.layer) {
+                // This is a boundary node,
+                // only delete it if every edge leading away from it was deleted
+                for edge_layer in &locked_layers[node.layer].meta.edges {
+                    if edge_layer.len() > node.idx && edge_layer[node.idx].is_some() {
+                        continue 'node;
+                    }
+                }
+            }
             locked_layers[node.layer].meta.statuses[node.idx].generation += 1;
             locked_layers[node.layer].meta.statuses[node.idx].currently_exists = false;
             locked_layers[node.layer]
@@ -1114,36 +1128,35 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
                     let mut curr_edge = edges_to_target[curr_node.idx];
                     // the whole node is being deleted, so every outgoing edge is too.
                     // only push the first edge, the rest will be deleted by following the list
-                    let mut primary_edge = true;
+                    let mut is_primary_edge = true;
                     while let Some(edge) = curr_edge {
                         let next_node = BareNodeKey {
                             layer: target_layer_idx,
                             idx: edge.target,
                         };
 
-                        if stop_at_layers.contains(&next_node.layer) {
-                            // the next node won't be deleted. this requires some extra attention
-                            // since it needs to be plucked out of the edge list
-                            // instead of deleting the whole list
-                            ret.edges.push((next_node, curr_node));
-                            if primary_edge {
-                                ret.edges.push((curr_node, next_node));
-                            }
-                        } else if let Some(already_seen) =
-                            ret.nodes.iter().find(|n| **n == next_node)
-                        {
-                            if primary_edge {
-                                ret.edges.push((curr_node, *already_seen));
-                            }
-                        } else {
-                            if primary_edge {
-                                ret.edges.push((curr_node, next_node));
-                            }
+                        let is_boundary_node = stop_at_layers.contains(&next_node.layer);
+                        let is_already_found_node = ret.nodes.contains(&next_node);
+
+                        if !is_already_found_node {
                             ret.nodes.push(next_node);
+                        }
+                        if is_primary_edge {
+                            ret.edges.push((curr_node, next_node));
+                        }
+                        if is_boundary_node {
+                            // Don't continue the search, but do push the node to found nodes
+                            // and the edge leading back to current node to found edges.
+                            // (If this isn't a boundary node, the edge leading back will be pushed
+                            // later in the search.)
+                            // This node is deleted only if all edges to it were found by the gather.
+                            ret.edges.push((next_node, curr_node));
+                        }
+                        if !is_boundary_node && !is_already_found_node {
                             search_all(next_node, ret, locked_layers, stop_at_layers);
                         }
 
-                        primary_edge = false;
+                        is_primary_edge = false;
                         curr_edge = edge
                             .next_edge
                             .map(|next| curr_layer.meta.secondary_edges[next]);
@@ -1482,18 +1495,33 @@ mod tests {
             gather.delete();
         }
 
-        let (poses, vels, bodies, shapes): AllLayers = graph.get_layer_bundle();
-        // poses should all be deleted, half of vels should, and none of bodies and shapes
-        assert_eq!(poses.iter().count(), 0);
-        assert_eq!(vels.iter().count(), 5);
-        assert_eq!(bodies.iter().count(), 10);
-        assert_eq!(shapes.iter().count(), 10);
-        for vel in vels.iter() {
-            let body = vel.get_neighbor(&bodies).expect("unwanted edge deleted");
-            let _shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+        let mut remaining_triples = Vec::new();
+        {
+            let (poses, vels, bodies, shapes): AllLayers = graph.get_layer_bundle();
+            // poses should all be deleted, half of vels should, and none of bodies and shapes
+            assert_eq!(poses.iter().count(), 0);
+            assert_eq!(vels.iter().count(), 5);
+            assert_eq!(bodies.iter().count(), 10);
+            assert_eq!(shapes.iter().count(), 10);
+            for vel in vels.iter() {
+                let body = vel.get_neighbor(&bodies).expect("unwanted edge deleted");
+                let shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+                remaining_triples.push((vel.key(), body.key(), shape.key()));
+            }
+            for body in bodies.iter() {
+                let _shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+            }
         }
-        for body in bodies.iter() {
-            let _shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+
+        for (vel, body, shape) in remaining_triples {
+            graph.gather(vel).stop_at_layer::<Body>().delete();
+            // body and shape should still be there for now
+            assert!(graph.get_layer::<Body>().get(body).is_some());
+            assert!(graph.get_layer::<Shape>().get(shape).is_some());
+            graph.gather(shape).stop_at_layer::<Body>().delete();
+            // body should now be deleted despite being set as a boundary
+            // because there are no more edges to it
+            assert!(graph.get_layer::<Body>().get(body).is_none());
         }
     }
 
