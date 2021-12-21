@@ -143,7 +143,7 @@ impl<'a, T: Component> From<NodeRef<'a, T>> for NodeKey<T> {
     fn from(node: NodeRef<'a, T>) -> Self {
         Self {
             idx: node.idx,
-            gen: node.layer_meta.generations[node.idx],
+            gen: node.layer_meta.statuses[node.idx].generation,
             _marker: PhantomData,
         }
     }
@@ -152,7 +152,7 @@ impl<'a, T: Component> From<NodeRefMut<'a, T>> for NodeKey<T> {
     fn from(node: NodeRefMut<'a, T>) -> Self {
         Self {
             idx: node.idx,
-            gen: node.layer_meta.generations[node.idx],
+            gen: node.layer_meta.statuses[node.idx].generation,
             _marker: PhantomData,
         }
     }
@@ -208,6 +208,20 @@ impl<'a, T: Component> NodeRef<'a, T> {
         get_neighbor(self.layer_meta, self.idx, layer)
     }
 
+    /// Get an iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][self::get_neighbor] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors<'r, 'l, Target: Component>(
+        &'r self,
+        layer: &'r LayerView<'l, Target>,
+    ) -> EdgeIter<'r, 'l, Target> {
+        EdgeIter {
+            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
+    }
+
     /// If there's an edge starting from this node and ending at a node of the given type,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
@@ -218,12 +232,26 @@ impl<'a, T: Component> NodeRef<'a, T> {
         get_neighbor_mut(self.layer_meta, self.idx, layer)
     }
 
+    /// Get a mutable iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][self::get_neighbor_mut] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors_mut<'r, 'l, Target: Component>(
+        &'r self,
+        layer: &'r mut LayerViewMut<'l, Target>,
+    ) -> EdgeIterMut<'r, 'l, Target> {
+        EdgeIterMut {
+            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
+    }
+
     /// Get a key that can be used to access this node later.
     #[inline]
     pub fn key(&self) -> NodeKey<T> {
         NodeKey {
             idx: self.idx,
-            gen: self.layer_meta.generations[self.idx],
+            gen: self.layer_meta.statuses[self.idx].generation,
             _marker: PhantomData,
         }
     }
@@ -249,14 +277,48 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         if edges.len() <= self.idx {
             edges.resize(self.idx + 1, None);
         }
-        let prev_val = edges[self.idx].replace(other.idx);
-        assert!(
-            prev_val.is_none(),
-            "Multiple edges to the same layer from the same component are not supported yet"
-        );
+        let new_edge_node = EdgeListNode {
+            target: other.idx,
+            next_edge: None,
+        };
+        // add the node either as primary if it's the first one,
+        // or to the end of the linked list if not
+        match edges[self.idx] {
+            None => {
+                edges[self.idx] = Some(new_edge_node);
+            }
+            Some(ref mut existing_edge) => {
+                let new_edge_idx = match self.layer_meta.vacant_edge_slots.pop_front() {
+                    Some(vacant) => {
+                        self.layer_meta.secondary_edges[vacant] = new_edge_node;
+                        vacant
+                    }
+                    None => {
+                        self.layer_meta.secondary_edges.push(new_edge_node);
+                        self.layer_meta.secondary_edges.len() - 1
+                    }
+                };
+                // attach to the list
+                match existing_edge.next_edge {
+                    None => {
+                        existing_edge.next_edge = Some(new_edge_idx);
+                    }
+                    Some(next_edge) => {
+                        let mut last_edge_idx = next_edge;
+                        while let Some(next) =
+                            self.layer_meta.secondary_edges[last_edge_idx].next_edge
+                        {
+                            last_edge_idx = next;
+                        }
+                        self.layer_meta.secondary_edges[last_edge_idx].next_edge =
+                            Some(new_edge_idx);
+                    }
+                }
+            }
+        }
     }
 
-    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// If there's an edge from this node to a node of the given type,
     /// get a reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor<'lr, 'l, Target: Component>(
@@ -266,7 +328,21 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         get_neighbor(self.layer_meta, self.idx, layer)
     }
 
-    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// Get an iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][self::get_neighbor] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors<'r, 'l, Target: Component>(
+        &'r self,
+        layer: &'r LayerView<'l, Target>,
+    ) -> EdgeIter<'r, 'l, Target> {
+        EdgeIter {
+            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
+    }
+
+    /// If there's an edge from this node to a node of the given type,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
@@ -276,12 +352,26 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
         get_neighbor_mut(self.layer_meta, self.idx, layer)
     }
 
+    /// Get a mutable iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][self::get_neighbor_mut] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors_mut<'r, 'l, Target: Component>(
+        &'r self,
+        layer: &'r mut LayerViewMut<'l, Target>,
+    ) -> EdgeIterMut<'r, 'l, Target> {
+        EdgeIterMut {
+            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
+    }
+
     /// Get a key that can be used to access this node later.
     #[inline]
     pub fn key(&self) -> NodeKey<T> {
         NodeKey {
             idx: self.idx,
-            gen: self.layer_meta.generations[self.idx],
+            gen: self.layer_meta.statuses[self.idx].generation,
             _marker: PhantomData,
         }
     }
@@ -297,11 +387,11 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     }
 }
 
-// exposed to crate for some trickery in rope iterators
-pub(crate) fn get_neighbor_idx<Target: Component>(
+#[inline]
+fn get_neighbor_list_node<Target: Component>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
-) -> Option<usize> {
+) -> Option<EdgeListNode> {
     if node_layer_meta.edges.len() <= Target::LAYER_INDEX
         || node_layer_meta.edges[Target::LAYER_INDEX].len() <= node_idx
     {
@@ -311,6 +401,15 @@ pub(crate) fn get_neighbor_idx<Target: Component>(
     }
 }
 
+#[inline]
+pub(crate) fn get_neighbor_idx<Target: Component>(
+    node_layer_meta: &LayerMetadata,
+    node_idx: usize,
+) -> Option<usize> {
+    get_neighbor_list_node::<Target>(node_layer_meta, node_idx).map(|e| e.target)
+}
+
+#[inline]
 fn get_neighbor<'lr, 'l, Target: Component>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
@@ -323,6 +422,7 @@ fn get_neighbor<'lr, 'l, Target: Component>(
     })
 }
 
+#[inline]
 fn get_neighbor_mut<'lr, 'l, Target: Component>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
@@ -336,24 +436,87 @@ fn get_neighbor_mut<'lr, 'l, Target: Component>(
 }
 
 //
-// Layers
+// Layer metadata
 //
 
 /// Tracking edges, refcounts, generations and vacant slots for a single layer.
 #[derive(Debug)]
 pub(crate) struct LayerMetadata {
-    edges: Vec<Vec<Option<ComponentIdx>>>,
-    generations: Vec<GenerationIdx>,
-    exists: Vec<bool>,
-    vacant_slots: VecDeque<ComponentIdx>,
+    edges: Vec<Vec<Option<EdgeListNode>>>,
+    secondary_edges: Vec<EdgeListNode>,
+    vacant_edge_slots: VecDeque<usize>,
+
+    statuses: Vec<NodeStatus>,
+    vacant_comp_slots: VecDeque<ComponentIdx>,
 }
 impl LayerMetadata {
     fn new(layer_count: usize) -> Self {
         Self {
             edges: vec![Vec::new(); layer_count],
-            generations: Vec::new(),
-            exists: Vec::new(),
-            vacant_slots: VecDeque::new(),
+            secondary_edges: Vec::new(),
+            vacant_edge_slots: VecDeque::new(),
+
+            statuses: Vec::new(),
+            vacant_comp_slots: VecDeque::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NodeStatus {
+    generation: GenerationIdx,
+    // needed for skipping in iteration
+    currently_exists: bool,
+}
+
+/// Intrusive list node for secondary edges
+#[derive(Clone, Copy, Debug)]
+struct EdgeListNode {
+    target: ComponentIdx,
+    next_edge: Option<usize>,
+}
+
+/// An iterator over all edges from a node to nodes in a specific layer.
+pub struct EdgeIter<'a, 'l: 'a, T: Component> {
+    curr_list_node: Option<EdgeListNode>,
+    edge_list: &'a [EdgeListNode],
+    layer: &'a LayerView<'l, T>,
+}
+impl<'a, 'l: 'a, T: Component> Iterator for EdgeIter<'a, 'l, T> {
+    type Item = NodeRef<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.curr_list_node {
+            None => None,
+            Some(curr) => {
+                self.curr_list_node = curr.next_edge.map(|next| self.edge_list[next]);
+                Some(self.layer.get_unchecked_by_item_idx(curr.target))
+            }
+        }
+    }
+}
+
+/// An iterator over all edges from a node to nodes in a specific layer,
+/// yielding mutable references.
+pub struct EdgeIterMut<'a, 'l: 'a, T: Component> {
+    curr_list_node: Option<EdgeListNode>,
+    edge_list: &'a [EdgeListNode],
+    layer: &'a mut LayerViewMut<'l, T>,
+}
+impl<'a, 'l: 'a, T: Component> EdgeIterMut<'a, 'l, T> {
+    /// Get a reference to the next connected node.
+    ///
+    /// Unfortunately this isn't compatible with the Iterator trait
+    /// because the lifetime of yielded references needs to be `'_`,
+    /// which doesn't exist in associated types.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<NodeRefMut<'_, T>> {
+        match self.curr_list_node {
+            None => None,
+            Some(curr) => {
+                self.curr_list_node = curr.next_edge.map(|next| self.edge_list[next]);
+                Some(self.layer.get_mut_unchecked_by_item_idx(curr.target))
+            }
         }
     }
 }
@@ -373,6 +536,10 @@ impl TypeErasedLayer {
         }
     }
 }
+
+//
+// Layer storage
+//
 
 /// Dynamically typed, lazily initialized storage for component buffers.
 #[derive(Debug)]
@@ -420,7 +587,8 @@ impl<'a, T: Component> LayerView<'a, T> {
     /// Get an immutable reference to a node if it still exists, otherwise return None.
     #[inline]
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
-        if self.meta.generations.len() <= key.idx || self.meta.generations[key.idx] != key.gen {
+        if self.meta.statuses.len() <= key.idx || self.meta.statuses[key.idx].generation != key.gen
+        {
             None
         } else {
             Some(self.get_unchecked(key))
@@ -496,15 +664,17 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
     /// pose_node.connect(&mut collider_node);
     /// ```
     pub fn insert(&mut self, component: T) -> NodeRefMut<'_, T> {
-        let item_idx = if let Some(vacant_slot) = self.meta.vacant_slots.pop_front() {
+        let item_idx = if let Some(vacant_slot) = self.meta.vacant_comp_slots.pop_front() {
             // no generation increment here, that happens on delete
             self.components[vacant_slot] = component;
-            self.meta.exists[vacant_slot] = true;
+            self.meta.statuses[vacant_slot].currently_exists = true;
             vacant_slot
         } else {
             self.components.push(component);
-            self.meta.generations.push(0);
-            self.meta.exists.push(true);
+            self.meta.statuses.push(NodeStatus {
+                generation: 0,
+                currently_exists: true,
+            });
             self.components.len() - 1
         };
 
@@ -517,7 +687,7 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 
     /// Get an immutable reference to a node if it still exists, otherwise return None.
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
-        if self.meta.generations[key.idx] != key.gen {
+        if self.meta.statuses[key.idx].generation != key.gen {
             None
         } else {
             Some(self.get_unchecked(key))
@@ -543,7 +713,8 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 
     /// Get a mutable reference to a node if it still exists, otherwise return None.
     pub fn get_mut(&mut self, key: NodeKey<T>) -> Option<NodeRefMut<'_, T>> {
-        if self.meta.generations.len() <= key.idx || self.meta.generations[key.idx] != key.gen {
+        if self.meta.statuses.len() <= key.idx || self.meta.statuses[key.idx].generation != key.gen
+        {
             None
         } else {
             Some(self.get_mut_unchecked(key))
@@ -621,7 +792,7 @@ impl<'a, T: Component> Iterator for LayerIter<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let (next_idx, next) = loop {
             let (next_idx, next) = self.comp_iter.next()?;
-            if self.layer_meta.exists[next_idx] {
+            if self.layer_meta.statuses[next_idx].currently_exists {
                 break (next_idx, next);
             }
         };
@@ -647,7 +818,7 @@ impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let (next_idx, next) = loop {
             let (next_idx, next) = self.comp_iter.next()?;
-            if self.layer_meta.exists[next_idx] {
+            if self.layer_meta.statuses[next_idx].currently_exists {
                 break (next_idx, next);
             }
         };
@@ -827,6 +998,12 @@ struct GatherInner {
     stop_at_layers: Vec<usize>,
 }
 
+#[derive(Clone, Debug)]
+struct GatherResult {
+    nodes: Vec<BareNodeKey>,
+    edges: Vec<(BareNodeKey, BareNodeKey)>,
+}
+
 impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
     pub fn stop_at_layer<T: Component>(mut self) -> Self {
         self.inner.stop_at_layers.push(T::LAYER_INDEX);
@@ -839,10 +1016,9 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
         let root_idx = self.inner.root.idx;
         // check if the node still exists before doing anything
         let start_layer = &locked_layers[self.inner.root.layer].meta;
-        if start_layer.generations.len() <= root_idx
-            || start_layer.generations[root_idx] != self.inner.root_gen
-            || start_layer.exists.len() <= root_idx
-            || !start_layer.exists[root_idx]
+        if start_layer.statuses.len() <= root_idx
+            || start_layer.statuses[root_idx].generation != self.inner.root_gen
+            || !start_layer.statuses[root_idx].currently_exists
         {
             return;
         }
@@ -850,14 +1026,65 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
         let result = Self::run(&mut self.inner, &mut locked_layers);
 
         for (edge_start, edge_end) in result.edges {
-            locked_layers[edge_start.layer].meta.edges[edge_end.layer][edge_start.idx] = None;
+            let layer_meta = &mut locked_layers[edge_start.layer].meta;
+
+            if !self.inner.stop_at_layers.contains(&edge_start.layer) {
+                //
+                // this is a node that's being deleted; remove the entire list of edges
+
+                let mut curr_edge = layer_meta.edges[edge_end.layer][edge_start.idx].unwrap();
+                layer_meta.edges[edge_end.layer][edge_start.idx] = None;
+                while let Some(next) = curr_edge.next_edge {
+                    curr_edge = layer_meta.secondary_edges[next];
+                    // we don't explicitly delete anything here,
+                    // just remove the primary edge and mark the secondary slots for reuse
+                    layer_meta.vacant_edge_slots.push_back(next);
+                }
+            } else {
+                //
+                // this is a boundary node; find and remove only this particular edge in the list
+
+                let primary_edge = layer_meta.edges[edge_end.layer][edge_start.idx]
+                    .as_mut()
+                    .unwrap();
+                if primary_edge.target == edge_end.idx {
+                    match primary_edge.next_edge {
+                        None => {
+                            layer_meta.edges[edge_end.layer][edge_start.idx] = None;
+                        }
+                        Some(next) => {
+                            *primary_edge = layer_meta.secondary_edges[next];
+                            layer_meta.vacant_edge_slots.push_back(next);
+                        }
+                    }
+                } else {
+                    let first_secondary_idx = primary_edge.next_edge.unwrap();
+                    let first_secondary = layer_meta.secondary_edges[first_secondary_idx];
+                    if first_secondary.target == edge_end.idx {
+                        primary_edge.next_edge = first_secondary.next_edge;
+                        layer_meta.vacant_edge_slots.push_back(first_secondary_idx);
+                    } else {
+                        let mut curr_idx = first_secondary_idx;
+                        while let Some(next_idx) = layer_meta.secondary_edges[curr_idx].next_edge {
+                            let next_edge = layer_meta.secondary_edges[next_idx];
+                            if next_edge.target == edge_end.idx {
+                                layer_meta.secondary_edges[curr_idx].next_edge =
+                                    next_edge.next_edge;
+                                layer_meta.vacant_edge_slots.push_back(next_idx);
+                                break;
+                            }
+                            curr_idx = next_idx;
+                        }
+                    }
+                }
+            }
         }
         for node in result.nodes {
-            locked_layers[node.layer].meta.generations[node.idx] += 1;
-            locked_layers[node.layer].meta.exists[node.idx] = false;
+            locked_layers[node.layer].meta.statuses[node.idx].generation += 1;
+            locked_layers[node.layer].meta.statuses[node.idx].currently_exists = false;
             locked_layers[node.layer]
                 .meta
-                .vacant_slots
+                .vacant_comp_slots
                 .push_back(node.idx);
         }
     }
@@ -865,8 +1092,8 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
     fn run(
         inner: &mut GatherInner,
         locked_layers: &mut [RwLockWriteGuard<'_, TypeErasedLayer>],
-    ) -> SearchResult {
-        let mut ret = SearchResult {
+    ) -> GatherResult {
+        let mut ret = GatherResult {
             nodes: Vec::new(),
             edges: Vec::new(),
         };
@@ -876,32 +1103,50 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
         // recursive depth first search to find all nodes and edges
         fn search_all(
             curr_node: BareNodeKey,
-            ret: &mut SearchResult,
+            ret: &mut GatherResult,
             locked_layers: &[RwLockWriteGuard<TypeErasedLayer>],
             stop_at_layers: &[usize],
         ) {
             let curr_layer = &locked_layers[curr_node.layer];
             for (target_layer_idx, edges_to_target) in curr_layer.meta.edges.iter().enumerate() {
                 if curr_node.idx < edges_to_target.len() {
-                    if let Some(other_item_idx) = edges_to_target[curr_node.idx] {
+                    // iterate over the list of edges
+                    let mut curr_edge = edges_to_target[curr_node.idx];
+                    // the whole node is being deleted, so every outgoing edge is too.
+                    // only push the first edge, the rest will be deleted by following the list
+                    let mut primary_edge = true;
+                    while let Some(edge) = curr_edge {
                         let next_node = BareNodeKey {
                             layer: target_layer_idx,
-                            idx: other_item_idx,
+                            idx: edge.target,
                         };
 
                         if stop_at_layers.contains(&next_node.layer) {
-                            // don't search further but remove edge (both ways!!)
-                            ret.edges.push((curr_node, next_node));
+                            // the next node won't be deleted. this requires some extra attention
+                            // since it needs to be plucked out of the edge list
+                            // instead of deleting the whole list
                             ret.edges.push((next_node, curr_node));
+                            if primary_edge {
+                                ret.edges.push((curr_node, next_node));
+                            }
                         } else if let Some(already_seen) =
                             ret.nodes.iter().find(|n| **n == next_node)
                         {
-                            ret.edges.push((curr_node, *already_seen));
+                            if primary_edge {
+                                ret.edges.push((curr_node, *already_seen));
+                            }
                         } else {
-                            ret.edges.push((curr_node, next_node));
+                            if primary_edge {
+                                ret.edges.push((curr_node, next_node));
+                            }
                             ret.nodes.push(next_node);
                             search_all(next_node, ret, locked_layers, stop_at_layers);
                         }
+
+                        primary_edge = false;
+                        curr_edge = edge
+                            .next_edge
+                            .map(|next| curr_layer.meta.secondary_edges[next]);
                     }
                 }
             }
@@ -910,12 +1155,6 @@ impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
 
         ret
     }
-}
-
-#[derive(Clone, Debug)]
-struct SearchResult {
-    nodes: Vec<BareNodeKey>,
-    edges: Vec<(BareNodeKey, BareNodeKey)>,
 }
 
 //
@@ -1210,7 +1449,7 @@ mod tests {
         assert_eq!(vels.components.len(), 30);
     }
 
-    /// If stopping layers are specified, delete stops there
+    /// If stopping layers are specified, delete algorithm stops there as intended.
     #[test]
     fn delete_stop() {
         let mut graph = Graph::new();
@@ -1255,6 +1494,93 @@ mod tests {
         }
         for body in bodies.iter() {
             let _shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+        }
+    }
+
+    /// Multiple edges from one node to one layer are created, followed, and destroyed correctly.
+    #[test]
+    fn multiple_edges() {
+        let mut graph = Graph::new();
+
+        // do the whole thing a few times to ensure we don't leave garbage
+        for _ in 0..3 {
+            let mut poses = graph.get_layer_mut::<Pose>();
+            let mut bodies = graph.get_layer_mut::<Body>();
+            let mut shapes = graph.get_layer_mut::<Shape>();
+
+            let mut pose = poses.insert(Pose(0));
+            let mut shape = shapes.insert(Shape(0));
+            pose.connect(&mut shape);
+            let mut shape_connected_body_keys = Vec::new();
+            for i in 0..10 {
+                let mut body = bodies.insert(Body(i));
+                pose.connect(&mut body);
+                if i % 2 == 0 {
+                    shape.connect(&mut body);
+                    shape_connected_body_keys.push(body.key());
+                }
+            }
+            assert_eq!(bodies.iter().count(), 10);
+
+            // all neighbors are found
+
+            assert_eq!(pose.get_all_neighbors(&bodies.subview()).count(), 10);
+            assert_eq!(shape.get_all_neighbors(&bodies.subview()).count(), 5);
+
+            let mut conn_bodies = pose.get_all_neighbors_mut(&mut bodies);
+            while let Some(body) = conn_bodies.next() {
+                body.c.0 = 69;
+            }
+            for body in shape.get_all_neighbors(&bodies.subview()) {
+                assert_eq!(body.c.0, 69);
+            }
+
+            let pose_key = pose.key();
+            for &body in &shape_connected_body_keys {
+                let b = bodies.get(body).unwrap();
+                assert_eq!(b.get_neighbor(&poses.subview()).unwrap().key(), pose_key);
+            }
+
+            let shape_key = shape.key();
+
+            // delete gets everything
+
+            drop(poses);
+            drop(bodies);
+            drop(shapes);
+            // half of bodies should go with this, pose should survive with 5 attached
+            graph.gather(shape_key).stop_at_layer::<Pose>().delete();
+
+            let poses = graph.get_layer::<Pose>();
+            let bodies = graph.get_layer::<Body>();
+
+            assert_eq!(bodies.iter().count(), 5);
+            let pose = poses.get(pose_key).expect("Pose was deleted??");
+            assert_eq!(pose.get_all_neighbors(&bodies).count(), 5);
+            for body in pose.get_all_neighbors(&bodies) {
+                assert!(!shape_connected_body_keys.contains(&body.key()));
+            }
+
+            drop(poses);
+            drop(bodies);
+
+            // delete the rest of everything
+            graph.gather(pose_key).delete();
+
+            let poses = graph.get_layer::<Pose>();
+            let bodies = graph.get_layer::<Body>();
+            for edge in &bodies.meta.edges[Pose::LAYER_INDEX] {
+                assert!(edge.is_none());
+            }
+            for edge in &bodies.meta.edges[Shape::LAYER_INDEX] {
+                assert!(edge.is_none());
+            }
+            // all secondary edges became vacant (10 edges - 1 primary edge)
+            assert_eq!(poses.meta.vacant_edge_slots.len(), 9);
+            // secondary edges stay after delete,
+            // but none more were added after first iteration
+            // because vacant slots were used
+            assert_eq!(poses.meta.secondary_edges.len(), 9);
         }
     }
 }
