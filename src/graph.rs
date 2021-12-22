@@ -1,30 +1,27 @@
-//! Starframe's entity system, i.e. the data structure representing game objects.
+//! Starframe's entity system, i.e. the data structure representing game objects,
+//! the component graph.
 //!
-//! A game object in Starframe is a _directed graph_ of components.
-//! Conceptually, one may look something like this:
+//! A game object in Starframe is an _undirected graph_ of components.
+//! Conceptually, a generic physics object may look something like this:
 //! ```text
-//!   Pose <----> Body <----> Collider
-//!    ^            ^
-//!    |            |
-//!    v            v
-//!  Sprite     EventSink
-//!    |
-//!    |
-//!    v
-//! Texture
+//!       Body
+//!       /  \
+//!      /    \
+//!   Pose----Collider
+//!      \
+//!       \
+//!       Shape
 //! ```
-//! Most edges (connections between nodes) should go both ways, but because the graph is directed,
-//! one-directional edges such as from Sprite to Texture in the above diagram can also be made.
-//! This is important to the way object boundaries are determined by the deletion algorithm (see
-//! [`delete`][self::Graph::delete] for details). This comes into play when sharing one component
-//! between multiple objects.
+//! The ECS equivalent would be an entity with a Pose, Body, Collider and Shape component.
 //!
 //! Similarly to how systems in ECS iterate over specific sets of components,
 //! systems using the graph iterate over specific *patterns* of connected nodes.
+//! For instance, physics treats all Bodies that are connected to a Pose and a Collider
+//! as rigid bodies.
 //!
-//! # Usage example
+//! # Basic usage example
 //! ```
-//! # use starframe::{graph::{make_graph, LayerViewMut}, math::Pose};
+//! use starframe::{graph::{new_graph, LayerViewMut}, math::Pose};
 //!
 //! struct Player;
 //! enum Hat {
@@ -35,12 +32,12 @@
 //!     coolness_level: usize,
 //! }
 //!
-//! type MyGraph = make_graph! {
+//! let graph = new_graph! {
+//!     Pose,
 //!     Player,
 //!     Hat,
 //!     Sword,
 //! };
-//! let graph = MyGraph::new();
 //!
 //! fn spawn_player(
 //!     pose: Pose,
@@ -76,6 +73,7 @@
 //!     graph.get_layer_bundle(),
 //! );
 //!
+//! // Iteration equivalent to querying for (Player, Sword) in an ECS
 //! let l_player = graph.get_layer::<Player>();
 //! let l_sword = graph.get_layer::<Sword>();
 //! for player_node in l_player.iter() {
@@ -85,7 +83,31 @@
 //! }
 //! ```
 //!
-//! See individual types' documentation for details.
+//! See individual types' documentation in this module for more usage details.
+//!
+//! # Object boundaries and deletion
+//!
+//! What constitutes an object in the graph isn't strictly defined because anything can be
+//! connected to anything, but most of the time you'll have clear groups of nodes that form
+//! _components_ (in the [graph theory
+//! sense](https://en.wikipedia.org/wiki/Component_(graph_theory))), i.e. have some path of edges
+//! connecting all of them and no edges going anywhere else. (not to be confused with the things
+//! stored in the nodes this graph, also called components because they're analogous to components
+//! in entity-component structures)
+//!
+//! Deleting things is done with [`Graph::gather`][self::Graph::gather]. By default, it assumes
+//! the aformentioned structure. Calling [`delete`][self::Gather::delete] on the created
+//! [`Gather`][self::Gather] performs a depth-first search starting from the given node
+//! and deletes everything it finds.
+//!
+//! However, sometimes multiple conceptual objects are linked in some way, and sometimes this can
+//! be modelled nicely in the graph. For example, Starframe's [ropes][crate::physics::rope] are
+//! built by connecting multiple particles to a single [`Rope`][crate::physics::rope::Rope] node.
+//! In this case, deleting any of the particle bodies in the rope would, by default, delete every
+//! particle in the rope. If this isn't the desired outcome, you can instruct the search to stop at
+//! nodes of a specific type with [`stop_at_layer`][self::Gather::stop_at_layer]. Stopping at a
+//! [`Rope`][crate::physics::rope::Rope] when deleting a rope particle will preserve the rest of
+//! the rope (unless this particle is the last one).
 
 use std::{
     any::{self, Any},
@@ -180,7 +202,7 @@ pub struct NodeRef<'a, T> {
 }
 
 impl<'a, T> NodeRef<'a, T> {
-    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// If there's an edge starting from this node and ending on the target layer,
     /// get a reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor<'lr, 'l, Target>(
@@ -191,7 +213,7 @@ impl<'a, T> NodeRef<'a, T> {
     }
 
     /// Get an iterator going over all edges from this node to the target layer.
-    /// Usually there is only one and [`get_neighbor`][self::get_neighbor] can be used instead.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor] can be used instead.
     #[inline]
     pub fn get_all_neighbors<'r, 'l, Target>(
         &'r self,
@@ -215,7 +237,7 @@ impl<'a, T> NodeRef<'a, T> {
     }
 
     /// Get a mutable iterator going over all edges from this node to the target layer.
-    /// Usually there is only one and [`get_neighbor`][self::get_neighbor_mut] can be used instead.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor_mut] can be used instead.
     #[inline]
     pub fn get_all_neighbors_mut<'r, 'l, Target>(
         &'r self,
@@ -248,6 +270,13 @@ pub struct NodeRefMut<'a, T> {
 }
 
 impl<'a, T> NodeRefMut<'a, T> {
+    /// Connect the node to another node.
+    ///
+    /// After this, the other node will be yielded by the iterator produced by
+    /// [`get_all_neighbors`][Self::get_all_neighbors] if called on `self` with
+    /// the other node's layer, and vice versa. If this is the first edge from
+    /// a specific node to a specific layer (which is typically the case),
+    /// it will also be returned by [`get_neighbor`][Self::get_neighbor].
     #[inline]
     pub fn connect<Other>(&mut self, other: &mut NodeRefMut<'_, Other>) {
         self.connect_oneway(other);
@@ -300,7 +329,7 @@ impl<'a, T> NodeRefMut<'a, T> {
         }
     }
 
-    /// If there's an edge from this node to a node of the given type,
+    /// If there's an edge from this node to a node in the target layer,
     /// get a reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor<'lr, 'l, Target>(
@@ -311,7 +340,7 @@ impl<'a, T> NodeRefMut<'a, T> {
     }
 
     /// Get an iterator going over all edges from this node to the target layer.
-    /// Usually there is only one and [`get_neighbor`][self::get_neighbor] can be used instead.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor] can be used instead.
     #[inline]
     pub fn get_all_neighbors<'r, 'l, Target>(
         &'r self,
@@ -324,7 +353,7 @@ impl<'a, T> NodeRefMut<'a, T> {
         }
     }
 
-    /// If there's an edge from this node to a node of the given type,
+    /// If there's an edge from this node to a node in the target layer,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
     pub fn get_neighbor_mut<'lr, 'l, Target>(
@@ -335,7 +364,7 @@ impl<'a, T> NodeRefMut<'a, T> {
     }
 
     /// Get a mutable iterator going over all edges from this node to the target layer.
-    /// Usually there is only one and [`get_neighbor`][self::get_neighbor_mut] can be used instead.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor_mut] can be used instead.
     #[inline]
     pub fn get_all_neighbors_mut<'r, 'l, Target>(
         &'r self,
@@ -425,7 +454,7 @@ fn get_neighbor_mut<'lr, 'l, Target>(
 // Layer metadata
 //
 
-/// Tracking edges, refcounts, generations and vacant slots for a single layer.
+/// The component-type-independent structure of the graph.
 #[derive(Debug)]
 pub(crate) struct LayerMetadata {
     /// index in the vec that layers are stored in in the Graph
@@ -646,9 +675,8 @@ impl<'a, T> LayerViewMut<'a, T> {
     /// which you can use to connect it to other nodes.
     /// # Example
     /// ```
-    /// # use starframe::{graph::make_graph, math::Pose, physics::Collider};
-    /// # type MyGraph = make_graph!{};
-    /// # let graph = MyGraph::new();
+    /// # use starframe::{graph::new_graph, math::Pose, physics::Collider};
+    /// # let graph = new_graph! { Pose, Collider };
     /// let mut l_pose = graph.get_layer_mut::<Pose>();
     /// let mut l_collider = graph.get_layer_mut::<Collider>();
     /// let mut pose_node = l_pose.insert(Pose::default());
@@ -693,9 +721,8 @@ impl<'a, T> LayerViewMut<'a, T> {
         self.get_unchecked_by_item_idx(key.idx)
     }
 
-    #[doc(hidden)]
     #[inline]
-    pub fn get_unchecked_by_item_idx(&self, idx: usize) -> NodeRef<'_, T> {
+    pub(crate) fn get_unchecked_by_item_idx(&self, idx: usize) -> NodeRef<'_, T> {
         NodeRef {
             c: &self.components[idx],
             idx,
@@ -745,6 +772,8 @@ impl<'a, T> LayerViewMut<'a, T> {
     }
 
     /// Take an immutable sub-view into this mutable view.
+    ///
+    /// Useful for forwarding the view to other functions without moving it.
     pub fn subview(&self) -> LayerView<'_, T> {
         LayerView {
             meta: self.meta,
@@ -844,6 +873,9 @@ pub struct Graph {
 }
 
 impl Graph {
+    /// Create a new graph with layers for the given list of types.
+    /// You probably want to use the [`new_graph`][self::new_graph] macro
+    /// instead for convenience.
     pub fn new(layer_types: &[any::TypeId]) -> Self {
         let addresses: HashMap<_, _> = layer_types
             .iter()
@@ -923,10 +955,9 @@ impl Graph {
     /// # use starframe::{
     /// #    math::Pose,
     /// #    physics::{Body, Collider},
-    /// #    graph::{LayerView, LayerViewMut, make_graph}
+    /// #    graph::{LayerView, LayerViewMut, new_graph}
     /// # };
-    /// # type MyGraph = make_graph!{};
-    /// # let graph = MyGraph::new();
+    /// # let graph = new_graph! { Pose, Body, Collider };
     ///
     /// fn do_things_with_bodies(
     ///     how_many_things: usize,
@@ -989,8 +1020,7 @@ impl Graph {
     }
 }
 
-/// Helper macro to avoid repeating `std::any::TypeId::of` when creating a new
-/// [`Graph`][crate::graph::Graph] with [`new`][crate::graph::Graph::new].
+/// Helper macro to more concisely create new graphs with a given set of layers.
 /// # Example
 /// ```
 /// # use starframe::{graph::new_graph, math::Pose, physics::{Body, Collider}};
@@ -999,6 +1029,17 @@ impl Graph {
 ///     Body,
 ///     Collider,
 /// };
+/// ```
+/// is equivalent to
+/// ```
+/// # use starframe::{graph::Graph, math::Pose, physics::{Body, Collider}};
+/// # use std::any::TypeId;
+/// let graph = Graph::new(&[
+///     TypeId::of::<Pose>(),
+///     TypeId::of::<Body>(),
+///     TypeId::of::<Collider>(),
+/// ]);
+/// ```
 #[macro_export]
 macro_rules! new_graph {
     ($($types:ty),* $(,)*) => {
@@ -1013,6 +1054,11 @@ pub use crate::new_graph;
 // Gather & delete
 //
 
+/// A query that finds all graph nodes and edges
+/// that have paths connecting them to the starting node.
+///
+/// Produced with [`Graph::gather`][self::Graph::gather] and used for deleting things.
+/// See the [module-level documentation][self] for more info.
 pub struct Gather<'g> {
     graph: &'g mut Graph,
     inner: GatherInner,
@@ -1032,6 +1078,11 @@ struct GatherResult {
 }
 
 impl<'g> Gather<'g> {
+    /// Stop the search at the layer of the given type.
+    /// Nodes on that layer are only deleted if they end up with no more edges connected to them
+    /// after the search is complete.
+    /// # Panics
+    /// Panics if there is no layer for the given type in the graph.
     pub fn stop_at_layer<T: 'static>(mut self) -> Self {
         self.inner
             .stop_at_layers
@@ -1039,6 +1090,7 @@ impl<'g> Gather<'g> {
         self
     }
 
+    /// Execute the search and delete everything that was found.
     pub fn delete(mut self) {
         let mut locked_layers = self.graph.write_all_layers();
 

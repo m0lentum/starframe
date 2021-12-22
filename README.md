@@ -17,6 +17,7 @@ about vines and fire.
 
 - Novel graph-based entity system inspired by [froggy](https://github.com/kvark/froggy)
   - [related blog post](https://moletrooper.github.io/blog/2020/08/starframe-1-architecture/)
+    (somewhat outdated; many details have changed since)
 - 2D rigid body and particle physics
   - collider shapes: boxes, circles, and capsules
   - particle-based ropes with full coupling with rigid bodies
