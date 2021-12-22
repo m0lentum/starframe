@@ -7,7 +7,7 @@ use rand::{distributions as distr, distributions::Distribution};
 
 use starframe::{
     game::{self, Game},
-    graph::make_graph,
+    graph::{new_graph, Graph},
     graphics as gx,
     input::{Key, MouseButton},
     math::{self as m, uv},
@@ -38,10 +38,6 @@ fn main() {
 // Types
 //
 
-type MyGraph = make_graph! {
-    player::Player,
-};
-
 pub enum StateEnum {
     Playing,
     Paused,
@@ -49,7 +45,7 @@ pub enum StateEnum {
 pub struct State {
     scene: Scene,
     state: StateEnum,
-    graph: MyGraph,
+    graph: Graph,
     player: player::PlayerController,
     mouse_mode: MouseMode,
     mouse_grabber: MouseGrabber,
@@ -65,7 +61,16 @@ impl State {
         State {
             scene: Scene::default(),
             state: StateEnum::Playing,
-            graph: MyGraph::new(),
+            graph: new_graph! {
+                // starframe types
+                m::Pose,
+                phys::Body,
+                phys::Collider,
+                phys::rope::Rope,
+                gx::Shape,
+                // our types
+                player::Player,
+            },
             player: player::PlayerController::new(),
             mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
@@ -173,7 +178,7 @@ impl Scene {
         Scene::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, physics: &mut phys::Physics, graph: &MyGraph) {
+    pub fn instantiate(&self, physics: &mut phys::Physics, graph: &Graph) {
         for recipe in &self.recipes {
             recipe.spawn(physics, graph);
         }

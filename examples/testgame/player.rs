@@ -1,6 +1,6 @@
 use starframe::{
     self as sf,
-    graph::{LayerViewMut, NodeKey},
+    graph::{Graph, LayerViewMut, NodeKey},
     graphics as gx,
     input::{Key, KeyAxisState},
     math as m, physics as phys,
@@ -93,12 +93,7 @@ impl PlayerController {
         }
     }
 
-    pub fn tick(
-        &mut self,
-        input: &sf::InputCache,
-        physics: &phys::Physics,
-        graph: &mut super::MyGraph,
-    ) {
+    pub fn tick(&mut self, input: &sf::InputCache, physics: &phys::Physics, graph: &mut Graph) {
         let mut layers = graph.get_layer_bundle::<Layers>();
         let (l_pose, l_collider, l_body, l_shape, l_player) = &mut layers;
 
@@ -168,7 +163,7 @@ impl PlayerController {
 
         drop(layers);
         for bullet in bullet_delete_queue {
-            graph.delete(bullet);
+            graph.gather(bullet).delete();
         }
     }
 

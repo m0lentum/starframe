@@ -1,30 +1,27 @@
-//! Starframe's entity system, i.e. the data structure representing game objects.
+//! Starframe's entity system, i.e. the data structure representing game objects,
+//! the component graph.
 //!
-//! A game object in Starframe is a _directed graph_ of components.
-//! Conceptually, one may look something like this:
+//! A game object in Starframe is an _undirected graph_ of components.
+//! Conceptually, a generic physics object may look something like this:
 //! ```text
-//!   Pose <----> Body <----> Collider
-//!    ^            ^
-//!    |            |
-//!    v            v
-//!  Sprite     EventSink
-//!    |
-//!    |
-//!    v
-//! Texture
+//!       Body
+//!       /  \
+//!      /    \
+//!   Pose----Collider
+//!      \
+//!       \
+//!       Shape
 //! ```
-//! Most edges (connections between nodes) should go both ways, but because the graph is directed,
-//! one-directional edges such as from Sprite to Texture in the above diagram can also be made.
-//! This is important to the way object boundaries are determined by the deletion algorithm (see
-//! [`delete`][self::Graph::delete] for details). This comes into play when sharing one component
-//! between multiple objects.
+//! The ECS equivalent would be an entity with a Pose, Body, Collider and Shape component.
 //!
 //! Similarly to how systems in ECS iterate over specific sets of components,
 //! systems using the graph iterate over specific *patterns* of connected nodes.
+//! For instance, physics treats all Bodies that are connected to a Pose and a Collider
+//! as rigid bodies.
 //!
-//! # Usage example
+//! # Basic usage example
 //! ```
-//! # use starframe::{graph::{make_graph, LayerViewMut}, math::Pose};
+//! use starframe::{graph::{new_graph, LayerViewMut}, math::Pose};
 //!
 //! struct Player;
 //! enum Hat {
@@ -35,12 +32,12 @@
 //!     coolness_level: usize,
 //! }
 //!
-//! type MyGraph = make_graph! {
+//! let graph = new_graph! {
+//!     Pose,
 //!     Player,
 //!     Hat,
 //!     Sword,
 //! };
-//! let graph = MyGraph::new();
 //!
 //! fn spawn_player(
 //!     pose: Pose,
@@ -76,6 +73,7 @@
 //!     graph.get_layer_bundle(),
 //! );
 //!
+//! // Iteration equivalent to querying for (Player, Sword) in an ECS
 //! let l_player = graph.get_layer::<Player>();
 //! let l_sword = graph.get_layer::<Sword>();
 //! for player_node in l_player.iter() {
@@ -85,19 +83,41 @@
 //! }
 //! ```
 //!
-//! See individual types' documentation for details.
+//! See individual types' documentation in this module for more usage details.
+//!
+//! # Object boundaries and deletion
+//!
+//! What constitutes an object in the graph isn't strictly defined because anything can be
+//! connected to anything, but most of the time you'll have clear groups of nodes that form
+//! _components_ (in the [graph theory
+//! sense](https://en.wikipedia.org/wiki/Component_(graph_theory))), i.e. have some path of edges
+//! connecting all of them and no edges going anywhere else. (not to be confused with the things
+//! stored in the nodes this graph, also called components because they're analogous to components
+//! in entity-component structures)
+//!
+//! Deleting things is done with [`Graph::gather`][self::Graph::gather]. By default, it assumes
+//! the aformentioned structure. Calling [`delete`][self::Gather::delete] on the created
+//! [`Gather`][self::Gather] performs a depth-first search starting from the given node
+//! and deletes everything it finds.
+//!
+//! However, sometimes multiple conceptual objects are linked in some way, and sometimes this can
+//! be modelled nicely in the graph. For example, Starframe's [ropes][crate::physics::rope] are
+//! built by connecting multiple particles to a single [`Rope`][crate::physics::rope::Rope] node.
+//! In this case, deleting any of the particle bodies in the rope would, by default, delete every
+//! particle in the rope. If this isn't the desired outcome, you can instruct the search to stop at
+//! nodes of a specific type with [`stop_at_layer`][self::Gather::stop_at_layer]. Stopping at a
+//! [`Rope`][crate::physics::rope::Rope] when deleting a rope particle will preserve the rest of
+//! the rope (unless this particle is the last one).
 
-use std::{any::Any, collections::VecDeque, marker::PhantomData};
+use std::{
+    any::{self, Any},
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+};
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //
-
-#[macro_use]
-mod component_defs;
-pub use crate::make_graph;
-#[doc(hidden)]
-pub use component_defs::BUILTIN_LAYER_COUNT;
 
 mod layer_bundle;
 pub use layer_bundle::LayerBundle;
@@ -108,15 +128,6 @@ pub use layer_bundle::LayerBundle;
 
 type ComponentIdx = usize;
 type GenerationIdx = usize;
-type Refcount = usize;
-
-/// Allows types to be inserted into the graph.
-/// Implemented for custom types using the [`make_graph`][self::make_graph] macro;
-/// do not implement manually!
-pub trait Component: 'static + Send + Sync {
-    /// Address of this type's graph layer.
-    const LAYER_INDEX: usize;
-}
 
 /// Node position without generation info, used internally to traverse the graph
 /// without knowing types.
@@ -125,41 +136,33 @@ struct BareNodeKey {
     layer: usize,
     idx: usize,
 }
-impl<T: Component> From<NodeKey<T>> for BareNodeKey {
-    fn from(key: NodeKey<T>) -> Self {
-        Self {
-            layer: T::LAYER_INDEX,
-            idx: key.idx,
-        }
-    }
-}
 
 /// An identifier for looking up a specific node.
-pub struct NodeKey<T: Component> {
-    pub(crate) idx: usize,
-    pub(crate) gen: usize,
+pub struct NodeKey<T> {
+    pub(crate) idx: ComponentIdx,
+    pub(crate) gen: GenerationIdx,
     pub(crate) _marker: PhantomData<T>,
 }
-impl<'a, T: Component> From<NodeRef<'a, T>> for NodeKey<T> {
+impl<'a, T> From<NodeRef<'a, T>> for NodeKey<T> {
     fn from(node: NodeRef<'a, T>) -> Self {
         Self {
             idx: node.idx,
-            gen: node.layer_meta.generations[node.idx],
+            gen: node.layer_meta.statuses[node.idx].generation,
             _marker: PhantomData,
         }
     }
 }
-impl<'a, T: Component> From<NodeRefMut<'a, T>> for NodeKey<T> {
+impl<'a, T> From<NodeRefMut<'a, T>> for NodeKey<T> {
     fn from(node: NodeRefMut<'a, T>) -> Self {
         Self {
             idx: node.idx,
-            gen: node.layer_meta.generations[node.idx],
+            gen: node.layer_meta.statuses[node.idx].generation,
             _marker: PhantomData,
         }
     }
 }
 // blanket impls required because phantomdata makes derive unnecessarily restrict type of T
-impl<T: Component> Clone for NodeKey<T> {
+impl<T> Clone for NodeKey<T> {
     fn clone(&self) -> Self {
         NodeKey {
             idx: self.idx,
@@ -168,8 +171,8 @@ impl<T: Component> Clone for NodeKey<T> {
         }
     }
 }
-impl<T: Component> Copy for NodeKey<T> {}
-impl<T: Component> std::fmt::Debug for NodeKey<T> {
+impl<T> Copy for NodeKey<T> {}
+impl<T> std::fmt::Debug for NodeKey<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "Node {{\n idx: {:?},\n gen: {},\n}}",
@@ -177,13 +180,13 @@ impl<T: Component> std::fmt::Debug for NodeKey<T> {
         ))
     }
 }
-impl<T: Component> PartialEq for NodeKey<T> {
+impl<T> PartialEq for NodeKey<T> {
     fn eq(&self, other: &Self) -> bool {
         self.idx == other.idx && self.gen == other.gen
     }
 }
-impl<T: Component> Eq for NodeKey<T> {}
-impl<T: Component> std::hash::Hash for NodeKey<T> {
+impl<T> Eq for NodeKey<T> {}
+impl<T> std::hash::Hash for NodeKey<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.idx.hash(state);
     }
@@ -191,32 +194,60 @@ impl<T: Component> std::hash::Hash for NodeKey<T> {
 
 /// An immutable reference to a node in the graph.
 #[derive(Clone, Copy, Debug)]
-pub struct NodeRef<'a, T: Component> {
+pub struct NodeRef<'a, T> {
     /// The component that this node points to.
     pub c: &'a T,
     idx: usize,
     layer_meta: &'a LayerMetadata,
 }
 
-impl<'a, T: Component> NodeRef<'a, T> {
-    /// If there's an edge starting from this node and ending at a node of the given type,
+impl<'a, T> NodeRef<'a, T> {
+    /// If there's an edge starting from this node and ending on the target layer,
     /// get a reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor<'lr, 'l, Target: Component>(
+    pub fn get_neighbor<'lr, 'l, Target>(
         &self,
         layer: &'lr LayerView<'l, Target>,
     ) -> Option<NodeRef<'lr, Target>> {
         get_neighbor(self.layer_meta, self.idx, layer)
     }
 
+    /// Get an iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors<'r, 'l, Target>(
+        &'r self,
+        layer: &'r LayerView<'l, Target>,
+    ) -> EdgeIter<'r, 'l, Target> {
+        EdgeIter {
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
+    }
+
     /// If there's an edge starting from this node and ending at a node of the given type,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
+    pub fn get_neighbor_mut<'lr, 'l, Target>(
         &self,
         layer: &'lr mut LayerViewMut<'l, Target>,
     ) -> Option<NodeRefMut<'lr, Target>> {
         get_neighbor_mut(self.layer_meta, self.idx, layer)
+    }
+
+    /// Get a mutable iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor_mut] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors_mut<'r, 'l, Target>(
+        &'r self,
+        layer: &'r mut LayerViewMut<'l, Target>,
+    ) -> EdgeIterMut<'r, 'l, Target> {
+        EdgeIterMut {
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
     }
 
     /// Get a key that can be used to access this node later.
@@ -224,152 +255,126 @@ impl<'a, T: Component> NodeRef<'a, T> {
     pub fn key(&self) -> NodeKey<T> {
         NodeKey {
             idx: self.idx,
-            gen: self.layer_meta.generations[self.idx],
+            gen: self.layer_meta.statuses[self.idx].generation,
             _marker: PhantomData,
         }
     }
 }
 
 /// A mutable reference to a node in the graph.
-pub struct NodeRefMut<'a, T: Component> {
+pub struct NodeRefMut<'a, T> {
     /// The component that this node points to.
     pub c: &'a mut T,
     idx: usize,
     layer_meta: &'a mut LayerMetadata,
 }
 
-impl<'a, T: Component> NodeRefMut<'a, T> {
-    /// Add an edge going both ways between this and another node.
+impl<'a, T> NodeRefMut<'a, T> {
+    /// Connect the node to another node.
     ///
-    /// This makes both nodes hierarchically equal parts of the same object.
-    /// Both nodes can find each other with [`get_neighbor`][Self::get_neighbor],
-    /// and both will (in most cases) be deleted if `Graph::delete` is called on either one.
-    ///
-    /// Internally this calls [`connect_oneway`][Self::connect_oneway] twice, so all the same caveats apply.
-    ///
-    /// # Panics
-    /// Panics if either edge this creates would make `connect_oneway` panic.
+    /// After this, the other node will be yielded by the iterator produced by
+    /// [`get_all_neighbors`][Self::get_all_neighbors] if called on `self` with
+    /// the other node's layer, and vice versa. If this is the first edge from
+    /// a specific node to a specific layer (which is typically the case),
+    /// it will also be returned by [`get_neighbor`][Self::get_neighbor].
     #[inline]
-    pub fn connect<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
+    pub fn connect<Other>(&mut self, other: &mut NodeRefMut<'_, Other>) {
         self.connect_oneway(other);
         other.connect_oneway(self);
     }
 
-    /// Create an edge from this node to another, only going in that direction.
-    ///
-    /// In a sense, this makes the other node hierarchically lower than this one.
-    /// If the lower node is deleted, this one won't be, but if this one is deleted,
-    /// the lower one will be too, unless there are other nodes also pointing to it with
-    /// a one-directional edge.
-    ///
-    /// # Panics
-    /// The current graph implementation is limited to one edge per node per layer.
-    /// If an edge from this node to somewhere in the other's layer already exists,
-    /// this function will panic, because this signals
-    /// that you're creating a malformed object that won't work the way you expect.
-    pub fn connect_oneway<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
-        let edges = &mut self.layer_meta.edges[Other::LAYER_INDEX];
+    fn connect_oneway<Other>(&mut self, other: &mut NodeRefMut<'_, Other>) {
+        let edges = &mut self.layer_meta.edges[other.layer_meta.address];
         if edges.len() <= self.idx {
             edges.resize(self.idx + 1, None);
         }
-        let prev_val = edges[self.idx].replace(other.idx);
-        assert!(
-            prev_val.is_none(),
-            "Multiple edges to the same layer from the same component are not supported"
-        );
-        other.layer_meta.refcounts[other.idx] += 1;
-    }
-
-    /// Like [`connect_oneway`][Self::connect_oneway], but for the special case
-    /// of connecting to a node in the same layer.
-    ///
-    /// This isn't possible otherwise because `NodeRefMut` mutably borrows the layer
-    /// it points to. It's a little finicky, but fortunately this is a relatively rare case.
-    /// # Example
-    /// ```
-    /// # use starframe::{graph::make_graph, physics::Body};
-    /// # type Graph = make_graph!{};
-    /// # let graph = Graph::new();
-    /// let mut l_body = graph.get_layer_mut::<Body>();
-    /// let b2 = l_body.insert(Body::new_particle(1.0));
-    /// let b2 = b2.key();
-    /// let mut b1 = l_body.insert(Body::new_particle(1.0));
-    /// b1.connect_oneway_same_layer(b2);
-    /// ```
-    pub fn connect_oneway_same_layer(&mut self, other: NodeKey<T>) {
-        if other.gen != self.layer_meta.generations[other.idx] {
-            return;
-        }
-        let edges = &mut self.layer_meta.edges[T::LAYER_INDEX];
-        if edges.len() <= self.idx {
-            edges.resize(self.idx + 1, None);
-        }
-        let prev_val = edges[self.idx].replace(other.idx);
-        assert!(
-            prev_val.is_none(),
-            "Multiple edges to the same layer from the same component are not supported"
-        );
-        self.layer_meta.refcounts[other.idx] += 1;
-    }
-
-    /// Remove the edge pointing from `self` to `other`.
-    ///
-    /// This takes ownership of `other` because if this is the last edge pointing to it,
-    /// this causes it to become deleted, invalidating the ref.
-    pub fn disconnect_oneway<Other: Component>(&mut self, other: NodeRefMut<'_, Other>) {
-        let edges = &mut self.layer_meta.edges[Other::LAYER_INDEX];
-        if edges.len() <= self.idx {
-            return;
-        }
-        if edges[self.idx] == Some(other.idx) {
-            edges[self.idx] = None;
-            other.layer_meta.refcounts[other.idx] -= 1;
-            if other.layer_meta.refcounts[other.idx] == 0 {
-                other.layer_meta.generations[other.idx] += 1;
-                other.layer_meta.vacant_slots.push_back(other.idx);
+        let new_edge_node = EdgeListNode {
+            target: other.idx,
+            next_edge: None,
+        };
+        // add the node either as primary if it's the first one,
+        // or to the end of the linked list if not
+        match edges[self.idx] {
+            None => {
+                edges[self.idx] = Some(new_edge_node);
+            }
+            Some(ref mut existing_edge) => {
+                let new_edge_idx = match self.layer_meta.vacant_edge_slots.pop_front() {
+                    Some(vacant) => {
+                        self.layer_meta.secondary_edges[vacant] = new_edge_node;
+                        vacant
+                    }
+                    None => {
+                        self.layer_meta.secondary_edges.push(new_edge_node);
+                        self.layer_meta.secondary_edges.len() - 1
+                    }
+                };
+                // attach to the list
+                match existing_edge.next_edge {
+                    None => {
+                        existing_edge.next_edge = Some(new_edge_idx);
+                    }
+                    Some(next_edge) => {
+                        let mut last_edge_idx = next_edge;
+                        while let Some(next) =
+                            self.layer_meta.secondary_edges[last_edge_idx].next_edge
+                        {
+                            last_edge_idx = next;
+                        }
+                        self.layer_meta.secondary_edges[last_edge_idx].next_edge =
+                            Some(new_edge_idx);
+                    }
+                }
             }
         }
     }
 
-    /// Remove the edge pointing from `self` to another node on the same layer.
-    ///
-    /// See [`connect_oneway_same_layer`][Self::connect_oneway_same_layer] for more information.
-    pub fn disconnect_oneway_same_layer(&mut self, other: NodeKey<T>) {
-        if other.gen != self.layer_meta.generations[other.idx] {
-            return;
-        }
-        let edges = &mut self.layer_meta.edges[T::LAYER_INDEX];
-        if edges.len() <= self.idx {
-            return;
-        }
-        if edges[self.idx] == Some(other.idx) {
-            edges[self.idx] = None;
-            self.layer_meta.refcounts[other.idx] -= 1;
-            if self.layer_meta.refcounts[other.idx] == 0 {
-                self.layer_meta.generations[other.idx] += 1;
-                self.layer_meta.vacant_slots.push_back(other.idx);
-            }
-        }
-    }
-
-    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// If there's an edge from this node to a node in the target layer,
     /// get a reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor<'lr, 'l, Target: Component>(
+    pub fn get_neighbor<'lr, 'l, Target>(
         &self,
         layer: &'lr LayerView<'l, Target>,
     ) -> Option<NodeRef<'lr, Target>> {
         get_neighbor(self.layer_meta, self.idx, layer)
     }
 
-    /// If there's an edge starting from this node and ending at a node of the given type,
+    /// Get an iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors<'r, 'l, Target>(
+        &'r self,
+        layer: &'r LayerView<'l, Target>,
+    ) -> EdgeIter<'r, 'l, Target> {
+        EdgeIter {
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
+    }
+
+    /// If there's an edge from this node to a node in the target layer,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
+    pub fn get_neighbor_mut<'lr, 'l, Target>(
         &self,
         layer: &'lr mut LayerViewMut<'l, Target>,
     ) -> Option<NodeRefMut<'lr, Target>> {
         get_neighbor_mut(self.layer_meta, self.idx, layer)
+    }
+
+    /// Get a mutable iterator going over all edges from this node to the target layer.
+    /// Usually there is only one and [`get_neighbor`][Self::get_neighbor_mut] can be used instead.
+    #[inline]
+    pub fn get_all_neighbors_mut<'r, 'l, Target>(
+        &'r self,
+        layer: &'r mut LayerViewMut<'l, Target>,
+    ) -> EdgeIterMut<'r, 'l, Target> {
+        EdgeIterMut {
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
+            edge_list: &self.layer_meta.secondary_edges,
+            layer,
+        }
     }
 
     /// Get a key that can be used to access this node later.
@@ -377,7 +382,7 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     pub fn key(&self) -> NodeKey<T> {
         NodeKey {
             idx: self.idx,
-            gen: self.layer_meta.generations[self.idx],
+            gen: self.layer_meta.statuses[self.idx].generation,
             _marker: PhantomData,
         }
     }
@@ -393,63 +398,146 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     }
 }
 
-// exposed to crate for some trickery in rope iterators
-pub(crate) fn get_neighbor_idx<Target: Component>(
+#[inline]
+fn get_neighbor_list_node(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
-) -> Option<usize> {
-    if node_layer_meta.edges.len() <= Target::LAYER_INDEX
-        || node_layer_meta.edges[Target::LAYER_INDEX].len() <= node_idx
+    target_layer_idx: usize,
+) -> Option<EdgeListNode> {
+    if node_layer_meta.edges.len() <= target_layer_idx
+        || node_layer_meta.edges[target_layer_idx].len() <= node_idx
     {
         None
     } else {
-        node_layer_meta.edges[Target::LAYER_INDEX][node_idx]
+        node_layer_meta.edges[target_layer_idx][node_idx]
     }
 }
 
-fn get_neighbor<'lr, 'l, Target: Component>(
+#[inline]
+pub(crate) fn get_neighbor_idx(
+    node_layer_meta: &LayerMetadata,
+    node_idx: usize,
+    target_layer_idx: usize,
+) -> Option<usize> {
+    get_neighbor_list_node(node_layer_meta, node_idx, target_layer_idx).map(|e| e.target)
+}
+
+#[inline]
+fn get_neighbor<'lr, 'l, Target>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
     target_layer: &'lr LayerView<'l, Target>,
 ) -> Option<NodeRef<'lr, Target>> {
-    get_neighbor_idx::<Target>(node_layer_meta, node_idx).map(|target| NodeRef {
+    get_neighbor_idx(node_layer_meta, node_idx, target_layer.meta.address).map(|target| NodeRef {
         c: &target_layer.components[target],
         idx: target,
         layer_meta: target_layer.meta,
     })
 }
 
-fn get_neighbor_mut<'lr, 'l, Target: Component>(
+#[inline]
+fn get_neighbor_mut<'lr, 'l, Target>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
     target_layer: &'lr mut LayerViewMut<'l, Target>,
 ) -> Option<NodeRefMut<'lr, Target>> {
-    get_neighbor_idx::<Target>(node_layer_meta, node_idx).map(move |target| NodeRefMut {
-        c: &mut target_layer.components[target],
-        idx: target,
-        layer_meta: target_layer.meta,
+    get_neighbor_idx(node_layer_meta, node_idx, target_layer.meta.address).map(move |target| {
+        NodeRefMut {
+            c: &mut target_layer.components[target],
+            idx: target,
+            layer_meta: target_layer.meta,
+        }
     })
 }
 
 //
-// Layers
+// Layer metadata
 //
 
-/// Tracking edges, refcounts, generations and vacant slots for a single layer.
+/// The component-type-independent structure of the graph.
 #[derive(Debug)]
 pub(crate) struct LayerMetadata {
-    edges: Vec<Vec<Option<ComponentIdx>>>,
-    refcounts: Vec<Refcount>,
-    generations: Vec<GenerationIdx>,
-    vacant_slots: VecDeque<ComponentIdx>,
+    /// index in the vec that layers are stored in in the Graph
+    /// and index of the corresponding edge set in every layer
+    pub(crate) address: usize,
+
+    pub(crate) edges: Vec<Vec<Option<EdgeListNode>>>,
+    pub(crate) secondary_edges: Vec<EdgeListNode>,
+    pub(crate) vacant_edge_slots: VecDeque<usize>,
+
+    statuses: Vec<NodeStatus>,
+    vacant_comp_slots: VecDeque<ComponentIdx>,
 }
 impl LayerMetadata {
-    fn new(layer_count: usize) -> Self {
+    fn new(address: usize, layer_count: usize) -> Self {
         Self {
+            address,
+
             edges: vec![Vec::new(); layer_count],
-            refcounts: Vec::new(),
-            generations: Vec::new(),
-            vacant_slots: VecDeque::new(),
+            secondary_edges: Vec::new(),
+            vacant_edge_slots: VecDeque::new(),
+
+            statuses: Vec::new(),
+            vacant_comp_slots: VecDeque::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NodeStatus {
+    generation: GenerationIdx,
+    // needed for skipping in iteration
+    currently_exists: bool,
+}
+
+/// Intrusive list node for secondary edges
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EdgeListNode {
+    pub(crate) target: ComponentIdx,
+    pub(crate) next_edge: Option<usize>,
+}
+
+/// An iterator over all edges from a node to nodes in a specific layer.
+pub struct EdgeIter<'a, 'l: 'a, T> {
+    curr_list_node: Option<EdgeListNode>,
+    edge_list: &'a [EdgeListNode],
+    layer: &'a LayerView<'l, T>,
+}
+impl<'a, 'l: 'a, T> Iterator for EdgeIter<'a, 'l, T> {
+    type Item = NodeRef<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.curr_list_node {
+            None => None,
+            Some(curr) => {
+                self.curr_list_node = curr.next_edge.map(|next| self.edge_list[next]);
+                Some(self.layer.get_unchecked_by_item_idx(curr.target))
+            }
+        }
+    }
+}
+
+/// An iterator over all edges from a node to nodes in a specific layer,
+/// yielding mutable references.
+pub struct EdgeIterMut<'a, 'l: 'a, T> {
+    curr_list_node: Option<EdgeListNode>,
+    edge_list: &'a [EdgeListNode],
+    layer: &'a mut LayerViewMut<'l, T>,
+}
+impl<'a, 'l: 'a, T> EdgeIterMut<'a, 'l, T> {
+    /// Get a reference to the next connected node.
+    ///
+    /// Unfortunately this isn't compatible with the Iterator trait
+    /// because the lifetime of yielded references needs to be `'_`,
+    /// which doesn't exist in associated types.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> Option<NodeRefMut<'_, T>> {
+        match self.curr_list_node {
+            None => None,
+            Some(curr) => {
+                self.curr_list_node = curr.next_edge.map(|next| self.edge_list[next]);
+                Some(self.layer.get_mut_unchecked_by_item_idx(curr.target))
+            }
         }
     }
 }
@@ -462,13 +550,17 @@ struct TypeErasedLayer {
     components: ComponentStorage,
 }
 impl TypeErasedLayer {
-    fn new(layer_count: usize) -> Self {
+    fn new(address: usize, layer_count: usize) -> Self {
         Self {
-            meta: LayerMetadata::new(layer_count),
+            meta: LayerMetadata::new(address, layer_count),
             components: ComponentStorage(None),
         }
     }
 }
+
+//
+// Layer storage
+//
 
 /// Dynamically typed, lazily initialized storage for component buffers.
 #[derive(Debug)]
@@ -501,7 +593,7 @@ impl ComponentStorage {
 ///
 /// Acquired with [`Graph::get_layer`][self::Graph::get_layer_mut] or as a part of
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
-pub struct LayerView<'a, T: Component> {
+pub struct LayerView<'a, T> {
     pub(crate) meta: &'a LayerMetadata,
     pub(crate) components: &'a [T],
     // Using the same unsafe pattern as with `LayerViewMut`,
@@ -512,10 +604,12 @@ pub struct LayerView<'a, T: Component> {
     _guard: Option<RwLockReadGuard<'a, TypeErasedLayer>>,
 }
 
-impl<'a, T: Component> LayerView<'a, T> {
+impl<'a, T> LayerView<'a, T> {
     /// Get an immutable reference to a node if it still exists, otherwise return None.
+    #[inline]
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
-        if self.meta.generations.len() <= key.idx || self.meta.generations[key.idx] != key.gen {
+        if self.meta.statuses.len() <= key.idx || self.meta.statuses[key.idx].generation != key.gen
+        {
             None
         } else {
             Some(self.get_unchecked(key))
@@ -562,7 +656,7 @@ impl<'a, T: Component> LayerView<'a, T> {
 ///
 /// Acquired with [`Graph::get_layer_mut`][self::Graph::get_layer_mut] or as a part of
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
-pub struct LayerViewMut<'a, T: Component> {
+pub struct LayerViewMut<'a, T> {
     pub(crate) meta: &'a mut LayerMetadata,
     pub(crate) components: &'a mut Vec<T>,
     // Storing the lock guard inside this
@@ -574,16 +668,15 @@ pub struct LayerViewMut<'a, T: Component> {
     _guard: Option<RwLockWriteGuard<'a, TypeErasedLayer>>,
 }
 
-impl<'a, T: Component> LayerViewMut<'a, T> {
+impl<'a, T> LayerViewMut<'a, T> {
     /// Insert a component into the layer.
     ///
     /// This returns a reference to the node that was created,
     /// which you can use to connect it to other nodes.
     /// # Example
     /// ```
-    /// # use starframe::{graph::make_graph, math::Pose, physics::Collider};
-    /// # type MyGraph = make_graph!{};
-    /// # let graph = MyGraph::new();
+    /// # use starframe::{graph::new_graph, math::Pose, physics::Collider};
+    /// # let graph = new_graph! { Pose, Collider };
     /// let mut l_pose = graph.get_layer_mut::<Pose>();
     /// let mut l_collider = graph.get_layer_mut::<Collider>();
     /// let mut pose_node = l_pose.insert(Pose::default());
@@ -591,14 +684,17 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
     /// pose_node.connect(&mut collider_node);
     /// ```
     pub fn insert(&mut self, component: T) -> NodeRefMut<'_, T> {
-        let item_idx = if let Some(vacant_slot) = self.meta.vacant_slots.pop_front() {
+        let item_idx = if let Some(vacant_slot) = self.meta.vacant_comp_slots.pop_front() {
             // no generation increment here, that happens on delete
             self.components[vacant_slot] = component;
+            self.meta.statuses[vacant_slot].currently_exists = true;
             vacant_slot
         } else {
             self.components.push(component);
-            self.meta.refcounts.push(0);
-            self.meta.generations.push(0);
+            self.meta.statuses.push(NodeStatus {
+                generation: 0,
+                currently_exists: true,
+            });
             self.components.len() - 1
         };
 
@@ -611,7 +707,7 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 
     /// Get an immutable reference to a node if it still exists, otherwise return None.
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
-        if self.meta.generations[key.idx] != key.gen {
+        if self.meta.statuses[key.idx].generation != key.gen {
             None
         } else {
             Some(self.get_unchecked(key))
@@ -625,9 +721,8 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
         self.get_unchecked_by_item_idx(key.idx)
     }
 
-    #[doc(hidden)]
     #[inline]
-    pub fn get_unchecked_by_item_idx(&self, idx: usize) -> NodeRef<'_, T> {
+    pub(crate) fn get_unchecked_by_item_idx(&self, idx: usize) -> NodeRef<'_, T> {
         NodeRef {
             c: &self.components[idx],
             idx,
@@ -637,7 +732,8 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 
     /// Get a mutable reference to a node if it still exists, otherwise return None.
     pub fn get_mut(&mut self, key: NodeKey<T>) -> Option<NodeRefMut<'_, T>> {
-        if self.meta.generations.len() <= key.idx || self.meta.generations[key.idx] != key.gen {
+        if self.meta.statuses.len() <= key.idx || self.meta.statuses[key.idx].generation != key.gen
+        {
             None
         } else {
             Some(self.get_mut_unchecked(key))
@@ -676,6 +772,8 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
     }
 
     /// Take an immutable sub-view into this mutable view.
+    ///
+    /// Useful for forwarding the view to other functions without moving it.
     pub fn subview(&self) -> LayerView<'_, T> {
         LayerView {
             meta: self.meta,
@@ -704,18 +802,18 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 ///
 /// Create with the `iter` method on [`LayerView`][self::LayerView]
 /// or [`LayerViewMut`][self::LayerViewMut].
-pub struct LayerIter<'a, T: Component> {
+pub struct LayerIter<'a, T> {
     layer_meta: &'a LayerMetadata,
     comp_iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
 }
 
-impl<'a, T: Component> Iterator for LayerIter<'a, T> {
+impl<'a, T> Iterator for LayerIter<'a, T> {
     type Item = NodeRef<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (next_idx, next) = loop {
             let (next_idx, next) = self.comp_iter.next()?;
-            if self.layer_meta.refcounts[next_idx] > 0 {
+            if self.layer_meta.statuses[next_idx].currently_exists {
                 break (next_idx, next);
             }
         };
@@ -730,18 +828,18 @@ impl<'a, T: Component> Iterator for LayerIter<'a, T> {
 /// A mutable iterator over components in a single layer.
 ///
 /// Create with the `iter_mut` method on [`LayerViewMut`][self::LayerViewMut].
-pub struct LayerIterMut<'a, T: Component> {
+pub struct LayerIterMut<'a, T> {
     layer_meta: &'a mut LayerMetadata,
     comp_iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
 }
 
-impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
+impl<'a, T> Iterator for LayerIterMut<'a, T> {
     type Item = NodeRefMut<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (next_idx, next) = loop {
             let (next_idx, next) = self.comp_iter.next()?;
-            if self.layer_meta.refcounts[next_idx] > 0 {
+            if self.layer_meta.statuses[next_idx].currently_exists {
                 break (next_idx, next);
             }
         };
@@ -765,36 +863,39 @@ impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
 
 /// The component graph itself.
 ///
-/// Use the [`make_graph`][self::make_graph] macro to automatically create one
-/// with the correct layer count.
-/// See that macro's documentation for an example and some talk of limitations.
-///
 /// A graph is built out of _layers_, one per type of component stored.
 /// Layers contain _nodes_ representing individual components,
 /// and these are connected to other components with _edges_.
 #[derive(Debug)]
-pub struct Graph<const LAYER_COUNT: usize> {
+pub struct Graph {
     layers: Vec<RwLock<TypeErasedLayer>>,
+    addresses: HashMap<any::TypeId, usize>,
 }
 
-impl<const LAYER_COUNT: usize> Default for Graph<LAYER_COUNT> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
-    pub fn new() -> Self {
-        let mut layers = Vec::new();
-        layers.resize_with(LAYER_COUNT, || {
-            RwLock::new(TypeErasedLayer::new(LAYER_COUNT))
-        });
-        Self { layers }
+impl Graph {
+    /// Create a new graph with layers for the given list of types.
+    /// You probably want to use the [`new_graph`][self::new_graph] macro
+    /// instead for convenience.
+    pub fn new(layer_types: &[any::TypeId]) -> Self {
+        let addresses: HashMap<_, _> = layer_types
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| (t, i))
+            .collect();
+        let layer_count = addresses.len();
+
+        let mut layers = Vec::with_capacity(layer_count);
+        for address in 0..layer_count {
+            layers.push(RwLock::new(TypeErasedLayer::new(address, layer_count)));
+        }
+
+        Self { layers, addresses }
     }
 
     /// Lock a layer for reading.
     /// # Panics
-    /// Panics if the layer is currently locked for writing.
-    pub fn get_layer<T: Component>(&self) -> LayerView<'_, T> {
+    /// Panics if the layer is currently locked for writing or doesn't exist.
+    pub fn get_layer<T: 'static>(&self) -> LayerView<'_, T> {
         let err = || {
             // not sure if panic here is the right call,
             // but it's surely better than having it hang forever in case of a conflict
@@ -803,7 +904,9 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
                 std::any::type_name::<T>()
             )
         };
-        let guard = self.layers[T::LAYER_INDEX].try_read().unwrap_or_else(err);
+        let guard = self.layers[self.get_layer_address::<T>()]
+            .try_read()
+            .unwrap_or_else(err);
         // taking references to things inside the lock for the sake of API.
         // SAFETY: the guard will drop at the same time as the references
         // and we never access the guard itself.
@@ -820,15 +923,17 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
 
     /// Lock a layer for writing.
     /// # Panics
-    /// Panics if the layer is currently locked for reading or writing.
-    pub fn get_layer_mut<T: Component>(&self) -> LayerViewMut<'_, T> {
+    /// Panics if the layer is currently locked for reading or writing or doesn't exist.
+    pub fn get_layer_mut<T: 'static>(&self) -> LayerViewMut<'_, T> {
         let err = || {
             panic!(
                 "Could not lock layer for writing: {}",
                 std::any::type_name::<T>()
             )
         };
-        let mut guard = self.layers[T::LAYER_INDEX].try_write().unwrap_or_else(err);
+        let mut guard = self.layers[self.get_layer_address::<T>()]
+            .try_write()
+            .unwrap_or_else(err);
         // taking references to things inside the lock for the sake of API.
         // SAFETY: the guard will drop at the same time as the references
         // and we never access the guard itself.
@@ -850,10 +955,9 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
     /// # use starframe::{
     /// #    math::Pose,
     /// #    physics::{Body, Collider},
-    /// #    graph::{LayerView, LayerViewMut, make_graph}
+    /// #    graph::{LayerView, LayerViewMut, new_graph}
     /// # };
-    /// # type MyGraph = make_graph!{};
-    /// # let graph = MyGraph::new();
+    /// # let graph = new_graph! { Pose, Body, Collider };
     ///
     /// fn do_things_with_bodies(
     ///     how_many_things: usize,
@@ -873,6 +977,13 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
         B::get_from_graph(self)
     }
 
+    pub(crate) fn get_layer_address<T: 'static>(&self) -> usize {
+        *self
+            .addresses
+            .get(&any::TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("No layer in graph for type {}", std::any::type_name::<T>()))
+    }
+
     fn write_all_layers(&mut self) -> Vec<RwLockWriteGuard<'_, TypeErasedLayer>> {
         self.layers
             .iter()
@@ -886,182 +997,257 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
     /// Drop all content and recreate the graph from scratch.
     pub fn reset(&mut self) {
         let layer_count = self.layers.len();
-        for mut layer in self.write_all_layers() {
-            *layer = TypeErasedLayer::new(layer_count);
+        for (address, layer) in self.write_all_layers().iter_mut().enumerate() {
+            **layer = TypeErasedLayer::new(address, layer_count);
         }
     }
 
-    /// Delete a whole _object_ from the graph, beginning from the given node.
-    /// This needs write access to all layers, so every layer must be unlocked.
-    ///
-    /// What constitutes a single object in the graph isn't quite straightforward due to the
-    /// number of ways in which nodes can be connected.
-    /// The deletion algorithm performs a depth-first search to find and delete every component
-    /// reachable from the starting node, stopping at shared components.
-    /// An individual node is considered deleted once it no longer has any edges pointing to it.
-    ///
-    /// Illustrated example:
-    /// ```text
-    /// O<->(O)<->O-->O<--O<->O
-    ///               ^
-    ///               L->O
-    /// Delete edges, starting from (O) (note how it stops on the "shared" node)
-    /// O   (O)   O   O<--O<->O
-    ///               ^
-    ///               L->O
-    /// Remove nodes without any more edges
-    /// O<--O<->O
-    /// ^
-    /// L->O
-    /// Done!
-    /// ```
-    /// There are a lot of nuances to this depending on object structure, but the vast majority of the time
-    /// objects will just be their own islands in the graph where everything is connected with bidirectional edges.
-    /// In these cases, the whole island will be deleted regardless of which node you start on.
-    ///
+    /// Create a query that finds all nodes accessible from the given node via edges.
+    /// This is used to delete segments of the graph.
+    pub fn gather<T: 'static>(&mut self, node: NodeKey<T>) -> Gather<'_> {
+        let root_layer = self.get_layer_address::<T>();
+        Gather {
+            graph: self,
+            inner: GatherInner {
+                root: BareNodeKey {
+                    layer: root_layer,
+                    idx: node.idx,
+                },
+                root_gen: node.gen,
+                stop_at_layers: Vec::new(),
+            },
+        }
+    }
+}
+
+/// Helper macro to more concisely create new graphs with a given set of layers.
+/// # Example
+/// ```
+/// # use starframe::{graph::new_graph, math::Pose, physics::{Body, Collider}};
+/// let graph = new_graph! {
+///     Pose,
+///     Body,
+///     Collider,
+/// };
+/// ```
+/// is equivalent to
+/// ```
+/// # use starframe::{graph::Graph, math::Pose, physics::{Body, Collider}};
+/// # use std::any::TypeId;
+/// let graph = Graph::new(&[
+///     TypeId::of::<Pose>(),
+///     TypeId::of::<Body>(),
+///     TypeId::of::<Collider>(),
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! new_graph {
+    ($($types:ty),* $(,)*) => {
+        $crate::graph::Graph::new(&[
+            $(std::any::TypeId::of::<$types>(),)*
+        ])
+    };
+}
+pub use crate::new_graph;
+
+//
+// Gather & delete
+//
+
+/// A query that finds all graph nodes and edges
+/// that have paths connecting them to the starting node.
+///
+/// Produced with [`Graph::gather`][self::Graph::gather] and used for deleting things.
+/// See the [module-level documentation][self] for more info.
+pub struct Gather<'g> {
+    graph: &'g mut Graph,
+    inner: GatherInner,
+}
+
+#[derive(Clone, Debug)]
+struct GatherInner {
+    root: BareNodeKey,
+    root_gen: GenerationIdx,
+    stop_at_layers: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct GatherResult {
+    nodes: Vec<BareNodeKey>,
+    edges: Vec<(BareNodeKey, BareNodeKey)>,
+}
+
+impl<'g> Gather<'g> {
+    /// Stop the search at the layer of the given type.
+    /// Nodes on that layer are only deleted if they end up with no more edges connected to them
+    /// after the search is complete.
     /// # Panics
-    /// Panics if any layer is locked for reading or writing.
-    pub fn delete<T: Component>(&mut self, root: NodeKey<T>) {
-        #[derive(Clone, Copy, Debug)]
-        struct VisitedNode {
-            node: BareNodeKey,
-            visit_count: Refcount,
-            all_refs_visited: bool,
-        }
+    /// Panics if there is no layer for the given type in the graph.
+    pub fn stop_at_layer<T: 'static>(mut self) -> Self {
+        self.inner
+            .stop_at_layers
+            .push(self.graph.get_layer_address::<T>());
+        self
+    }
 
-        #[derive(Clone, Copy, Debug)]
-        struct VisitedEdge {
-            start_idx: usize,
-            end_idx: usize,
-            is_shared: bool,
-        }
+    /// Execute the search and delete everything that was found.
+    pub fn delete(mut self) {
+        let mut locked_layers = self.graph.write_all_layers();
 
-        let mut locked_layers = self.write_all_layers();
-
-        // check if the node is already considered deleted before doing anything
-        let start_layer = &locked_layers[T::LAYER_INDEX].meta;
-        if start_layer.generations.len() <= root.idx
-            || start_layer.generations[root.idx] != root.gen
-            || start_layer.refcounts.len() <= root.idx
-            || start_layer.refcounts[root.idx] == 0
+        let root_idx = self.inner.root.idx;
+        // check if the node still exists before doing anything
+        let start_layer = &locked_layers[self.inner.root.layer].meta;
+        if start_layer.statuses.len() <= root_idx
+            || start_layer.statuses[root_idx].generation != self.inner.root_gen
+            || !start_layer.statuses[root_idx].currently_exists
         {
             return;
         }
 
-        let root: BareNodeKey = root.into();
-        let mut visited_nodes = vec![VisitedNode {
-            node: root,
-            visit_count: 0,
-            all_refs_visited: false,
-        }];
-        let mut visited_edges: Vec<VisitedEdge> = Vec::new();
+        let result = Self::run(&mut self.inner, &mut locked_layers);
+
+        // delete edges
+
+        for (edge_start, edge_end) in result.edges {
+            let layer_meta = &mut locked_layers[edge_start.layer].meta;
+
+            if !self.inner.stop_at_layers.contains(&edge_start.layer) {
+                //
+                // this is a node that's being deleted; remove the entire list of edges
+
+                let mut curr_edge = layer_meta.edges[edge_end.layer][edge_start.idx].unwrap();
+                layer_meta.edges[edge_end.layer][edge_start.idx] = None;
+                while let Some(next) = curr_edge.next_edge {
+                    curr_edge = layer_meta.secondary_edges[next];
+                    // we don't explicitly delete anything here,
+                    // just remove the primary edge and mark the secondary slots for reuse
+                    layer_meta.vacant_edge_slots.push_back(next);
+                }
+            } else {
+                //
+                // this is a boundary node; find and remove only this particular edge in the list
+
+                let primary_edge = layer_meta.edges[edge_end.layer][edge_start.idx]
+                    .as_mut()
+                    .unwrap();
+                if primary_edge.target == edge_end.idx {
+                    match primary_edge.next_edge {
+                        None => {
+                            layer_meta.edges[edge_end.layer][edge_start.idx] = None;
+                        }
+                        Some(next) => {
+                            *primary_edge = layer_meta.secondary_edges[next];
+                            layer_meta.vacant_edge_slots.push_back(next);
+                        }
+                    }
+                } else {
+                    let first_secondary_idx = primary_edge.next_edge.unwrap();
+                    let first_secondary = layer_meta.secondary_edges[first_secondary_idx];
+                    if first_secondary.target == edge_end.idx {
+                        primary_edge.next_edge = first_secondary.next_edge;
+                        layer_meta.vacant_edge_slots.push_back(first_secondary_idx);
+                    } else {
+                        let mut curr_idx = first_secondary_idx;
+                        while let Some(next_idx) = layer_meta.secondary_edges[curr_idx].next_edge {
+                            let next_edge = layer_meta.secondary_edges[next_idx];
+                            if next_edge.target == edge_end.idx {
+                                layer_meta.secondary_edges[curr_idx].next_edge =
+                                    next_edge.next_edge;
+                                layer_meta.vacant_edge_slots.push_back(next_idx);
+                                break;
+                            }
+                            curr_idx = next_idx;
+                        }
+                    }
+                }
+            }
+        }
+
+        // delete nodes
+
+        'node: for node in result.nodes {
+            if self.inner.stop_at_layers.contains(&node.layer) {
+                // This is a boundary node,
+                // only delete it if every edge leading away from it was deleted
+                for edge_layer in &locked_layers[node.layer].meta.edges {
+                    if edge_layer.len() > node.idx && edge_layer[node.idx].is_some() {
+                        continue 'node;
+                    }
+                }
+            }
+            locked_layers[node.layer].meta.statuses[node.idx].generation += 1;
+            locked_layers[node.layer].meta.statuses[node.idx].currently_exists = false;
+            locked_layers[node.layer]
+                .meta
+                .vacant_comp_slots
+                .push_back(node.idx);
+        }
+    }
+
+    fn run(
+        inner: &mut GatherInner,
+        locked_layers: &mut [RwLockWriteGuard<'_, TypeErasedLayer>],
+    ) -> GatherResult {
+        let mut ret = GatherResult {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+
+        ret.nodes.push(inner.root);
 
         // recursive depth first search to find all nodes and edges
         fn search_all(
             curr_node: BareNodeKey,
-            curr_node_idx: usize,
-            visited_nodes: &mut Vec<VisitedNode>,
-            visited_edges: &mut Vec<VisitedEdge>,
+            ret: &mut GatherResult,
             locked_layers: &[RwLockWriteGuard<TypeErasedLayer>],
+            stop_at_layers: &[usize],
         ) {
             let curr_layer = &locked_layers[curr_node.layer];
             for (target_layer_idx, edges_to_target) in curr_layer.meta.edges.iter().enumerate() {
                 if curr_node.idx < edges_to_target.len() {
-                    if let Some(other_item_idx) = edges_to_target[curr_node.idx] {
+                    // iterate over the list of edges
+                    let mut curr_edge = edges_to_target[curr_node.idx];
+                    // the whole node is being deleted, so every outgoing edge is too.
+                    // only push the first edge, the rest will be deleted by following the list
+                    let mut is_primary_edge = true;
+                    while let Some(edge) = curr_edge {
                         let next_node = BareNodeKey {
                             layer: target_layer_idx,
-                            idx: other_item_idx,
+                            idx: edge.target,
                         };
 
-                        if let Some(already_seen) =
-                            visited_nodes.iter().position(|n| n.node == next_node)
-                        {
-                            visited_edges.push(VisitedEdge {
-                                start_idx: curr_node_idx,
-                                end_idx: already_seen,
-                                is_shared: false,
-                            });
-                            visited_nodes[already_seen].visit_count += 1;
-                        } else {
-                            let next_node_idx = visited_nodes.len();
-                            visited_edges.push(VisitedEdge {
-                                start_idx: curr_node_idx,
-                                end_idx: next_node_idx,
-                                is_shared: false,
-                            });
-                            visited_nodes.push(VisitedNode {
-                                node: next_node,
-                                visit_count: 1,
-                                all_refs_visited: false,
-                            });
-                            search_all(
-                                next_node,
-                                next_node_idx,
-                                visited_nodes,
-                                visited_edges,
-                                locked_layers,
-                            );
+                        let is_boundary_node = stop_at_layers.contains(&next_node.layer);
+                        let is_already_found_node = ret.nodes.contains(&next_node);
+
+                        if !is_already_found_node {
+                            ret.nodes.push(next_node);
                         }
+                        if is_primary_edge {
+                            ret.edges.push((curr_node, next_node));
+                        }
+                        if is_boundary_node {
+                            // Don't continue the search, but do push the node to found nodes
+                            // and the edge leading back to current node to found edges.
+                            // (If this isn't a boundary node, the edge leading back will be pushed
+                            // later in the search.)
+                            // This node is deleted only if all edges to it were found by the gather.
+                            ret.edges.push((next_node, curr_node));
+                        }
+                        if !is_boundary_node && !is_already_found_node {
+                            search_all(next_node, ret, locked_layers, stop_at_layers);
+                        }
+
+                        is_primary_edge = false;
+                        curr_edge = edge
+                            .next_edge
+                            .map(|next| curr_layer.meta.secondary_edges[next]);
                     }
                 }
             }
         }
-        search_all(
-            root,
-            0,
-            &mut visited_nodes,
-            &mut visited_edges,
-            &locked_layers,
-        );
+        search_all(inner.root, &mut ret, locked_layers, &inner.stop_at_layers);
 
-        for vis in visited_nodes.iter_mut() {
-            if locked_layers[vis.node.layer].meta.refcounts[vis.node.idx] == vis.visit_count {
-                vis.all_refs_visited = true;
-            }
-        }
-
-        // identify shared nodes and remove edges found after them
-        for (node_idx, node) in visited_nodes.iter().enumerate() {
-            if !node.all_refs_visited {
-                fn remove_edges_past_node(curr_node_idx: usize, visited_edges: &mut [VisitedEdge]) {
-                    let edge_idxs_from_node: Vec<usize> = visited_edges
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, edge)| edge.start_idx == curr_node_idx)
-                        .map(|(idx, _)| idx)
-                        .collect();
-                    for edge_idx in edge_idxs_from_node {
-                        // check that we didn't already go through here to avoid infinite loop
-                        if !visited_edges[edge_idx].is_shared {
-                            visited_edges[edge_idx].is_shared = true;
-                            remove_edges_past_node(visited_edges[edge_idx].end_idx, visited_edges);
-                        }
-                    }
-                }
-                remove_edges_past_node(node_idx, &mut visited_edges);
-            }
-        }
-        // remove edges not marked as shared
-        for owned_edge in visited_edges.iter().filter(|e| !e.is_shared) {
-            let start_node = visited_nodes[owned_edge.start_idx].node;
-            let end_node = visited_nodes[owned_edge.end_idx].node;
-            locked_layers[start_node.layer].meta.edges[end_node.layer][start_node.idx] = None;
-            locked_layers[end_node.layer].meta.refcounts[end_node.idx] -= 1;
-        }
-
-        for vis_node in visited_nodes {
-            let node = vis_node.node;
-            let layer = &mut locked_layers[node.layer];
-            if layer.meta.refcounts[node.idx] == 0 {
-                debug_assert!(
-                    !layer.meta.vacant_slots.iter().any(|&idx| idx == node.idx),
-                    "Same slot marked vacant twice ({:?})",
-                    node,
-                );
-                layer.meta.vacant_slots.push_back(node.idx);
-                layer.meta.generations[node.idx] += 1;
-            }
-        }
+        ret
     }
 }
 
@@ -1081,52 +1267,31 @@ mod tests {
     struct Body(usize);
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct Shape(usize);
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    struct Subshape(usize);
 
-    type Graph = make_graph! {
-        Pose,
-        Velocity,
-        Body,
-        Shape,
-        Subshape,
-    };
+    fn graph() -> Graph {
+        new_graph! {
+            Pose,
+            Velocity,
+            Body,
+            Shape,
+        }
+    }
 
     // shorthands for layer views because we have to repeat this stuff a lot here
     type L<'a, T> = LayerView<'a, T>;
     type LM<'a, T> = LayerViewMut<'a, T>;
-    type AllLayers<'a> = (
-        L<'a, Pose>,
-        L<'a, Velocity>,
-        L<'a, Body>,
-        L<'a, Shape>,
-        L<'a, Subshape>,
-    );
-    type AllLayersMut<'a> = (
-        LM<'a, Pose>,
-        LM<'a, Velocity>,
-        LM<'a, Body>,
-        LM<'a, Shape>,
-        LM<'a, Subshape>,
-    );
+    type AllLayers<'a> = (L<'a, Pose>, L<'a, Velocity>, L<'a, Body>, L<'a, Shape>);
+    type AllLayersMut<'a> = (LM<'a, Pose>, LM<'a, Velocity>, LM<'a, Body>, LM<'a, Shape>);
 
     /// Nodes can be connected and then queried for their neighbors.
-    /// Multiple ownership works.
     #[test]
     fn connect_nodes() {
-        let graph = Graph::new();
-
-        let everyones_shape = graph.get_layer_mut().insert(Shape(69)).key();
+        let graph = graph();
 
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
-            let pose_key;
-            let rb_key;
-            {
-                let (mut poses, mut vels, mut bodies, mut shapes, _) =
-                    graph.get_layer_bundle::<AllLayersMut>();
-
-                let mut everyones_shape = &mut shapes.get_mut(everyones_shape).unwrap();
+            let pose_key = {
+                let (mut poses, mut vels, mut bodies, _) = graph.get_layer_bundle::<AllLayersMut>();
 
                 let mut pose_node = poses.insert(Pose(i));
                 let mut vel_node = vels.insert(Velocity(i));
@@ -1134,26 +1299,13 @@ mod tests {
                 vel_node.connect(&mut pose_node);
                 body_node.connect(&mut pose_node);
                 body_node.connect(&mut vel_node);
-                body_node.connect_oneway(&mut everyones_shape);
-                // refcounts
-                assert_eq!(pose_node.layer_meta.refcounts[pose_node.idx], 2);
-                assert_eq!(body_node.layer_meta.refcounts[body_node.idx], 2);
-                assert_eq!(
-                    everyones_shape.layer_meta.refcounts[everyones_shape.idx],
-                    i + 1
-                );
                 // neighbors are found
                 // (getting them is cumbersome here because we have to juggle layer references
                 // back and forth to drop mutable refs, but this won't be done in real code)
-                pose_key = pose_node.key();
-                rb_key = body_node.key();
-            }
+                pose_node.key()
+            };
             {
-                let (poses, _, bodies, shapes, _) = graph.get_layer_bundle::<AllLayers>();
-                assert_eq!(
-                    *bodies.get(rb_key).unwrap().get_neighbor(&shapes).unwrap().c,
-                    Shape(69)
-                );
+                let (poses, _, bodies, shapes) = graph.get_layer_bundle::<AllLayers>();
                 assert_eq!(
                     *poses
                         .get(pose_key)
@@ -1191,11 +1343,9 @@ mod tests {
     /// Iterating over nodes hits every alive node and only every alive node.
     #[test]
     fn iterate() {
-        let graph = Graph::new();
-        let (mut poses, mut vels, mut bodies, mut shapes, _) =
+        let graph = graph();
+        let (mut poses, mut vels, mut bodies, mut shapes) =
             graph.get_layer_bundle::<AllLayersMut>();
-
-        let everyones_shape = shapes.insert(Shape(69)).key();
 
         for i in 0..10 {
             let mut pose_node = poses.insert(Pose(i));
@@ -1206,7 +1356,8 @@ mod tests {
                 pose_node.connect(&mut vel_node);
             }
             if i % 4 == 0 {
-                body_node.connect_oneway(&mut shapes.get_mut(everyones_shape).unwrap());
+                let mut shape_node = shapes.insert(Shape(i));
+                body_node.connect(&mut shape_node);
             }
         }
 
@@ -1251,7 +1402,6 @@ mod tests {
         }
         assert_eq!(match_count, 5);
         assert_eq!(full_match_count, 3);
-        assert_eq!(*shapes.get(everyones_shape).unwrap().c, Shape(72));
 
         println!("All rbs: {:?}", bodies.components);
 
@@ -1271,15 +1421,11 @@ mod tests {
     /// Deleting hits every intended node.
     #[test]
     fn delete() {
-        let mut graph = Graph::new();
+        let mut graph = graph();
 
         let vels_to_del: Vec<NodeKey<Velocity>> = {
-            let (mut poses, mut vels, mut bodies, mut shapes, mut sub_shapes) =
+            let (mut poses, mut vels, mut bodies, mut shapes) =
                 graph.get_layer_bundle::<AllLayersMut>();
-
-            let mut everyones_shape = shapes.insert(Shape(69));
-            let mut shape_owns_thing = sub_shapes.insert(Subshape(42));
-            everyones_shape.connect(&mut shape_owns_thing);
 
             for i in 0..10 {
                 let mut pose_node = poses.insert(Pose(i));
@@ -1289,11 +1435,8 @@ mod tests {
                 if i % 2 == 0 {
                     pose_node.connect(&mut vel_node);
                 } else {
-                    let mut subshape = sub_shapes.insert(Subshape(i));
-                    vel_node.connect(&mut subshape);
-                }
-                if i % 3 == 0 {
-                    body_node.connect_oneway(&mut everyones_shape);
+                    let mut shape = shapes.insert(Shape(i));
+                    vel_node.connect(&mut shape);
                 }
             }
 
@@ -1302,9 +1445,9 @@ mod tests {
             vels.iter().map(|v| v.key()).collect()
         };
         for vel_to_del in vels_to_del {
-            graph.delete(vel_to_del);
+            graph.gather(vel_to_del).delete();
         }
-        // all vels deleted (== have 0 referrers)
+        // all vels deleted
         assert_eq!(graph.get_layer::<Velocity>().iter().count(), 0);
         // half of poses had vels attached and have also been deleted
         assert_eq!(graph.get_layer::<Pose>().iter().count(), 5);
@@ -1316,13 +1459,7 @@ mod tests {
             .collect();
         // rbs are connected to everything so deleting all of them should delete everything
         for rb_to_del in bodies_to_del {
-            // everyones_shape and its subcomponent should live until the last rb is deleted
-            // BECAUSE the last rb is connected to it
-            // (remember this if changing the iteration counts!)
-            assert_eq!(graph.get_layer::<Shape>().iter().count(), 1);
-            assert_eq!(graph.get_layer::<Subshape>().iter().count(), 1);
-
-            graph.delete(rb_to_del);
+            graph.gather(rb_to_del).delete();
         }
         assert_eq!(graph.get_layer::<Shape>().iter().count(), 0);
         assert_eq!(graph.get_layer::<Pose>().iter().count(), 0);
@@ -1340,18 +1477,7 @@ mod tests {
     /// Slots left over by `delete` are reused when spawning more components.
     #[test]
     fn reuse_deleted_slots() {
-        let mut graph = Graph::new();
-
-        let mut shapes = graph.get_layer_mut::<Shape>();
-        let mut subshapes = graph.get_layer_mut::<Subshape>();
-
-        let mut everyones_shape = shapes.insert(Shape(69));
-        // connect everyones_shape to something to make sure we don't accidentally delete it
-        let mut shape_guardian = subshapes.insert(Subshape(69));
-        shape_guardian.connect_oneway(&mut everyones_shape);
-        let everyones_shape = everyones_shape.key();
-        drop(subshapes);
-        drop(shapes);
+        let mut graph = graph();
 
         // delete and respawn stuff a few times to hopefully see if things get connected wrong at some point
         // (this doesn't prove things won't go wrong over a long enough time but fingers crossed)
@@ -1365,12 +1491,12 @@ mod tests {
                 .map(|pose| pose.key())
                 .collect();
             for pose_node in pose_nodes {
-                graph.delete(pose_node);
+                graph.gather(pose_node).delete();
             }
             for j in 0..10 {
                 let pose_key;
                 {
-                    let (mut poses, mut vels, mut bodies, mut shapes, _) =
+                    let (mut poses, mut vels, mut bodies, _) =
                         graph.get_layer_bundle::<AllLayersMut>();
 
                     let id = i * 20 + j;
@@ -1379,11 +1505,6 @@ mod tests {
                     let mut rb_node = bodies.insert(Body(id));
                     pose_node.connect(&mut vel_node);
                     vel_node.connect(&mut rb_node);
-                    pose_node.connect_oneway(
-                        &mut shapes
-                            .get_mut(everyones_shape)
-                            .expect("everyones_shape was deleted"),
-                    );
 
                     pose_key = pose_node.key();
                 }
@@ -1391,7 +1512,7 @@ mod tests {
                 if i % 2 == 0 {
                     let pose_len_before = graph.get_layer::<Pose>().components.len();
 
-                    graph.delete(pose_key);
+                    graph.gather(pose_key).delete();
                     let mut poses = graph.get_layer_mut::<Pose>();
                     assert!(
                         poses.get(pose_key).is_none(),
@@ -1415,51 +1536,162 @@ mod tests {
             }
         }
 
-        let (poses, vels, bodies, shapes, _) = graph.get_layer_bundle::<AllLayers>();
+        let (poses, vels, bodies, _) = graph.get_layer_bundle::<AllLayers>();
         println!("poses.content: {:?}", &poses.components);
         println!("vels.content: {:?}", &vels.components);
         println!("bodies.content: {:?}", &bodies.components);
 
         assert_eq!(poses.components.len(), 30);
         assert_eq!(vels.components.len(), 30);
-        // everyones_shape was never deleted
-        assert_eq!(shapes.components.len(), 1);
     }
 
-    /// Disconnecting nodes causes edges to be removed
-    /// and can cause a node to become deleted.
+    /// If stopping layers are specified, delete algorithm stops there as intended.
     #[test]
-    fn disconnect() {
-        let graph = Graph::new();
+    fn delete_stop() {
+        let mut graph = graph();
 
-        let mut l_pose = graph.get_layer_mut::<Pose>();
-        let mut l_body = graph.get_layer_mut::<Body>();
-        let mut l_shape = graph.get_layer_mut::<Shape>();
+        let mut pose_keys = Vec::new();
+        {
+            let (mut poses, mut vels, mut bodies, mut shapes): AllLayersMut =
+                graph.get_layer_bundle();
+            for i in 0..10 {
+                let mut pose = poses.insert(Pose(i));
+                let mut vel = vels.insert(Velocity(i));
+                let mut body = bodies.insert(Body(i));
+                let mut shape = shapes.insert(Shape(i));
+                // triangle shape of pose, body, and vel,
+                // attached to shape at the body
+                pose.connect(&mut vel);
+                vel.connect(&mut body);
+                body.connect(&mut pose);
+                body.connect(&mut shape);
 
-        let mut pose_node = l_pose.insert(Pose(0));
-        let mut body_node = l_body.insert(Body(0));
-        let mut shape_node = l_shape.insert(Shape(0));
+                pose_keys.push(pose.key());
+            }
+        }
 
-        pose_node.connect(&mut body_node);
-        body_node.connect(&mut shape_node);
-        shape_node.connect(&mut pose_node);
+        for (i, pose) in pose_keys.iter().enumerate() {
+            let mut gather = graph.gather(*pose).stop_at_layer::<Body>();
+            if i % 2 == 0 {
+                gather = gather.stop_at_layer::<Velocity>();
+            }
+            gather.delete();
+        }
 
-        let pose_key = pose_node.key();
-        let shape_key = shape_node.key();
+        let mut remaining_triples = Vec::new();
+        {
+            let (poses, vels, bodies, shapes): AllLayers = graph.get_layer_bundle();
+            // poses should all be deleted, half of vels should, and none of bodies and shapes
+            assert_eq!(poses.iter().count(), 0);
+            assert_eq!(vels.iter().count(), 5);
+            assert_eq!(bodies.iter().count(), 10);
+            assert_eq!(shapes.iter().count(), 10);
+            for vel in vels.iter() {
+                let body = vel.get_neighbor(&bodies).expect("unwanted edge deleted");
+                let shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+                remaining_triples.push((vel.key(), body.key(), shape.key()));
+            }
+            for body in bodies.iter() {
+                let _shape = body.get_neighbor(&shapes).expect("unwanted edge deleted");
+            }
+        }
 
-        pose_node.disconnect_oneway(shape_node);
-        assert!(pose_node.get_neighbor_mut(&mut l_shape).is_none());
+        for (vel, body, shape) in remaining_triples {
+            graph.gather(vel).stop_at_layer::<Body>().delete();
+            // body and shape should still be there for now
+            assert!(graph.get_layer::<Body>().get(body).is_some());
+            assert!(graph.get_layer::<Shape>().get(shape).is_some());
+            graph.gather(shape).stop_at_layer::<Body>().delete();
+            // body should now be deleted despite being set as a boundary
+            // because there are no more edges to it
+            assert!(graph.get_layer::<Body>().get(body).is_none());
+        }
+    }
 
-        let mut shape_node = l_shape.get_mut(shape_key).unwrap();
-        drop(pose_node);
-        assert!(shape_node.get_neighbor_mut(&mut l_pose).is_some());
+    /// Multiple edges from one node to one layer are created, followed, and destroyed correctly.
+    #[test]
+    fn multiple_edges() {
+        let mut graph = graph();
 
-        let pose_node = l_pose.get_mut(pose_key).unwrap();
-        shape_node.disconnect_oneway(pose_node);
-        assert!(shape_node.get_neighbor_mut(&mut l_pose).is_none());
+        // do the whole thing a few times to ensure we don't leave garbage
+        for _ in 0..3 {
+            let mut poses = graph.get_layer_mut::<Pose>();
+            let mut bodies = graph.get_layer_mut::<Body>();
+            let mut shapes = graph.get_layer_mut::<Shape>();
 
-        body_node.disconnect_oneway(shape_node);
-        assert!(l_shape.meta.vacant_slots.len() == 1);
-        assert!(l_shape.meta.refcounts[0] == 0);
+            let mut pose = poses.insert(Pose(0));
+            let mut shape = shapes.insert(Shape(0));
+            pose.connect(&mut shape);
+            let mut shape_connected_body_keys = Vec::new();
+            for i in 0..10 {
+                let mut body = bodies.insert(Body(i));
+                pose.connect(&mut body);
+                if i % 2 == 0 {
+                    shape.connect(&mut body);
+                    shape_connected_body_keys.push(body.key());
+                }
+            }
+            assert_eq!(bodies.iter().count(), 10);
+
+            // all neighbors are found
+
+            assert_eq!(pose.get_all_neighbors(&bodies.subview()).count(), 10);
+            assert_eq!(shape.get_all_neighbors(&bodies.subview()).count(), 5);
+
+            let mut conn_bodies = pose.get_all_neighbors_mut(&mut bodies);
+            while let Some(body) = conn_bodies.next() {
+                body.c.0 = 69;
+            }
+            for body in shape.get_all_neighbors(&bodies.subview()) {
+                assert_eq!(body.c.0, 69);
+            }
+
+            let pose_key = pose.key();
+            for &body in &shape_connected_body_keys {
+                let b = bodies.get(body).unwrap();
+                assert_eq!(b.get_neighbor(&poses.subview()).unwrap().key(), pose_key);
+            }
+
+            let shape_key = shape.key();
+
+            // delete gets everything
+
+            drop(poses);
+            drop(bodies);
+            drop(shapes);
+            // half of bodies should go with this, pose should survive with 5 attached
+            graph.gather(shape_key).stop_at_layer::<Pose>().delete();
+
+            let poses = graph.get_layer::<Pose>();
+            let bodies = graph.get_layer::<Body>();
+
+            assert_eq!(bodies.iter().count(), 5);
+            let pose = poses.get(pose_key).expect("Pose was deleted??");
+            assert_eq!(pose.get_all_neighbors(&bodies).count(), 5);
+            for body in pose.get_all_neighbors(&bodies) {
+                assert!(!shape_connected_body_keys.contains(&body.key()));
+            }
+
+            drop(poses);
+            drop(bodies);
+
+            // delete the rest of everything
+            graph.gather(pose_key).delete();
+
+            let poses = graph.get_layer::<Pose>();
+            let bodies = graph.get_layer::<Body>();
+            for edge in &bodies.meta.edges[graph.get_layer_address::<Pose>()] {
+                assert!(edge.is_none());
+            }
+            for edge in &bodies.meta.edges[graph.get_layer_address::<Shape>()] {
+                assert!(edge.is_none());
+            }
+            // all secondary edges became vacant (10 edges - 1 primary edge)
+            assert_eq!(poses.meta.vacant_edge_slots.len(), 9);
+            // secondary edges stay after delete,
+            // but none more were added after first iteration
+            // because vacant slots were used
+            assert_eq!(poses.meta.secondary_edges.len(), 9);
+        }
     }
 }

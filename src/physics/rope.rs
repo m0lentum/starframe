@@ -1,7 +1,7 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    graph::{self, LayerView, LayerViewMut},
+    graph::{self, LayerViewMut},
     graphics::Shape,
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
@@ -86,9 +86,6 @@ pub fn spawn_line(
         particle_count,
         (l_body.subview_mut(), l_pose, l_collider, l_shape),
     );
-    // outgoing connection from the rope node.
-    // incoming connections from each particle are created by `build_rope_line`
-    rope_node.connect_oneway(&mut l_body.get_mut_unchecked(first_body));
 
     RopeProperties {
         particle_count,
@@ -111,7 +108,7 @@ pub fn extend_line(
     ),
 ) -> RopeProperties {
     let l_body_sub = l_body.subview();
-    let mut rope_iter = RopeIter::new(rope_node.subview(), &l_body_sub).enumerate();
+    let mut rope_iter = rope_node.get_all_neighbors(&l_body_sub).enumerate();
     let first_particle = rope_iter.next().expect("Rope had no particles").1;
     let (last_particle_idx, last_particle) = rope_iter.last().unwrap_or((0, first_particle));
 
@@ -124,19 +121,15 @@ pub fn extend_line(
     let first_new_pos = last_particle_pos + step;
 
     let first_particle = first_particle.key();
-    let last_particle = last_particle.key();
     drop(l_body_sub);
 
-    let [first_new, last_new] = build_line(
+    let [_, last_new] = build_line(
         rope_node,
         first_new_pos,
         step,
         count,
         (l_body.subview_mut(), l_pose, l_collider, l_shape),
     );
-
-    let mut last_old = l_body.get_mut_unchecked(last_particle);
-    last_old.connect_oneway_same_layer(first_new);
 
     RopeProperties {
         particle_count: last_particle_idx + 1 + count,
@@ -182,7 +175,7 @@ fn build_line(
     first_body.connect(&mut first_coll);
     first_pose.connect(&mut first_coll);
     first_pose.connect(&mut first_shape);
-    first_body.connect_oneway(rope_node);
+    first_body.connect(rope_node);
     let first_body = first_body.key();
     let mut next_pos: m::Vec2 = start + step;
     let mut prev_body: graph::NodeKey<Body> = first_body;
@@ -195,200 +188,92 @@ fn build_line(
         pose.connect(&mut coll);
         body.connect(&mut coll);
         pose.connect(&mut shape);
-        body.connect_oneway(rope_node);
-        let body = body.key();
-        l_body
-            .get_mut_unchecked(prev_body)
-            .connect_oneway_same_layer(body);
+        body.connect(rope_node);
 
         next_pos += step;
-        prev_body = body;
+        prev_body = body.key();
     }
     [first_body, prev_body]
 }
 
-/// Split a rope into two at the given particle,
-/// leaving the particle unattached to any rope.
+/// Split a rope into two after the given particle.
 ///
-/// If the particle is part of the rope and not its first or last particle,
-/// the rope is split into two parts and their properties are returned.
-/// Otherwise, returns None.
-pub fn detach_particle(
+/// Returns the [`Rope`][crate::physics::rope::Rope] nodes of the two rope parts
+/// if the particle is part of a rope and not its last particle,
+/// otherwise returns `None`.
+pub fn cut_after(
     particle: graph::NodeKey<Body>,
     (mut l_body, mut l_rope): (LayerViewMut<Body>, LayerViewMut<Rope>),
-) -> Option<[RopeProperties; 2]> {
-    //
-    // this whole thing is some really unsavory and error-prone code,
-    // I hope to come up with a better graph API to make stuff like this easier
-    // but for the time being, it works
-    //
+) -> Option<[graph::NodeKey<Rope>; 2]> {
+    let l_rope_addr = l_rope.meta.address;
+    let l_body_addr = l_body.meta.address;
 
-    let particle_node = l_body.get(particle)?;
-    let rope_node = particle_node.get_neighbor_mut(&mut l_rope)?;
-    // iterating by hand instead of rope iter here due to borrowing and mutating shenanigans
-    let first = rope_node.get_neighbor_mut(&mut l_body)?.key();
+    let p_node = l_body.get(particle)?;
+    let l_rope_sub = l_rope.subview();
+    let rope_node = p_node.get_neighbor(&l_rope_sub)?;
+    let rope_copy = *rope_node.c;
     let rope_key = rope_node.key();
+    drop(l_rope_sub);
 
-    // special case for first particle
+    // traverse the list of edges to find the one pointing to this particle,
+    // transfer ones after that to new rope node
 
-    if first == particle {
-        let mut rope = l_rope.get_mut_unchecked(rope_key);
-        rope.disconnect_oneway(l_body.get_mut(first)?);
-        l_body.get_mut_unchecked(first).disconnect_oneway(rope);
+    let edge_idx_to_transfer: Option<usize>;
 
-        if let Some(second_idx) = graph::get_neighbor_idx::<Body>(l_body.meta, first.idx) {
-            let mut second = l_body.get_mut_unchecked_by_item_idx(second_idx);
-            l_rope
-                .get_mut_unchecked(rope_key)
-                .connect_oneway(&mut second);
-            let second = second.key();
-            l_body
-                .get_mut_unchecked(first)
-                .disconnect_oneway_same_layer(second);
-        }
-        return None;
-    }
-
-    // general case
-
-    let mut curr = first;
-    let new_rope: graph::NodeKey<Rope>;
-    // find the particle being detached, do it and create a new rope if we're in the middle
-    loop {
-        let next_idx = graph::get_neighbor_idx::<Body>(l_body.meta, curr.idx)?;
-        let next_key = l_body.get_unchecked_by_item_idx(next_idx).key();
-
-        if next_key == particle {
-            l_body
-                .get_mut_unchecked(curr)
-                .disconnect_oneway_same_layer(next_key);
-            l_body
-                .get_mut_unchecked(next_key)
-                .disconnect_oneway(l_rope.get_mut_unchecked(rope_key));
-
-            if let Some(rope_continues) = graph::get_neighbor_idx::<Body>(l_body.meta, next_key.idx)
-            {
-                let next_next_key = l_body.get_unchecked_by_item_idx(rope_continues).key();
-
-                let rope_copy = *l_rope.get_unchecked(rope_key).c;
-                let mut new_rope_node = l_rope.insert(rope_copy);
-                new_rope_node.connect_oneway(&mut l_body.get_mut_unchecked(next_next_key));
-                l_body
-                    .get_mut_unchecked(next_key)
-                    .disconnect_oneway_same_layer(next_next_key);
-
-                new_rope = new_rope_node.key();
-                curr = next_next_key;
+    let first_edge = l_rope.meta.edges[l_body_addr][rope_key.idx]
+        .as_mut()
+        .expect("Rope had no particles");
+    if first_edge.target == particle.idx {
+        edge_idx_to_transfer = first_edge.next_edge;
+        first_edge.next_edge = None;
+    } else {
+        let mut curr_edge_idx = first_edge.next_edge;
+        while let Some(curr) = curr_edge_idx {
+            let curr_edge = &mut l_rope.meta.secondary_edges[curr];
+            curr_edge_idx = curr_edge.next_edge;
+            if curr_edge.target == particle.idx {
+                curr_edge.next_edge = None;
                 break;
             }
         }
-        curr = next_key;
+        edge_idx_to_transfer = curr_edge_idx;
     }
 
-    // connect new stuff to new rope node
-    loop {
-        let mut particle = l_body.get_mut_unchecked_by_item_idx(curr.idx);
-        particle.disconnect_oneway(l_rope.get_mut_unchecked(rope_key));
-        particle.connect_oneway(&mut l_rope.get_mut_unchecked(new_rope));
+    // this is all a little trickier than it strictly needs to be,
+    // could be done by deleting and recreating all edges using public graph apis,
+    // but moving existing edges around is a bit more efficient
 
-        curr = match graph::get_neighbor_idx::<Body>(l_body.meta, curr.idx) {
-            Some(next) => l_body.get_unchecked_by_item_idx(next).key(),
-            None => {
-                return Some([rope_key, new_rope].map(|rope| {
-                    let l_body_sub = l_body.subview();
-                    let mut iter =
-                        RopeIter::new(l_rope.get_unchecked(rope), &l_body_sub).enumerate();
-                    let fst = iter.next().unwrap().1;
-                    let (last_idx, last) = iter.last().unwrap_or((0, fst));
-                    RopeProperties {
-                        particle_count: last_idx + 1,
-                        rope_node: rope,
-                        first_particle: fst.key(),
-                        last_particle: last.key(),
-                    }
-                }));
+    match edge_idx_to_transfer {
+        Some(edge_idx_to_transfer) => {
+            let edge_to_transfer = l_rope.meta.secondary_edges[edge_idx_to_transfer];
+            let mut new_rope = l_rope.insert(rope_copy);
+            let new_rope_key = new_rope.key();
+            // remove old edge and use connect api
+            // so we don't have to extend the rope layer's edge vec manually here
+            l_body.meta.edges[l_rope_addr][edge_to_transfer.target] = None;
+            new_rope.connect(&mut l_body.get_mut_unchecked_by_item_idx(edge_to_transfer.target));
+            // transfer the rest of the edges from the old rope to the new
+            l_rope.meta.edges[l_body_addr][new_rope_key.idx] = Some(edge_to_transfer);
+            // mark the one edge that just became a primary edge as vacant
+            l_rope
+                .meta
+                .vacant_edge_slots
+                .push_back(edge_idx_to_transfer);
+            // transfer the edges from the particles toward the rope
+            // (taking for granted that the rope is the primary edge for them all;
+            // anything else would be a logic error in multiple places)
+            let mut curr_edge = edge_to_transfer;
+            while let Some(next) = curr_edge.next_edge {
+                let next_edge = l_rope.meta.secondary_edges[next];
+                l_body.meta.edges[l_rope_addr][next_edge.target]
+                    .as_mut()
+                    .unwrap()
+                    .target = new_rope_key.idx;
+                curr_edge = next_edge;
             }
-        };
-    }
-}
 
-//
-// iterators
-//
-
-/// An iterator over the particles in a particular rope, in order from start to end.
-pub struct RopeIter<'a, 'l: 'a> {
-    rope_node: graph::NodeRef<'a, Rope>,
-    has_started: bool,
-    curr_body_idx: Option<usize>,
-    l_body: &'a LayerView<'l, Body>,
-}
-
-impl<'a, 'l: 'a> RopeIter<'a, 'l> {
-    pub fn new(rope_node: graph::NodeRef<'a, Rope>, l_body: &'a LayerView<'l, Body>) -> Self {
-        Self {
-            rope_node,
-            has_started: false,
-            curr_body_idx: None,
-            l_body,
+            Some([rope_key, new_rope_key])
         }
-    }
-}
-
-impl<'a, 'l: 'a> Iterator for RopeIter<'a, 'l> {
-    type Item = graph::NodeRef<'a, Body>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(curr) = self.curr_body_idx {
-            self.curr_body_idx = graph::get_neighbor_idx::<Body>(self.l_body.meta, curr);
-        } else if !self.has_started {
-            self.has_started = true;
-            self.curr_body_idx = self
-                .rope_node
-                .get_neighbor(self.l_body)
-                .map(|node| node.key().idx);
-        }
-        self.curr_body_idx
-            .map(|i| self.l_body.get_unchecked_by_item_idx(i))
-    }
-}
-
-/// A [`RopeIter`][self::RopeIter] but it yields mutable references.
-pub struct RopeIterMut<'a, 'l: 'a> {
-    rope_node: graph::NodeRef<'a, Rope>,
-    has_started: bool,
-    curr_body_idx: Option<usize>,
-    l_body: &'a mut LayerViewMut<'l, Body>,
-}
-
-impl<'a, 'l: 'a> RopeIterMut<'a, 'l> {
-    pub fn new(
-        rope_node: graph::NodeRef<'a, Rope>,
-        l_body: &'a mut LayerViewMut<'l, Body>,
-    ) -> Self {
-        Self {
-            rope_node,
-            has_started: false,
-            curr_body_idx: None,
-            l_body,
-        }
-    }
-
-    /// Unfortunately Iterator can't be implemented for this due to lifetime trouble,
-    /// as Iterator doesn't allow tying the lifetime of yielded references to
-    /// the `'_` lifetime of the `next` method. Call this by hand instead.
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Option<graph::NodeRefMut<'_, Body>> {
-        if let Some(curr) = self.curr_body_idx {
-            self.curr_body_idx = graph::get_neighbor_idx::<Body>(self.l_body.meta, curr);
-        } else if !self.has_started {
-            self.has_started = true;
-            self.curr_body_idx = self
-                .rope_node
-                .get_neighbor(&self.l_body.subview())
-                .map(|node| node.key().idx);
-        }
-        self.curr_body_idx
-            .map(move |i| self.l_body.get_mut_unchecked_by_item_idx(i))
+        None => None,
     }
 }

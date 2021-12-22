@@ -432,7 +432,7 @@ impl Physics {
         let _main_span = tracy_span!("physics tick", "tick");
 
         let l_pose_immut = l_pose.subview();
-        let l_body_immut = l_body.subview();
+        let l_body_sub = l_body.subview();
 
         let dt = frame_dt / self.consts.substeps as f64;
         let inv_dt = 1.0 / dt;
@@ -442,9 +442,9 @@ impl Physics {
 
         // remove constraints where one or both participating bodies have been destroyed
         self.user_constraints.retain(|_, c| {
-            l_body_immut.get(c.owner).is_some()
+            l_body_sub.get(c.owner).is_some()
                 && c.target
-                    .map(|t| l_body_immut.get(t).is_some())
+                    .map(|t| l_body_sub.get(t).is_some())
                     .unwrap_or(true)
         });
         bufs.user_constraints.clear();
@@ -468,7 +468,7 @@ impl Physics {
             let pose = coll
                 .get_neighbor(&l_pose_immut)
                 .expect("A Collider didn't have a Pose");
-            let aabb = match coll.get_neighbor(&l_body_immut) {
+            let aabb = match coll.get_neighbor(&l_body_sub) {
                 Some(b) => coll
                     .c
                     .aabb(pose.c)
@@ -500,12 +500,13 @@ impl Physics {
         let constr_graph_span = tracy_span!("build constraint graph", "tick");
 
         self.constraint_graph.clear();
-        self.constraint_graph.resize(l_body_immut.components.len());
+        self.constraint_graph.resize(l_body_sub.components.len());
 
         // rope constraints
         for rope_node in l_rope.iter() {
             let rope_node_idx = rope_node.key().idx;
-            let mut iter = rope::RopeIter::new(rope_node, &l_body_immut)
+            let mut iter = rope_node
+                .get_all_neighbors(&l_body_sub)
                 .map(|node| node.key().idx)
                 .peekable();
             while let Some(particle) = iter.next() {
@@ -558,7 +559,7 @@ impl Physics {
         // but that would require redoing this every substep which would be costly.
         for (pair_idx, pair) in bufs.coll_pair_idxs.iter().enumerate() {
             let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
-            match colls.map(|c| c.get_neighbor(&l_body_immut).map(|b| b.key().idx)) {
+            match colls.map(|c| c.get_neighbor(&l_body_sub).map(|b| b.key().idx)) {
                 [Some(b1), Some(b2)] => {
                     self.constraint_graph.insert(
                         b1,
@@ -595,7 +596,7 @@ impl Physics {
 
         bufs.island_assigned.clear();
         bufs.island_assigned
-            .resize(l_body_immut.components.len(), false);
+            .resize(l_body_sub.components.len(), false);
         bufs.islands.clear();
         bufs.sorted_first_pass.clear();
         bufs.sorted_second_pass.clear();
@@ -679,7 +680,7 @@ impl Physics {
             }
         }
 
-        for body in l_body_immut.iter() {
+        for body in l_body_sub.iter() {
             let bi = body.key().idx;
             if bufs.island_assigned[bi] {
                 continue;
@@ -722,7 +723,7 @@ impl Physics {
                     [isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
                     .any(|bi| {
-                        l_body_immut
+                        l_body_sub
                             .get_unchecked_by_item_idx(*bi)
                             .c
                             .velocity
@@ -793,12 +794,12 @@ impl Physics {
             .sorted_second_pass
             .bodies
             .iter()
-            .map(|&bi| l_body_immut.get_unchecked_by_item_idx(bi))
+            .map(|&bi| l_body_sub.get_unchecked_by_item_idx(bi))
             .collect();
         // node_ref_map maps from the position of a node in the graph layer
         // to the position of a node in body_refs
         // we don't need to clear it because gaps will just never be touched
-        bufs.node_ref_map.resize(l_body_immut.components.len(), 0);
+        bufs.node_ref_map.resize(l_body_sub.components.len(), 0);
         for (ref_pos, node) in body_refs.iter().enumerate() {
             bufs.node_ref_map[node.key().idx] = ref_pos;
         }
@@ -809,7 +810,7 @@ impl Physics {
             .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
                 let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
                 let first_particle = rope_node
-                    .get_neighbor(&l_body_immut)
+                    .get_neighbor(&l_body_sub)
                     .expect("A Rope didn't have any particles");
                 solver::RopeView {
                     info: *rope_node.c,
@@ -833,7 +834,8 @@ impl Physics {
         bufs.rope_prev_particles.resize(body_refs.len(), None);
         for rope_node in l_rope.iter() {
             let node_ref_map = &bufs.node_ref_map;
-            let mut iter = rope::RopeIter::new(rope_node, &l_body_immut)
+            let mut iter = rope_node
+                .get_all_neighbors(&l_body_sub)
                 .map(|node| node_ref_map[node.key().idx])
                 .peekable();
             while let Some(particle) = iter.next() {
@@ -887,7 +889,7 @@ impl Physics {
             bufs.colliders[node_idx] = solver::ColliderWithContext {
                 node_idx,
                 coll: *coll.c,
-                ctx: match coll.get_neighbor(&l_body_immut) {
+                ctx: match coll.get_neighbor(&l_body_sub) {
                     Some(b) => ColliderContext::Body(bufs.node_ref_map[b.key().idx]),
                     None => ColliderContext::Static(match coll.get_neighbor(&l_pose_immut) {
                         Some(pose) => *pose.c,
@@ -1212,7 +1214,7 @@ impl Physics {
         // drop body_refs and immutable views so we can get mutable references
         let body_nodes: Vec<graph::NodeKey<Body>> =
             body_refs.into_iter().map(|br| br.key()).collect();
-        drop(l_body_immut);
+        drop(l_body_sub);
         drop(l_pose_immut);
 
         for (body, pose_result, vel_result) in izip!(body_nodes, &bufs.poses, &bufs.velocities) {

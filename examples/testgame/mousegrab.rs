@@ -1,8 +1,9 @@
-use sf::{
+use starframe::{
+    self as sf,
+    graph::Graph,
     graphics::camera::Camera,
     physics::{ConstraintBuilder, ConstraintHandle},
 };
-use starframe as sf;
 
 #[derive(Clone, Copy, Debug)]
 pub struct MouseGrabber {
@@ -20,7 +21,7 @@ impl MouseGrabber {
         camera: &impl Camera,
         viewport_size: (u32, u32),
         physics: &mut sf::Physics,
-        graph: &super::MyGraph,
+        graph: &Graph,
     ) {
         if input.is_mouse_button_pressed(sf::input::MouseButton::Left, None) {
             let target_point =
