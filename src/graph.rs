@@ -87,17 +87,15 @@
 //!
 //! See individual types' documentation for details.
 
-use std::{any::Any, collections::VecDeque, marker::PhantomData};
+use std::{
+    any::{self, Any},
+    collections::{HashMap, VecDeque},
+    marker::PhantomData,
+};
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //
-
-#[macro_use]
-mod component_defs;
-pub use crate::make_graph;
-#[doc(hidden)]
-pub use component_defs::BUILTIN_LAYER_COUNT;
 
 mod layer_bundle;
 pub use layer_bundle::LayerBundle;
@@ -109,14 +107,6 @@ pub use layer_bundle::LayerBundle;
 type ComponentIdx = usize;
 type GenerationIdx = usize;
 
-/// Allows types to be inserted into the graph.
-/// Implemented for custom types using the [`make_graph`][self::make_graph] macro;
-/// do not implement manually!
-pub trait Component: 'static + Send + Sync {
-    /// Address of this type's graph layer.
-    const LAYER_INDEX: usize;
-}
-
 /// Node position without generation info, used internally to traverse the graph
 /// without knowing types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -124,22 +114,14 @@ struct BareNodeKey {
     layer: usize,
     idx: usize,
 }
-impl<T: Component> From<NodeKey<T>> for BareNodeKey {
-    fn from(key: NodeKey<T>) -> Self {
-        Self {
-            layer: T::LAYER_INDEX,
-            idx: key.idx,
-        }
-    }
-}
 
 /// An identifier for looking up a specific node.
-pub struct NodeKey<T: Component> {
-    pub(crate) idx: usize,
-    pub(crate) gen: usize,
+pub struct NodeKey<T> {
+    pub(crate) idx: ComponentIdx,
+    pub(crate) gen: GenerationIdx,
     pub(crate) _marker: PhantomData<T>,
 }
-impl<'a, T: Component> From<NodeRef<'a, T>> for NodeKey<T> {
+impl<'a, T> From<NodeRef<'a, T>> for NodeKey<T> {
     fn from(node: NodeRef<'a, T>) -> Self {
         Self {
             idx: node.idx,
@@ -148,7 +130,7 @@ impl<'a, T: Component> From<NodeRef<'a, T>> for NodeKey<T> {
         }
     }
 }
-impl<'a, T: Component> From<NodeRefMut<'a, T>> for NodeKey<T> {
+impl<'a, T> From<NodeRefMut<'a, T>> for NodeKey<T> {
     fn from(node: NodeRefMut<'a, T>) -> Self {
         Self {
             idx: node.idx,
@@ -158,7 +140,7 @@ impl<'a, T: Component> From<NodeRefMut<'a, T>> for NodeKey<T> {
     }
 }
 // blanket impls required because phantomdata makes derive unnecessarily restrict type of T
-impl<T: Component> Clone for NodeKey<T> {
+impl<T> Clone for NodeKey<T> {
     fn clone(&self) -> Self {
         NodeKey {
             idx: self.idx,
@@ -167,8 +149,8 @@ impl<T: Component> Clone for NodeKey<T> {
         }
     }
 }
-impl<T: Component> Copy for NodeKey<T> {}
-impl<T: Component> std::fmt::Debug for NodeKey<T> {
+impl<T> Copy for NodeKey<T> {}
+impl<T> std::fmt::Debug for NodeKey<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "Node {{\n idx: {:?},\n gen: {},\n}}",
@@ -176,13 +158,13 @@ impl<T: Component> std::fmt::Debug for NodeKey<T> {
         ))
     }
 }
-impl<T: Component> PartialEq for NodeKey<T> {
+impl<T> PartialEq for NodeKey<T> {
     fn eq(&self, other: &Self) -> bool {
         self.idx == other.idx && self.gen == other.gen
     }
 }
-impl<T: Component> Eq for NodeKey<T> {}
-impl<T: Component> std::hash::Hash for NodeKey<T> {
+impl<T> Eq for NodeKey<T> {}
+impl<T> std::hash::Hash for NodeKey<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.idx.hash(state);
     }
@@ -190,18 +172,18 @@ impl<T: Component> std::hash::Hash for NodeKey<T> {
 
 /// An immutable reference to a node in the graph.
 #[derive(Clone, Copy, Debug)]
-pub struct NodeRef<'a, T: Component> {
+pub struct NodeRef<'a, T> {
     /// The component that this node points to.
     pub c: &'a T,
     idx: usize,
     layer_meta: &'a LayerMetadata,
 }
 
-impl<'a, T: Component> NodeRef<'a, T> {
+impl<'a, T> NodeRef<'a, T> {
     /// If there's an edge starting from this node and ending at a node of the given type,
     /// get a reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor<'lr, 'l, Target: Component>(
+    pub fn get_neighbor<'lr, 'l, Target>(
         &self,
         layer: &'lr LayerView<'l, Target>,
     ) -> Option<NodeRef<'lr, Target>> {
@@ -211,12 +193,12 @@ impl<'a, T: Component> NodeRef<'a, T> {
     /// Get an iterator going over all edges from this node to the target layer.
     /// Usually there is only one and [`get_neighbor`][self::get_neighbor] can be used instead.
     #[inline]
-    pub fn get_all_neighbors<'r, 'l, Target: Component>(
+    pub fn get_all_neighbors<'r, 'l, Target>(
         &'r self,
         layer: &'r LayerView<'l, Target>,
     ) -> EdgeIter<'r, 'l, Target> {
         EdgeIter {
-            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
             edge_list: &self.layer_meta.secondary_edges,
             layer,
         }
@@ -225,7 +207,7 @@ impl<'a, T: Component> NodeRef<'a, T> {
     /// If there's an edge starting from this node and ending at a node of the given type,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
+    pub fn get_neighbor_mut<'lr, 'l, Target>(
         &self,
         layer: &'lr mut LayerViewMut<'l, Target>,
     ) -> Option<NodeRefMut<'lr, Target>> {
@@ -235,12 +217,12 @@ impl<'a, T: Component> NodeRef<'a, T> {
     /// Get a mutable iterator going over all edges from this node to the target layer.
     /// Usually there is only one and [`get_neighbor`][self::get_neighbor_mut] can be used instead.
     #[inline]
-    pub fn get_all_neighbors_mut<'r, 'l, Target: Component>(
+    pub fn get_all_neighbors_mut<'r, 'l, Target>(
         &'r self,
         layer: &'r mut LayerViewMut<'l, Target>,
     ) -> EdgeIterMut<'r, 'l, Target> {
         EdgeIterMut {
-            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
             edge_list: &self.layer_meta.secondary_edges,
             layer,
         }
@@ -258,22 +240,22 @@ impl<'a, T: Component> NodeRef<'a, T> {
 }
 
 /// A mutable reference to a node in the graph.
-pub struct NodeRefMut<'a, T: Component> {
+pub struct NodeRefMut<'a, T> {
     /// The component that this node points to.
     pub c: &'a mut T,
     idx: usize,
     layer_meta: &'a mut LayerMetadata,
 }
 
-impl<'a, T: Component> NodeRefMut<'a, T> {
+impl<'a, T> NodeRefMut<'a, T> {
     #[inline]
-    pub fn connect<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
+    pub fn connect<Other>(&mut self, other: &mut NodeRefMut<'_, Other>) {
         self.connect_oneway(other);
         other.connect_oneway(self);
     }
 
-    fn connect_oneway<Other: Component>(&mut self, other: &mut NodeRefMut<'_, Other>) {
-        let edges = &mut self.layer_meta.edges[Other::LAYER_INDEX];
+    fn connect_oneway<Other>(&mut self, other: &mut NodeRefMut<'_, Other>) {
+        let edges = &mut self.layer_meta.edges[other.layer_meta.address];
         if edges.len() <= self.idx {
             edges.resize(self.idx + 1, None);
         }
@@ -321,7 +303,7 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     /// If there's an edge from this node to a node of the given type,
     /// get a reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor<'lr, 'l, Target: Component>(
+    pub fn get_neighbor<'lr, 'l, Target>(
         &self,
         layer: &'lr LayerView<'l, Target>,
     ) -> Option<NodeRef<'lr, Target>> {
@@ -331,12 +313,12 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     /// Get an iterator going over all edges from this node to the target layer.
     /// Usually there is only one and [`get_neighbor`][self::get_neighbor] can be used instead.
     #[inline]
-    pub fn get_all_neighbors<'r, 'l, Target: Component>(
+    pub fn get_all_neighbors<'r, 'l, Target>(
         &'r self,
         layer: &'r LayerView<'l, Target>,
     ) -> EdgeIter<'r, 'l, Target> {
         EdgeIter {
-            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
             edge_list: &self.layer_meta.secondary_edges,
             layer,
         }
@@ -345,7 +327,7 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     /// If there's an edge from this node to a node of the given type,
     /// get a mutable reference to that node, otherwise return None.
     #[inline]
-    pub fn get_neighbor_mut<'lr, 'l, Target: Component>(
+    pub fn get_neighbor_mut<'lr, 'l, Target>(
         &self,
         layer: &'lr mut LayerViewMut<'l, Target>,
     ) -> Option<NodeRefMut<'lr, Target>> {
@@ -355,12 +337,12 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
     /// Get a mutable iterator going over all edges from this node to the target layer.
     /// Usually there is only one and [`get_neighbor`][self::get_neighbor_mut] can be used instead.
     #[inline]
-    pub fn get_all_neighbors_mut<'r, 'l, Target: Component>(
+    pub fn get_all_neighbors_mut<'r, 'l, Target>(
         &'r self,
         layer: &'r mut LayerViewMut<'l, Target>,
     ) -> EdgeIterMut<'r, 'l, Target> {
         EdgeIterMut {
-            curr_list_node: get_neighbor_list_node::<Target>(self.layer_meta, self.idx),
+            curr_list_node: get_neighbor_list_node(self.layer_meta, self.idx, layer.meta.address),
             edge_list: &self.layer_meta.secondary_edges,
             layer,
         }
@@ -388,34 +370,36 @@ impl<'a, T: Component> NodeRefMut<'a, T> {
 }
 
 #[inline]
-fn get_neighbor_list_node<Target: Component>(
+fn get_neighbor_list_node(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
+    target_layer_idx: usize,
 ) -> Option<EdgeListNode> {
-    if node_layer_meta.edges.len() <= Target::LAYER_INDEX
-        || node_layer_meta.edges[Target::LAYER_INDEX].len() <= node_idx
+    if node_layer_meta.edges.len() <= target_layer_idx
+        || node_layer_meta.edges[target_layer_idx].len() <= node_idx
     {
         None
     } else {
-        node_layer_meta.edges[Target::LAYER_INDEX][node_idx]
+        node_layer_meta.edges[target_layer_idx][node_idx]
     }
 }
 
 #[inline]
-pub(crate) fn get_neighbor_idx<Target: Component>(
+pub(crate) fn get_neighbor_idx(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
+    target_layer_idx: usize,
 ) -> Option<usize> {
-    get_neighbor_list_node::<Target>(node_layer_meta, node_idx).map(|e| e.target)
+    get_neighbor_list_node(node_layer_meta, node_idx, target_layer_idx).map(|e| e.target)
 }
 
 #[inline]
-fn get_neighbor<'lr, 'l, Target: Component>(
+fn get_neighbor<'lr, 'l, Target>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
     target_layer: &'lr LayerView<'l, Target>,
 ) -> Option<NodeRef<'lr, Target>> {
-    get_neighbor_idx::<Target>(node_layer_meta, node_idx).map(|target| NodeRef {
+    get_neighbor_idx(node_layer_meta, node_idx, target_layer.meta.address).map(|target| NodeRef {
         c: &target_layer.components[target],
         idx: target,
         layer_meta: target_layer.meta,
@@ -423,15 +407,17 @@ fn get_neighbor<'lr, 'l, Target: Component>(
 }
 
 #[inline]
-fn get_neighbor_mut<'lr, 'l, Target: Component>(
+fn get_neighbor_mut<'lr, 'l, Target>(
     node_layer_meta: &LayerMetadata,
     node_idx: usize,
     target_layer: &'lr mut LayerViewMut<'l, Target>,
 ) -> Option<NodeRefMut<'lr, Target>> {
-    get_neighbor_idx::<Target>(node_layer_meta, node_idx).map(move |target| NodeRefMut {
-        c: &mut target_layer.components[target],
-        idx: target,
-        layer_meta: target_layer.meta,
+    get_neighbor_idx(node_layer_meta, node_idx, target_layer.meta.address).map(move |target| {
+        NodeRefMut {
+            c: &mut target_layer.components[target],
+            idx: target,
+            layer_meta: target_layer.meta,
+        }
     })
 }
 
@@ -442,6 +428,10 @@ fn get_neighbor_mut<'lr, 'l, Target: Component>(
 /// Tracking edges, refcounts, generations and vacant slots for a single layer.
 #[derive(Debug)]
 pub(crate) struct LayerMetadata {
+    /// index in the vec that layers are stored in in the Graph
+    /// and index of the corresponding edge set in every layer
+    pub(crate) address: usize,
+
     pub(crate) edges: Vec<Vec<Option<EdgeListNode>>>,
     pub(crate) secondary_edges: Vec<EdgeListNode>,
     pub(crate) vacant_edge_slots: VecDeque<usize>,
@@ -450,8 +440,10 @@ pub(crate) struct LayerMetadata {
     vacant_comp_slots: VecDeque<ComponentIdx>,
 }
 impl LayerMetadata {
-    fn new(layer_count: usize) -> Self {
+    fn new(address: usize, layer_count: usize) -> Self {
         Self {
+            address,
+
             edges: vec![Vec::new(); layer_count],
             secondary_edges: Vec::new(),
             vacant_edge_slots: VecDeque::new(),
@@ -477,12 +469,12 @@ pub(crate) struct EdgeListNode {
 }
 
 /// An iterator over all edges from a node to nodes in a specific layer.
-pub struct EdgeIter<'a, 'l: 'a, T: Component> {
+pub struct EdgeIter<'a, 'l: 'a, T> {
     curr_list_node: Option<EdgeListNode>,
     edge_list: &'a [EdgeListNode],
     layer: &'a LayerView<'l, T>,
 }
-impl<'a, 'l: 'a, T: Component> Iterator for EdgeIter<'a, 'l, T> {
+impl<'a, 'l: 'a, T> Iterator for EdgeIter<'a, 'l, T> {
     type Item = NodeRef<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -498,12 +490,12 @@ impl<'a, 'l: 'a, T: Component> Iterator for EdgeIter<'a, 'l, T> {
 
 /// An iterator over all edges from a node to nodes in a specific layer,
 /// yielding mutable references.
-pub struct EdgeIterMut<'a, 'l: 'a, T: Component> {
+pub struct EdgeIterMut<'a, 'l: 'a, T> {
     curr_list_node: Option<EdgeListNode>,
     edge_list: &'a [EdgeListNode],
     layer: &'a mut LayerViewMut<'l, T>,
 }
-impl<'a, 'l: 'a, T: Component> EdgeIterMut<'a, 'l, T> {
+impl<'a, 'l: 'a, T> EdgeIterMut<'a, 'l, T> {
     /// Get a reference to the next connected node.
     ///
     /// Unfortunately this isn't compatible with the Iterator trait
@@ -529,9 +521,9 @@ struct TypeErasedLayer {
     components: ComponentStorage,
 }
 impl TypeErasedLayer {
-    fn new(layer_count: usize) -> Self {
+    fn new(address: usize, layer_count: usize) -> Self {
         Self {
-            meta: LayerMetadata::new(layer_count),
+            meta: LayerMetadata::new(address, layer_count),
             components: ComponentStorage(None),
         }
     }
@@ -572,7 +564,7 @@ impl ComponentStorage {
 ///
 /// Acquired with [`Graph::get_layer`][self::Graph::get_layer_mut] or as a part of
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
-pub struct LayerView<'a, T: Component> {
+pub struct LayerView<'a, T> {
     pub(crate) meta: &'a LayerMetadata,
     pub(crate) components: &'a [T],
     // Using the same unsafe pattern as with `LayerViewMut`,
@@ -583,7 +575,7 @@ pub struct LayerView<'a, T: Component> {
     _guard: Option<RwLockReadGuard<'a, TypeErasedLayer>>,
 }
 
-impl<'a, T: Component> LayerView<'a, T> {
+impl<'a, T> LayerView<'a, T> {
     /// Get an immutable reference to a node if it still exists, otherwise return None.
     #[inline]
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
@@ -635,7 +627,7 @@ impl<'a, T: Component> LayerView<'a, T> {
 ///
 /// Acquired with [`Graph::get_layer_mut`][self::Graph::get_layer_mut] or as a part of
 /// [`Graph::get_layer_bundle`][self::Graph::get_layer_bundle].
-pub struct LayerViewMut<'a, T: Component> {
+pub struct LayerViewMut<'a, T> {
     pub(crate) meta: &'a mut LayerMetadata,
     pub(crate) components: &'a mut Vec<T>,
     // Storing the lock guard inside this
@@ -647,7 +639,7 @@ pub struct LayerViewMut<'a, T: Component> {
     _guard: Option<RwLockWriteGuard<'a, TypeErasedLayer>>,
 }
 
-impl<'a, T: Component> LayerViewMut<'a, T> {
+impl<'a, T> LayerViewMut<'a, T> {
     /// Insert a component into the layer.
     ///
     /// This returns a reference to the node that was created,
@@ -781,12 +773,12 @@ impl<'a, T: Component> LayerViewMut<'a, T> {
 ///
 /// Create with the `iter` method on [`LayerView`][self::LayerView]
 /// or [`LayerViewMut`][self::LayerViewMut].
-pub struct LayerIter<'a, T: Component> {
+pub struct LayerIter<'a, T> {
     layer_meta: &'a LayerMetadata,
     comp_iter: std::iter::Enumerate<std::slice::Iter<'a, T>>,
 }
 
-impl<'a, T: Component> Iterator for LayerIter<'a, T> {
+impl<'a, T> Iterator for LayerIter<'a, T> {
     type Item = NodeRef<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -807,12 +799,12 @@ impl<'a, T: Component> Iterator for LayerIter<'a, T> {
 /// A mutable iterator over components in a single layer.
 ///
 /// Create with the `iter_mut` method on [`LayerViewMut`][self::LayerViewMut].
-pub struct LayerIterMut<'a, T: Component> {
+pub struct LayerIterMut<'a, T> {
     layer_meta: &'a mut LayerMetadata,
     comp_iter: std::iter::Enumerate<std::slice::IterMut<'a, T>>,
 }
 
-impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
+impl<'a, T> Iterator for LayerIterMut<'a, T> {
     type Item = NodeRefMut<'a, T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -842,36 +834,36 @@ impl<'a, T: Component> Iterator for LayerIterMut<'a, T> {
 
 /// The component graph itself.
 ///
-/// Use the [`make_graph`][self::make_graph] macro to automatically create one
-/// with the correct layer count.
-/// See that macro's documentation for an example and some talk of limitations.
-///
 /// A graph is built out of _layers_, one per type of component stored.
 /// Layers contain _nodes_ representing individual components,
 /// and these are connected to other components with _edges_.
 #[derive(Debug)]
-pub struct Graph<const LAYER_COUNT: usize> {
+pub struct Graph {
     layers: Vec<RwLock<TypeErasedLayer>>,
+    addresses: HashMap<any::TypeId, usize>,
 }
 
-impl<const LAYER_COUNT: usize> Default for Graph<LAYER_COUNT> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
-    pub fn new() -> Self {
-        let mut layers = Vec::new();
-        layers.resize_with(LAYER_COUNT, || {
-            RwLock::new(TypeErasedLayer::new(LAYER_COUNT))
-        });
-        Self { layers }
+impl Graph {
+    pub fn new(layer_types: &[any::TypeId]) -> Self {
+        let addresses: HashMap<_, _> = layer_types
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| (t, i))
+            .collect();
+        let layer_count = addresses.len();
+
+        let mut layers = Vec::with_capacity(layer_count);
+        for address in 0..layer_count {
+            layers.push(RwLock::new(TypeErasedLayer::new(address, layer_count)));
+        }
+
+        Self { layers, addresses }
     }
 
     /// Lock a layer for reading.
     /// # Panics
-    /// Panics if the layer is currently locked for writing.
-    pub fn get_layer<T: Component>(&self) -> LayerView<'_, T> {
+    /// Panics if the layer is currently locked for writing or doesn't exist.
+    pub fn get_layer<T: 'static>(&self) -> LayerView<'_, T> {
         let err = || {
             // not sure if panic here is the right call,
             // but it's surely better than having it hang forever in case of a conflict
@@ -880,7 +872,9 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
                 std::any::type_name::<T>()
             )
         };
-        let guard = self.layers[T::LAYER_INDEX].try_read().unwrap_or_else(err);
+        let guard = self.layers[self.get_layer_address::<T>()]
+            .try_read()
+            .unwrap_or_else(err);
         // taking references to things inside the lock for the sake of API.
         // SAFETY: the guard will drop at the same time as the references
         // and we never access the guard itself.
@@ -897,15 +891,17 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
 
     /// Lock a layer for writing.
     /// # Panics
-    /// Panics if the layer is currently locked for reading or writing.
-    pub fn get_layer_mut<T: Component>(&self) -> LayerViewMut<'_, T> {
+    /// Panics if the layer is currently locked for reading or writing or doesn't exist.
+    pub fn get_layer_mut<T: 'static>(&self) -> LayerViewMut<'_, T> {
         let err = || {
             panic!(
                 "Could not lock layer for writing: {}",
                 std::any::type_name::<T>()
             )
         };
-        let mut guard = self.layers[T::LAYER_INDEX].try_write().unwrap_or_else(err);
+        let mut guard = self.layers[self.get_layer_address::<T>()]
+            .try_write()
+            .unwrap_or_else(err);
         // taking references to things inside the lock for the sake of API.
         // SAFETY: the guard will drop at the same time as the references
         // and we never access the guard itself.
@@ -950,6 +946,13 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
         B::get_from_graph(self)
     }
 
+    pub(crate) fn get_layer_address<T: 'static>(&self) -> usize {
+        *self
+            .addresses
+            .get(&any::TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("No layer in graph for type {}", std::any::type_name::<T>()))
+    }
+
     fn write_all_layers(&mut self) -> Vec<RwLockWriteGuard<'_, TypeErasedLayer>> {
         self.layers
             .iter()
@@ -963,18 +966,22 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
     /// Drop all content and recreate the graph from scratch.
     pub fn reset(&mut self) {
         let layer_count = self.layers.len();
-        for mut layer in self.write_all_layers() {
-            *layer = TypeErasedLayer::new(layer_count);
+        for (address, layer) in self.write_all_layers().iter_mut().enumerate() {
+            **layer = TypeErasedLayer::new(address, layer_count);
         }
     }
 
     /// Create a query that finds all nodes accessible from the given node via edges.
     /// This is used to delete segments of the graph.
-    pub fn gather<T: Component>(&mut self, node: NodeKey<T>) -> Gather<'_, LAYER_COUNT> {
+    pub fn gather<T: 'static>(&mut self, node: NodeKey<T>) -> Gather<'_> {
+        let root_layer = self.get_layer_address::<T>();
         Gather {
             graph: self,
             inner: GatherInner {
-                root: node.into(),
+                root: BareNodeKey {
+                    layer: root_layer,
+                    idx: node.idx,
+                },
                 root_gen: node.gen,
                 stop_at_layers: Vec::new(),
             },
@@ -982,12 +989,32 @@ impl<const LAYER_COUNT: usize> Graph<LAYER_COUNT> {
     }
 }
 
+/// Helper macro to avoid repeating `std::any::TypeId::of` when creating a new
+/// [`Graph`][crate::graph::Graph] with [`new`][crate::graph::Graph::new].
+/// # Example
+/// ```
+/// # use starframe::{graph::new_graph, math::Pose, physics::{Body, Collider}};
+/// let graph = new_graph! {
+///     Pose,
+///     Body,
+///     Collider,
+/// };
+#[macro_export]
+macro_rules! new_graph {
+    ($($types:ty),* $(,)*) => {
+        $crate::graph::Graph::new(&[
+            $(std::any::TypeId::of::<$types>(),)*
+        ])
+    };
+}
+pub use crate::new_graph;
+
 //
 // Gather & delete
 //
 
-pub struct Gather<'g, const LAYER_COUNT: usize> {
-    graph: &'g mut Graph<LAYER_COUNT>,
+pub struct Gather<'g> {
+    graph: &'g mut Graph,
     inner: GatherInner,
 }
 
@@ -1004,9 +1031,11 @@ struct GatherResult {
     edges: Vec<(BareNodeKey, BareNodeKey)>,
 }
 
-impl<'g, const LAYER_COUNT: usize> Gather<'g, LAYER_COUNT> {
-    pub fn stop_at_layer<T: Component>(mut self) -> Self {
-        self.inner.stop_at_layers.push(T::LAYER_INDEX);
+impl<'g> Gather<'g> {
+    pub fn stop_at_layer<T: 'static>(mut self) -> Self {
+        self.inner
+            .stop_at_layers
+            .push(self.graph.get_layer_address::<T>());
         self
     }
 
@@ -1187,12 +1216,14 @@ mod tests {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     struct Shape(usize);
 
-    type Graph = make_graph! {
-        Pose,
-        Velocity,
-        Body,
-        Shape,
-    };
+    fn graph() -> Graph {
+        new_graph! {
+            Pose,
+            Velocity,
+            Body,
+            Shape,
+        }
+    }
 
     // shorthands for layer views because we have to repeat this stuff a lot here
     type L<'a, T> = LayerView<'a, T>;
@@ -1203,7 +1234,7 @@ mod tests {
     /// Nodes can be connected and then queried for their neighbors.
     #[test]
     fn connect_nodes() {
-        let graph = Graph::new();
+        let graph = graph();
 
         // do this a few times to make sure we connect correctly even with multiple objects there
         for i in 0..3 {
@@ -1260,7 +1291,7 @@ mod tests {
     /// Iterating over nodes hits every alive node and only every alive node.
     #[test]
     fn iterate() {
-        let graph = Graph::new();
+        let graph = graph();
         let (mut poses, mut vels, mut bodies, mut shapes) =
             graph.get_layer_bundle::<AllLayersMut>();
 
@@ -1338,7 +1369,7 @@ mod tests {
     /// Deleting hits every intended node.
     #[test]
     fn delete() {
-        let mut graph = Graph::new();
+        let mut graph = graph();
 
         let vels_to_del: Vec<NodeKey<Velocity>> = {
             let (mut poses, mut vels, mut bodies, mut shapes) =
@@ -1394,7 +1425,7 @@ mod tests {
     /// Slots left over by `delete` are reused when spawning more components.
     #[test]
     fn reuse_deleted_slots() {
-        let mut graph = Graph::new();
+        let mut graph = graph();
 
         // delete and respawn stuff a few times to hopefully see if things get connected wrong at some point
         // (this doesn't prove things won't go wrong over a long enough time but fingers crossed)
@@ -1465,7 +1496,7 @@ mod tests {
     /// If stopping layers are specified, delete algorithm stops there as intended.
     #[test]
     fn delete_stop() {
-        let mut graph = Graph::new();
+        let mut graph = graph();
 
         let mut pose_keys = Vec::new();
         {
@@ -1528,7 +1559,7 @@ mod tests {
     /// Multiple edges from one node to one layer are created, followed, and destroyed correctly.
     #[test]
     fn multiple_edges() {
-        let mut graph = Graph::new();
+        let mut graph = graph();
 
         // do the whole thing a few times to ensure we don't leave garbage
         for _ in 0..3 {
@@ -1597,10 +1628,10 @@ mod tests {
 
             let poses = graph.get_layer::<Pose>();
             let bodies = graph.get_layer::<Body>();
-            for edge in &bodies.meta.edges[Pose::LAYER_INDEX] {
+            for edge in &bodies.meta.edges[graph.get_layer_address::<Pose>()] {
                 assert!(edge.is_none());
             }
-            for edge in &bodies.meta.edges[Shape::LAYER_INDEX] {
+            for edge in &bodies.meta.edges[graph.get_layer_address::<Shape>()] {
                 assert!(edge.is_none());
             }
             // all secondary edges became vacant (10 edges - 1 primary edge)

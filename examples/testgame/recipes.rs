@@ -1,6 +1,6 @@
 use starframe::{
     self as sf,
-    graph::LayerViewMut,
+    graph::{Graph, LayerViewMut},
     graphics as gx, math as m,
     physics::{self as phys, rope, Material},
 };
@@ -166,7 +166,7 @@ fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
 }
 
 impl Recipe {
-    pub fn spawn(&self, physics: &mut phys::Physics, graph: &super::MyGraph) {
+    pub fn spawn(&self, physics: &mut phys::Physics, graph: &Graph) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(graph.get_layer_bundle()),
             Recipe::Block(block) => {

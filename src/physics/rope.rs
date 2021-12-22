@@ -1,7 +1,7 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    graph::{self, Component, LayerViewMut},
+    graph::{self, LayerViewMut},
     graphics::Shape,
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
@@ -205,6 +205,9 @@ pub fn cut_after(
     particle: graph::NodeKey<Body>,
     (mut l_body, mut l_rope): (LayerViewMut<Body>, LayerViewMut<Rope>),
 ) -> Option<[graph::NodeKey<Rope>; 2]> {
+    let l_rope_addr = l_rope.meta.address;
+    let l_body_addr = l_body.meta.address;
+
     let p_node = l_body.get(particle)?;
     let l_rope_sub = l_rope.subview();
     let rope_node = p_node.get_neighbor(&l_rope_sub)?;
@@ -217,7 +220,7 @@ pub fn cut_after(
 
     let edge_idx_to_transfer: Option<usize>;
 
-    let first_edge = l_rope.meta.edges[Body::LAYER_INDEX][rope_key.idx]
+    let first_edge = l_rope.meta.edges[l_body_addr][rope_key.idx]
         .as_mut()
         .expect("Rope had no particles");
     if first_edge.target == particle.idx {
@@ -247,10 +250,10 @@ pub fn cut_after(
             let new_rope_key = new_rope.key();
             // remove old edge and use connect api
             // so we don't have to extend the rope layer's edge vec manually here
-            l_body.meta.edges[Rope::LAYER_INDEX][edge_to_transfer.target] = None;
+            l_body.meta.edges[l_rope_addr][edge_to_transfer.target] = None;
             new_rope.connect(&mut l_body.get_mut_unchecked_by_item_idx(edge_to_transfer.target));
             // transfer the rest of the edges from the old rope to the new
-            l_rope.meta.edges[Body::LAYER_INDEX][new_rope_key.idx] = Some(edge_to_transfer);
+            l_rope.meta.edges[l_body_addr][new_rope_key.idx] = Some(edge_to_transfer);
             // mark the one edge that just became a primary edge as vacant
             l_rope
                 .meta
@@ -262,7 +265,7 @@ pub fn cut_after(
             let mut curr_edge = edge_to_transfer;
             while let Some(next) = curr_edge.next_edge {
                 let next_edge = l_rope.meta.secondary_edges[next];
-                l_body.meta.edges[Rope::LAYER_INDEX][next_edge.target]
+                l_body.meta.edges[l_rope_addr][next_edge.target]
                     .as_mut()
                     .unwrap()
                     .target = new_rope_key.idx;
