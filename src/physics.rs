@@ -1304,41 +1304,60 @@ impl Physics {
         // Mutable reference required
         // because spatial index traversal uses mutation for timestamping.
         // TODO: think about using interior mutability here
+        // idea: like timestamping but each query sets a single bit
+        // instead of an entire int; use atomics to parallelize
         &'p mut self,
         ray: Ray,
         max_distance: f64,
         (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
     ) -> Option<RayHit> {
         let mut traversal = self.spatial_index.traverse_ray(ray, max_distance);
-        while let Some(cell_iter) = traversal.step() {
-            let mut t_min = max_distance;
-            let mut found_coll: Option<graph::NodeRef<Collider>> = None;
-            for coll in cell_iter.filter_map(|coll_key| l_collider.get(coll_key)) {
-                if !coll.c.is_solid() {
-                    continue;
-                }
-                let pose = match coll.get_neighbor(&l_pose) {
-                    Some(pose) => pose,
-                    None => continue,
-                };
-                let t = match collision::query::ray_collider(ray, pose.c, coll.c) {
-                    Some(t) => t,
-                    None => continue,
-                };
-                if t < t_min {
-                    t_min = t;
-                    found_coll = Some(coll);
+        let mut found_t = max_distance;
+        let mut found_coll: Option<graph::NodeRef<Collider>> = None;
+        loop {
+            let next_step = traversal.step();
+
+            if let Some(coll) = found_coll {
+                if match next_step {
+                    // we can only stop here if the hit point is in the previously covered cell,
+                    // otherwise we might still find something that's closer
+                    // (if we still have cells to go)
+                    Some((_, t_covered)) => found_t <= t_covered,
+                    None => true,
+                } {
+                    return Some(RayHit {
+                        collider: coll.key(),
+                        point: ray.start + found_t * *ray.dir,
+                        t: found_t,
+                    });
                 }
             }
-            if let Some(coll) = found_coll {
-                return Some(RayHit {
-                    collider: coll.key(),
-                    point: ray.start + t_min * *ray.dir,
-                    t: t_min,
-                });
+
+            match next_step {
+                Some((cell_iter, _)) => {
+                    for coll in cell_iter.filter_map(|coll_key| l_collider.get(coll_key)) {
+                        if !coll.c.is_solid() {
+                            continue;
+                        }
+                        let pose = match coll.get_neighbor(&l_pose) {
+                            Some(pose) => pose,
+                            None => continue,
+                        };
+                        let t = match collision::query::ray_collider(ray, pose.c, coll.c) {
+                            Some(t) => t,
+                            None => continue,
+                        };
+                        if t < found_t {
+                            found_t = t;
+                            found_coll = Some(coll);
+                        }
+                    }
+                }
+                None => {
+                    return None;
+                }
             }
         }
-        None
     }
 
     /// For debug visualization

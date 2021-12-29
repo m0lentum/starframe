@@ -458,11 +458,12 @@ pub(crate) struct RayTraversal<'a> {
 
 impl<'a> RayTraversal<'a> {
     /// Step to the next cell of the top-level grid
-    /// and return an iterator over all colliders in that area on any of the grid levels.
-    pub fn step(&mut self) -> Option<CellRayIter<'_>> {
+    /// and return an iterator over all colliders in that area on any of the grid levels,
+    /// along with the value of `t` upon entering that cell.
+    pub fn step(&mut self) -> Option<(CellRayIter<'_>, f64)> {
         if !self.first_returned {
             self.first_returned = true;
-            return Some(CellRayIter::new(self));
+            return Some((CellRayIter::new(self), 0.0));
         }
         let top_grid = &self.hgrid.grids[self.hgrid.grids.len() - 1];
 
@@ -545,7 +546,8 @@ impl<'a> RayTraversal<'a> {
             }
         }
 
-        Some(CellRayIter::new(self))
+        let t = self.t + self.t_past;
+        Some((CellRayIter::new(self), t))
     }
 }
 
