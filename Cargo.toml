@@ -5,16 +5,16 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-winit = "0.25.0"
-wgpu = "0.10.1"
-zerocopy = "0.6.0"
-futures = "0.3.17"
+winit = "0.26.0"
+wgpu = "0.12.0"
+zerocopy = "0.6.1"
+futures = "0.3.19"
 ultraviolet = { version = "0.8.1", features = ["f64"] }
-itertools = "0.10.1"
+itertools = "0.10.3"
 slotmap = "1.0.6"
 parking_lot = "0.11.2"
-tracy-client = { version = "0.12.4", default-features = false }
-serde = { version = "1.0.130", features = ["derive"], optional = true }
+tracy-client = { version = "0.12.6", default-features = false }
+serde = { version = "1.0.132", features = ["derive"], optional = true }
 rayon = { version = "1.5.1", optional = true }
 
 [features]
@@ -25,7 +25,7 @@ tracy = ["tracy-client/enable"]
 
 [dev-dependencies]
 rand = "0.8.4"
-ron = "0.6.5"
+ron = "0.7.0"
 
 [profile.dev]
 opt-level = 2

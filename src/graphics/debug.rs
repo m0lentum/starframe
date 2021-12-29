@@ -140,6 +140,7 @@ impl DebugVisualizer {
                     },
                     depth_stencil: None,
                     multisample: wgpu::MultisampleState::default(),
+                    multiview: None,
                 })
         };
         let line_pipeline = pipeline(wgpu::PrimitiveTopology::LineList);

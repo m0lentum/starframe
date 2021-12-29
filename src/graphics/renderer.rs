@@ -20,6 +20,7 @@ impl Renderer {
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
             })
             .await
@@ -92,9 +93,8 @@ impl Renderer {
     pub fn draw_to_window(&mut self) -> RenderContext {
         let frame = self
             .surface
-            .get_current_frame()
-            .expect("Failed to get next swap chain texture")
-            .output;
+            .get_current_texture()
+            .expect("Failed to get next swap chain texture");
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -106,7 +106,7 @@ impl Renderer {
 
         RenderContext {
             view,
-            _frame: frame,
+            frame,
             encoder,
             device: &self.device,
             queue,
@@ -120,10 +120,7 @@ impl Renderer {
 /// TODOC: example
 pub struct RenderContext<'a> {
     view: wgpu::TextureView,
-    // frame is not accessed but needs to be stored,
-    // otherwise it gets dropped and the texture goes with it
-    // (specifically AFTER view so it gets dropped after it)
-    _frame: wgpu::SurfaceTexture,
+    frame: wgpu::SurfaceTexture,
     pub encoder: wgpu::CommandEncoder,
     pub device: &'a wgpu::Device,
     pub queue: &'a mut wgpu::Queue,
@@ -168,5 +165,6 @@ impl<'a> RenderContext<'a> {
     /// Submit the commands made through this context to the GPU.
     pub fn submit(self) {
         self.queue.submit(Some(self.encoder.finish()));
+        self.frame.present();
     }
 }
