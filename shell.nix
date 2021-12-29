@@ -3,7 +3,7 @@ let
 
   pkgs = import sources.nixpkgs { overlays = [ (import sources.nixpkgs-mozilla) ]; };
 
-  rust = (pkgs.rustChannelOf { channel = "1.55.0"; }).rust.override {
+  rust = (pkgs.rustChannelOf { channel = "1.56.1"; }).rust.override {
     extensions = [ "rust-src" ];
   };
 in

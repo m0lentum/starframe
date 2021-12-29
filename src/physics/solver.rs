@@ -300,9 +300,8 @@ fn solve_contacts(data: &mut DataView<'_>) {
 
         // check for collision
         *contact = {
-            let poses = &*data.poses;
             let poses = map_pair(colls, |coll| match coll.ctx {
-                ColliderContext::Body(b) => poses[b],
+                ColliderContext::Body(b) => data.poses[b],
                 ColliderContext::Static(pose) => pose,
             });
             collision::shape_shape::intersection_check(
@@ -375,9 +374,6 @@ fn solve_contacts(data: &mut DataView<'_>) {
                 offset_wedge_tan: f64,
                 eff_inv_mass_tan: f64,
             }
-            let body_refs = &*data.body_refs;
-            let old_poses = &*data.old_poses;
-            let poses = &*data.poses;
             let vars = map_pair(&[0, 1], |&i| {
                 match colls[i].ctx {
                     // no body attached -> static body, infinite mass
@@ -393,17 +389,17 @@ fn solve_contacts(data: &mut DataView<'_>) {
                         }
                     }
                     ColliderContext::Body(bi) => {
-                        let im = body_refs[bi].c.mass.inv();
-                        let imi = body_refs[bi].c.moment_of_inertia.inv();
-                        let offset_rotated = poses[bi].rotation * contact.offsets[i];
+                        let im = data.body_refs[bi].c.mass.inv();
+                        let imi = data.body_refs[bi].c.moment_of_inertia.inv();
+                        let offset_rotated = data.poses[bi].rotation * contact.offsets[i];
                         let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
                         let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
 
                         WorkingVars {
-                            offset_worldspace: poses[bi] * contact.offsets[i],
+                            offset_worldspace: data.poses[bi] * contact.offsets[i],
                             offset_wedge_normal,
                             eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
-                            offset_worldspace_old: old_poses[bi] * contact.offsets[i],
+                            offset_worldspace_old: data.old_poses[bi] * contact.offsets[i],
                             offset_wedge_tan,
                             eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
                         }

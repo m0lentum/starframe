@@ -262,7 +262,8 @@ impl HGrid {
             max: aabb.max - self.bounds.min,
         };
 
-        // destructuring to move into closures
+        // destructuring still needed here (in 2021 edition)
+        // to make lifetimes work by moving the right things
         let timestamps = &mut self.timestamps;
         let aabbs = &self.aabbs;
         let layers = &self.layers;
@@ -316,8 +317,6 @@ impl HGrid {
 
         // a bit of a monster iterator but I really didn't feel like
         // making a new type and impling Iterator by hand :^)
-        let aabbs = &self.aabbs;
-        let generations = &self.generations;
         self.grids
             .iter()
             .rev()
@@ -342,10 +341,10 @@ impl HGrid {
                 )
             })
             .flatten()
-            .filter(move |&id| aabbs[id].contains_point(point_worldspace))
+            .filter(move |&id| self.aabbs[id].contains_point(point_worldspace))
             .map(move |id| NodeKey {
                 idx: id,
-                gen: generations[id],
+                gen: self.generations[id],
                 _marker: std::marker::PhantomData,
             })
     }

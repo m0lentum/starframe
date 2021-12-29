@@ -712,14 +712,14 @@ impl Physics {
             sleeping.continues_sleeping = false;
         }
         // remove sleeping islands from computation and set them to keep sleeping
-        let sleeping_islands = &mut self.sleeping_islands;
-        let sorted_first_pass = &bufs.sorted_first_pass;
-        let sleep_vel_threshold = self.consts.sleep_vel_threshold;
-        let fall_asleep_frames = self.consts.fall_asleep_frames;
         bufs.islands.retain(|isl| {
-            if let Some(sleeping) = sleeping_islands.iter_mut().find(|slep| slep.id == isl.id) {
+            if let Some(sleeping) = self
+                .sleeping_islands
+                .iter_mut()
+                .find(|slep| slep.id == isl.id)
+            {
                 // we need to check if anything started moving between frames due to user code
-                if sorted_first_pass.bodies
+                if bufs.sorted_first_pass.bodies
                     [isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
                     .any(|bi| {
@@ -728,7 +728,7 @@ impl Physics {
                             .c
                             .velocity
                             .mag_sq()
-                            >= sleep_vel_threshold
+                            >= self.consts.sleep_vel_threshold
                     })
                 {
                     return true;
@@ -736,7 +736,7 @@ impl Physics {
 
                 sleeping.continues_sleeping = true;
                 // keep island in computations if it hasn't slept for long enough
-                sleeping.ticks_slept < fall_asleep_frames
+                sleeping.ticks_slept < self.consts.fall_asleep_frames
             } else {
                 true
             }
@@ -805,7 +805,6 @@ impl Physics {
         }
 
         bufs.sorted_rope_views.clear();
-        let node_ref_map = &bufs.node_ref_map;
         bufs.sorted_rope_views
             .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
                 let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
@@ -814,17 +813,16 @@ impl Physics {
                     .expect("A Rope didn't have any particles");
                 solver::RopeView {
                     info: *rope_node.c,
-                    start: node_ref_map[first_particle.key().idx],
+                    start: bufs.node_ref_map[first_particle.key().idx],
                 }
             }));
 
         bufs.sorted_constraints.clear();
-        let user_constraints = &bufs.user_constraints;
         bufs.sorted_constraints.extend(
             bufs.sorted_second_pass
                 .constraints
                 .iter()
-                .map(|&ci| user_constraints[ci]),
+                .map(|&ci| bufs.user_constraints[ci]),
         );
 
         // store indices into neighboring particles for rope nodes
@@ -900,23 +898,20 @@ impl Physics {
         }
 
         bufs.constraint_body_pairs.clear();
-        let node_ref_map = &bufs.node_ref_map;
         bufs.constraint_body_pairs
             .extend(bufs.sorted_constraints.iter().map(|c| {
                 (
-                    node_ref_map[c.owner.idx],
-                    c.target.map(|t| node_ref_map[t.idx]),
+                    bufs.node_ref_map[c.owner.idx],
+                    c.target.map(|t| bufs.node_ref_map[t.idx]),
                 )
             }));
 
         bufs.sorted_coll_pairs.clear();
-        let coll_pair_idxs = &bufs.coll_pair_idxs;
-        let colliders = &bufs.colliders;
         bufs.sorted_coll_pairs.extend(
             bufs.sorted_second_pass
                 .coll_pairs
                 .iter()
-                .map(|pi| coll_pair_idxs[*pi].map(|ci| colliders[ci])),
+                .map(|pi| bufs.coll_pair_idxs[*pi].map(|ci| bufs.colliders[ci])),
         );
         // store latest contacts for use in the velocity step
         bufs.contacts.clear();
@@ -1017,14 +1012,13 @@ impl Physics {
 
         let mut island_start_idx = 0;
 
-        let islands = &bufs.islands;
         for group in bufs
             .island_group_sizes
             .iter()
             .scan(0, |group_start, group_size| {
                 let curr_group_start = *group_start;
                 *group_start += *group_size;
-                Some(&islands[curr_group_start..*group_start])
+                Some(&bufs.islands[curr_group_start..*group_start])
             })
         {
             let body_count = group.iter().map(|isl| isl.body_count).sum();
@@ -1132,9 +1126,8 @@ impl Physics {
         #[cfg(not(feature = "parallel"))]
         let island_iter = island_group_views.iter_mut();
 
-        let substeps = self.consts.substeps;
         island_iter.for_each(|island_view| {
-            for _substep in 0..substeps {
+            for _substep in 0..self.consts.substeps {
                 let _substep_span = tracy_span!("substep", "tick");
 
                 solver::solve(forcefield, island_view);
@@ -1154,16 +1147,14 @@ impl Physics {
         // store contacts for user queries and other systems
         //
 
-        let sleeping_islands = &self.sleeping_islands;
-        let fall_asleep_frames = self.consts.fall_asleep_frames;
         self.contacts.retain(|cont| {
             // contacts that are part of sleeping islands are conceptually still there,
             // but not generated because we skip collision detection.
             // keep them in the buffer so they keep getting returned from queries
             // as the user would expect
-            sleeping_islands
-                .iter()
-                .any(|isl| isl.id == cont.island_id && isl.ticks_slept >= fall_asleep_frames)
+            self.sleeping_islands.iter().any(|isl| {
+                isl.id == cont.island_id && isl.ticks_slept >= self.consts.fall_asleep_frames
+            })
         });
         for isl in &bufs.islands {
             self.contacts.extend(
@@ -1188,12 +1179,11 @@ impl Physics {
         // set islands where movement was below a threshold to sleep
         //
 
-        let sleep_vel_threshold = self.consts.sleep_vel_threshold;
         for isl in &bufs.islands {
             if isl.can_sleep
                 && bufs.velocities[isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
-                    .all(|vel| vel.mag_sq() < sleep_vel_threshold)
+                    .all(|vel| vel.mag_sq() < self.consts.sleep_vel_threshold)
             {
                 if let Some(already_sleeping) = self
                     .sleeping_islands

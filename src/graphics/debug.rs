@@ -185,14 +185,14 @@ impl DebugVisualizer {
                     hgrid.bounds.min.y as f32 + cell.row_idx as f32 * spacing,
                 ];
                 let max = [min[0] + spacing, min[1] + spacing];
-                std::array::IntoIter::new([
+                [
                     [min[0], min[1]],
                     [max[0], min[1]],
                     [min[0], max[1]],
                     [max[0], max[1]],
                     [min[0], max[1]],
                     [max[0], min[1]],
-                ])
+                ]
                 .map(move |position| Vertex { position, color })
             })
             .collect();
@@ -209,7 +209,6 @@ impl DebugVisualizer {
 
         // draw lines
 
-        let bds = hgrid.bounds;
         let verts: Vec<Vertex> = hgrid
             .grids
             .iter()
@@ -218,30 +217,29 @@ impl DebugVisualizer {
                 // less opaque for smaller grid levels
                 let alpha = 0.8 * ((grid_idx + 1) as f32 / hgrid.grids.len() as f32);
                 let color = [0.0, 0.0, 0.0, alpha];
-                let spacing = grid.spacing;
                 (0..=grid.column_count)
                     .flat_map(move |col| {
-                        let x = (bds.min.x + col as f64 * spacing) as f32;
+                        let x = (hgrid.bounds.min.x + col as f64 * grid.spacing) as f32;
                         [
                             Vertex {
-                                position: [x, bds.min.y as f32],
+                                position: [x, hgrid.bounds.min.y as f32],
                                 color,
                             },
                             Vertex {
-                                position: [x, bds.max.y as f32],
+                                position: [x, hgrid.bounds.max.y as f32],
                                 color,
                             },
                         ]
                     })
                     .chain((0..=grid.row_count).flat_map(move |row| {
-                        let y = (bds.min.y + row as f64 * spacing) as f32;
+                        let y = (hgrid.bounds.min.y + row as f64 * grid.spacing) as f32;
                         [
                             Vertex {
-                                position: [bds.min.x as f32, y],
+                                position: [hgrid.bounds.min.x as f32, y],
                                 color,
                             },
                             Vertex {
-                                position: [bds.max.x as f32, y],
+                                position: [hgrid.bounds.max.x as f32, y],
                                 color,
                             },
                         ]
@@ -302,7 +300,7 @@ impl DebugVisualizer {
                 }
                 let min = [enclosing_aabb.min.x as f32, enclosing_aabb.min.y as f32];
                 let max = [enclosing_aabb.max.x as f32, enclosing_aabb.max.y as f32];
-                std::array::IntoIter::new([
+                [
                     [min[0], min[1]],
                     [max[0], min[1]],
                     [max[0], min[1]],
@@ -311,7 +309,7 @@ impl DebugVisualizer {
                     [min[0], max[1]],
                     [min[0], max[1]],
                     [min[0], min[1]],
-                ])
+                ]
                 .map(move |position| Vertex { position, color })
             })
             .collect();
