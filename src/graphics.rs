@@ -5,8 +5,8 @@ pub mod util;
 
 pub mod camera;
 
-pub mod shape;
-pub use shape::{Shape, ShapeRenderer};
+mod mesh;
+pub use mesh::*;
 
 mod debug;
 pub use debug::DebugVisualizer;

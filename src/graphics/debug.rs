@@ -1,6 +1,6 @@
 //! Utilities for visualizing internal structures like colliders.
 
-// largely copied from ShapeRenderer since this uses the same shader.
+// largely copied from MeshRenderer since this uses the same shader.
 // think about abstraction if more stuff needs same or very similar wgpu structures
 
 use std::borrow::Cow;
@@ -15,7 +15,7 @@ use crate::{
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct GlobalUniforms {
-    view: super::util::GlslMat3,
+    view: super::util::GpuMat3,
 }
 
 #[repr(C)]
@@ -31,9 +31,9 @@ pub struct DebugVisualizer {
     mesh_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
-    grid_line_buf: super::util::DynamicVertexBuffer,
-    grid_mesh_buf: super::util::DynamicVertexBuffer,
-    island_line_buf: super::util::DynamicVertexBuffer,
+    grid_line_buf: super::util::DynamicBuffer,
+    grid_mesh_bufs: super::util::DynamicMeshBuffers<Vertex>,
+    island_line_bufs: super::util::DynamicMeshBuffers<Vertex>,
 }
 
 impl DebugVisualizer {
@@ -42,7 +42,7 @@ impl DebugVisualizer {
             .device
             .create_shader_module(&wgpu::ShaderModuleDescriptor {
                 label: Some("debug"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/shape.wgsl"))),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/mesh.wgsl"))),
             });
 
         let uniform_buf_size = std::mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
@@ -151,9 +151,12 @@ impl DebugVisualizer {
             mesh_pipeline: shape_pipeline,
             bind_group,
             uniform_buf,
-            grid_line_buf: super::util::DynamicVertexBuffer::new(Some("debug grid lines")),
-            grid_mesh_buf: super::util::DynamicVertexBuffer::new(Some("debug grid meshes")),
-            island_line_buf: super::util::DynamicVertexBuffer::new(Some("debug island lines")),
+            grid_line_buf: super::util::DynamicBuffer::new(
+                Some("debug grid lines"),
+                wgpu::BufferUsages::VERTEX,
+            ),
+            grid_mesh_bufs: super::util::DynamicMeshBuffers::new(Some("debug grid meshes")),
+            island_line_bufs: super::util::DynamicMeshBuffers::new(Some("debug island lines")),
         }
     }
 
@@ -173,42 +176,42 @@ impl DebugVisualizer {
 
         // draw populated grid cells
 
+        self.grid_mesh_bufs.clear();
         let hgrid = &phys.spatial_index;
-        let verts: Vec<Vertex> = hgrid
-            .populated_cells()
-            .flat_map(|cell| {
-                // more opaque for smaller grid levels
-                let alpha = 0.2 * (1.0 - cell.grid_idx as f32 / hgrid.grids.len() as f32);
-                let color = [0.8, 0.5 * alpha, alpha, alpha];
-                let spacing = hgrid.grids[cell.grid_idx].spacing as f32;
-                let min = [
-                    hgrid.bounds.min.x as f32 + cell.col_idx as f32 * spacing,
-                    hgrid.bounds.min.y as f32 + cell.row_idx as f32 * spacing,
-                ];
-                let max = [min[0] + spacing, min[1] + spacing];
+        for cell in hgrid.populated_cells() {
+            // more opaque for smaller grid levels
+            let alpha = 0.2 * (1.0 - cell.grid_idx as f32 / hgrid.grids.len() as f32);
+            let color = [0.8, 0.5 * alpha, alpha, alpha];
+            let spacing = hgrid.grids[cell.grid_idx].spacing as f32;
+            let min = [
+                hgrid.bounds.min.x as f32 + cell.col_idx as f32 * spacing,
+                hgrid.bounds.min.y as f32 + cell.row_idx as f32 * spacing,
+            ];
+            let max = [min[0] + spacing, min[1] + spacing];
+
+            self.grid_mesh_bufs.extend(
                 [
                     [min[0], min[1]],
                     [max[0], min[1]],
-                    [min[0], max[1]],
                     [max[0], max[1]],
                     [min[0], max[1]],
-                    [max[0], min[1]],
                 ]
-                .map(move |position| Vertex { position, color })
-            })
-            .collect();
+                .map(move |position| Vertex { position, color }),
+                [0, 1, 2, 0, 2, 3],
+            );
+        }
 
-        self.grid_mesh_buf.write(ctx, &verts);
+        self.grid_mesh_bufs.write(ctx);
 
         {
             let mut pass = ctx.pass();
             pass.set_pipeline(&self.mesh_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.grid_mesh_buf.slice());
-            pass.draw(0..self.grid_mesh_buf.len() as u32, 0..1);
+            self.grid_mesh_bufs.set_buffers(&mut pass);
+            pass.draw_indexed(self.grid_mesh_bufs.index_range(), 0, 0..1);
         }
 
-        // draw lines
+        // draw grid lines
 
         let verts: Vec<Vertex> = hgrid
             .grids
@@ -276,53 +279,51 @@ impl DebugVisualizer {
 
         // draw boxes
 
-        let verts: Vec<Vertex> = phys
-            .islands(&l_body)
-            .flat_map(|island| {
-                let color = [0.3, 0.5, 0.9, 1.0];
-                let mut enclosing_aabb = AABB {
-                    min: m::Vec2::new(std::f64::MAX, std::f64::MAX),
-                    max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
+        self.island_line_bufs.clear();
+        for island in phys.islands(&l_body) {
+            let color = [0.3, 0.5, 0.9, 1.0];
+            let mut enclosing_aabb = AABB {
+                min: m::Vec2::new(std::f64::MAX, std::f64::MAX),
+                max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
+            };
+            for body in island {
+                let pose = match body.get_neighbor(&l_pose) {
+                    Some(p) => p,
+                    // body was deleted
+                    None => break,
                 };
-                for body in island {
-                    let pose = match body.get_neighbor(&l_pose) {
-                        Some(p) => p,
-                        // body was deleted
-                        None => break,
-                    };
-                    let pos = pose.c.translation;
-                    let r = match body.get_neighbor(&l_coll) {
-                        Some(coll) => coll.c.bounding_sphere_r(),
-                        None => 0.0,
-                    };
-                    let r = m::Vec2::new(r, r);
-                    enclosing_aabb.min = enclosing_aabb.min.min_by_component(pos - r);
-                    enclosing_aabb.max = enclosing_aabb.max.max_by_component(pos + r);
-                }
-                let min = [enclosing_aabb.min.x as f32, enclosing_aabb.min.y as f32];
-                let max = [enclosing_aabb.max.x as f32, enclosing_aabb.max.y as f32];
+                let pos = pose.c.translation;
+                let r = match body.get_neighbor(&l_coll) {
+                    Some(coll) => coll.c.bounding_sphere_r(),
+                    None => 0.0,
+                };
+                let r = m::Vec2::new(r, r);
+                enclosing_aabb.min = enclosing_aabb.min.min_by_component(pos - r);
+                enclosing_aabb.max = enclosing_aabb.max.max_by_component(pos + r);
+            }
+            let min = [enclosing_aabb.min.x as f32, enclosing_aabb.min.y as f32];
+            let max = [enclosing_aabb.max.x as f32, enclosing_aabb.max.y as f32];
+
+            self.island_line_bufs.extend(
                 [
                     [min[0], min[1]],
                     [max[0], min[1]],
-                    [max[0], min[1]],
-                    [max[0], max[1]],
                     [max[0], max[1]],
                     [min[0], max[1]],
-                    [min[0], max[1]],
-                    [min[0], min[1]],
                 ]
-                .map(move |position| Vertex { position, color })
-            })
-            .collect();
+                .map(move |position| Vertex { position, color }),
+                [0, 1, 1, 2, 2, 3, 3, 0],
+            );
+        }
 
-        self.island_line_buf.write(ctx, &verts);
+        self.island_line_bufs.write(ctx);
 
         {
             let mut pass = ctx.pass();
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.island_line_buf.slice());
-            pass.draw(0..self.island_line_buf.len() as u32, 0..1);
+            self.island_line_bufs.set_buffers(&mut pass);
+            pass.draw_indexed(self.island_line_bufs.index_range(), 0, 0..1);
         }
     }
 }

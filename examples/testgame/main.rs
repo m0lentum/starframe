@@ -51,7 +51,7 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     physics: phys::Physics,
     camera: gx::camera::MouseDragCamera,
-    shape_renderer: gx::ShapeRenderer,
+    mesh_renderer: gx::MeshRenderer,
     debug_visualizer: gx::DebugVisualizer,
     grid_vis_active: bool,
     island_vis_active: bool,
@@ -67,7 +67,7 @@ impl State {
                 phys::Body,
                 phys::Collider,
                 phys::rope::Rope,
-                gx::Shape,
+                gx::Mesh,
                 // our types
                 player::Player,
             },
@@ -96,7 +96,7 @@ impl State {
                     height: 10.0,
                 },
             ),
-            shape_renderer: gx::ShapeRenderer::new(renderer),
+            mesh_renderer: gx::MeshRenderer::new(renderer),
             debug_visualizer: gx::DebugVisualizer::new(renderer),
             grid_vis_active: false,
             island_vis_active: false,
@@ -384,7 +384,7 @@ impl game::GameState for State {
             );
         }
 
-        self.shape_renderer
+        self.mesh_renderer
             .draw(&self.camera, &mut ctx, self.graph.get_layer_bundle());
 
         ctx.submit();

@@ -45,7 +45,7 @@ type Layers<'a> = (
     LayerViewMut<'a, m::Pose>,
     LayerViewMut<'a, phys::Collider>,
     LayerViewMut<'a, phys::Body>,
-    LayerViewMut<'a, gx::Shape>,
+    LayerViewMut<'a, gx::Mesh>,
     LayerViewMut<'a, Player>,
 );
 
@@ -67,7 +67,7 @@ impl PlayerRecipe {
                 .with_rotation(m::Angle::Deg(90.0))
                 .build(),
         );
-        let mut shape_node = l_shape.insert(gx::Shape::from_collider(&coll, [0.2, 0.8, 0.6, 1.0]));
+        let mut shape_node = l_shape.insert(gx::Mesh::from(coll).with_color([0.2, 0.8, 0.6, 1.0]));
         let mut coll_node = l_collider.insert(coll);
         let mut body_node = l_body.insert(phys::Body::new_particle(1.0));
         let mut tag_node = l_player.insert(Player::new());
@@ -95,7 +95,7 @@ impl PlayerController {
 
     pub fn tick(&mut self, input: &sf::InputCache, physics: &phys::Physics, graph: &mut Graph) {
         let mut layers = graph.get_layer_bundle::<Layers>();
-        let (l_pose, l_collider, l_body, l_shape, l_player) = &mut layers;
+        let (l_pose, l_collider, l_body, l_mesh, l_player) = &mut layers;
 
         let (target_facing, target_hdir) = match input.get_key_axis_state(Key::Right, Key::Left) {
             KeyAxisState::Zero => (None, 0.0),
@@ -156,7 +156,7 @@ impl PlayerController {
                         angular: 0.0,
                         linear: player.c.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
                     },
-                    (l_pose, l_collider, l_body, l_shape),
+                    (l_pose, l_collider, l_body, l_mesh),
                 ));
             }
         }
@@ -170,20 +170,17 @@ impl PlayerController {
     fn spawn_bullet(
         pose: m::Pose,
         vel: phys::Velocity,
-        (l_pose, l_collider, l_body, l_shape): (
+        (l_pose, l_collider, l_body, l_mesh): (
             &mut LayerViewMut<m::Pose>,
             &mut LayerViewMut<phys::Collider>,
             &mut LayerViewMut<phys::Body>,
-            &mut LayerViewMut<gx::Shape>,
+            &mut LayerViewMut<gx::Mesh>,
         ),
     ) -> NodeKey<phys::Collider> {
         const R: f64 = 0.05;
         let mut pose_node = l_pose.insert(pose);
-        let mut shape_node = l_shape.insert(gx::Shape::Circle {
-            r: R,
-            points: 5,
-            color: [1.0; 4],
-        });
+        let mut mesh_node =
+            l_mesh.insert(gx::Mesh::from(gx::MeshShape::Circle { r: R, points: 5 }));
         let coll = phys::Collider::new_circle(R);
         let body = phys::Body::new_dynamic_const_mass(&coll, 1.0).with_velocity(vel);
         let mut coll_node = l_collider.insert(coll);
@@ -192,7 +189,7 @@ impl PlayerController {
         pose_node.connect(&mut body_node);
         pose_node.connect(&mut coll_node);
         body_node.connect(&mut coll_node);
-        pose_node.connect(&mut shape_node);
+        pose_node.connect(&mut mesh_node);
 
         coll_node.key()
     }

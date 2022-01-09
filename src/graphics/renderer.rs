@@ -12,7 +12,7 @@ impl Renderer {
     /// Create a Renderer.
     ///
     /// Most users won't need to create one of these manually;
-    /// the `Game`/`GameLoop` API handles it for you.
+    /// the [`Game`][crate::game::Game] API handles it for you.
     pub async fn init(window: &winit::window::Window) -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
         let surface = unsafe { instance.create_surface(window) };

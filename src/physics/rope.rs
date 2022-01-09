@@ -2,7 +2,7 @@
 
 use crate::{
     graph::{self, LayerViewMut},
-    graphics::Shape,
+    graphics::{Mesh, MeshShape},
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
 };
@@ -62,12 +62,12 @@ pub fn spawn_line(
     mut rope: Rope,
     start: m::Vec2,
     end: m::Vec2,
-    (mut l_body, l_pose, l_collider, mut l_rope, l_shape): (
+    (mut l_body, l_pose, l_collider, mut l_rope, l_mesh): (
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
         LayerViewMut<Rope>,
-        LayerViewMut<Shape>,
+        LayerViewMut<Mesh>,
     ),
 ) -> RopeProperties {
     let dist = end - start;
@@ -84,7 +84,7 @@ pub fn spawn_line(
         start,
         step,
         particle_count,
-        (l_body.subview_mut(), l_pose, l_collider, l_shape),
+        (l_body.subview_mut(), l_pose, l_collider, l_mesh),
     );
 
     RopeProperties {
@@ -100,11 +100,11 @@ pub fn extend_line(
     rope_node: &mut graph::NodeRefMut<Rope>,
     dir: m::Unit<m::Vec2>,
     count: usize,
-    (mut l_body, l_pose, l_collider, l_shape): (
+    (mut l_body, l_pose, l_collider, l_mesh): (
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
-        LayerViewMut<Shape>,
+        LayerViewMut<Mesh>,
     ),
 ) -> RopeProperties {
     let l_body_sub = l_body.subview();
@@ -128,7 +128,7 @@ pub fn extend_line(
         first_new_pos,
         step,
         count,
-        (l_body.subview_mut(), l_pose, l_collider, l_shape),
+        (l_body.subview_mut(), l_pose, l_collider, l_mesh),
     );
 
     RopeProperties {
@@ -145,11 +145,11 @@ fn build_line(
     start: m::Vec2,
     step: m::Vec2,
     count: usize,
-    (mut l_body, mut l_pose, mut l_collider, mut l_shape): (
+    (mut l_body, mut l_pose, mut l_collider, mut l_mesh): (
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
-        LayerViewMut<Shape>,
+        LayerViewMut<Mesh>,
     ),
 ) -> [graph::NodeKey<Body>; 2] {
     let body_proto = Body {
@@ -160,21 +160,22 @@ fn build_line(
     let collider_proto = Collider::new_circle(rope_node.c.thickness / 2.0)
         .with_layer(ROPE_LAYER)
         .with_material(rope_node.c.material);
-    // temporary visualisation with Shapes until I get something more bespoke for this
-    let shape_proto = Shape::Circle {
+    // temporary visualisation with individual particle Meshes
+    // until I get something more bespoke for this
+    let mesh_proto = Mesh::from(MeshShape::Circle {
         r: rope_node.c.thickness / 2.0,
         points: 8,
-        color: [0.729, 0.855, 0.333, 1.0],
-    };
+    })
+    .with_color([0.729, 0.855, 0.333, 1.0]);
 
     let mut first_body = l_body.insert(body_proto);
     let mut first_pose = l_pose.insert(m::Pose::new(start, Default::default()));
     let mut first_coll = l_collider.insert(collider_proto);
-    let mut first_shape = l_shape.insert(shape_proto);
+    let mut first_mesh = l_mesh.insert(mesh_proto.clone());
     first_body.connect(&mut first_pose);
     first_body.connect(&mut first_coll);
     first_pose.connect(&mut first_coll);
-    first_pose.connect(&mut first_shape);
+    first_pose.connect(&mut first_mesh);
     first_body.connect(rope_node);
     let first_body = first_body.key();
     let mut next_pos: m::Vec2 = start + step;
@@ -183,11 +184,11 @@ fn build_line(
         let mut body = l_body.insert(body_proto);
         let mut pose = l_pose.insert(m::Pose::new(next_pos, Default::default()));
         let mut coll = l_collider.insert(collider_proto);
-        let mut shape = l_shape.insert(shape_proto);
+        let mut mesh = l_mesh.insert(mesh_proto.clone());
         body.connect(&mut pose);
         pose.connect(&mut coll);
         body.connect(&mut coll);
-        pose.connect(&mut shape);
+        pose.connect(&mut mesh);
         body.connect(rope_node);
 
         next_pos += step;

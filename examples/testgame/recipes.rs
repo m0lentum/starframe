@@ -100,26 +100,28 @@ type Layers<'a> = (
     LayerViewMut<'a, m::Pose>,
     LayerViewMut<'a, phys::Collider>,
     LayerViewMut<'a, phys::Body>,
-    LayerViewMut<'a, gx::Shape>,
+    LayerViewMut<'a, gx::Mesh>,
 );
 
 fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::Body>> {
-    let (mut l_pose, mut l_collider, mut l_body, mut l_shape) = layers;
+    let (mut l_pose, mut l_collider, mut l_body, mut l_mesh) = layers;
 
     let mut pose_node = l_pose.insert(block.pose.into());
     let coll = phys::Collider::new_rect(block.width, block.height);
     let mut coll_node = l_collider.insert(coll);
-    let mut shape_node = l_shape.insert(gx::Shape::Rect {
-        w: block.width,
-        h: block.height,
-        color: if block.is_static {
+    let mut mesh_node = l_mesh.insert(
+        gx::Mesh::from(gx::MeshShape::Rect {
+            w: block.width,
+            h: block.height,
+        })
+        .with_color(if block.is_static {
             [0.7; 4]
         } else {
             random_color()
-        },
-    });
+        }),
+    );
     pose_node.connect(&mut coll_node);
-    pose_node.connect(&mut shape_node);
+    pose_node.connect(&mut mesh_node);
 
     if !block.is_static {
         let body = phys::Body::new_dynamic(&coll, 0.5);
@@ -140,25 +142,25 @@ struct Solid {
 }
 
 fn spawn_static(solid: Solid, layers: Layers) {
-    let (mut l_pose, mut l_collider, _, mut l_shape) = layers;
+    let (mut l_pose, mut l_collider, _, mut l_mesh) = layers;
 
     let mut pose_node = l_pose.insert(solid.pose);
     let mut coll_node = l_collider.insert(solid.coll);
-    let mut shape_node = l_shape.insert(gx::Shape::from_collider(&solid.coll, solid.color));
+    let mut mesh_node = l_mesh.insert(gx::Mesh::from(solid.coll).with_color(solid.color));
     pose_node.connect(&mut coll_node);
-    pose_node.connect(&mut shape_node);
+    pose_node.connect(&mut mesh_node);
 }
 
 fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
-    let (mut l_pose, mut l_collider, mut l_body, mut l_shape) = layers;
+    let (mut l_pose, mut l_collider, mut l_body, mut l_mesh) = layers;
 
     let mut pose_node = l_pose.insert(solid.pose);
     let mut coll_node = l_collider.insert(solid.coll);
-    let mut shape_node = l_shape.insert(gx::Shape::from_collider(&solid.coll, solid.color));
+    let mut mesh_node = l_mesh.insert(gx::Mesh::from(solid.coll).with_color(solid.color));
     let mut body_node = l_body.insert(phys::Body::new_dynamic(&solid.coll, 0.5));
 
     pose_node.connect(&mut coll_node);
-    pose_node.connect(&mut shape_node);
+    pose_node.connect(&mut mesh_node);
     body_node.connect(&mut coll_node);
     pose_node.connect(&mut body_node);
 

@@ -1,143 +1,124 @@
 use crate::{
-    graphics::{self as gx, util::GlslMat3},
-    {graph::LayerView, math as m},
+    graph::LayerView,
+    graphics::{
+        self as gx,
+        util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
+    },
+    math as m,
+    physics::Collider,
 };
 
 use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
 type Color = [f32; 4];
-/// A flat-colored convex polygon shape.
-///
-/// Concavity will not result in an error but will be rendered incorrectly.
+
+/// Regular shapes that can be used to generate [`Mesh`][self::Mesh]es.
 #[derive(Clone, Copy, Debug)]
-pub enum Shape {
+pub enum MeshShape {
     Circle {
         r: f64,
         points: usize,
-        color: Color,
     },
     Rect {
         w: f64,
         h: f64,
-        color: Color,
     },
     Capsule {
         hl: f64,
         r: f64,
         points_per_cap: usize,
-        color: Color,
     },
 }
 
-impl Shape {
-    /// Create a Shape that matches the given Collider.
-    pub fn from_collider(coll: &crate::physics::Collider, color: Color) -> Self {
-        use crate::physics::collision::ColliderShape;
-        match coll.shape {
-            ColliderShape::Circle { r } => Shape::Circle {
-                r,
-                points: 16,
-                color,
-            },
-            ColliderShape::Rect { hw, hh } => Shape::Rect {
-                w: 2.0 * hw,
-                h: 2.0 * hh,
-                color,
-            },
-            ColliderShape::Capsule { hl, r } => Shape::Capsule {
-                hl,
-                r,
-                points_per_cap: 8,
-                color,
-            },
+/// A triangle mesh for rendering.
+#[derive(Clone, Debug)]
+pub struct Mesh {
+    pub color: Color,
+    pub(crate) vertices: Vec<m::Vec2>,
+}
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self {
+            color: [1.0; 4],
+            vertices: Vec::new(),
         }
     }
+}
 
-    pub fn set_color(&mut self, color: Color) {
-        let my_color = match self {
-            Shape::Circle { color, .. } => color,
-            Shape::Rect { color, .. } => color,
-            Shape::Capsule { color, .. } => color,
-        };
-        *my_color = color;
-    }
-
-    pub(self) fn verts(&self, pose: &m::Pose) -> Vec<Vertex> {
-        // generate a triangle mesh
-        fn as_verts(pts: &[m::Vec2], pose: &m::Pose, color: Color) -> Vec<Vertex> {
-            let mut iter = pts.iter().map(|p| *pose * *p).peekable();
-            let first = match iter.next() {
-                Some(p) => Vertex {
-                    position: [p.x as f32, p.y as f32],
-                    color,
-                },
-                None => return Vec::new(),
-            };
-            let mut verts = Vec::with_capacity((pts.len() - 2) * 3);
-            while let Some(curr) = iter.next() {
-                if let Some(&next) = iter.peek() {
-                    verts.push(first);
-                    verts.push(Vertex {
-                        position: [curr.x as f32, curr.y as f32],
-                        color,
-                    });
-                    verts.push(Vertex {
-                        position: [next.x as f32, next.y as f32],
-                        color,
-                    });
-                }
-            }
-            verts
-        }
-
-        // do it
-        match self {
-            Shape::Circle { r, points, color } => {
-                let angle_incr = 2.0 * std::f64::consts::PI / *points as f64;
-                let verts: Vec<m::Vec2> = (0..*points)
+impl From<MeshShape> for Mesh {
+    fn from(shape: MeshShape) -> Self {
+        let vertices = match shape {
+            MeshShape::Circle { r, points } => {
+                let angle_incr = 2.0 * std::f64::consts::PI / points as f64;
+                (0..points)
                     .map(|i| {
                         let angle = angle_incr * i as f64;
                         m::Vec2::new(r * angle.cos(), r * angle.sin())
                     })
-                    .collect();
-                as_verts(verts.as_slice(), pose, *color)
+                    .collect()
             }
-            Shape::Rect { w, h, color } => {
+            MeshShape::Rect { w, h } => {
                 let hw = 0.5 * w;
                 let hh = 0.5 * h;
-                as_verts(
-                    &[
-                        m::Vec2::new(hw, hh),
-                        m::Vec2::new(-hw, hh),
-                        m::Vec2::new(-hw, -hh),
-                        m::Vec2::new(hw, -hh),
-                    ],
-                    pose,
-                    *color,
-                )
+                vec![
+                    m::Vec2::new(hw, hh),
+                    m::Vec2::new(-hw, hh),
+                    m::Vec2::new(-hw, -hh),
+                    m::Vec2::new(hw, -hh),
+                ]
             }
-            Shape::Capsule {
+            MeshShape::Capsule {
                 hl,
                 r,
                 points_per_cap,
-                color,
             } => {
-                let angle_incr = std::f64::consts::PI / *points_per_cap as f64;
-                let verts: Vec<m::Vec2> = (0..=*points_per_cap)
+                let angle_incr = std::f64::consts::PI / points_per_cap as f64;
+                (0..=points_per_cap)
                     .map(|i| {
                         let angle = angle_incr * i as f64;
                         m::Vec2::new(r * angle.sin() + hl, r * angle.cos())
                     })
-                    .chain((*points_per_cap..=2 * points_per_cap).map(|i| {
+                    .chain((points_per_cap..=2 * points_per_cap).map(|i| {
                         let angle = angle_incr * i as f64;
                         m::Vec2::new(r * angle.sin() - hl, r * angle.cos())
                     }))
-                    .collect();
-
-                as_verts(verts.as_slice(), pose, *color)
+                    .collect()
             }
+        };
+
+        Self {
+            vertices,
+            ..Default::default()
         }
+    }
+}
+
+impl From<Collider> for Mesh {
+    fn from(coll: Collider) -> Self {
+        use crate::physics::collision::ColliderShape;
+        match coll.shape {
+            ColliderShape::Circle { r } => MeshShape::Circle { r, points: 16 },
+            ColliderShape::Rect { hw, hh } => MeshShape::Rect {
+                w: 2.0 * hw,
+                h: 2.0 * hh,
+            },
+            ColliderShape::Capsule { hl, r } => MeshShape::Capsule {
+                hl,
+                r,
+                points_per_cap: 8,
+            },
+        }
+        .into()
+    }
+}
+
+impl Mesh {
+    /// Set the color of the mesh in a builder-like fashion.
+    pub fn with_color(mut self, color: Color) -> Self {
+        self.color = color;
+        self
     }
 }
 
@@ -148,31 +129,31 @@ impl Shape {
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct GlobalUniforms {
-    view: GlslMat3,
+    view: GpuMat3,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct Vertex {
-    position: [f32; 2],
+    position: GpuVec2,
     color: [f32; 4],
 }
 
-pub struct ShapeRenderer {
+pub struct MeshRenderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
-    vert_buf: super::util::DynamicVertexBuffer,
+    bufs: DynamicMeshBuffers<Vertex>,
 }
-impl ShapeRenderer {
+impl MeshRenderer {
     pub fn new(rend: &super::Renderer) -> Self {
         // shaders
 
         let shader = rend
             .device
             .create_shader_module(&wgpu::ShaderModuleDescriptor {
-                label: Some("shape"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/shape.wgsl"))),
+                label: Some("mesh"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/mesh.wgsl"))),
             });
 
         // bind group & buffers
@@ -181,7 +162,7 @@ impl ShapeRenderer {
         let uniform_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
             size: uniform_buf_size,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("shape uniforms"),
+            label: Some("mesh uniforms"),
             mapped_at_creation: false,
         });
 
@@ -201,7 +182,7 @@ impl ShapeRenderer {
                         },
                         count: None,
                     }],
-                    label: Some("shape"),
+                    label: Some("mesh"),
                 });
         let bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
@@ -209,7 +190,7 @@ impl ShapeRenderer {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }],
-            label: Some("shape"),
+            label: Some("mesh"),
         });
 
         let vertex_buffers = [wgpu::VertexBufferLayout {
@@ -236,14 +217,14 @@ impl ShapeRenderer {
         let pipeline_layout = rend
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("shape"),
+                label: Some("mesh"),
                 bind_group_layouts: &[&bind_group_layout],
                 push_constant_ranges: &[],
             });
         let pipeline = rend
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("shape"),
+                label: Some("mesh"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
@@ -266,20 +247,20 @@ impl ShapeRenderer {
                 multiview: None,
             });
 
-        ShapeRenderer {
+        MeshRenderer {
             pipeline,
             bind_group,
             uniform_buf,
-            vert_buf: super::util::DynamicVertexBuffer::new(Some("shape")),
+            bufs: DynamicMeshBuffers::new(Some("mesh")),
         }
     }
 
-    /// Draw all the alive [`Shape`][self::Shape]s that have associated [`Pose`][crate::math::Pose]s.
+    /// Draw all the [`mesh`][self::Mesh]s that have associated [`Pose`][crate::math::Pose]s.
     pub fn draw(
         &mut self,
         camera: &impl gx::camera::Camera,
         ctx: &mut gx::RenderContext,
-        (l_shape, l_pose): (LayerView<Shape>, LayerView<m::Pose>),
+        (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
     ) {
         //
         // Update the uniform buffer
@@ -295,16 +276,24 @@ impl ShapeRenderer {
         // Update the vertex buffer
         //
 
-        let verts: Vec<Vertex> = l_shape
+        self.bufs.clear();
+        for (mesh, pose) in l_mesh
             .iter()
-            .filter_map(|s| s.get_neighbor(&l_pose).map(|tr| s.c.verts(tr.c)))
-            .flatten()
-            .collect();
-        if verts.is_empty() {
+            .filter_map(|m| m.get_neighbor(&l_pose).map(|p| (m, p)))
+        {
+            self.bufs.extend(
+                mesh.c.vertices.iter().map(|vert| Vertex {
+                    position: (*pose.c * *vert).into(),
+                    color: mesh.c.color,
+                }),
+                (1..mesh.c.vertices.len() as u16 - 1).flat_map(|idx| [0, idx, idx + 1]),
+            );
+        }
+        if self.bufs.indices.is_empty() {
             return;
         }
 
-        self.vert_buf.write(ctx, &verts);
+        self.bufs.write(ctx);
 
         //
         // Render
@@ -313,8 +302,8 @@ impl ShapeRenderer {
             let mut pass = ctx.pass();
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vert_buf.slice());
-            pass.draw(0..self.vert_buf.len() as u32, 0..1);
+            self.bufs.set_buffers(&mut pass);
+            pass.draw_indexed(self.bufs.index_range(), 0, 0..1);
         }
     }
 }
