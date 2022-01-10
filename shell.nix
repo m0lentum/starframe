@@ -9,14 +9,17 @@ let
 in
 pkgs.mkShell {
   buildInputs = [
+    # rust stuff
     rust
     pkgs.cargo-flamegraph
     pkgs.cargo-outdated
     pkgs.lld
     pkgs.llvmPackages.bintools
 
+    # utilities
     pkgs.niv
     pkgs.tracy
+    pkgs.renderdoc
     pkgs.just
 
     # wgpu dependencies

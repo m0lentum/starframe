@@ -299,7 +299,7 @@ impl MeshRenderer {
         // Render
         //
         {
-            let mut pass = ctx.pass();
+            let mut pass = ctx.pass(Some("mesh"));
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             self.bufs.set_buffers(&mut pass);

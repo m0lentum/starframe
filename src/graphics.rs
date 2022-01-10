@@ -8,5 +8,8 @@ pub mod camera;
 mod mesh;
 pub use mesh::*;
 
+mod outlines;
+pub use outlines::{OutlineParams, OutlineRenderer};
+
 mod debug;
 pub use debug::DebugVisualizer;

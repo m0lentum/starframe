@@ -21,7 +21,7 @@ impl From<uv::DMat3> for GpuMat3 {
     }
 }
 
-/// Utility type to convert 2D vectors to a GPU-appropriate form.
+/// Utility type for putting 2D vectors in vertex buffers.
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuVec2([f32; 2]);
@@ -29,6 +29,17 @@ pub struct GpuVec2([f32; 2]);
 impl From<m::Vec2> for GpuVec2 {
     fn from(v: m::Vec2) -> Self {
         Self([v.x as f32, v.y as f32])
+    }
+}
+
+/// Utility type for putting 2D vectors in uniform buffers.
+#[derive(Clone, Copy, AsBytes, FromBytes)]
+#[repr(transparent)]
+pub struct GpuVec2Padded([f32; 4]);
+
+impl From<m::Vec2> for GpuVec2Padded {
+    fn from(v: m::Vec2) -> Self {
+        Self([v.x as f32, v.y as f32, 0.0, 0.0])
     }
 }
 

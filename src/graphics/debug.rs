@@ -204,7 +204,7 @@ impl DebugVisualizer {
         self.grid_mesh_bufs.write(ctx);
 
         {
-            let mut pass = ctx.pass();
+            let mut pass = ctx.pass(Some("hgrid mesh"));
             pass.set_pipeline(&self.mesh_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             self.grid_mesh_bufs.set_buffers(&mut pass);
@@ -254,7 +254,7 @@ impl DebugVisualizer {
         self.grid_line_buf.write(ctx, &verts);
 
         {
-            let mut pass = ctx.pass();
+            let mut pass = ctx.pass(Some("hgrid lines"));
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.grid_line_buf.slice());
@@ -319,7 +319,7 @@ impl DebugVisualizer {
         self.island_line_bufs.write(ctx);
 
         {
-            let mut pass = ctx.pass();
+            let mut pass = ctx.pass(Some("island lines"));
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             self.island_line_bufs.set_buffers(&mut pass);

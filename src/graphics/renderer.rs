@@ -90,7 +90,7 @@ impl Renderer {
     }
 
     /// Begin drawing directly into the game window.
-    pub fn draw_to_window(&mut self) -> RenderContext {
+    pub fn draw_to_window(&mut self) -> RenderContext<'_> {
         let frame = self
             .surface
             .get_current_texture()
@@ -105,8 +105,27 @@ impl Renderer {
         let queue = &mut self.queue;
 
         RenderContext {
-            view,
-            frame,
+            target: RenderTarget::Surface { view, frame },
+            encoder,
+            device: &self.device,
+            queue,
+            target_size,
+        }
+    }
+
+    /// Begin drawing to a non-screen texture.
+    pub fn draw_to_texture<'s, 'v: 's>(
+        &'s mut self,
+        view: &'v wgpu::TextureView,
+        target_size: (u32, u32),
+    ) -> RenderContext<'s> {
+        let encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let queue = &mut self.queue;
+
+        RenderContext {
+            target: RenderTarget::Texture { view },
             encoder,
             device: &self.device,
             queue,
@@ -119,21 +138,38 @@ impl Renderer {
 ///
 /// TODOC: example
 pub struct RenderContext<'a> {
-    view: wgpu::TextureView,
-    frame: wgpu::SurfaceTexture,
+    target: RenderTarget<'a>,
     pub encoder: wgpu::CommandEncoder,
     pub device: &'a wgpu::Device,
     pub queue: &'a mut wgpu::Queue,
     pub target_size: (u32, u32),
 }
 
+enum RenderTarget<'a> {
+    Surface {
+        view: wgpu::TextureView,
+        frame: wgpu::SurfaceTexture,
+    },
+    Texture {
+        view: &'a wgpu::TextureView,
+    },
+}
+impl<'a> RenderTarget<'a> {
+    fn view(&self) -> &wgpu::TextureView {
+        match self {
+            RenderTarget::Surface { view, .. } => view,
+            RenderTarget::Texture { view } => view,
+        }
+    }
+}
+
 impl<'a> RenderContext<'a> {
     /// Fill the render target with a flat color.
     pub fn clear(&mut self, color: wgpu::Color) {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
+            label: Some("clear"),
             color_attachments: &[wgpu::RenderPassColorAttachment {
-                view: &self.view,
+                view: self.target.view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(color),
@@ -146,12 +182,12 @@ impl<'a> RenderContext<'a> {
         // to be written to the encoder
     }
 
-    /// Begin a render pass.
-    pub fn pass(&mut self) -> wgpu::RenderPass {
+    /// Begin a render pass that draws on top of what's already in the target.
+    pub fn pass(&mut self, label: Option<&'static str>) -> wgpu::RenderPass {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: None,
+            label,
             color_attachments: &[wgpu::RenderPassColorAttachment {
-                view: &self.view,
+                view: self.target.view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
@@ -163,8 +199,11 @@ impl<'a> RenderContext<'a> {
     }
 
     /// Submit the commands made through this context to the GPU.
+    /// Must be called or nothing is actually executed!
     pub fn submit(self) {
         self.queue.submit(Some(self.encoder.finish()));
-        self.frame.present();
+        if let RenderTarget::Surface { frame, .. } = self.target {
+            frame.present();
+        }
     }
 }

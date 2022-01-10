@@ -46,12 +46,15 @@ pub struct State {
     scene: Scene,
     state: StateEnum,
     graph: Graph,
+    // gameplay
     player: player::PlayerController,
     mouse_mode: MouseMode,
     mouse_grabber: MouseGrabber,
     physics: phys::Physics,
+    // graphics
     camera: gx::camera::MouseDragCamera,
     mesh_renderer: gx::MeshRenderer,
+    outline_renderer: gx::OutlineRenderer,
     debug_visualizer: gx::DebugVisualizer,
     grid_vis_active: bool,
     island_vis_active: bool,
@@ -97,6 +100,10 @@ impl State {
                 },
             ),
             mesh_renderer: gx::MeshRenderer::new(renderer),
+            outline_renderer: gx::OutlineRenderer::new(
+                gx::OutlineParams { thickness: 15 },
+                renderer,
+            ),
             debug_visualizer: gx::DebugVisualizer::new(renderer),
             grid_vis_active: false,
             island_vis_active: false,
@@ -200,15 +207,13 @@ impl game::GameState for State {
             return None;
         }
 
-        // adjust physics substeps
-        if game.input.is_key_pressed(Key::NumpadAdd, Some(0)) {
-            self.physics.consts.substeps += 1;
-            println!("Substeps: {}", self.physics.consts.substeps);
-        } else if game.input.is_key_pressed(Key::NumpadSubtract, Some(0))
-            && self.physics.consts.substeps > 1
+        // adjust outlines
+        if game.input.is_key_pressed(Key::NumpadAdd, None) {
+            self.outline_renderer.params.thickness += 1;
+        } else if game.input.is_key_pressed(Key::NumpadSubtract, None)
+            && self.outline_renderer.params.thickness > 1
         {
-            self.physics.consts.substeps -= 1;
-            println!("Substeps: {}", self.physics.consts.substeps);
+            self.outline_renderer.params.thickness -= 1;
         }
 
         // toggle debug visualizers
@@ -363,6 +368,11 @@ impl game::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut gx::Renderer) {
+        self.outline_renderer.prepare(renderer);
+        self.outline_renderer
+            .init_meshes(&self.camera, renderer, self.graph.get_layer_bundle());
+        self.outline_renderer.compute(renderer);
+
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
@@ -370,6 +380,8 @@ impl game::GameState for State {
             b: 0.1,
             a: 1.0,
         });
+
+        self.outline_renderer.draw(&mut ctx);
 
         if self.grid_vis_active {
             self.debug_visualizer
