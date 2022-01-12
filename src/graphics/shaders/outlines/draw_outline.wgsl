@@ -1,5 +1,8 @@
 struct Uniforms {
     thickness: u32;
+    l1_weight: f32;
+    l2_weight: f32;
+    inf_weight: f32;
 };
 
 [[group(0), binding(0)]]
@@ -34,12 +37,16 @@ fn fs_main(
     let closest = textureLoad(gbuf_tex, uv_i, 0);
 
     let dist = closest.xy - uv_f;
-    let dist_mag = length(dist);
-    // adjust threshold half a pixel down to avoid rounding artifacts on straight edges
-    let threshold = f32(unif.thickness) - 0.5;
-    if (closest.x < 0.0 || dist_mag > threshold) {
+    let dist_norm = unif.l1_weight * (abs(dist.x) + abs(dist.y))
+        + unif.l2_weight * length(dist)
+        + unif.inf_weight * max(abs(dist.x), abs(dist.y));
+
+    // bump threshold a bit to avoid rounding artifacts on straight edges
+    let threshold = f32(unif.thickness) + 0.25;
+    if (closest.x < 0.0 || dist_norm > threshold) {
         discard;
     }
 
-    return vec4<f32>(0.0, 0.0, 0.0, 1.0); // TODO customizable color
+    // TODO customizable color (possibly distance curve or texture)
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }

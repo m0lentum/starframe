@@ -1,5 +1,8 @@
 struct Uniforms {
     step_size: u32;
+    l1_weight: f32;
+    l2_weight: f32;
+    inf_weight: f32;
 };
 
 [[group(0), binding(0)]]
@@ -45,9 +48,12 @@ fn fs_main(
             let val_at_offset = textureLoad(gbuf_tex, uv_i + offset, 0);
             
             let dist: vec2<f32> = val_at_offset.xy - uv_f;
-            let dist_mag = dot(dist, dist);
-            if (val_at_offset.x > 0.0 && dist_mag < min_dist) {
-                min_dist = dist_mag;
+            let dist_norm = unif.l1_weight * (abs(dist.x) + abs(dist.y))
+                + unif.l2_weight * length(dist)
+                + unif.inf_weight * max(abs(dist.x), abs(dist.y));
+
+            if (val_at_offset.x > 0.0 && dist_norm < min_dist) {
+                min_dist = dist_norm;
                 min_coord = val_at_offset.xy;
             }
         }

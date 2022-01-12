@@ -55,6 +55,8 @@ pub struct State {
     camera: gx::camera::MouseDragCamera,
     mesh_renderer: gx::MeshRenderer,
     outline_renderer: gx::OutlineRenderer,
+    // interpolate between two outline shapes for fun
+    outline_interp: f32,
     debug_visualizer: gx::DebugVisualizer,
     grid_vis_active: bool,
     island_vis_active: bool,
@@ -101,9 +103,13 @@ impl State {
             ),
             mesh_renderer: gx::MeshRenderer::new(renderer),
             outline_renderer: gx::OutlineRenderer::new(
-                gx::OutlineParams { thickness: 15 },
+                gx::OutlineParams {
+                    thickness: 15,
+                    shape: gx::OutlineShape::octagon(),
+                },
                 renderer,
             ),
+            outline_interp: 0.0,
             debug_visualizer: gx::DebugVisualizer::new(renderer),
             grid_vis_active: false,
             island_vis_active: false,
@@ -215,6 +221,13 @@ impl game::GameState for State {
         {
             self.outline_renderer.params.thickness -= 1;
         }
+        if game.input.is_key_pressed(Key::NumpadMultiply, None) {
+            self.outline_interp = (self.outline_interp + 0.05).min(1.0);
+        } else if game.input.is_key_pressed(Key::NumpadDivide, None) {
+            self.outline_interp = (self.outline_interp - 0.05).max(0.0);
+        }
+        self.outline_renderer.params.shape =
+            gx::OutlineShape::octagon().lerp(self.outline_interp, gx::OutlineShape::circle());
 
         // toggle debug visualizers
         if game.input.is_key_pressed(Key::G, Some(0)) {

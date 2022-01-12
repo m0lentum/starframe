@@ -9,7 +9,7 @@ mod mesh;
 pub use mesh::*;
 
 mod outlines;
-pub use outlines::{OutlineParams, OutlineRenderer};
+pub use outlines::{OutlineParams, OutlineRenderer, OutlineShape};
 
 mod debug;
 pub use debug::DebugVisualizer;

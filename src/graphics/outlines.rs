@@ -12,6 +12,10 @@ use crate::{
 use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
+//
+// parameters
+//
+
 /// Renderer that draws outlines for things using the jump flood algorithm.
 pub struct OutlineRenderer {
     pub params: OutlineParams,
@@ -34,12 +38,94 @@ pub struct OutlineRenderer {
 pub struct OutlineParams {
     /// Thickness in pixels.
     pub thickness: u32,
+    /// The shape of the outline around corners.
+    pub shape: OutlineShape,
 }
 impl Default for OutlineParams {
     fn default() -> Self {
-        Self { thickness: 10 }
+        Self {
+            thickness: 10,
+            shape: Default::default(),
+        }
     }
 }
+
+/// The shape of outlines around corners and curves,
+/// defined as a weighted average of three different norm functions.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+pub struct OutlineShape {
+    /// Weight of the l1 norm (a.k.a. manhattan distance).
+    /// Produces a rhombus shape.
+    pub l1: f32,
+    /// Weight of the l2 norm (a.k.a. euclidean distance).
+    /// Produces a circular shape.
+    pub l2: f32,
+    /// Weight of the infinity norm (a.k.a. maximum norm).
+    /// Produces a square shape.
+    pub inf: f32,
+}
+impl OutlineShape {
+    #[inline]
+    pub fn new(l1: f32, l2: f32, inf: f32) -> Self {
+        Self { l1, l2, inf }
+    }
+
+    #[inline]
+    pub fn circle() -> Self {
+        Self::new(0.0, 1.0, 0.0)
+    }
+
+    #[inline]
+    pub fn octagon() -> Self {
+        Self::new(1.0 / 3.0, 0.0, 2.0 / 3.0)
+    }
+
+    #[inline]
+    pub fn rhombus() -> Self {
+        Self::new(1.0, 0.0, 0.0)
+    }
+
+    #[inline]
+    pub fn square() -> Self {
+        Self::new(0.0, 0.0, 1.0)
+    }
+
+    #[inline]
+    pub fn rounded_square() -> Self {
+        Self::new(0.0, 1.0 / 2.0, 1.0 / 2.0)
+    }
+
+    /// Linearly interpolate between this and another shape.
+    #[inline]
+    pub fn lerp(&self, t: f32, other: Self) -> Self {
+        let t_ = 1.0 - t;
+        Self {
+            l1: t_ * self.l1 + t * other.l1,
+            l2: t_ * self.l2 + t * other.l2,
+            inf: t_ * self.inf + t * other.inf,
+        }
+    }
+
+    #[inline]
+    fn normalized(&self) -> Self {
+        let sum = self.l1 + self.l2 + self.inf;
+        Self {
+            l1: self.l1 / sum,
+            l2: self.l2 / sum,
+            inf: self.inf / sum,
+        }
+    }
+}
+impl Default for OutlineShape {
+    fn default() -> Self {
+        Self::octagon()
+    }
+}
+
+//
+// internals
+//
 
 /// The initialization step of JFA, drawing seed fragment positions into a texture.
 struct InitStep {
@@ -69,6 +155,7 @@ struct DistanceStep {
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct DistanceUniforms {
     step_size: u32,
+    shape: OutlineShape,
 }
 
 /// The final step where the results are actually drawn on screen.
@@ -81,6 +168,7 @@ struct DrawStep {
 #[derive(Clone, Copy, AsBytes, FromBytes)]
 struct DrawUniforms {
     thickness: u32,
+    shape: OutlineShape,
 }
 
 impl OutlineRenderer {
@@ -363,7 +451,11 @@ impl OutlineRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &draw_shader,
                     entry_point: "fs_main",
-                    targets: &[rend.swapchain_format().into()],
+                    targets: &[wgpu::ColorTargetState {
+                        format: rend.swapchain_format(),
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -482,6 +574,7 @@ impl OutlineRenderer {
 
             let uniforms = DistanceUniforms {
                 step_size: step_pixels,
+                shape: self.params.shape.normalized(),
             };
             ctx.queue
                 .write_buffer(&self.dist_step.uniform_buf, 0, uniforms.as_bytes());
@@ -506,6 +599,7 @@ impl OutlineRenderer {
     pub fn draw(&self, ctx: &mut super::RenderContext) {
         let uniforms = DrawUniforms {
             thickness: self.params.thickness,
+            shape: self.params.shape.normalized(),
         };
         ctx.queue
             .write_buffer(&self.draw_step.uniform_buf, 0, uniforms.as_bytes());
