@@ -26,9 +26,11 @@ about vines and fire.
     - [related blog post](https://moletrooper.github.io/blog/2021/03/starframe-devlog-constraints/)
 - Graphics
   - Basic 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
+  - Dynamic outlines with the Jump Flood algorithm
 
-For more details, I organize my plans with Github issues on a [project
-board](https://github.com/MoleTrooper/starframe/projects/1).
+Future plans and ideas are constantly changing and can be found in the form of
+Obsidian kanban boards in [my notes
+repo](https://github.com/MoleTrooper/notes).
 
 ## Blog
 
