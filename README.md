@@ -52,8 +52,10 @@ bullets. Here's how you can check it out:
 
 ### The easy way, using [Nix](https://nixos.org/nix/) (on Linux)
 
+Note that this requires a Nix version that supports flakes (2.4 and up).
+
 1. Clone and navigate to this repository
-2. `nix-shell`
+2. `nix develop`
 3. `cargo run --example testgame`
 
 ### Keybindings
