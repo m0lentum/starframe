@@ -22,6 +22,14 @@ impl Default for Collider {
         }
     }
 }
+impl From<ColliderShape> for Collider {
+    fn from(shape: ColliderShape) -> Self {
+        Self {
+            shape,
+            ..Default::default()
+        }
+    }
+}
 
 impl Collider {
     /// Create a solid circle collider from a radius.
@@ -88,6 +96,11 @@ impl Collider {
     #[inline]
     pub fn is_solid(&self) -> bool {
         matches!(self.ty, ColliderType::Solid(_))
+    }
+
+    #[inline]
+    pub fn is_trigger(&self) -> bool {
+        matches!(self.ty, ColliderType::Trigger)
     }
 
     #[inline]

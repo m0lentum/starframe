@@ -128,25 +128,40 @@ impl MaskMatrix {
     /// Stop collision detection between a pair of collision layers.
     #[inline]
     pub fn ignore(&mut self, layer1: usize, layer2: usize) {
-        self.0[layer1 as usize] &= !(1 << layer2);
-        self.0[layer2 as usize] &= !(1 << layer1);
+        self.0[layer1] &= !(1 << layer2);
+        self.0[layer2] &= !(1 << layer1);
     }
 
     /// Stop collision detection between members of the same layer.
     #[inline]
     pub fn ignore_within(&mut self, layer: usize) {
-        self.0[layer as usize] &= !(1 << layer);
+        self.0[layer] &= !(1 << layer);
+    }
+
+    /// Ignore all collisions involving members of this layer.
+    #[inline]
+    pub fn ignore_all(&mut self, layer: usize) {
+        for other in 0..self.0.len() {
+            self.ignore(layer, other);
+        }
+    }
+
+    /// Re-enable collision detection between a pair of layers.
+    #[inline]
+    pub fn unignore(&mut self, layer1: usize, layer2: usize) {
+        self.0[layer1] |= 1 << layer2;
+        self.0[layer2] |= 1 << layer1;
     }
 
     /// Check whether or not two layers have collision enabled between them.
     #[inline]
     pub fn get(&self, layer1: usize, layer2: usize) -> bool {
-        self.0[layer1 as usize] & (1 << layer2) != 0
+        self.0[layer1] & (1 << layer2) != 0
     }
 
     /// Get the mask for a single layer.
     #[inline]
     pub fn get_mask(&self, layer: usize) -> LayerMask {
-        LayerMask(self.0[layer as usize])
+        LayerMask(self.0[layer])
     }
 }
