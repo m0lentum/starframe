@@ -411,10 +411,12 @@ impl Physics {
         self.user_constraints.remove(handle)
     }
 
-    /// Remove all constraints.
+    /// Remove all constraints and reset internal state.
     #[inline]
-    pub fn clear_constraints(&mut self) {
+    pub fn reset(&mut self) {
         self.user_constraints.clear();
+        self.sleeping_islands.clear();
+        self.contacts.clear();
     }
 
     /// Detect collisions, solve constraint forces and move bodies.
