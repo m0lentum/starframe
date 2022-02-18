@@ -81,6 +81,8 @@ impl State {
             mouse_grabber: MouseGrabber::new(),
             physics: phys::Physics::new(
                 phys::TuningConstants {
+                    // uncomment to help testing collision detection and such
+                    // substeps: 1,
                     ..Default::default()
                 },
                 phys::collision::HGridParams {

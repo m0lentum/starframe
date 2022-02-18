@@ -1,4 +1,7 @@
-use super::AABB;
+use super::{
+    shape_shape::{AxisIter, Edge, SeparatingAxis, SupportingEdge},
+    AABB,
+};
 use crate::math as m;
 
 /// A component that allows a game object to collide with others
@@ -16,7 +19,10 @@ pub struct Collider {
 impl Default for Collider {
     fn default() -> Self {
         Self {
-            shape: ColliderShape::Circle { r: 1.0 },
+            shape: ColliderShape {
+                polygon: ColliderPolygon::Point,
+                circle_r: 1.0,
+            },
             ty: ColliderType::default(),
             layer: 0,
         }
@@ -30,12 +36,23 @@ impl From<ColliderShape> for Collider {
         }
     }
 }
+impl From<ColliderPolygon> for Collider {
+    fn from(polygon: ColliderPolygon) -> Self {
+        Self {
+            shape: ColliderShape::from(polygon),
+            ..Default::default()
+        }
+    }
+}
 
 impl Collider {
     /// Create a solid circle collider from a radius.
     pub fn new_circle(radius: f64) -> Self {
         Self {
-            shape: ColliderShape::Circle { r: radius },
+            shape: ColliderShape {
+                polygon: ColliderPolygon::Point,
+                circle_r: radius,
+            },
             ..Self::default()
         }
     }
@@ -50,7 +67,10 @@ impl Collider {
         let hw = width / 2.0;
         let hh = height / 2.0;
         Self {
-            shape: ColliderShape::Rect { hw, hh },
+            shape: ColliderShape {
+                polygon: ColliderPolygon::Rect { hw, hh },
+                circle_r: 0.0,
+            },
             ..Self::default()
         }
     }
@@ -58,9 +78,9 @@ impl Collider {
     /// Create a solid capsule collider (a rectangle with semicircles at the ends on the x-axis).
     pub fn new_capsule(length: f64, radius: f64) -> Self {
         Self {
-            shape: ColliderShape::Capsule {
-                hl: length / 2.0,
-                r: radius,
+            shape: ColliderShape {
+                polygon: ColliderPolygon::LineSegment { hl: length / 2.0 },
+                circle_r: radius,
             },
             ..Self::default()
         }
@@ -114,84 +134,212 @@ impl Collider {
     }
 }
 
-/// The physical shape of a collider.
+/// The shape of a collider, expressed as the Minkowski sum of a
+/// convex polygon (or point or line segment) and a circle.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
-pub enum ColliderShape {
-    Circle {
-        r: f64,
-    },
-    /// The rect collider stores its side lengths halved because this makes
-    /// intersection tests easier.
-    Rect {
-        hw: f64,
-        hh: f64,
-    },
-    /// A rectangle with half-circles at the ends, circles along the x-axis.
-    Capsule {
-        hl: f64,
-        r: f64,
-    },
+pub struct ColliderShape {
+    pub polygon: ColliderPolygon,
+    pub circle_r: f64,
+}
+
+impl From<ColliderPolygon> for ColliderShape {
+    fn from(polygon: ColliderPolygon) -> Self {
+        Self {
+            polygon,
+            circle_r: 0.0,
+        }
+    }
 }
 
 impl ColliderShape {
     #[inline]
     pub fn area(&self) -> f64 {
-        match *self {
-            ColliderShape::Circle { r } => std::f64::consts::PI * r * r,
-            ColliderShape::Rect { hw, hh } => 4.0 * hw * hh,
-            ColliderShape::Capsule { hl, r } => (std::f64::consts::PI * r * r) + (4.0 * hl * r),
+        let r = self.circle_r;
+        // area of a circle-convex polygon sum:
+        // the polygon itself
+        // plus exactly one circle (sum of all corners),
+        // plus an extra polygon with height r for each face of the polygon
+        let circ_area = std::f64::consts::PI * r * r;
+        match self.polygon {
+            ColliderPolygon::Point => circ_area,
+            ColliderPolygon::LineSegment { hl } => circ_area + (4.0 * hl * r),
+            ColliderPolygon::Rect { hw, hh } => 4.0 * hw * hh,
         }
     }
 
     #[inline]
     pub fn moment_of_inertia_coef(&self) -> f64 {
+        let r = self.circle_r;
         // from https://en.wikipedia.org/wiki/List_of_moments_of_inertia
-        match *self {
-            ColliderShape::Circle { r } => r * r / 2.0,
-            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
-            // rough estimation as a rectangle, since an accurate formula is not on wikipedia.
+
+        // TODO: how does the circular part change this?
+        // maybe we can just add r to all dimensions and call it close enough
+        match self.polygon {
+            ColliderPolygon::Point => r * r / 2.0,
+            // rough estimation of a capsule as a rectangle,
+            // since an accurate formula is not on wikipedia.
             // TODO: calculate a formula by hand
-            ColliderShape::Capsule { hl, r } => (hl * hl + r * r) / 3.0,
+            ColliderPolygon::LineSegment { hl } => (hl * hl + r * r) / 3.0,
+            ColliderPolygon::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
         }
     }
 
     #[inline]
     pub fn bounding_sphere_r(&self) -> f64 {
-        match *self {
-            ColliderShape::Circle { r } => r,
-            ColliderShape::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
-            ColliderShape::Capsule { hl, r } => hl + r,
+        let r = self.circle_r;
+        match self.polygon {
+            ColliderPolygon::Point => r,
+            ColliderPolygon::LineSegment { hl } => hl + r,
+            ColliderPolygon::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
         }
     }
 
     pub fn aabb(&self, pose: &m::Pose) -> AABB {
+        let r = self.circle_r;
         // for symmetrical shapes, the box is one vector mirrored both ways
-        let extent = match *self {
-            ColliderShape::Circle { r } => m::Vec2::new(r, r),
-            ColliderShape::Rect { hw, hh } => {
+        // (always plus r in both x and y)
+        let extent = match self.polygon {
+            ColliderPolygon::Point => m::Vec2::zero(),
+            ColliderPolygon::LineSegment { hl } => (pose.rotation * m::Vec2::new(hl, 0.0)).abs(),
+            ColliderPolygon::Rect { hw, hh } => {
                 (pose.rotation * m::Vec2::new(hw, 0.0)).abs()
                     + (pose.rotation * m::Vec2::new(0.0, hh)).abs()
             }
-            ColliderShape::Capsule { hl, r } => {
-                (pose.rotation * m::Vec2::new(hl, 0.0)).abs() + m::Vec2::new(r, r)
-            }
-        };
+        } + m::Vec2::new(r, r);
         AABB {
             min: pose.translation - extent,
             max: pose.translation + extent,
         }
     }
 
-    /// Enlarge the shape by the same amount in all normal directions.
+    /// Enlarge the circle component of the shape.
     pub fn expanded(&self, amount: f64) -> Self {
+        Self {
+            circle_r: self.circle_r + amount,
+            polygon: self.polygon,
+        }
+    }
+}
+
+/// The polygonal part of a collider's shape.
+///
+/// For symmetrical shapes, dimensions are stored "halved",
+/// as distances from the origin to the edge.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
+pub enum ColliderPolygon {
+    Point,
+    LineSegment { hl: f64 },
+    Rect { hw: f64, hh: f64 },
+}
+
+impl ColliderPolygon {
+    //
+    // internals for collision detection
+    //
+
+    /// Get all potential separating axes of the polygon.
+    pub(super) fn separating_axes(&self) -> AxisIter {
         match *self {
-            ColliderShape::Circle { r } => ColliderShape::Circle { r: r + amount },
-            ColliderShape::Rect { hw, hh } => ColliderShape::Rect {
-                hw: hw + amount,
-                hh: hh + amount,
-            },
-            ColliderShape::Capsule { hl, r } => ColliderShape::Capsule { hl, r: r + amount },
+            Self::Point => AxisIter::Zero,
+            Self::LineSegment { hl } => AxisIter::One(
+                [SeparatingAxis {
+                    axis: m::Unit::unit_y(),
+                    extent: 0.0,
+                    edge: Edge {
+                        start: m::Vec2::new(-hl, 0.0),
+                        dir: m::Unit::unit_x(),
+                        length: 2.0 * hl,
+                    },
+                    symmetrical: true,
+                }]
+                .into_iter(),
+            ),
+            Self::Rect { hw, hh } => AxisIter::Two(
+                [
+                    SeparatingAxis {
+                        axis: m::Unit::unit_x(),
+                        extent: hw,
+                        edge: Edge {
+                            start: m::Vec2::new(hw, -hh),
+                            dir: m::Unit::unit_y(),
+                            length: 2.0 * hh,
+                        },
+                        symmetrical: true,
+                    },
+                    SeparatingAxis {
+                        axis: m::Unit::unit_y(),
+                        extent: hh,
+                        edge: Edge {
+                            start: m::Vec2::new(-hw, hh),
+                            dir: m::Unit::unit_x(),
+                            length: 2.0 * hw,
+                        },
+                        symmetrical: true,
+                    },
+                ]
+                .into_iter(),
+            ),
+        }
+    }
+
+    /// Get the distance from the shape's center to its farthest extent
+    /// when projected onto the given axis.
+    ///
+    /// `dir` must be given in object-local space.
+    pub(super) fn projected_extent(&self, dir: m::Unit<m::Vec2>) -> f64 {
+        match *self {
+            Self::Point => 0.0,
+            Self::LineSegment { hl } => dir.x.abs() * hl,
+            Self::Rect { hw, hh } => dir.x.abs() * hw + dir.y.abs() * hh,
+        }
+    }
+
+    /// Get the edge that is closest to the given direction,
+    /// starting from the supporting point in that direction.
+    ///
+    /// `dir` must be given in object-local space.
+    /// Returns None only if the shape is Point.
+    pub(super) fn supporting_edge(&self, dir: m::Unit<m::Vec2>) -> Option<SupportingEdge> {
+        match *self {
+            Self::Point => None,
+            Self::LineSegment { hl } => Some(SupportingEdge {
+                edge: Edge {
+                    start: m::Vec2::new(hl.copysign(dir.x), 0.0),
+                    dir: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(-dir.x), 0.0)),
+                    length: 2.0 * hl,
+                },
+                normal: m::Unit::new_unchecked(m::Vec2::new(0.0, 1_f64.copysign(dir.y))),
+            }),
+            Self::Rect { hw, hh } => {
+                let start = m::Vec2::new(hw.copysign(dir.x), hh.copysign(dir.y));
+                if dir.x.abs() > dir.y.abs() {
+                    Some(SupportingEdge {
+                        edge: Edge {
+                            start,
+                            dir: m::Unit::new_unchecked(m::Vec2::new(
+                                0.0,
+                                -(1_f64.copysign(dir.y)),
+                            )),
+                            length: hh * 2.0,
+                        },
+                        normal: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(dir.x), 0.0)),
+                    })
+                } else {
+                    Some(SupportingEdge {
+                        edge: Edge {
+                            start,
+                            dir: m::Unit::new_unchecked(m::Vec2::new(
+                                -(1_f64.copysign(dir.x)),
+                                0.0,
+                            )),
+                            length: hw * 2.0,
+                        },
+                        normal: m::Unit::new_unchecked(m::Vec2::new(0.0, 1_f64.copysign(dir.y))),
+                    })
+                }
+            }
         }
     }
 }

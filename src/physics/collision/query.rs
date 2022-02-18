@@ -1,18 +1,23 @@
 //! Intersection queries for points, rays, etc. vs. colliders.
 
-use super::{Collider, ColliderShape};
+use super::{Collider, ColliderPolygon};
 use crate::math as m;
 
 /// Check whether or not a point intersects with a collider.
 pub fn point_collider_bool(point: m::Vec2, pose: &m::Pose, coll: &Collider) -> bool {
+    let r = coll.shape.circle_r;
     let p_wrt_c = pose.inversed() * point;
-    match coll.shape {
-        ColliderShape::Circle { r } => p_wrt_c.mag_sq() < r * r,
-        ColliderShape::Rect { hw, hh } => p_wrt_c.x.abs() < hw && p_wrt_c.y.abs() < hh,
-        ColliderShape::Capsule { hl, r } => {
+    match coll.shape.polygon {
+        ColliderPolygon::Point => p_wrt_c.mag_sq() < r * r,
+        ColliderPolygon::LineSegment { hl } => {
             let x_dist = (p_wrt_c.x.abs() - hl).max(0.0);
             let y_dist = p_wrt_c.y.abs();
             x_dist * x_dist + y_dist * y_dist < r * r
+        }
+        ColliderPolygon::Rect { hw, hh } => {
+            let x_dist = p_wrt_c.x.abs() - hw;
+            let y_dist = p_wrt_c.y.abs() - hh;
+            x_dist <= 0.0 || y_dist <= 0.0 || x_dist * x_dist + y_dist * y_dist < r * r
         }
     }
 }
@@ -57,37 +62,11 @@ impl Ray {
 
 /// Find the value of t where the ray start + t * dir intersects with the collider.
 pub fn ray_collider(ray: Ray, pose: &m::Pose, coll: &Collider) -> Option<f64> {
-    match coll.shape {
+    let r = coll.shape.circle_r;
+    match coll.shape.polygon {
         // source for circle and rect: Real-Time Collision Detection chapter 5
-        ColliderShape::Circle { r } => ray_circle(ray, pose.translation, r),
-        ColliderShape::Rect { hw, hh } => {
-            // work in object-local space to treat box as AABB
-            let ray = pose.inversed() * ray;
-
-            let mut t_min = 0.0_f64;
-            let mut t_max = f64::MAX;
-            for (ray_start, ray_speed, rect_dim) in
-                [(ray.start.x, ray.dir.x, hw), (ray.start.y, ray.dir.y, hh)]
-            {
-                if ray_speed.abs() < 0.00001 && ray_start.abs() > rect_dim {
-                    // ray is parallel to this slab and starts outside of it
-                    return None;
-                }
-                let speed_inv = 1.0 / ray_speed;
-                let t = [
-                    (-rect_dim - ray_start) * speed_inv,
-                    (rect_dim - ray_start) * speed_inv,
-                ];
-                let t = if t[0] < t[1] { t } else { [t[1], t[0]] };
-                t_min = t_min.max(t[0]);
-                t_max = t_max.min(t[1]);
-                if t_min > t_max {
-                    return None;
-                }
-            }
-            Some(t_min)
-        }
-        ColliderShape::Capsule { hl, r } => {
+        ColliderPolygon::Point => ray_circle(ray, pose.translation, r),
+        ColliderPolygon::LineSegment { hl } => {
             // work in object-local space to make use of symmetry
             let ray = pose.inversed() * ray;
 
@@ -119,6 +98,34 @@ pub fn ray_collider(ray: Ray, pose: &m::Pose, coll: &Collider) -> Option<f64> {
                 ray.mirrored_by_y()
             };
             ray_circle(ray, m::Vec2::new(hl, 0.0), r)
+        }
+        // BIG TODO: account for the circle component
+        ColliderPolygon::Rect { hw, hh } => {
+            // work in object-local space to treat box as AABB
+            let ray = pose.inversed() * ray;
+
+            let mut t_min = 0.0_f64;
+            let mut t_max = f64::MAX;
+            for (ray_start, ray_speed, rect_dim) in
+                [(ray.start.x, ray.dir.x, hw), (ray.start.y, ray.dir.y, hh)]
+            {
+                if ray_speed.abs() < 0.00001 && ray_start.abs() > rect_dim {
+                    // ray is parallel to this slab and starts outside of it
+                    return None;
+                }
+                let speed_inv = 1.0 / ray_speed;
+                let t = [
+                    (-rect_dim - ray_start) * speed_inv,
+                    (rect_dim - ray_start) * speed_inv,
+                ];
+                let t = if t[0] < t[1] { t } else { [t[1], t[0]] };
+                t_min = t_min.max(t[0]);
+                t_max = t_max.min(t[1]);
+                if t_min > t_max {
+                    return None;
+                }
+            }
+            Some(t_min)
         }
     }
 }

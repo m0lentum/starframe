@@ -5,7 +5,7 @@ use crate::{
         util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
     },
     math as m,
-    physics::Collider,
+    physics::{collision::ColliderPolygon, Collider},
 };
 
 use std::borrow::Cow;
@@ -97,17 +97,18 @@ impl From<MeshShape> for Mesh {
 
 impl From<Collider> for Mesh {
     fn from(coll: Collider) -> Self {
-        use crate::physics::collision::ColliderShape;
-        match coll.shape {
-            ColliderShape::Circle { r } => MeshShape::Circle { r, points: 16 },
-            ColliderShape::Rect { hw, hh } => MeshShape::Rect {
-                w: 2.0 * hw,
-                h: 2.0 * hh,
-            },
-            ColliderShape::Capsule { hl, r } => MeshShape::Capsule {
+        let r = coll.shape.circle_r;
+        match coll.shape.polygon {
+            ColliderPolygon::Point => MeshShape::Circle { r, points: 16 },
+            ColliderPolygon::LineSegment { hl } => MeshShape::Capsule {
                 hl,
                 r,
                 points_per_cap: 8,
+            },
+            // TODO: support circle-rect sums
+            ColliderPolygon::Rect { hw, hh } => MeshShape::Rect {
+                w: 2.0 * hw,
+                h: 2.0 * hh,
             },
         }
         .into()

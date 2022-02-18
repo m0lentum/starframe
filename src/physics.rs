@@ -1289,10 +1289,8 @@ impl Physics {
                 let their_coll = l_collider.get(coll_key)?;
                 let their_pose = their_coll.get_neighbor(l_pose)?;
                 let result = collision::shape_shape::intersection_check(
-                    &pose,
-                    &shape,
-                    their_pose.c,
-                    &their_coll.c.shape,
+                    [pose, *their_pose.c],
+                    [shape, their_coll.c.shape],
                 );
                 if result.is_zero() {
                     None
