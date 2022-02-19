@@ -7,6 +7,9 @@ trace:
 profile:
   cargo run --features tracy --example testgame
 
+profile-single-thread:
+  cargo run --no-default-features --features serde-types --features tracy --example testgame
+
 # cargo-outdated only lists minor versions and above, but I like to update patch versions,
 # so here's a silly way to list dependencies with new patch versions available
 #

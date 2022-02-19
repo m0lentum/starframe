@@ -345,6 +345,7 @@ impl Default for TuningConstants {
             sleep_vel_threshold: 0.001,
             fall_asleep_frames: 10,
             max_expected_acceleration: 10.0,
+            #[cfg(feature = "parallel")]
             min_bodies_per_thread: 64,
         }
     }
