@@ -14,7 +14,8 @@ use crate::{
 pub mod collision;
 use collision::HGrid;
 pub use collision::{
-    Collider, ColliderShape, ColliderType, Contact, ContactResult, LayerMask, Material, Ray,
+    Collider, ColliderPolygon, ColliderShape, ColliderType, Contact, ContactResult, LayerMask,
+    Material, Ray,
 };
 
 pub(crate) mod bitmatrix;

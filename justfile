@@ -5,10 +5,16 @@ trace:
   RUST_BACKTRACE=1 cargo run --example testgame
 
 profile:
-  cargo run --features tracy --example testgame
+  cargo run --release --features tracy --example testgame
 
 profile-single-thread:
-  cargo run --no-default-features --features serde-types --features tracy --example testgame
+  cargo run --release --no-default-features --features serde-types --features tracy --example testgame
+
+flamegraph:
+  cargo flamegraph --example testgame
+
+flamegraph-single-thread:
+  cargo flamegraph --no-default-features --features serde-types --example testgame
 
 # cargo-outdated only lists minor versions and above, but I like to update patch versions,
 # so here's a silly way to list dependencies with new patch versions available

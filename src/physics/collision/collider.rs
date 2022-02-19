@@ -1,5 +1,5 @@
 use super::{
-    shape_shape::{AxisIter, Edge, SeparatingAxis, SupportingEdge},
+    shape_shape::{AxisIter, ClosestBoundaryPoint, Edge, SeparatingAxis, SupportingEdge},
     AABB,
 };
 use crate::math as m;
@@ -239,6 +239,53 @@ impl ColliderPolygon {
     // internals for collision detection
     //
 
+    /// Get the closest point to a point on the exterior edge of the polygon,
+    /// plus whether or not the queried point is inside the polygon.
+    ///
+    /// Used in the special case of circle - other shape collisions.
+    pub(super) fn closest_boundary_point(&self, pt: m::Vec2) -> ClosestBoundaryPoint {
+        match *self {
+            Self::Point => ClosestBoundaryPoint {
+                pt: m::Vec2::zero(),
+                is_interior: false,
+            },
+            Self::LineSegment { hl } => ClosestBoundaryPoint {
+                pt: m::Vec2::new(pt.x.max(-hl).min(hl), 0.0),
+                is_interior: false,
+            },
+            Self::Rect { hw, hh } => {
+                let x_dist = pt.x.abs() - hw;
+                let y_dist = pt.y.abs() - hh;
+                match (x_dist > 0.0, y_dist > 0.0) {
+                    // we're outside the whole rect and closest point is a corner
+                    (true, true) => ClosestBoundaryPoint {
+                        pt: m::Vec2::new(hw.copysign(pt.x), hh.copysign(pt.y)),
+                        is_interior: false,
+                    },
+                    // outside only on the x-axis
+                    (true, false) => ClosestBoundaryPoint {
+                        pt: m::Vec2::new(hw.copysign(pt.x), pt.y),
+                        is_interior: false,
+                    },
+                    // outside only on the y-axis
+                    (false, true) => ClosestBoundaryPoint {
+                        pt: m::Vec2::new(pt.x, hh.copysign(pt.y)),
+                        is_interior: false,
+                    },
+                    // inside
+                    (false, false) => ClosestBoundaryPoint {
+                        pt: if x_dist.abs() < y_dist.abs() {
+                            m::Vec2::new(hw.copysign(pt.x), pt.y)
+                        } else {
+                            m::Vec2::new(pt.x, hh.copysign(pt.y))
+                        },
+                        is_interior: true,
+                    },
+                }
+            }
+        }
+    }
+
     /// Get all potential separating axes of the polygon.
     pub(super) fn separating_axes(&self) -> AxisIter {
         match *self {
@@ -299,9 +346,10 @@ impl ColliderPolygon {
     /// Get the edge that is closest to the given direction,
     /// starting from the supporting point in that direction.
     ///
-    /// `dir` must be given in object-local space.
+    /// `dir` must be given in object-local space but does not need to be
+    /// normalized (note to self: DO NOT USE THE VALUE OF `dir * thing`, only compare).
     /// Returns None only if the shape is Point.
-    pub(super) fn supporting_edge(&self, dir: m::Unit<m::Vec2>) -> Option<SupportingEdge> {
+    pub(super) fn supporting_edge(&self, dir: m::Vec2) -> Option<SupportingEdge> {
         match *self {
             Self::Point => None,
             Self::LineSegment { hl } => Some(SupportingEdge {

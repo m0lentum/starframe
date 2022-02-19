@@ -304,7 +304,10 @@ fn solve_contacts(data: &mut DataView<'_>) {
                 ColliderContext::Body(b) => data.poses[b],
                 ColliderContext::Static(pose) => pose,
             });
-            collision::shape_shape::intersection_check(poses, colls.map(|c| c.coll.shape))
+            collision::shape_shape::intersection_check(
+                poses,
+                [colls[0].coll.shape, colls[1].coll.shape],
+            )
         };
         // mark latest contact that wasn't zero;
         // this will be available to be queried by the user later

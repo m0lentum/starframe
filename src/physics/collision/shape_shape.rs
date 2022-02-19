@@ -61,26 +61,14 @@ pub struct Contact {
 
 /// Checks two colliders for intersection.
 pub fn intersection_check(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
+    let r0 = shapes[0].circle_r;
+    let r1 = shapes[1].circle_r;
     type P = ColliderPolygon;
-    match shapes.map(|s| s.polygon) {
-        [P::Point, P::Point] => {
-            circle_circle(poses[0], shapes[0].circle_r, poses[1], shapes[1].circle_r)
-        }
-        [P::Point, P::LineSegment { hl }] => circle_capsule(
-            poses[0],
-            shapes[0].circle_r,
-            poses[1],
-            hl,
-            shapes[1].circle_r,
-        ),
-        [P::LineSegment { hl }, P::Point] => flip_contacts(circle_capsule(
-            poses[1],
-            shapes[1].circle_r,
-            poses[0],
-            hl,
-            shapes[0].circle_r,
-        )),
-        _ => generic_separating_axis_test(poses, shapes),
+    match [shapes[0].polygon, shapes[1].polygon] {
+        [P::Point, P::Point] => circle_circle(poses[0], r0, poses[1], r1),
+        [P::Point, _] => circle_any(poses[0], r0, poses[1], shapes[1], r1),
+        [_, P::Point] => flip_contacts(circle_any(poses[1], r1, poses[0], shapes[0], r0)),
+        _ => any_any(poses, shapes),
     }
 }
 
@@ -93,7 +81,7 @@ fn flip_contacts(contacts: ContactResult) -> ContactResult {
 }
 
 //
-// simplified special cases
+// simplified special cases for circles
 //
 
 fn circle_circle(pose1: m::Pose, r1: f64, pose2: m::Pose, r2: f64) -> ContactResult {
@@ -123,49 +111,53 @@ fn circle_circle(pose1: m::Pose, r1: f64, pose2: m::Pose, r2: f64) -> ContactRes
     })
 }
 
-fn circle_capsule(
-    pose_circ: m::Pose,
+fn circle_any(
+    pose_circ: Pose,
     r_circ: f64,
-    pose_cap: m::Pose,
-    hl: f64,
-    r_cap: f64,
+    pose_other: Pose,
+    shape_other: ColliderShape,
+    r_other: f64,
 ) -> ContactResult {
-    let pose_circ_wrt_cap = pose_cap.inversed() * pose_circ;
-    let center_dist = pose_circ_wrt_cap.translation;
+    // working in the local space of the other shape
+    let pose_circ_local = pose_other.inversed() * pose_circ;
+    let dist = pose_circ_local.translation;
 
-    let dist = m::Vec2::new(
-        // x distance is 0 if the circle is along the line segment defining the capsule
-        (center_dist.x.abs() - hl).max(0.0) * center_dist.x.signum(),
-        center_dist.y,
-    );
-    let dist_sq = dist.mag_sq();
-    let r_sum = r_circ + r_cap;
-
-    let normal = if dist_sq < 0.001 {
-        Unit::unit_y()
-    } else if dist_sq < r_sum * r_sum {
-        // normal must be away from the circle, dist is from cap to circle
-        Unit::new_normalize(-dist)
+    let closest_pt = shape_other.polygon.closest_boundary_point(dist);
+    let dist_from_closest = dist - closest_pt.pt;
+    if closest_pt.is_interior {
+        let dir_from_closest = Unit::new_normalize(dist_from_closest);
+        ContactResult::One(Contact {
+            // remember: normal away from the circle!
+            // in this case, dir_from_closest points inward to the other shape
+            normal: pose_other.rotation * dir_from_closest,
+            offsets: [
+                pose_circ_local.rotation.reversed() * (r_circ * *dir_from_closest),
+                closest_pt.pt - r_other * *dir_from_closest,
+            ],
+        })
     } else {
-        return ContactResult::Zero;
-    };
-
-    let depth = r_sum - dist_sq.sqrt();
-
-    ContactResult::One(Contact {
-        normal: pose_cap.rotation * normal,
-        offsets: [
-            pose_circ_wrt_cap.rotation.reversed() * (r_circ * *normal),
-            center_dist + (r_circ - depth) * *normal,
-        ],
-    })
+        let r_sum = r_circ + r_other;
+        let dist_sq = dist_from_closest.mag_sq();
+        if dist_sq >= r_sum * r_sum {
+            ContactResult::Zero
+        } else {
+            let dir_from_closest = Unit::new_unchecked(dist_from_closest / dist_sq.sqrt());
+            ContactResult::One(Contact {
+                normal: pose_other.rotation * (-dir_from_closest),
+                offsets: [
+                    pose_circ_local.rotation.reversed() * (r_circ * *(-dir_from_closest)),
+                    closest_pt.pt + r_other * *dir_from_closest,
+                ],
+            })
+        }
+    }
 }
 
 //
-// generic SAT for all other shape pairs
+// generic test for all other shape pairs
 //
 
-fn generic_separating_axis_test(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
+fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     let po2_wrt_po1 = poses[0].inversed() * poses[1];
     let relative_poses = [po2_wrt_po1.inversed(), po2_wrt_po1];
 
@@ -226,75 +218,79 @@ fn generic_separating_axis_test(poses: [Pose; 2], shapes: [ColliderShape; 2]) ->
     // first check for a two-point contact by clipping the closest two straight edges
 
     // clip done on edges offset to the outer edge of the sum shape
-    let owning_edge = pen_axis
-        .edge
-        .offset(*pen_axis.axis * shapes[shape_order[0]].circle_r);
+    let owning_edge = if shapes[shape_order[0]].circle_r == 0.0 {
+        pen_axis.edge
+    } else {
+        let offset = *pen_axis.axis * shapes[shape_order[0]].circle_r;
+        pen_axis.edge.offset(offset)
+    };
     // rotated to second shape's local space and flipped towards the first
     let pen_axis_wrt_snd = -(relative_poses[shape_order[0]].rotation * pen_axis.axis);
 
-    // closest point to shape 1 on the polygon component of shape 2
-    let closest_point_on_other: m::Vec2;
-
-    match shapes[shape_order[1]]
+    let incident_edge_inner_local = shapes[shape_order[1]]
         .polygon
-        .supporting_edge(pen_axis_wrt_snd)
-    {
-        None => {
-            // the other shape is a circle, no edges to clip
-            closest_point_on_other = relative_poses[shape_order[1]].translation;
-        }
-        Some(e) => {
-            // edge on the polygon part, without the circle part, in the first object's local space
-            let incident_edge_inner = e.transformed(relative_poses[shape_order[1]]);
-            // edge on the actual shape, with the circle part applied
-            let incident_edge_outer = incident_edge_inner
-                .edge
-                .offset(*incident_edge_inner.normal * shapes[shape_order[1]].circle_r);
+        .supporting_edge(*pen_axis_wrt_snd)
+        .expect("Don't use generic collision detection with circles");
+    // if neither shape has a circle component, we can possibly early out after this
+    let both_simple_polygons =
+        shapes[shape_order[0]].circle_r == 0.0 && shapes[shape_order[1]].circle_r == 0.0;
 
-            match clip_edge(owning_edge, incident_edge_outer) {
-                // check if the edge passes on the "inside" of the other,
-                // if so this is a two-point contact
-                EdgeClipResult::Passes { enters, exits } => {
-                    let start_depth = pen_axis.extent + shapes[shape_order[0]].circle_r
-                        - incident_edge_outer.start.dot(*pen_axis.axis);
-                    let dir_dot_axis = incident_edge_outer.dir.dot(*pen_axis.axis);
+    // edge on the polygon part, without the circle part, in the first object's local space
+    let incident_edge_inner = incident_edge_inner_local.transformed(relative_poses[shape_order[1]]);
+    // edge on the actual shape, with the circle part applied
+    let incident_edge_outer = if shapes[shape_order[1]].circle_r == 0.0 {
+        incident_edge_inner.edge
+    } else {
+        let offset = *incident_edge_inner.normal * shapes[shape_order[1]].circle_r;
+        incident_edge_inner.edge.offset(offset)
+    };
 
-                    let enter_depth = start_depth - enters * dir_dot_axis;
-                    let exit_depth = start_depth - exits * dir_dot_axis;
+    match clip_edge(owning_edge, incident_edge_outer) {
+        // check if the edge passes on the "inside" of the other,
+        // if so this is a two-point contact
+        EdgeClipResult::Passes { enters, exits } => {
+            let start_depth = pen_axis.extent + shapes[shape_order[0]].circle_r
+                - incident_edge_outer.start.dot(*pen_axis.axis);
+            let dir_dot_axis = incident_edge_outer.dir.dot(*pen_axis.axis);
 
-                    if enter_depth > 0.0 && exit_depth > 0.0 {
-                        let enter_point =
-                            incident_edge_outer.start + (enters * *incident_edge_outer.dir);
-                        let exit_point =
-                            incident_edge_outer.start + (exits * *incident_edge_outer.dir);
+            let enter_depth = start_depth - enters * dir_dot_axis;
+            let exit_depth = start_depth - exits * dir_dot_axis;
 
-                        let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.axis;
+            if enter_depth > 0.0 && exit_depth > 0.0 {
+                let enter_point = incident_edge_outer.start + (enters * *incident_edge_outer.dir);
+                let exit_point = incident_edge_outer.start + (exits * *incident_edge_outer.dir);
 
-                        return orient_result(ContactResult::Two(
-                            Contact {
-                                normal: normal_worldspace,
-                                offsets: [
-                                    enter_point + enter_depth * *pen_axis.axis,
-                                    relative_poses[shape_order[0]] * enter_point,
-                                ],
-                            },
-                            Contact {
-                                normal: normal_worldspace,
-                                offsets: [
-                                    exit_point + exit_depth * *pen_axis.axis,
-                                    relative_poses[shape_order[0]] * exit_point,
-                                ],
-                            },
-                        ));
-                    }
-                }
-                // no two-point collision, a single-point is still possible.
-                // we'll check for that next
-                EdgeClipResult::Intersects | EdgeClipResult::Misses => {}
+                let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.axis;
+
+                return orient_result(ContactResult::Two(
+                    Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            enter_point + enter_depth * *pen_axis.axis,
+                            relative_poses[shape_order[0]] * enter_point,
+                        ],
+                    },
+                    Contact {
+                        normal: normal_worldspace,
+                        offsets: [
+                            exit_point + exit_depth * *pen_axis.axis,
+                            relative_poses[shape_order[0]] * exit_point,
+                        ],
+                    },
+                ));
+            } else if both_simple_polygons {
+                return ContactResult::Zero;
             }
-            closest_point_on_other = incident_edge_inner.edge.start;
         }
+        EdgeClipResult::Misses if both_simple_polygons => {
+            return ContactResult::Zero;
+        }
+        // no two-point collision, a single-point is still possible.
+        // we'll check for that next
+        _ => {}
     }
+
+    let closest_point_on_other = incident_edge_inner.edge.start;
 
     // find the closest points on the two shapes (we already have the one for shape 2)
     // and do a circle-circle collision on those
@@ -347,6 +343,14 @@ fn generic_separating_axis_test(poses: [Pose; 2], shapes: [ColliderShape; 2]) ->
 //
 // utility types & operations
 //
+
+/// Closest point to a query point on the boundary of a polygon,
+/// plus whether the query point is inside the polygon or not.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ClosestBoundaryPoint {
+    pub pt: m::Vec2,
+    pub is_interior: bool,
+}
 
 /// The edge of a shape's polygon component that's closest to a given direction,
 /// starting from the supporting point in that direction.
