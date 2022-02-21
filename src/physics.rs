@@ -1302,6 +1302,12 @@ impl Physics {
     }
 
     /// Find the first solid collider intersected by the given ray.
+    ///
+    /// By convention, if the ray starts inside an object, it will miss that object.
+    /// This way you can have a ray start e.g. at the center of a player's collider
+    /// without having to worry about offsetting it just right.
+    /// If you need to also know if the ray starts inside something, use
+    /// [`query_point_body`][Self::query_point_body] in addition to this.
     pub fn raycast<'p>(
         // Mutable reference required
         // because spatial index traversal uses mutation for timestamping.

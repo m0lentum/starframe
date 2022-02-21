@@ -166,19 +166,19 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     // and access to the closest pair of polygon edges
 
     let mut pen_depth = f64::MAX;
-    let mut pen_axis: Option<SeparatingAxis> = None;
+    let mut pen_axis: Option<PolygonEdge> = None;
     // shape owning the current axis comes first
     let mut shape_order = [0, 1];
-    for (axis, s_order) in itertools::chain(
-        shapes[0].polygon.separating_axes().map(|a| (a, [0, 1])),
-        shapes[1].polygon.separating_axes().map(|a| (a, [1, 0])),
+    for (edge, s_order) in itertools::chain(
+        shapes[0].polygon.edges().map(|a| (a, [0, 1])),
+        shapes[1].polygon.edges().map(|a| (a, [1, 0])),
     ) {
         let dist = relative_poses[s_order[1]].translation;
         // check that the axis points towards the other object
-        let axis = if axis.axis.dot(dist) >= 0.0 {
-            axis
-        } else if axis.symmetrical {
-            axis.mirrored()
+        let axis = if edge.normal.dot(dist) >= 0.0 {
+            edge
+        } else if edge.symmetrical {
+            edge.mirrored()
         } else {
             // we can skip axes that point away and don't have an associated symmetry
             // (not 100% sure this is true in all cases, if there's a bug make sure to look here)
@@ -187,12 +187,12 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 
         // transform axis such that it's in the other object's local space
         // and points towards the first
-        let axis_wrt_other = -(relative_poses[s_order[0]].rotation * axis.axis);
+        let axis_wrt_other = -(relative_poses[s_order[0]].rotation * axis.normal);
         let depth = axis.extent
             + shapes[0].circle_r
             + shapes[s_order[1]].polygon.projected_extent(axis_wrt_other)
             + shapes[1].circle_r
-            - dist.dot(*axis.axis);
+            - dist.dot(*axis.normal);
 
         if depth <= 0.0 {
             return ContactResult::Zero;
@@ -221,11 +221,11 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     let owning_edge = if shapes[shape_order[0]].circle_r == 0.0 {
         pen_axis.edge
     } else {
-        let offset = *pen_axis.axis * shapes[shape_order[0]].circle_r;
+        let offset = *pen_axis.normal * shapes[shape_order[0]].circle_r;
         pen_axis.edge.offset(offset)
     };
     // rotated to second shape's local space and flipped towards the first
-    let pen_axis_wrt_snd = -(relative_poses[shape_order[0]].rotation * pen_axis.axis);
+    let pen_axis_wrt_snd = -(relative_poses[shape_order[0]].rotation * pen_axis.normal);
 
     let incident_edge_inner_local = shapes[shape_order[1]]
         .polygon
@@ -250,8 +250,8 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         // if so this is a two-point contact
         EdgeClipResult::Passes { enters, exits } => {
             let start_depth = pen_axis.extent + shapes[shape_order[0]].circle_r
-                - incident_edge_outer.start.dot(*pen_axis.axis);
-            let dir_dot_axis = incident_edge_outer.dir.dot(*pen_axis.axis);
+                - incident_edge_outer.start.dot(*pen_axis.normal);
+            let dir_dot_axis = incident_edge_outer.dir.dot(*pen_axis.normal);
 
             let enter_depth = start_depth - enters * dir_dot_axis;
             let exit_depth = start_depth - exits * dir_dot_axis;
@@ -260,20 +260,20 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
                 let enter_point = incident_edge_outer.start + (enters * *incident_edge_outer.dir);
                 let exit_point = incident_edge_outer.start + (exits * *incident_edge_outer.dir);
 
-                let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.axis;
+                let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.normal;
 
                 return orient_result(ContactResult::Two(
                     Contact {
                         normal: normal_worldspace,
                         offsets: [
-                            enter_point + enter_depth * *pen_axis.axis,
+                            enter_point + enter_depth * *pen_axis.normal,
                             relative_poses[shape_order[0]] * enter_point,
                         ],
                     },
                     Contact {
                         normal: normal_worldspace,
                         offsets: [
-                            exit_point + exit_depth * *pen_axis.axis,
+                            exit_point + exit_depth * *pen_axis.normal,
                             relative_poses[shape_order[0]] * exit_point,
                         ],
                     },
@@ -295,17 +295,17 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     // find the closest points on the two shapes (we already have the one for shape 2)
     // and do a circle-circle collision on those
 
-    if closest_point_on_other.dot(*pen_axis.axis) <= pen_axis.extent {
+    if closest_point_on_other.dot(*pen_axis.normal) <= pen_axis.extent {
         // the polygon components' edges intersect.
         // there's a collision for sure, no need for further checks
         let supporting_point =
-            closest_point_on_other - shapes[shape_order[1]].circle_r * *pen_axis.axis;
-        let supp_point_depth = pen_axis.extent - pen_axis.axis.dot(supporting_point);
-        let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.axis;
+            closest_point_on_other - shapes[shape_order[1]].circle_r * *pen_axis.normal;
+        let supp_point_depth = pen_axis.extent - pen_axis.normal.dot(supporting_point);
+        let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.normal;
         return orient_result(ContactResult::One(Contact {
             normal: normal_worldspace,
             offsets: [
-                supporting_point + supp_point_depth * *pen_axis.axis,
+                supporting_point + supp_point_depth * *pen_axis.normal,
                 relative_poses[shape_order[0]] * supporting_point,
             ],
         }));
@@ -374,21 +374,23 @@ impl SupportingEdge {
 /// A possible axis of separation, plus related information
 /// about the shape it's related to.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct SeparatingAxis {
-    pub axis: m::Unit<m::Vec2>,
+pub(super) struct PolygonEdge {
+    pub normal: m::Unit<m::Vec2>,
+    /// Distance of the edge from the polygon's origin
     pub extent: f64,
     pub edge: Edge,
+    /// If true, the same edge exists mirrored around the origin
     pub symmetrical: bool,
 }
-impl SeparatingAxis {
+impl PolygonEdge {
     /// Mirror the axis and related info with respect to the point at the origin.
     pub fn mirrored(self) -> Self {
-        assert!(
+        debug_assert!(
             self.symmetrical,
             "Only symmetrical axes make sense to mirror"
         );
         Self {
-            axis: -self.axis,
+            normal: -self.normal,
             extent: self.extent,
             edge: self.edge.mirrored(),
             symmetrical: self.symmetrical,
@@ -397,15 +399,15 @@ impl SeparatingAxis {
 }
 
 /// Enum to handle different numbers of separating axes without allocating
-pub(super) enum AxisIter {
+pub(super) enum EdgeIter {
     Zero,
-    One(std::array::IntoIter<SeparatingAxis, 1>),
-    Two(std::array::IntoIter<SeparatingAxis, 2>),
+    One(std::array::IntoIter<PolygonEdge, 1>),
+    Two(std::array::IntoIter<PolygonEdge, 2>),
     // more will only come out of general polygons (or other shapes that don't currently exist).
     // Depending on how I store them, their variant for this can likely be a mapped slice iter
 }
-impl Iterator for AxisIter {
-    type Item = SeparatingAxis;
+impl Iterator for EdgeIter {
+    type Item = PolygonEdge;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {

@@ -1,5 +1,5 @@
 use super::{
-    shape_shape::{AxisIter, ClosestBoundaryPoint, Edge, SeparatingAxis, SupportingEdge},
+    shape_shape::{ClosestBoundaryPoint, Edge, EdgeIter, PolygonEdge, SupportingEdge},
     AABB,
 };
 use crate::math as m;
@@ -47,6 +47,7 @@ impl From<ColliderPolygon> for Collider {
 
 impl Collider {
     /// Create a solid circle collider from a radius.
+    #[inline]
     pub fn new_circle(radius: f64) -> Self {
         Self {
             shape: ColliderShape {
@@ -57,25 +58,35 @@ impl Collider {
         }
     }
 
-    /// Create a solid rect collider with both sides set to the same length.
+    /// Create a solid rectangle collider with both sides set to the same length.
+    #[inline]
     pub fn new_square(side_length: f64) -> Self {
         Collider::new_rect(side_length, side_length)
     }
 
-    /// Create a solid rect collider with two different side lengths.
+    /// Create a solid rectangle collider with two different side lengths.
+    #[inline]
     pub fn new_rect(width: f64, height: f64) -> Self {
-        let hw = width / 2.0;
-        let hh = height / 2.0;
+        Self::new_rounded_rect(width, height, 0.0)
+    }
+
+    /// Create a solid rectangle collider with rounded corners.
+    pub fn new_rounded_rect(width: f64, height: f64, radius: f64) -> Self {
+        let hw = (width / 2.0) - radius;
+        let hh = (height / 2.0) - radius;
+        debug_assert!(hw > 0.0, "degenerate rect with width 0");
+        debug_assert!(hh > 0.0, "degenerate rect with height 0");
         Self {
             shape: ColliderShape {
                 polygon: ColliderPolygon::Rect { hw, hh },
-                circle_r: 0.0,
+                circle_r: radius,
             },
             ..Self::default()
         }
     }
 
     /// Create a solid capsule collider (a rectangle with semicircles at the ends on the x-axis).
+    #[inline]
     pub fn new_capsule(length: f64, radius: f64) -> Self {
         Self {
             shape: ColliderShape {
@@ -87,17 +98,20 @@ impl Collider {
     }
 
     /// Set the collider to be solid with the given surface material.
+    #[inline]
     pub fn with_material(mut self, mat: Material) -> Self {
         self.ty = ColliderType::Solid(mat);
         self
     }
 
     /// Turn the collider into a trigger.
+    #[inline]
     pub fn trigger(mut self) -> Self {
         self.ty = ColliderType::Trigger;
         self
     }
 
+    #[inline]
     pub fn with_layer(mut self, layer: usize) -> Self {
         self.layer = layer;
         self
@@ -287,12 +301,12 @@ impl ColliderPolygon {
     }
 
     /// Get all potential separating axes of the polygon.
-    pub(super) fn separating_axes(&self) -> AxisIter {
+    pub(super) fn edges(&self) -> EdgeIter {
         match *self {
-            Self::Point => AxisIter::Zero,
-            Self::LineSegment { hl } => AxisIter::One(
-                [SeparatingAxis {
-                    axis: m::Unit::unit_y(),
+            Self::Point => EdgeIter::Zero,
+            Self::LineSegment { hl } => EdgeIter::One(
+                [PolygonEdge {
+                    normal: m::Unit::unit_y(),
                     extent: 0.0,
                     edge: Edge {
                         start: m::Vec2::new(-hl, 0.0),
@@ -303,10 +317,10 @@ impl ColliderPolygon {
                 }]
                 .into_iter(),
             ),
-            Self::Rect { hw, hh } => AxisIter::Two(
+            Self::Rect { hw, hh } => EdgeIter::Two(
                 [
-                    SeparatingAxis {
-                        axis: m::Unit::unit_x(),
+                    PolygonEdge {
+                        normal: m::Unit::unit_x(),
                         extent: hw,
                         edge: Edge {
                             start: m::Vec2::new(hw, -hh),
@@ -315,8 +329,8 @@ impl ColliderPolygon {
                         },
                         symmetrical: true,
                     },
-                    SeparatingAxis {
-                        axis: m::Unit::unit_y(),
+                    PolygonEdge {
+                        normal: m::Unit::unit_y(),
                         extent: hh,
                         edge: Edge {
                             start: m::Vec2::new(-hw, hh),
@@ -388,6 +402,21 @@ impl ColliderPolygon {
                     })
                 }
             }
+        }
+    }
+
+    /// Tangent of half of the angle between edges is needed to compute the edges
+    /// of the outer polygon from the inner polygon.
+    ///
+    /// For now we only have regular polygons and can get away with returning
+    /// a constant with no parameters. If I want general polygons I'll have to think
+    /// about how to associate a vertex and an edge
+    pub(super) fn half_angle_between_edges_tan(&self) -> f64 {
+        match *self {
+            Self::Point | Self::LineSegment { .. } => {
+                panic!("Angle between edges shouldn't be called for points or line segments")
+            }
+            Self::Rect { .. } => 1.0,
         }
     }
 }
