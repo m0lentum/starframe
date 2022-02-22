@@ -375,7 +375,7 @@ impl SupportingEdge {
 /// A possible axis of separation, plus related information
 /// about the shape it's related to.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct PolygonEdge {
+pub(crate) struct PolygonEdge {
     pub normal: m::Unit<m::Vec2>,
     /// Distance of the edge from the polygon's origin
     pub extent: f64,
@@ -397,10 +397,10 @@ impl PolygonEdge {
 //
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct Edge {
-    pub(super) start: m::Vec2,
-    pub(super) dir: Unit<m::Vec2>,
-    pub(super) length: f64,
+pub(crate) struct Edge {
+    pub start: m::Vec2,
+    pub dir: Unit<m::Vec2>,
+    pub length: f64,
 }
 impl Edge {
     pub fn transformed(self, pose: Pose) -> Self {

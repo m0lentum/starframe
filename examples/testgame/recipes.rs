@@ -81,6 +81,7 @@ impl Default for Capsule {
 pub struct Block {
     pub width: f64,
     pub height: f64,
+    pub radius: f64,
     pub pose: m::PoseBuilder,
     pub is_static: bool,
 }
@@ -90,6 +91,7 @@ impl Default for Block {
         Self {
             width: 1.0,
             height: 1.0,
+            radius: 0.0,
             pose: Default::default(),
             is_static: false,
         }
@@ -107,19 +109,14 @@ fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::
     let (mut l_pose, mut l_collider, mut l_body, mut l_mesh) = layers;
 
     let mut pose_node = l_pose.insert(block.pose.into());
-    let coll = phys::Collider::new_rect(block.width, block.height);
+    let coll = phys::Collider::new_rounded_rect(block.width, block.height, block.radius);
     let mut coll_node = l_collider.insert(coll);
-    let mut mesh_node = l_mesh.insert(
-        gx::Mesh::from(gx::MeshShape::Rect {
-            w: block.width,
-            h: block.height,
-        })
-        .with_color(if block.is_static {
+    let mut mesh_node =
+        l_mesh.insert(gx::Mesh::from(*coll_node.c).with_color(if block.is_static {
             [0.7; 4]
         } else {
             random_color()
-        }),
-    );
+        }));
     pose_node.connect(&mut coll_node);
     pose_node.connect(&mut mesh_node);
 
@@ -307,6 +304,7 @@ impl Recipe {
                     Block {
                         width: 1.0,
                         height: 1.0,
+                        radius: 0.0,
                         pose: m::PoseBuilder::new().with_position(position + offset),
                         is_static: false,
                     },
@@ -317,6 +315,7 @@ impl Recipe {
                     Block {
                         width: 1.0,
                         height: 1.0,
+                        radius: 0.0,
                         pose: m::PoseBuilder::new().with_position(position - offset),
                         is_static: false,
                     },

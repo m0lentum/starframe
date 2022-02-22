@@ -3,7 +3,7 @@
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
-use rand::{distributions as distr, distributions::Distribution};
+use rand::{distributions as distr, distributions::Distribution, Rng};
 
 use starframe::{
     game::{self, Game},
@@ -319,8 +319,13 @@ impl game::GameState for State {
                 pose: m::PoseBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle()),
-                width: distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                height: distr::Uniform::from(0.5..0.8).sample(&mut rng),
+                width: distr::Uniform::from(0.8..1.2).sample(&mut rng),
+                height: distr::Uniform::from(0.7..1.0).sample(&mut rng),
+                radius: if rng.gen::<bool>() {
+                    distr::Uniform::from(0.1..0.3).sample(&mut rng)
+                } else {
+                    0.0
+                },
                 is_static: false,
             })
             .spawn(&mut self.physics, &self.graph);

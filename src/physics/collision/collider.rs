@@ -71,6 +71,13 @@ impl Collider {
     }
 
     /// Create a solid rectangle collider with rounded corners.
+    ///
+    /// Width and height are outer dimensions of the box, with corners cut out.
+    /// Think `corner-radius` in CSS.
+    ///
+    /// # Panics
+    /// Panics if the corner radius is greater than one of the two box dimensions,
+    /// as this would result in a shape that isn't a rectangle at all.
     pub fn new_rounded_rect(width: f64, height: f64, radius: f64) -> Self {
         let hw = (width / 2.0) - radius;
         let hh = (height / 2.0) - radius;
@@ -302,14 +309,14 @@ impl ColliderPolygon {
 
     /// Whether or not the shape has mirror symmetry with respect to the origin point.
     /// If true, we can only return half the edges and work with their mirror images.
-    pub(super) fn is_symmetrical(&self) -> bool {
+    pub(crate) fn is_symmetrical(&self) -> bool {
         match *self {
             Self::Point | Self::LineSegment { .. } | Self::Rect { .. } => true,
         }
     }
 
     /// Poor man's generator by iterating indices and returning edges by matching on them
-    pub(super) fn edge_count(&self) -> usize {
+    pub(crate) fn edge_count(&self) -> usize {
         match *self {
             Self::Point => 0,
             Self::LineSegment { .. } => 1,
@@ -318,7 +325,10 @@ impl ColliderPolygon {
     }
 
     /// Get all potential separating axes of the polygon.
-    pub(super) fn get_edge(&self, idx: usize) -> PolygonEdge {
+    ///
+    /// These must come in counterclockwise order and include every vertex,
+    /// in order to facilitate automatic mesh generation.
+    pub(crate) fn get_edge(&self, idx: usize) -> PolygonEdge {
         let bad_edge = || {
             panic!(
                 "Called get_edge for {:?} with an out of bounds index {}",
@@ -331,8 +341,8 @@ impl ColliderPolygon {
                 normal: m::Unit::unit_y(),
                 extent: 0.0,
                 edge: Edge {
-                    start: m::Vec2::new(-hl, 0.0),
-                    dir: m::Unit::unit_x(),
+                    start: m::Vec2::new(hl, 0.0),
+                    dir: -m::Unit::unit_x(),
                     length: 2.0 * hl,
                 },
             },
@@ -350,8 +360,8 @@ impl ColliderPolygon {
                     normal: m::Unit::unit_y(),
                     extent: hh,
                     edge: Edge {
-                        start: m::Vec2::new(-hw, hh),
-                        dir: m::Unit::unit_x(),
+                        start: m::Vec2::new(hw, hh),
+                        dir: -m::Unit::unit_x(),
                         length: 2.0 * hw,
                     },
                 },
