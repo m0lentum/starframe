@@ -206,7 +206,7 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 
     // the only way we can have None here is if we called this for a circle-circle pair,
     // which has a more efficient special case available so shouldn't be used
-    let pen_axis = pen_axis.expect("Don't use generic test for circle-circle pairs");
+    let pen_edge = pen_axis.expect("Don't use generic test for circle-circle pairs");
 
     // flip returned result if the axis of penetration is on the second shape
     let orient_result = if shape_order[0] == 0 {
@@ -219,13 +219,13 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 
     // clip done on edges offset to the outer edge of the sum shape
     let owning_edge = if shapes[shape_order[0]].circle_r == 0.0 {
-        pen_axis.edge
+        pen_edge.edge
     } else {
-        let offset = *pen_axis.normal * shapes[shape_order[0]].circle_r;
-        pen_axis.edge.offset(offset)
+        let offset = *pen_edge.normal * shapes[shape_order[0]].circle_r;
+        pen_edge.edge.offset(offset)
     };
     // rotated to second shape's local space and flipped towards the first
-    let pen_axis_wrt_snd = -(relative_poses[shape_order[0]].rotation * pen_axis.normal);
+    let pen_axis_wrt_snd = -(relative_poses[shape_order[0]].rotation * pen_edge.normal);
 
     let incident_edge_inner_local = shapes[shape_order[1]]
         .polygon
@@ -249,9 +249,9 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         // check if the edge passes on the "inside" of the other,
         // if so this is a two-point contact
         EdgeClipResult::Passes { enters, exits } => {
-            let start_depth = pen_axis.extent + shapes[shape_order[0]].circle_r
-                - incident_edge_outer.start.dot(*pen_axis.normal);
-            let dir_dot_axis = incident_edge_outer.dir.dot(*pen_axis.normal);
+            let start_depth = pen_edge.extent + shapes[shape_order[0]].circle_r
+                - incident_edge_outer.start.dot(*pen_edge.normal);
+            let dir_dot_axis = incident_edge_outer.dir.dot(*pen_edge.normal);
 
             let enter_depth = start_depth - enters * dir_dot_axis;
             let exit_depth = start_depth - exits * dir_dot_axis;
@@ -260,20 +260,20 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
                 let enter_point = incident_edge_outer.start + (enters * *incident_edge_outer.dir);
                 let exit_point = incident_edge_outer.start + (exits * *incident_edge_outer.dir);
 
-                let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.normal;
+                let normal_worldspace = poses[shape_order[0]].rotation * pen_edge.normal;
 
                 return orient_result(ContactResult::Two(
                     Contact {
                         normal: normal_worldspace,
                         offsets: [
-                            enter_point + enter_depth * *pen_axis.normal,
+                            enter_point + enter_depth * *pen_edge.normal,
                             relative_poses[shape_order[0]] * enter_point,
                         ],
                     },
                     Contact {
                         normal: normal_worldspace,
                         offsets: [
-                            exit_point + exit_depth * *pen_axis.normal,
+                            exit_point + exit_depth * *pen_edge.normal,
                             relative_poses[shape_order[0]] * exit_point,
                         ],
                     },
@@ -292,31 +292,31 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 
     let closest_point_on_other = incident_edge_inner.edge.start;
 
-    // find the closest points on the two shapes (we already have the one for shape 2)
-    // and do a circle-circle collision on those
+    // possibly need one more check for distance between closest points
 
-    if closest_point_on_other.dot(*pen_axis.normal) <= pen_axis.extent {
-        // the polygon components' edges intersect.
-        // there's a collision for sure, no need for further checks
-        let supporting_point =
-            closest_point_on_other - shapes[shape_order[1]].circle_r * *pen_axis.normal;
-        let supp_point_depth = pen_axis.extent - pen_axis.normal.dot(supporting_point);
-        let normal_worldspace = poses[shape_order[0]].rotation * pen_axis.normal;
+    let edge_start_to_closest = closest_point_on_other - pen_edge.edge.start;
+    let t_to_closest_projected = edge_start_to_closest.dot(*pen_edge.edge.dir);
+    let t_clamped = if t_to_closest_projected < 0.0 {
+        0.0
+    } else if t_to_closest_projected > pen_edge.edge.length {
+        pen_edge.edge.length
+    } else {
+        // closest point is along the edge;
+        // this is a collision along the axis we've already computed
+        // and we don't have to do a point-point comparison
         return orient_result(ContactResult::One(Contact {
-            normal: normal_worldspace,
+            normal: poses[shape_order[0]].rotation * pen_edge.normal,
             offsets: [
-                supporting_point + supp_point_depth * *pen_axis.normal,
-                relative_poses[shape_order[0]] * supporting_point,
+                pen_edge.edge.start
+                    + t_to_closest_projected * *pen_edge.edge.dir
+                    + shapes[shape_order[0]].circle_r * *pen_edge.normal,
+                relative_poses[shape_order[0]]
+                    * (closest_point_on_other - shapes[shape_order[1]].circle_r * *pen_edge.normal),
             ],
         }));
-    }
-
-    // the polygon components don't overlap,
-    // need one more check for distance between closest points
-    let edge_start_to_closest = closest_point_on_other - pen_axis.edge.start;
-    let t_to_closest_projected = edge_start_to_closest.dot(*pen_axis.edge.dir);
-    let closest_on_pen_edge = pen_axis.edge.start
-        + t_to_closest_projected.max(0.0).min(pen_axis.edge.length) * *pen_axis.edge.dir;
+    };
+    // closest point is at the end of the edge, meaning this is a circle-corner collision (or miss)
+    let closest_on_pen_edge = pen_edge.edge.start + t_clamped * *pen_edge.edge.dir;
 
     let dist_btw_closest_points = closest_point_on_other - closest_on_pen_edge;
     let dist_sq = dist_btw_closest_points.mag_sq();
