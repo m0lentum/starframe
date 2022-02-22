@@ -169,13 +169,14 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     let mut pen_axis: Option<PolygonEdge> = None;
     // shape owning the current axis comes first
     let mut shape_order = [0, 1];
-    for (edge, s_order) in itertools::chain(
-        shapes[0].polygon.edges().map(|a| (a, [0, 1])),
-        shapes[1].polygon.edges().map(|a| (a, [1, 0])),
+    for (edge_idx, s_order) in itertools::chain(
+        (0..shapes[0].polygon.edge_count()).map(|i| (i, [0, 1])),
+        (0..shapes[1].polygon.edge_count()).map(|i| (i, [1, 0])),
     ) {
         let dist = relative_poses[s_order[1]].translation;
+        let edge = shapes[s_order[0]].polygon.get_edge(edge_idx);
         // check that the axis points towards the other object
-        let axis = if edge.normal.dot(dist) >= 0.0 {
+        let edge = if edge.normal.dot(dist) >= 0.0 {
             edge
         } else if edge.symmetrical {
             edge.mirrored()
@@ -187,19 +188,19 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 
         // transform axis such that it's in the other object's local space
         // and points towards the first
-        let axis_wrt_other = -(relative_poses[s_order[0]].rotation * axis.normal);
-        let depth = axis.extent
+        let axis_wrt_other = -(relative_poses[s_order[0]].rotation * edge.normal);
+        let depth = edge.extent
             + shapes[0].circle_r
             + shapes[s_order[1]].polygon.projected_extent(axis_wrt_other)
             + shapes[1].circle_r
-            - dist.dot(*axis.normal);
+            - dist.dot(*edge.normal);
 
         if depth <= 0.0 {
             return ContactResult::Zero;
         }
         if depth < pen_depth {
             pen_depth = depth;
-            pen_axis = Some(axis);
+            pen_axis = Some(edge);
             shape_order = s_order;
         }
     }

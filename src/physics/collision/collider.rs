@@ -300,48 +300,58 @@ impl ColliderPolygon {
         }
     }
 
-    /// Get all potential separating axes of the polygon.
-    pub(super) fn edges(&self) -> EdgeIter {
+    /// Poor man's generator by iterating indices and returning edges by matching on them
+    pub(super) fn edge_count(&self) -> usize {
         match *self {
-            Self::Point => EdgeIter::Zero,
-            Self::LineSegment { hl } => EdgeIter::One(
-                [PolygonEdge {
-                    normal: m::Unit::unit_y(),
-                    extent: 0.0,
+            Self::Point => 0,
+            Self::LineSegment { .. } => 1,
+            Self::Rect { .. } => 2,
+        }
+    }
+
+    /// Get all potential separating axes of the polygon.
+    pub(super) fn get_edge(&self, idx: usize) -> PolygonEdge {
+        let bad_edge = || {
+            panic!(
+                "Called get_edge for {:?} with an out of bounds index {}",
+                self, idx
+            )
+        };
+        match *self {
+            Self::Point => bad_edge(),
+            Self::LineSegment { hl } => PolygonEdge {
+                normal: m::Unit::unit_y(),
+                extent: 0.0,
+                edge: Edge {
+                    start: m::Vec2::new(-hl, 0.0),
+                    dir: m::Unit::unit_x(),
+                    length: 2.0 * hl,
+                },
+                symmetrical: true,
+            },
+            Self::Rect { hw, hh } => match idx {
+                0 => PolygonEdge {
+                    normal: m::Unit::unit_x(),
+                    extent: hw,
                     edge: Edge {
-                        start: m::Vec2::new(-hl, 0.0),
-                        dir: m::Unit::unit_x(),
-                        length: 2.0 * hl,
+                        start: m::Vec2::new(hw, -hh),
+                        dir: m::Unit::unit_y(),
+                        length: 2.0 * hh,
                     },
                     symmetrical: true,
-                }]
-                .into_iter(),
-            ),
-            Self::Rect { hw, hh } => EdgeIter::Two(
-                [
-                    PolygonEdge {
-                        normal: m::Unit::unit_x(),
-                        extent: hw,
-                        edge: Edge {
-                            start: m::Vec2::new(hw, -hh),
-                            dir: m::Unit::unit_y(),
-                            length: 2.0 * hh,
-                        },
-                        symmetrical: true,
+                },
+                1 => PolygonEdge {
+                    normal: m::Unit::unit_y(),
+                    extent: hh,
+                    edge: Edge {
+                        start: m::Vec2::new(-hw, hh),
+                        dir: m::Unit::unit_x(),
+                        length: 2.0 * hw,
                     },
-                    PolygonEdge {
-                        normal: m::Unit::unit_y(),
-                        extent: hh,
-                        edge: Edge {
-                            start: m::Vec2::new(-hw, hh),
-                            dir: m::Unit::unit_x(),
-                            length: 2.0 * hw,
-                        },
-                        symmetrical: true,
-                    },
-                ]
-                .into_iter(),
-            ),
+                    symmetrical: true,
+                },
+                _ => bad_edge(),
+            },
         }
     }
 

@@ -148,7 +148,8 @@ pub fn ray_collider(ray: Ray, pose: &m::Pose, coll: &Collider) -> Option<f64> {
             // we'll need to check against the circle at the closest vertex
             let mut vertex_for_circle_check: Option<m::Vec2> = None;
             let mut closest_hit_t = f64::MAX;
-            for edge in coll.shape.polygon.edges() {
+            for edge_idx in 0..coll.shape.polygon.edge_count() {
+                let edge = coll.shape.polygon.get_edge(edge_idx);
                 // only consider edges that point towards the ray start direction
                 // (this doesn't catch if the ray starts inside the shape, that
                 // needs to be handled separately)
