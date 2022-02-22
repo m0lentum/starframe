@@ -155,7 +155,7 @@ pub fn ray_collider(ray: Ray, pose: &m::Pose, coll: &Collider) -> Option<f64> {
                 // needs to be handled separately)
                 let edge = if edge.normal.dot(*ray.dir) <= 0.0 {
                     edge
-                } else if edge.symmetrical {
+                } else if coll.shape.polygon.is_symmetrical() {
                     edge.mirrored()
                 } else {
                     continue;

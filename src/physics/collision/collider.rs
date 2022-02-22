@@ -1,5 +1,5 @@
 use super::{
-    shape_shape::{ClosestBoundaryPoint, Edge, EdgeIter, PolygonEdge, SupportingEdge},
+    shape_shape::{ClosestBoundaryPoint, Edge, PolygonEdge, SupportingEdge},
     AABB,
 };
 use crate::math as m;
@@ -300,6 +300,14 @@ impl ColliderPolygon {
         }
     }
 
+    /// Whether or not the shape has mirror symmetry with respect to the origin point.
+    /// If true, we can only return half the edges and work with their mirror images.
+    pub(super) fn is_symmetrical(&self) -> bool {
+        match *self {
+            Self::Point | Self::LineSegment { .. } | Self::Rect { .. } => true,
+        }
+    }
+
     /// Poor man's generator by iterating indices and returning edges by matching on them
     pub(super) fn edge_count(&self) -> usize {
         match *self {
@@ -327,7 +335,6 @@ impl ColliderPolygon {
                     dir: m::Unit::unit_x(),
                     length: 2.0 * hl,
                 },
-                symmetrical: true,
             },
             Self::Rect { hw, hh } => match idx {
                 0 => PolygonEdge {
@@ -338,7 +345,6 @@ impl ColliderPolygon {
                         dir: m::Unit::unit_y(),
                         length: 2.0 * hh,
                     },
-                    symmetrical: true,
                 },
                 1 => PolygonEdge {
                     normal: m::Unit::unit_y(),
@@ -348,7 +354,6 @@ impl ColliderPolygon {
                         dir: m::Unit::unit_x(),
                         length: 2.0 * hw,
                     },
-                    symmetrical: true,
                 },
                 _ => bad_edge(),
             },

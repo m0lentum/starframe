@@ -178,7 +178,7 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         // check that the axis points towards the other object
         let edge = if edge.normal.dot(dist) >= 0.0 {
             edge
-        } else if edge.symmetrical {
+        } else if shapes[s_order[0]].polygon.is_symmetrical() {
             edge.mirrored()
         } else {
             // we can skip axes that point away and don't have an associated symmetry
@@ -380,47 +380,20 @@ pub(super) struct PolygonEdge {
     /// Distance of the edge from the polygon's origin
     pub extent: f64,
     pub edge: Edge,
-    /// If true, the same edge exists mirrored around the origin
-    pub symmetrical: bool,
 }
 impl PolygonEdge {
-    /// Mirror the axis and related info with respect to the point at the origin.
+    /// Mirror the edge with respect to the point at the origin.
     pub fn mirrored(self) -> Self {
-        debug_assert!(
-            self.symmetrical,
-            "Only symmetrical axes make sense to mirror"
-        );
         Self {
             normal: -self.normal,
             extent: self.extent,
             edge: self.edge.mirrored(),
-            symmetrical: self.symmetrical,
-        }
-    }
-}
-
-/// Enum to handle different numbers of separating axes without allocating
-pub(super) enum EdgeIter {
-    Zero,
-    One(std::array::IntoIter<PolygonEdge, 1>),
-    Two(std::array::IntoIter<PolygonEdge, 2>),
-    // more will only come out of general polygons (or other shapes that don't currently exist).
-    // Depending on how I store them, their variant for this can likely be a mapped slice iter
-}
-impl Iterator for EdgeIter {
-    type Item = PolygonEdge;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Zero => None,
-            Self::One(inner) => inner.next(),
-            Self::Two(inner) => inner.next(),
         }
     }
 }
 
 //
-// EDGE CLIP
+// edge clip
 //
 
 #[derive(Clone, Copy, Debug)]
