@@ -23,10 +23,13 @@ mod recipes;
 use recipes::Recipe;
 
 fn main() {
+    use winit::platform::unix::WindowBuilderExtUnix;
     let game = Game::init(
         60,
         winit::window::WindowBuilder::new()
             .with_title("starframe test")
+            // X11 class I use for a window manager rule to make the game window floating
+            .with_class("game".into(), "game".into())
             .with_inner_size(winit::dpi::LogicalSize {
                 width: 1280.0,
                 height: 720.0,
@@ -206,7 +209,7 @@ impl Scene {
 }
 
 fn read_available_scenes() -> Result<Vec<std::path::PathBuf>, std::io::Error> {
-    let dir = std::fs::read_dir("./examples/testgame/scenes")?;
+    let dir = std::fs::read_dir("./examples/sandbox/scenes")?;
     Ok(dir
         .into_iter()
         .filter_map(|entry| entry.map(|e| e.path()).ok())
@@ -288,8 +291,8 @@ impl game::GameState for State {
                 }
                 if ui.button("Rect").clicked() {
                     shape_to_spawn = Some(phys::ColliderPolygon::Rect {
-                        hw: distr::Uniform::from(0.4..0.6).sample(&mut rng) + self.spawner_circle_r,
-                        hh: distr::Uniform::from(0.3..0.5).sample(&mut rng) + self.spawner_circle_r,
+                        hw: distr::Uniform::from(0.4..0.6).sample(&mut rng),
+                        hh: distr::Uniform::from(0.3..0.5).sample(&mut rng),
                     });
                 }
             });

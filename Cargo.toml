@@ -32,7 +32,7 @@ egui_wgpu_backend = "0.16.0"
 egui_winit_platform = "0.13.0"
 
 [[example]]
-name = "testgame"
+name = "sandbox"
 required-features = ["serde-types"]
 
 [profile.dev]

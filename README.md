@@ -36,11 +36,11 @@ repo](https://github.com/MoleTrooper/notes).
 
 I write about this project once in a blue moon on [my website](https://moletrooper.me/blog/).
 
-## The test game
+## Sandbox example
 
-I have a little testing sandbox where you can throw blocks around with the
-mouse and move a rudimentary platformer character that shoots some rather heavy
-bullets. Here's how you can check it out:
+I have a little sandbox I use for testing new features where you can throw
+blocks around with the mouse and move a rudimentary platformer character that
+shoots some rather heavy bullets. Here's how you can check it out:
 
 ### The manual way
 
@@ -48,7 +48,7 @@ bullets. Here's how you can check it out:
 2. You may need to install `pkgconfig` and drivers for Vulkan, DX12, or Metal
    depending on your platform
 3. Clone and navigate to this repository
-4. `cargo run --example testgame`
+4. `cargo run --example sandbox`
 
 ### The easy way, using [Nix](https://nixos.org/nix/) (on Linux)
 
@@ -56,11 +56,11 @@ Note that this requires a Nix version that supports flakes (2.4 and up).
 
 1. Clone and navigate to this repository
 2. `nix develop`
-3. `cargo run --example testgame`
+3. `cargo run --example sandbox`
 
 ### Keybindings
 
-Disclaimer: these might be out of date - the test game changes in quick and
+Disclaimer: these might be out of date - the sandbox changes in quick and
 dirty ways
 
 ```text

@@ -1,20 +1,20 @@
 run:
-  cargo run --example testgame
+  cargo run --example sandbox
 
 trace:
-  RUST_BACKTRACE=1 cargo run --example testgame
+  RUST_BACKTRACE=1 cargo run --example sandbox
 
 profile:
-  cargo run --release --features tracy --example testgame
+  cargo run --release --features tracy --example sandbox
 
 profile-single-thread:
-  cargo run --release --no-default-features --features serde-types --features tracy --example testgame
+  cargo run --release --no-default-features --features serde-types --features tracy --example sandbox
 
 flamegraph:
-  cargo flamegraph --example testgame
+  cargo flamegraph --example sandbox
 
 flamegraph-single-thread:
-  cargo flamegraph --no-default-features --features serde-types --example testgame
+  cargo flamegraph --no-default-features --features serde-types --example sandbox
 
 # cargo-outdated only lists minor versions and above, but I like to update patch versions,
 # so here's a silly way to list dependencies with new patch versions available
