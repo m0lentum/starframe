@@ -73,20 +73,16 @@ impl Collider {
     /// Create a solid rectangle collider with rounded corners.
     ///
     /// Width and height are outer dimensions of the box, with corners cut out.
-    /// Think `corner-radius` in CSS.
-    ///
-    /// # Panics
-    /// Panics if the corner radius is greater than one of the two box dimensions,
-    /// as this would result in a shape that isn't a rectangle at all.
+    /// Think `corner-radius` in CSS. If the radius is greater than there's
+    /// actually room for, it's reduced until it fits.
     pub fn new_rounded_rect(width: f64, height: f64, radius: f64) -> Self {
-        let hw = (width / 2.0) - radius;
-        let hh = (height / 2.0) - radius;
-        debug_assert!(hw > 0.0, "degenerate rect with width 0");
-        debug_assert!(hh > 0.0, "degenerate rect with height 0");
+        let hw = ((width / 2.0) - radius).max(0.05);
+        let hh = ((height / 2.0) - radius).max(0.05);
+        let circle_r = radius.min(width / 2.0).min(height / 2.0);
         Self {
             shape: ColliderShape {
                 polygon: ColliderPolygon::Rect { hw, hh },
-                circle_r: radius,
+                circle_r,
             },
             ..Self::default()
         }

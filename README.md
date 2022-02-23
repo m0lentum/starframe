@@ -64,20 +64,11 @@ Disclaimer: these might be out of date - the test game changes in quick and
 dirty ways
 
 ```text
-Number keys 1-9 - load a scene
-Enter           - reload current scene
-P               - pause
-Space           - step one frame while paused
-Esc             - close the game
-G               - toggle spatial index visualization
-I               - toggle island visualization
+Space   - step one frame while paused
 
 Arrows  - move the player
 LShift  - jump
 Z       - shoot
-S       - spawn a box
-T       - spawn a ball
-D       - spawn a capsule
 
 Left mouse  - grab a box (in grab mode)
 V           - change mouse mode between camera and grab

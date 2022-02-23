@@ -78,13 +78,22 @@ impl Game {
     }
 
     /// Begin the game loop.
-    pub fn run<State: GameState>(mut self, initial_state: State) {
+    pub fn run<State: GameState>(
+        mut self,
+        initial_state: State,
+        on_event: Option<fn(&mut State, &winit::event::Event<()>) -> ()>,
+    ) {
         let mut state = initial_state;
         let mut frame_start_t = Instant::now();
         let mut acc = 0;
         let events = self.events.take().unwrap();
         events.run(move |event, _, control_flow| {
+            if let Some(f) = on_event {
+                f(&mut state, &event);
+            }
+
             *control_flow = ControlFlow::Poll;
+
             match event {
                 Event::MainEventsCleared => {
                     // if vsynced, pretend frame timing is exact (see blog post mentioned above)

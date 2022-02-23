@@ -138,14 +138,14 @@ impl Renderer {
 ///
 /// TODOC: example
 pub struct RenderContext<'a> {
-    target: RenderTarget<'a>,
+    pub target: RenderTarget<'a>,
     pub encoder: wgpu::CommandEncoder,
     pub device: &'a wgpu::Device,
     pub queue: &'a mut wgpu::Queue,
     pub target_size: (u32, u32),
 }
 
-enum RenderTarget<'a> {
+pub enum RenderTarget<'a> {
     Surface {
         view: wgpu::TextureView,
         frame: wgpu::SurfaceTexture,
@@ -155,7 +155,7 @@ enum RenderTarget<'a> {
     },
 }
 impl<'a> RenderTarget<'a> {
-    fn view(&self) -> &wgpu::TextureView {
+    pub fn view(&self) -> &wgpu::TextureView {
         match self {
             RenderTarget::Surface { view, .. } => view,
             RenderTarget::Texture { view } => view,

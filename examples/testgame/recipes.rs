@@ -1,3 +1,8 @@
+//! Types and procedures for reading objects from files and spawning them in the game world.
+//!
+//! This file has gotten quite large and unwieldy over time.
+//! TODO: streamline this and bring in the Tiled editor integration from Flamegrower
+
 use starframe::{
     self as sf,
     graph::{Graph, LayerViewMut},
@@ -13,6 +18,11 @@ pub enum Recipe {
     Block(Block),
     Ball(Ball),
     Capsule(Capsule),
+    GenericObject {
+        pose: m::PoseBuilder,
+        shape: phys::ColliderShape,
+        is_static: bool,
+    },
     Blockchain {
         width: f64,
         spacing: f64,
@@ -210,6 +220,22 @@ impl Recipe {
                 let solid = Solid {
                     pose: (*pose).into(),
                     coll: phys::Collider::new_capsule(*length, *radius),
+                    color: random_color(),
+                };
+                if *is_static {
+                    spawn_static(solid, graph.get_layer_bundle());
+                } else {
+                    spawn_body(solid, graph.get_layer_bundle());
+                }
+            }
+            Recipe::GenericObject {
+                pose,
+                shape,
+                is_static,
+            } => {
+                let solid = Solid {
+                    pose: (*pose).into(),
+                    coll: phys::Collider::from(*shape),
                     color: random_color(),
                 };
                 if *is_static {

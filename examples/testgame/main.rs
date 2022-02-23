@@ -3,7 +3,9 @@
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
-use rand::{distributions as distr, distributions::Distribution, Rng};
+use rand::{distributions as distr, distributions::Distribution};
+
+use egui_winit_platform as egui_wp;
 
 use starframe::{
     game::{self, Game},
@@ -26,12 +28,16 @@ fn main() {
         winit::window::WindowBuilder::new()
             .with_title("starframe test")
             .with_inner_size(winit::dpi::LogicalSize {
-                width: 800.0,
-                height: 600.0,
+                width: 1280.0,
+                height: 720.0,
             }),
     );
     let state = State::init(&game.renderer);
-    game.run(state);
+    game.run(state, Some(handle_event));
+}
+
+fn handle_event(state: &mut State, evt: &winit::event::Event<()>) {
+    state.egui_platform.handle_event(evt);
 }
 
 //
@@ -43,6 +49,7 @@ pub enum StateEnum {
     Paused,
 }
 pub struct State {
+    scenes_available: Vec<std::path::PathBuf>,
     scene: Scene,
     state: StateEnum,
     graph: Graph,
@@ -55,15 +62,21 @@ pub struct State {
     camera: gx::camera::MouseDragCamera,
     mesh_renderer: gx::MeshRenderer,
     outline_renderer: gx::OutlineRenderer,
-    // interpolate between two outline shapes for fun
-    outline_interp: f32,
     debug_visualizer: gx::DebugVisualizer,
+    // egui stuff
+    egui_platform: egui_wp::Platform,
+    egui_pass: egui_wgpu_backend::RenderPass,
+    last_egui_paint_cmds: Vec<egui::epaint::ClippedShape>,
+    // UI states
+    outline_interp: f32,
     grid_vis_active: bool,
     island_vis_active: bool,
+    spawner_circle_r: f64,
 }
 impl State {
     fn init(renderer: &gx::Renderer) -> Self {
         State {
+            scenes_available: read_available_scenes().expect("Failed to read scenes directory"),
             scene: Scene::default(),
             state: StateEnum::Playing,
             graph: new_graph! {
@@ -111,10 +124,24 @@ impl State {
                 },
                 renderer,
             ),
-            outline_interp: 0.0,
             debug_visualizer: gx::DebugVisualizer::new(renderer),
+            egui_platform: egui_wp::Platform::new(egui_wp::PlatformDescriptor {
+                physical_width: renderer.window_size().width,
+                physical_height: renderer.window_size().height,
+                scale_factor: renderer.window_scale_factor(),
+                font_definitions: egui::FontDefinitions::default(),
+                style: egui::Style::default(),
+            }),
+            egui_pass: egui_wgpu_backend::RenderPass::new(
+                &renderer.device,
+                renderer.swapchain_format(),
+                1,
+            ),
+            last_egui_paint_cmds: vec![],
+            outline_interp: 0.0,
             grid_vis_active: false,
             island_vis_active: false,
+            spawner_circle_r: 0.0,
         }
     }
 
@@ -122,41 +149,19 @@ impl State {
         self.physics.reset();
         self.graph.reset();
     }
-
-    fn read_scene(&mut self, file_idx: usize) {
-        let dir = std::fs::read_dir("./examples/testgame/scenes");
-        match dir {
-            Err(err) => eprintln!("Scenes dir not found: {}", err),
-            Ok(mut dir) => {
-                if let Some(Ok(entry)) = dir.nth(file_idx) {
-                    let file = std::fs::File::open(entry.path());
-                    match file {
-                        Ok(file) => {
-                            let scene = Scene::read_from_file(file);
-                            match scene {
-                                Err(err) => eprintln!("Failed to parse file: {}", err),
-                                Ok(scene) => self.scene = scene,
-                            }
-                        }
-                        Err(err) => eprintln!("Failed to open file: {}", err),
-                    }
-                }
-            }
-        }
-    }
-
-    fn instantiate_scene(&mut self) {
-        self.scene.instantiate(&mut self.physics, &self.graph);
-    }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseMode {
     /// Grab objects with the mouse
     Grab,
     /// Move the camera with the mouse
     Camera,
 }
+
+//
+// scenes & loading
+//
 
 /// The recipes in a scene plus some adjustable parameters.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -200,54 +205,155 @@ impl Scene {
     }
 }
 
+fn read_available_scenes() -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    let dir = std::fs::read_dir("./examples/testgame/scenes")?;
+    Ok(dir
+        .into_iter()
+        .filter_map(|entry| entry.map(|e| e.path()).ok())
+        .filter(|p| p.is_file())
+        .collect())
+}
+
+fn read_scene(path: &std::path::Path) -> Option<Scene> {
+    let file = std::fs::File::open(path);
+    match file {
+        Ok(file) => match Scene::read_from_file(file) {
+            Ok(scene) => Some(scene),
+            Err(err) => {
+                eprintln!("Failed to parse file: {}", err);
+                None
+            }
+        },
+        Err(err) => {
+            eprintln!("Failed to open file: {}", err);
+            None
+        }
+    }
+}
+
 //
 // State updates
 //
 
 impl game::GameState for State {
     fn tick(&mut self, dt: f64, game: &Game) -> Option<()> {
+        let mut rng = rand::thread_rng();
+
         //
-        // State-independent stuff
+        // gui controls
         //
 
-        // exit on esc
-        if game.input.is_key_pressed(Key::Escape, None) {
+        self.egui_platform.begin_frame();
+        let egui_ctx = self.egui_platform.context();
+
+        let mut exit = false;
+        let mut reload = false;
+        let mut shape_to_spawn: Option<phys::ColliderPolygon> = None;
+        egui::Window::new("Controls").show(&egui_ctx, |ui| {
+            ui.heading("Load a scene");
+            ui.horizontal_wrapped(|ui| {
+                for scene_path in &self.scenes_available {
+                    if ui
+                        .button(
+                            scene_path
+                                .file_stem()
+                                .expect("File with no name?")
+                                .to_str()
+                                .expect("File with invalid name?"),
+                        )
+                        .clicked()
+                    {
+                        if let Some(scene) = read_scene(scene_path) {
+                            self.scene = scene;
+                            reload = true;
+                        }
+                    }
+                }
+            });
+            reload |= ui.button("Reload current").clicked();
+
+            ui.separator();
+            ui.heading("Spawn objects");
+            ui.add(egui::Slider::new(&mut self.spawner_circle_r, 0.0..=1.0).text("Radius"));
+            ui.horizontal_wrapped(|ui| {
+                if self.spawner_circle_r > 0.0 {
+                    if ui.button("Circle").clicked() {
+                        shape_to_spawn = Some(phys::ColliderPolygon::Point);
+                    }
+                    if ui.button("Capsule").clicked() {
+                        shape_to_spawn = Some(phys::ColliderPolygon::LineSegment {
+                            hl: distr::Uniform::from(0.3..0.5).sample(&mut rng),
+                        });
+                    }
+                }
+                if ui.button("Rect").clicked() {
+                    shape_to_spawn = Some(phys::ColliderPolygon::Rect {
+                        hw: distr::Uniform::from(0.4..0.6).sample(&mut rng) + self.spawner_circle_r,
+                        hh: distr::Uniform::from(0.3..0.5).sample(&mut rng) + self.spawner_circle_r,
+                    });
+                }
+            });
+
+            ui.separator();
+            ui.heading("Other controls");
+            match self.state {
+                StateEnum::Playing => {
+                    if ui.button("Pause").clicked() {
+                        self.state = StateEnum::Paused;
+                    }
+                }
+                StateEnum::Paused => {
+                    if ui.button("Unpause").clicked() {
+                        self.state = StateEnum::Playing;
+                    }
+                }
+            }
+            ui.add(
+                egui::Slider::new(
+                    &mut self.camera.pose.scale,
+                    self.camera.min_zoom_out..=self.camera.max_zoom_out,
+                )
+                .text("Camera zoom out"),
+            );
+            ui.horizontal(|ui| {
+                ui.label("Mouse mode:");
+                ui.selectable_value(&mut self.mouse_mode, MouseMode::Grab, "Grab");
+                ui.selectable_value(&mut self.mouse_mode, MouseMode::Camera, "Camera");
+            });
+            ui.add(
+                egui::Slider::new(&mut self.physics.consts.substeps, 1..=15)
+                    .text("Physics substeps"),
+            );
+
+            ui.separator();
+            ui.heading("Visuals");
+            ui.checkbox(&mut self.grid_vis_active, "Display grid");
+            ui.checkbox(&mut self.island_vis_active, "Display islands");
+            ui.add(
+                egui::Slider::new(&mut self.outline_renderer.params.thickness, 0..=30)
+                    .text("Outline thickness"),
+            );
+            ui.add(egui::Slider::new(&mut self.outline_interp, 0.0..=1.0).text("Outline shape"));
+            self.outline_renderer.params.shape =
+                gx::OutlineShape::octagon().lerp(self.outline_interp, gx::OutlineShape::circle());
+            ui.separator();
+            if ui.button("exit").clicked() {
+                exit = true;
+            }
+        });
+        if exit {
             return None;
         }
+        if reload {
+            self.reset();
+            self.scene.instantiate(&mut self.physics, &self.graph);
+        }
 
-        // adjust outlines
-        if game.input.is_key_pressed(Key::NumpadAdd, None) {
-            self.outline_renderer.params.thickness += 1;
-        } else if game.input.is_key_pressed(Key::NumpadSubtract, None)
-            && self.outline_renderer.params.thickness > 1
-        {
-            self.outline_renderer.params.thickness -= 1;
-        }
-        if game.input.is_key_pressed(Key::NumpadMultiply, None) {
-            self.outline_interp = (self.outline_interp + 0.05).min(1.0);
-        } else if game.input.is_key_pressed(Key::NumpadDivide, None) {
-            self.outline_interp = (self.outline_interp - 0.05).max(0.0);
-        }
-        self.outline_renderer.params.shape =
-            gx::OutlineShape::octagon().lerp(self.outline_interp, gx::OutlineShape::circle());
-
-        // toggle debug visualizers
-        if game.input.is_key_pressed(Key::G, Some(0)) {
-            self.grid_vis_active = !self.grid_vis_active;
-        }
-        if game.input.is_key_pressed(Key::I, Some(0)) {
-            self.island_vis_active = !self.island_vis_active;
-        }
+        let (_output, paint_commands) = self.egui_platform.end_frame(Some(&game.window));
+        self.last_egui_paint_cmds = paint_commands;
 
         // mouse controls
 
-        if game.input.is_key_pressed(Key::V, Some(0)) {
-            self.mouse_mode = match self.mouse_mode {
-                MouseMode::Grab => MouseMode::Camera,
-                MouseMode::Camera => MouseMode::Grab,
-            };
-            println!("Mouse mode: {:?}", self.mouse_mode);
-        }
         match self.mouse_mode {
             MouseMode::Grab => {
                 self.mouse_grabber.update(
@@ -267,35 +373,8 @@ impl game::GameState for State {
             }
         }
 
-        // reload
+        // spawn stuff even when paused
 
-        for (idx, num_key) in [
-            Key::Key1,
-            Key::Key2,
-            Key::Key3,
-            Key::Key4,
-            Key::Key5,
-            Key::Key6,
-            Key::Key7,
-            Key::Key8,
-            Key::Key9,
-        ]
-        .iter()
-        .enumerate()
-        {
-            if game.input.is_key_pressed(*num_key, Some(0)) {
-                self.reset();
-                self.read_scene(idx);
-                self.instantiate_scene();
-            }
-        }
-        // reload current scene
-        if game.input.is_key_pressed(Key::Return, Some(0)) {
-            self.reset();
-            self.instantiate_scene();
-        }
-
-        // spawn stuff also when paused
         let zone = self.scene.spawn_zone;
         let random_pos = || {
             let mut rng = rand::thread_rng();
@@ -306,49 +385,18 @@ impl game::GameState for State {
         };
         let random_angle =
             || m::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
-        let random_vel = || {
-            let mut rng = rand::thread_rng();
-            [
-                distr::Uniform::from(-5.0..5.0).sample(&mut rng),
-                distr::Uniform::from(-5.0..5.0).sample(&mut rng),
-            ]
-        };
-        let mut rng = rand::thread_rng();
-        if game.input.is_key_pressed(Key::S, Some(0)) {
-            Recipe::Block(recipes::Block {
+
+        if let Some(polygon) = shape_to_spawn {
+            Recipe::GenericObject {
                 pose: m::PoseBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle()),
-                width: distr::Uniform::from(0.8..1.2).sample(&mut rng),
-                height: distr::Uniform::from(0.7..1.0).sample(&mut rng),
-                radius: if rng.gen::<bool>() {
-                    distr::Uniform::from(0.1..0.3).sample(&mut rng)
-                } else {
-                    0.0
+                shape: phys::ColliderShape {
+                    polygon,
+                    circle_r: self.spawner_circle_r,
                 },
                 is_static: false,
-            })
-            .spawn(&mut self.physics, &self.graph);
-        }
-        if game.input.is_key_pressed(Key::T, Some(0)) {
-            Recipe::Ball(recipes::Ball {
-                position: random_pos().into(),
-                radius: distr::Uniform::from(0.1..0.4).sample(&mut rng),
-                restitution: 1.0,
-                start_velocity: random_vel(),
-                is_static: false,
-            })
-            .spawn(&mut self.physics, &self.graph);
-        }
-        if game.input.is_key_pressed(Key::D, Some(0)) {
-            Recipe::Capsule(recipes::Capsule {
-                pose: m::PoseBuilder::new()
-                    .with_position(random_pos())
-                    .with_rotation(random_angle()),
-                length: distr::Uniform::from(0.4..0.8).sample(&mut rng),
-                radius: distr::Uniform::from(0.1..0.5).sample(&mut rng),
-                is_static: false,
-            })
+            }
             .spawn(&mut self.physics, &self.graph);
         }
 
@@ -388,6 +436,8 @@ impl game::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut gx::Renderer) {
+        let window_scale_factor = renderer.window_scale_factor();
+
         self.outline_renderer.prepare(renderer);
         self.outline_renderer
             .init_meshes(&self.camera, renderer, self.graph.get_layer_bundle());
@@ -418,6 +468,33 @@ impl game::GameState for State {
 
         self.mesh_renderer
             .draw(&self.camera, &mut ctx, self.graph.get_layer_bundle());
+
+        let paint_jobs = self
+            .egui_platform
+            .context()
+            .tessellate(self.last_egui_paint_cmds.clone());
+        let screen_desc = egui_wgpu_backend::ScreenDescriptor {
+            physical_width: ctx.target_size.0,
+            physical_height: ctx.target_size.1,
+            scale_factor: window_scale_factor as f32,
+        };
+        self.egui_pass.update_texture(
+            ctx.device,
+            ctx.queue,
+            &self.egui_platform.context().font_image(),
+        );
+        self.egui_pass.update_user_textures(ctx.device, ctx.queue);
+        self.egui_pass
+            .update_buffers(ctx.device, ctx.queue, &paint_jobs, &screen_desc);
+        self.egui_pass
+            .execute(
+                &mut ctx.encoder,
+                ctx.target.view(),
+                &paint_jobs,
+                &screen_desc,
+                None,
+            )
+            .expect("failed to draw egui");
 
         ctx.submit();
     }
