@@ -382,6 +382,7 @@ pub(crate) struct PolygonEdge {
 }
 impl PolygonEdge {
     /// Mirror the edge with respect to the point at the origin.
+    #[inline]
     pub fn mirrored(self) -> Self {
         Self {
             normal: -self.normal,

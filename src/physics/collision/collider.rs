@@ -172,7 +172,7 @@ impl ColliderShape {
             self.polygon.area()
         } else {
             use std::f64::consts::PI;
-            // area of a circle-convex polygon sum:
+            // area of a circle-convex-polygon sum:
             // the polygon itself
             // plus exactly one circle (sum of all corners),
             // plus an extra polygon with height r for each face of the polygon
@@ -195,7 +195,9 @@ impl ColliderShape {
             ColliderPolygon::LineSegment { hl } => (hl * hl + r * r) / 3.0,
             ColliderPolygon::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
             // quick approximation as a circle for now
-            ColliderPolygon::Triangle { outer_r } => (outer_r + r) / 2.0,
+            ColliderPolygon::Triangle { outer_r } | ColliderPolygon::Hexagon { outer_r } => {
+                (outer_r + r) / 2.0
+            }
         }
     }
 
@@ -244,10 +246,18 @@ pub enum ColliderPolygon {
         hh: f64,
     },
     /// An equilateral triangle.
+    ///
     /// The bottom edge is parallel to the x-axis.
     Triangle {
         /// Radius of the circumscribed circle of the triangle,
         /// i.e. distance to its points from the center
+        outer_r: f64,
+    },
+    /// A regular hexagon.
+    ///
+    /// The bottom and top edges are parallel to the x-axis.
+    Hexagon {
+        /// Distance from the center to the points of the hexagon
         outer_r: f64,
     },
 }
@@ -285,6 +295,7 @@ impl ColliderPolygon {
             Self::LineSegment { .. } => 0.0,
             Self::Rect { hw, hh } => 4.0 * hw * hh,
             Self::Triangle { outer_r } => 3.0 * 0.25 * outer_r * outer_r / FRAC_PI_6_TAN,
+            Self::Hexagon { outer_r } => 3.0 * outer_r * FRAC_PI_6_COS * outer_r,
         }
     }
 
@@ -294,6 +305,7 @@ impl ColliderPolygon {
             Self::LineSegment { hl } => 4.0 * hl, // counts in both directions
             Self::Rect { hw, hh } => 4.0 * (hw + hh),
             Self::Triangle { outer_r } => 3.0 * outer_r / FRAC_PI_6_TAN,
+            Self::Hexagon { outer_r } => 6.0 * outer_r,
         }
     }
 
@@ -307,6 +319,7 @@ impl ColliderPolygon {
             Self::LineSegment { hl } => hl,
             Self::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
             Self::Triangle { outer_r } => outer_r,
+            Self::Hexagon { outer_r } => outer_r,
         }
     }
 
@@ -319,7 +332,9 @@ impl ColliderPolygon {
             }
             // probably not worth the computation time of all the trigonometry
             // to get the exact smallest aabb
-            Self::Triangle { outer_r } => m::Vec2::new(outer_r, outer_r),
+            Self::Triangle { outer_r } | Self::Hexagon { outer_r } => {
+                m::Vec2::new(outer_r, outer_r)
+            }
         };
         AABB {
             min: -symmetric_extent,
@@ -371,21 +386,49 @@ impl ColliderPolygon {
                     },
                 }
             }
-            _other_poly => {
+            // the following works for any shape using just edge information
+            Self::Triangle { .. } | Self::Hexagon { .. } => {
                 // negative distance used to find the closest edge if we're on the inside
                 let mut closest_edge_dist = f64::MIN;
                 let mut closest_edge_normal = m::Unit::unit_x();
+                // the closest vertex to return if we're in a vertex Voronoi region on the outside
+                let mut closest_vertex: Option<m::Vec2> = None;
                 for edge in (0..self.edge_count()).map(|i| self.get_edge(i)) {
-                    let dist_from_edge = edge.normal.dot(pt) - edge.extent;
-                    if dist_from_edge >= 0.0 {
-                        // outside of the shape, either along this edge or in one of the adjacent
-                        // vertex Voronoi regions. Get the closest point by clamping to this edge
-                        let edge_t_to_pt = edge.edge.dir.dot(pt - edge.edge.start);
-                        return ClosestBoundaryPoint {
-                            pt: edge.edge.start
-                                + edge_t_to_pt.max(0.0).min(edge.edge.length) * *edge.edge.dir,
-                            is_interior: false,
+                    let dist_towards_edge = edge.normal.dot(pt);
+                    let (edge, dist_towards_edge) =
+                        if dist_towards_edge < 0.0 && self.is_symmetrical() {
+                            (edge.mirrored(), -dist_towards_edge)
+                        } else {
+                            (edge, dist_towards_edge)
                         };
+                    let dist_from_edge = dist_towards_edge - edge.extent;
+                    if dist_from_edge >= 0.0 {
+                        // outside of the shape, either along this edge
+                        // or in one of the adjacent vertex Voronoi regions
+                        let edge_t_to_pt = edge.edge.dir.dot(pt - edge.edge.start);
+                        if edge_t_to_pt >= 0.0 && edge_t_to_pt <= edge.edge.length {
+                            // we're within the edge Voronoi region, can return immediately.
+                            // otherwise we might be in a corner region but don't know for sure yet
+                            return ClosestBoundaryPoint {
+                                pt: edge.edge.start + edge_t_to_pt * *edge.edge.dir,
+                                is_interior: false,
+                            };
+                        } else if let Some(pt) = closest_vertex {
+                            // we're outside two edges,
+                            // at this point we know for sure we're closest to a vertex
+                            return ClosestBoundaryPoint {
+                                pt,
+                                is_interior: false,
+                            };
+                        } else {
+                            // we're outside one edge. Wait until another similar edge is found
+                            // (or none is) to see if closest point is on that edge or on the
+                            // vertex between
+                            closest_vertex = Some(
+                                edge.edge.start
+                                    + edge_t_to_pt.max(0.0).min(edge.edge.length) * *edge.edge.dir,
+                            );
+                        }
                     }
                     // dist_from_edge is negative, point is on its inside
                     if dist_from_edge > closest_edge_dist {
@@ -393,9 +436,16 @@ impl ColliderPolygon {
                         closest_edge_normal = edge.normal;
                     }
                 }
-                ClosestBoundaryPoint {
-                    pt: pt - closest_edge_dist * *closest_edge_normal,
-                    is_interior: true,
+
+                match closest_vertex {
+                    Some(pt) => ClosestBoundaryPoint {
+                        pt,
+                        is_interior: false,
+                    },
+                    None => ClosestBoundaryPoint {
+                        pt: pt - closest_edge_dist * *closest_edge_normal,
+                        is_interior: true,
+                    },
                 }
             }
         }
@@ -405,18 +455,22 @@ impl ColliderPolygon {
     /// If true, we can only return half the edges and work with their mirror images.
     pub(crate) fn is_symmetrical(&self) -> bool {
         match *self {
-            Self::Point | Self::LineSegment { .. } | Self::Rect { .. } => true,
+            Self::Point | Self::LineSegment { .. } | Self::Rect { .. } | Self::Hexagon { .. } => {
+                true
+            }
             Self::Triangle { .. } => false,
         }
     }
 
     /// Poor man's generator by iterating indices and returning edges by matching on them
+    /// so we don't need to allocate to iterate edges
     pub(crate) fn edge_count(&self) -> usize {
         match *self {
             Self::Point => 0,
             Self::LineSegment { .. } => 1,
             Self::Rect { .. } => 2,
             Self::Triangle { .. } => 3,
+            Self::Hexagon { .. } => 3,
         }
     }
 
@@ -495,6 +549,39 @@ impl ColliderPolygon {
                 },
                 _ => bad_edge(),
             },
+            Self::Hexagon { outer_r } => match idx {
+                0 => PolygonEdge {
+                    normal: AXIS_30_DEG,
+                    // TODO: all symmetrical shapes have the same extent in every direction.
+                    // possibly put this in another place so we can cache it instead of
+                    // computing it for every axis
+                    extent: FRAC_PI_6_COS * outer_r,
+                    edge: Edge {
+                        start: m::Vec2::new(outer_r, 0.0),
+                        dir: AXIS_120_DEG,
+                        length: outer_r,
+                    },
+                },
+                1 => PolygonEdge {
+                    normal: m::Unit::unit_y(),
+                    extent: FRAC_PI_6_COS * outer_r,
+                    edge: Edge {
+                        start: outer_r * *AXIS_60_DEG,
+                        dir: -m::Unit::unit_x(),
+                        length: outer_r,
+                    },
+                },
+                2 => PolygonEdge {
+                    normal: AXIS_150_DEG,
+                    extent: FRAC_PI_6_COS * outer_r,
+                    edge: Edge {
+                        start: outer_r * *AXIS_120_DEG,
+                        dir: -AXIS_60_DEG,
+                        length: outer_r,
+                    },
+                },
+                _ => bad_edge(),
+            },
         }
     }
 
@@ -511,6 +598,14 @@ impl ColliderPolygon {
                 [m::Unit::unit_y(), -AXIS_30_DEG, -AXIS_150_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir))
+                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .unwrap()
+                    * outer_r
+            }
+            Self::Hexagon { outer_r } => {
+                [m::Unit::unit_x(), AXIS_60_DEG, AXIS_120_DEG]
+                    .into_iter()
+                    .map(|dir_to_vertex| dir_to_vertex.dot(*dir).abs())
                     .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
                     .unwrap()
                     * outer_r
@@ -563,31 +658,26 @@ impl ColliderPolygon {
                     }
                 }
             }
-            Self::Triangle { outer_r } => {
-                let (normal, _) = [-m::Unit::unit_y(), AXIS_30_DEG, AXIS_150_DEG]
-                    .into_iter()
-                    .map(|n| (n, n.dot(dir)))
-                    .max_by(|(_, d0), (_, d1)| d0.partial_cmp(d1).unwrap())
+            Self::Triangle { .. } | Self::Hexagon { .. } => {
+                let closest_edge = (0..self.edge_count())
+                    .map(|i| {
+                        let edge = self.get_edge(i);
+                        if self.is_symmetrical() && edge.normal.dot(dir) < 0.0 {
+                            edge.mirrored()
+                        } else {
+                            edge
+                        }
+                    })
+                    .max_by(|e0, e1| e0.normal.dot(dir).partial_cmp(&e1.normal.dot(dir)).unwrap())
                     .unwrap();
-                let edge_dir = m::unit_left_normal(normal);
-                // edge_dir away from the supporting point
-                let edge_dir = if edge_dir.dot(dir) < 0.0 {
-                    edge_dir
-                } else {
-                    -edge_dir
-                };
-
-                let inner_r = outer_r / 2.0;
-                let half_edge_len = inner_r / FRAC_PI_6_TAN;
-                let edge_start = inner_r * *normal - half_edge_len * *edge_dir;
 
                 SupportingEdge {
-                    edge: Edge {
-                        start: edge_start,
-                        dir: edge_dir,
-                        length: half_edge_len * 2.0,
+                    edge: if closest_edge.edge.dir.dot(dir) < 0.0 {
+                        closest_edge.edge
+                    } else {
+                        closest_edge.edge.flipped()
                     },
-                    normal,
+                    normal: closest_edge.normal,
                 }
             }
         }
@@ -605,8 +695,10 @@ impl ColliderPolygon {
                 panic!("Angle between edges shouldn't be called for points or line segments")
             }
             Self::Rect { .. } => 1.0,
-            // precomputed tan(pi / 3)
+            // tan(pi / 3)
             Self::Triangle { .. } => 1.73205080757,
+            // tan(2 * pi / 3)
+            Self::Hexagon { .. } => -1.73205080757,
         }
     }
 }
@@ -672,9 +764,10 @@ impl Material {
 mod tests {
     use super::*;
 
-    const TEST_POLYGONS: [ColliderPolygon; 2] = [
+    const TEST_POLYGONS: [ColliderPolygon; 3] = [
         ColliderPolygon::Rect { hw: 0.5, hh: 0.8 },
         ColliderPolygon::Triangle { outer_r: 1.0 },
+        ColliderPolygon::Hexagon { outer_r: 1.0 },
     ];
 
     /// Closest boundary points are found correctly
@@ -682,36 +775,60 @@ mod tests {
     #[test]
     fn closest_boundary_points() {
         for shape in TEST_POLYGONS {
-            for edge in (0..shape.edge_count()).map(|i| shape.get_edge(i)) {
-                let assert_print_info = |cond: bool| {
-                    assert!(cond, "shape {:?}\n\nedge {:?}", shape, edge);
+            for edge in (0..shape.edge_count()).map(|i| shape.get_edge(i)).chain(
+                // append mirrored edges if the shape is symmetrical
+                if shape.is_symmetrical() {
+                    0..shape.edge_count()
+                } else {
+                    0..0
+                }
+                .map(|i| shape.get_edge(i).mirrored()),
+            ) {
+                let assert_print_info = |cond: bool, pt: m::Vec2, cp: ClosestBoundaryPoint| {
+                    assert!(
+                        cond,
+                        "shape {:?}\n\nedge {:?}\n\npoint {:?}\n\nclosest {:?}",
+                        shape, edge, pt, cp
+                    );
                 };
                 for t in [0.3, 0.5, 0.7] {
                     let pt_on = edge.edge.start + t * edge.edge.length * *edge.edge.dir;
                     let pt_in = pt_on - 0.05 * *edge.normal;
                     let cp_in = shape.closest_boundary_point(pt_in);
-                    assert_print_info(cp_in.is_interior);
                     assert_print_info(
-                        (cp_in.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001,
+                        cp_in.is_interior
+                            && (cp_in.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001
+                            && (cp_in.pt - pt_in).dot(*edge.edge.dir).abs() < 0.0001,
+                        pt_in,
+                        cp_in,
                     );
-                    assert_print_info((cp_in.pt - pt_in).dot(*edge.edge.dir).abs() < 0.0001);
                     let pt_out = pt_on + 0.05 * *edge.normal;
                     let cp_out = shape.closest_boundary_point(pt_out);
-                    assert_print_info(!cp_out.is_interior);
+                    assert_print_info(!cp_out.is_interior, pt_out, cp_out);
                     assert_print_info(
-                        (cp_out.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001,
+                        !cp_out.is_interior
+                            && (cp_out.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001
+                            && (cp_out.pt - pt_out).dot(*edge.edge.dir).abs() < 0.0001,
+                        pt_out,
+                        cp_out,
                     );
-                    assert_print_info((cp_out.pt - pt_out).dot(*edge.edge.dir).abs() < 0.0001);
-                    let pt_before_out = edge.edge.start - 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
-                    let cp_before_out = shape.closest_boundary_point(pt_before_out);
-                    assert_print_info(!cp_before_out.is_interior);
-                    assert_print_info((cp_before_out.pt - edge.edge.start).mag_sq() < 0.0001);
-                    let edge_end = edge.edge.end_point();
-                    let pt_after_out = edge_end + 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
-                    let cp_after_out = shape.closest_boundary_point(pt_after_out);
-                    assert_print_info(!cp_after_out.is_interior);
-                    assert_print_info((cp_after_out.pt - edge_end).mag_sq() < 0.0001);
                 }
+                let pt_before_out = edge.edge.start - 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
+                let cp_before_out = shape.closest_boundary_point(pt_before_out);
+                assert_print_info(
+                    !cp_before_out.is_interior
+                        && (cp_before_out.pt - edge.edge.start).mag_sq() < 0.0001,
+                    pt_before_out,
+                    cp_before_out,
+                );
+                let edge_end = edge.edge.end_point();
+                let pt_after_out = edge_end + 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
+                let cp_after_out = shape.closest_boundary_point(pt_after_out);
+                assert_print_info(
+                    !cp_after_out.is_interior && (cp_after_out.pt - edge_end).mag_sq() < 0.0001,
+                    pt_after_out,
+                    cp_after_out,
+                );
             }
         }
     }
@@ -721,7 +838,6 @@ mod tests {
         // go around in a circle and make sure supporting_edge always returns an edge
         // that is also returned by get_edge (and it's the closest one and oriented correctly)
         for shape in TEST_POLYGONS {
-            dbg!(shape);
             for dir in sample_unit_circle(20) {
                 let supp = shape.supporting_edge(*dir);
                 let closest_edge = (0..shape.edge_count())
@@ -756,6 +872,36 @@ mod tests {
                 assert_print_info((closest_edge.start - supp.edge.start).mag_sq() < 0.0001);
                 assert_print_info((*closest_edge.dir - *supp.edge.dir).mag_sq() < 0.0001);
                 assert_print_info((closest_edge.length - supp.edge.length).abs() < 0.0001);
+            }
+        }
+    }
+
+    #[test]
+    fn projected_extent_matches_edge_list() {
+        // go around in a circle again, this time checking that projected_extent
+        // returns the distance of the farthest point in the edge list
+        for shape in TEST_POLYGONS {
+            for dir in sample_unit_circle(20) {
+                let proj = shape.projected_extent(dir);
+                let farthest_point_proj = (0..shape.edge_count())
+                    .map(|i| {
+                        let edge = shape.get_edge(i);
+                        let point_proj = dir.dot(edge.edge.start);
+                        if shape.is_symmetrical() && point_proj < 0.0 {
+                            -point_proj
+                        } else {
+                            point_proj
+                        }
+                    })
+                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .unwrap();
+
+                assert!(
+                    (proj - farthest_point_proj).abs() < 0.0001,
+                    "shape {:?}\n\ndir {:?}",
+                    shape,
+                    dir
+                );
             }
         }
     }

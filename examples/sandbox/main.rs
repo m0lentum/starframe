@@ -290,6 +290,11 @@ impl game::GameState for State {
                         hh: distr::Uniform::from(0.3..0.5).sample(&mut rng),
                     });
                 }
+                if ui.button("Hexagon").clicked() {
+                    shape_to_spawn = Some(phys::ColliderPolygon::Hexagon {
+                        outer_r: distr::Uniform::from(0.4..0.7).sample(&mut rng),
+                    });
+                }
             });
             if self.spawner_circle_r > 0.0 {
                 ui.horizontal(|ui| {
