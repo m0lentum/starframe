@@ -475,10 +475,11 @@ impl Physics {
             let aabb = match coll.get_neighbor(&l_body_sub) {
                 Some(b) => coll
                     .c
-                    .aabb(pose.c)
+                    .shape
+                    .aabb(*pose.c)
                     .extended(b.c.velocity.linear * frame_dt)
                     .padded(max_expected_accel_over_frame),
-                None => coll.c.aabb(pose.c),
+                None => coll.c.shape.aabb(*pose.c),
             };
 
             let coll_idx = coll.key().idx;
@@ -1285,7 +1286,7 @@ impl Physics {
         ),
     ) -> impl '_ + Iterator<Item = graph::NodeRef<'g, Collider>> {
         self.spatial_index
-            .test_aabb(shape.aabb(&pose), mask)
+            .test_aabb(shape.aabb(pose), mask)
             .filter_map(move |coll_key| {
                 let their_coll = l_collider.get(coll_key)?;
                 let their_pose = their_coll.get_neighbor(l_pose)?;

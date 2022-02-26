@@ -23,6 +23,14 @@ pub struct AABB {
 }
 
 impl AABB {
+    /// Move the AABB by the given vector without changing its size.
+    pub fn translated(self, translation: m::Vec2) -> Self {
+        Self {
+            min: self.min + translation,
+            max: self.max + translation,
+        }
+    }
+
     /// Increase the size of the AABB by the same amount in all directions.
     pub fn padded(mut self, amount: f64) -> Self {
         self.min.x -= amount;

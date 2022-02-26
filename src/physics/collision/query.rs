@@ -19,6 +19,12 @@ pub fn point_collider_bool(point: m::Vec2, pose: &m::Pose, coll: &Collider) -> b
             let y_dist = p_wrt_c.y.abs() - hh;
             x_dist <= 0.0 || y_dist <= 0.0 || x_dist * x_dist + y_dist * y_dist < r * r
         }
+        // this will probably be what I do for all other polygons,
+        // but keeping the match explicit so I have to look here every time and think about it
+        poly @ ColliderPolygon::Triangle { .. } => {
+            let closest = poly.closest_boundary_point(p_wrt_c);
+            closest.is_interior || (closest.pt - p_wrt_c).mag_sq() < r * r
+        }
     }
 }
 

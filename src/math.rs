@@ -59,7 +59,7 @@ impl Unit<Vec2> {
         Unit(v.normalized())
     }
 
-    pub fn new_unchecked(v: Vec2) -> Self {
+    pub const fn new_unchecked(v: Vec2) -> Self {
         Unit(v)
     }
 
@@ -166,4 +166,12 @@ pub fn left_normal(v: Vec2) -> Vec2 {
 #[inline]
 pub fn right_normal(v: Vec2) -> Vec2 {
     Vec2::new(v.y, -v.x)
+}
+#[inline]
+pub fn unit_left_normal(u: Unit<Vec2>) -> Unit<Vec2> {
+    Unit::new_unchecked(left_normal(*u))
+}
+#[inline]
+pub fn unit_right_normal(u: Unit<Vec2>) -> Unit<Vec2> {
+    Unit::new_unchecked(right_normal(*u))
 }

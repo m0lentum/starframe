@@ -121,16 +121,6 @@ impl Collider {
     }
 
     #[inline]
-    pub fn area(&self) -> f64 {
-        self.shape.area()
-    }
-
-    #[inline]
-    pub fn moment_of_inertia_coef(&self) -> f64 {
-        self.shape.moment_of_inertia_coef()
-    }
-
-    #[inline]
     pub fn is_solid(&self) -> bool {
         matches!(self.ty, ColliderType::Solid(_))
     }
@@ -139,15 +129,20 @@ impl Collider {
     pub fn is_trigger(&self) -> bool {
         matches!(self.ty, ColliderType::Trigger)
     }
+}
 
-    #[inline]
-    pub fn bounding_sphere_r(&self) -> f64 {
-        self.shape.bounding_sphere_r()
-    }
+/// Type of a collider. Solid ones respond to collisions when attached to bodies.
+/// Triggers only cause an event to be sent.
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
+pub enum ColliderType {
+    Solid(Material),
+    Trigger,
+}
 
-    #[inline]
-    pub fn aabb(&self, pose: &m::Pose) -> AABB {
-        self.shape.aabb(pose)
+impl Default for ColliderType {
+    fn default() -> Self {
+        Self::Solid(Material::default())
     }
 }
 
@@ -173,15 +168,15 @@ impl ColliderShape {
     #[inline]
     pub fn area(&self) -> f64 {
         let r = self.circle_r;
-        // area of a circle-convex polygon sum:
-        // the polygon itself
-        // plus exactly one circle (sum of all corners),
-        // plus an extra polygon with height r for each face of the polygon
-        let circ_area = std::f64::consts::PI * r * r;
-        match self.polygon {
-            ColliderPolygon::Point => circ_area,
-            ColliderPolygon::LineSegment { hl } => circ_area + (4.0 * hl * r),
-            ColliderPolygon::Rect { hw, hh } => 4.0 * hw * hh,
+        if r == 0.0 {
+            self.polygon.area()
+        } else {
+            use std::f64::consts::PI;
+            // area of a circle-convex polygon sum:
+            // the polygon itself
+            // plus exactly one circle (sum of all corners),
+            // plus an extra polygon with height r for each face of the polygon
+            self.polygon.area() + PI * r * r + self.polygon.side_length_sum() * r
         }
     }
 
@@ -196,38 +191,24 @@ impl ColliderShape {
             ColliderPolygon::Point => r * r / 2.0,
             // rough estimation of a capsule as a rectangle,
             // since an accurate formula is not on wikipedia.
-            // TODO: calculate a formula by hand
+            // TODO: work out all of these with circle component added
             ColliderPolygon::LineSegment { hl } => (hl * hl + r * r) / 3.0,
             ColliderPolygon::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
+            // quick approximation as a circle for now
+            ColliderPolygon::Triangle { outer_r } => (outer_r + r) / 2.0,
         }
     }
 
     #[inline]
     pub fn bounding_sphere_r(&self) -> f64 {
-        let r = self.circle_r;
-        match self.polygon {
-            ColliderPolygon::Point => r,
-            ColliderPolygon::LineSegment { hl } => hl + r,
-            ColliderPolygon::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
-        }
+        self.polygon.bounding_sphere_r() + self.circle_r
     }
 
-    pub fn aabb(&self, pose: &m::Pose) -> AABB {
-        let r = self.circle_r;
-        // for symmetrical shapes, the box is one vector mirrored both ways
-        // (always plus r in both x and y)
-        let extent = match self.polygon {
-            ColliderPolygon::Point => m::Vec2::zero(),
-            ColliderPolygon::LineSegment { hl } => (pose.rotation * m::Vec2::new(hl, 0.0)).abs(),
-            ColliderPolygon::Rect { hw, hh } => {
-                (pose.rotation * m::Vec2::new(hw, 0.0)).abs()
-                    + (pose.rotation * m::Vec2::new(0.0, hh)).abs()
-            }
-        } + m::Vec2::new(r, r);
-        AABB {
-            min: pose.translation - extent,
-            max: pose.translation + extent,
-        }
+    pub fn aabb(&self, pose: m::Pose) -> AABB {
+        self.polygon
+            .aabb(pose.rotation)
+            .padded(self.circle_r)
+            .translated(pose.translation)
     }
 
     /// Enlarge the circle component of the shape.
@@ -241,20 +222,110 @@ impl ColliderShape {
 
 /// The polygonal part of a collider's shape.
 ///
-/// For symmetrical shapes, dimensions are stored "halved",
+/// Dimensions are stored "halved",
 /// as distances from the origin to the edge.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub enum ColliderPolygon {
+    // With nonzero `circle_r`, this is a circle.
+    // With zero r it doesn't make much sense.
     Point,
-    LineSegment { hl: f64 },
-    Rect { hw: f64, hh: f64 },
+    // With nonzero `circle_r` this is a capsule.
+    // It may or may not make sense with zero r.
+    LineSegment {
+        /// half-length
+        hl: f64,
+    },
+    // A rectangle.
+    Rect {
+        /// half-width
+        hw: f64,
+        /// half-height
+        hh: f64,
+    },
+    /// An equilateral triangle.
+    /// The bottom edge is parallel to the x-axis.
+    Triangle {
+        /// Radius of the circumscribed circle of the triangle,
+        /// i.e. distance to its points from the center
+        outer_r: f64,
+    },
 }
+
+//
+// shape-specific utilities and axis constants
+//
+
+// consts for axes pointing at different non-axis-aligned angles
+// (naming convention: angle in degrees CCW from positive x-axis)
+// trig functions aren't const so I have to precompute these
+const FRAC_PI_6_COS: f64 = 0.866025403784;
+const FRAC_PI_6_SIN: f64 = 0.5;
+const FRAC_PI_6_TAN: f64 = 0.57735026919;
+const FRAC_PI_3_COS: f64 = FRAC_PI_6_SIN;
+const FRAC_PI_3_SIN: f64 = FRAC_PI_6_COS;
+const AXIS_30_DEG: m::Unit<m::Vec2> =
+    m::Unit::new_unchecked(m::Vec2::new(FRAC_PI_6_COS, FRAC_PI_6_SIN));
+const AXIS_60_DEG: m::Unit<m::Vec2> =
+    m::Unit::new_unchecked(m::Vec2::new(FRAC_PI_3_COS, FRAC_PI_3_SIN));
+// these are left normals of 30 and 60 but normal can't be const computed because of negation
+const AXIS_120_DEG: m::Unit<m::Vec2> =
+    m::Unit::new_unchecked(m::Vec2::new(-FRAC_PI_6_SIN, FRAC_PI_6_COS));
+const AXIS_150_DEG: m::Unit<m::Vec2> =
+    m::Unit::new_unchecked(m::Vec2::new(-FRAC_PI_3_SIN, FRAC_PI_3_COS));
 
 impl ColliderPolygon {
     //
-    // internals for collision detection
+    // physics properties
     //
+
+    fn area(&self) -> f64 {
+        match *self {
+            Self::Point => 0.0,
+            Self::LineSegment { .. } => 0.0,
+            Self::Rect { hw, hh } => 4.0 * hw * hh,
+            Self::Triangle { outer_r } => 3.0 * 0.25 * outer_r * outer_r / FRAC_PI_6_TAN,
+        }
+    }
+
+    fn side_length_sum(&self) -> f64 {
+        match *self {
+            Self::Point => 0.0,
+            Self::LineSegment { hl } => 4.0 * hl, // counts in both directions
+            Self::Rect { hw, hh } => 4.0 * (hw + hh),
+            Self::Triangle { outer_r } => 3.0 * outer_r / FRAC_PI_6_TAN,
+        }
+    }
+
+    //
+    // collision detection
+    //
+
+    fn bounding_sphere_r(&self) -> f64 {
+        match *self {
+            Self::Point => 0.0,
+            Self::LineSegment { hl } => hl,
+            Self::Rect { hw, hh } => (hw * hw + hh * hh).sqrt(),
+            Self::Triangle { outer_r } => outer_r,
+        }
+    }
+
+    fn aabb(&self, rotation: m::Rotor2) -> AABB {
+        let symmetric_extent = match *self {
+            Self::Point => m::Vec2::zero(),
+            Self::LineSegment { hl } => (rotation * m::Vec2::new(hl, 0.0)).abs(),
+            Self::Rect { hw, hh } => {
+                (rotation * m::Vec2::new(hw, 0.0)).abs() + (rotation * m::Vec2::new(0.0, hh)).abs()
+            }
+            // probably not worth the computation time of all the trigonometry
+            // to get the exact smallest aabb
+            Self::Triangle { outer_r } => m::Vec2::new(outer_r, outer_r),
+        };
+        AABB {
+            min: -symmetric_extent,
+            max: symmetric_extent,
+        }
+    }
 
     /// Get the closest point to a point on the exterior edge of the polygon,
     /// plus whether or not the queried point is inside the polygon.
@@ -300,6 +371,33 @@ impl ColliderPolygon {
                     },
                 }
             }
+            _other_poly => {
+                // negative distance used to find the closest edge if we're on the inside
+                let mut closest_edge_dist = f64::MIN;
+                let mut closest_edge_normal = m::Unit::unit_x();
+                for edge in (0..self.edge_count()).map(|i| self.get_edge(i)) {
+                    let dist_from_edge = edge.normal.dot(pt) - edge.extent;
+                    if dist_from_edge >= 0.0 {
+                        // outside of the shape, either along this edge or in one of the adjacent
+                        // vertex Voronoi regions. Get the closest point by clamping to this edge
+                        let edge_t_to_pt = edge.edge.dir.dot(pt - edge.edge.start);
+                        return ClosestBoundaryPoint {
+                            pt: edge.edge.start
+                                + edge_t_to_pt.max(0.0).min(edge.edge.length) * *edge.edge.dir,
+                            is_interior: false,
+                        };
+                    }
+                    // dist_from_edge is negative, point is on its inside
+                    if dist_from_edge > closest_edge_dist {
+                        closest_edge_dist = dist_from_edge;
+                        closest_edge_normal = edge.normal;
+                    }
+                }
+                ClosestBoundaryPoint {
+                    pt: pt - closest_edge_dist * *closest_edge_normal,
+                    is_interior: true,
+                }
+            }
         }
     }
 
@@ -308,6 +406,7 @@ impl ColliderPolygon {
     pub(crate) fn is_symmetrical(&self) -> bool {
         match *self {
             Self::Point | Self::LineSegment { .. } | Self::Rect { .. } => true,
+            Self::Triangle { .. } => false,
         }
     }
 
@@ -317,6 +416,7 @@ impl ColliderPolygon {
             Self::Point => 0,
             Self::LineSegment { .. } => 1,
             Self::Rect { .. } => 2,
+            Self::Triangle { .. } => 3,
         }
     }
 
@@ -363,6 +463,38 @@ impl ColliderPolygon {
                 },
                 _ => bad_edge(),
             },
+            Self::Triangle { outer_r } => match idx {
+                0 => PolygonEdge {
+                    normal: -m::Unit::unit_y(),
+                    // distance to the endpoints of an equilateral triangle
+                    // is double the radius of the inscribed circle
+                    extent: outer_r / 2.0,
+                    edge: Edge {
+                        start: -outer_r * *AXIS_30_DEG,
+                        dir: m::Unit::unit_x(),
+                        length: outer_r / FRAC_PI_6_TAN,
+                    },
+                },
+                1 => PolygonEdge {
+                    normal: AXIS_30_DEG,
+                    extent: outer_r / 2.0,
+                    edge: Edge {
+                        start: -outer_r * *AXIS_150_DEG,
+                        dir: AXIS_120_DEG,
+                        length: outer_r / FRAC_PI_6_TAN,
+                    },
+                },
+                2 => PolygonEdge {
+                    normal: AXIS_150_DEG,
+                    extent: outer_r / 2.0,
+                    edge: Edge {
+                        start: m::Vec2::new(0.0, outer_r),
+                        dir: -AXIS_60_DEG,
+                        length: outer_r / FRAC_PI_6_TAN,
+                    },
+                },
+                _ => bad_edge(),
+            },
         }
     }
 
@@ -375,6 +507,14 @@ impl ColliderPolygon {
             Self::Point => 0.0,
             Self::LineSegment { hl } => dir.x.abs() * hl,
             Self::Rect { hw, hh } => dir.x.abs() * hw + dir.y.abs() * hh,
+            Self::Triangle { outer_r } => {
+                [m::Unit::unit_y(), -AXIS_30_DEG, -AXIS_150_DEG]
+                    .into_iter()
+                    .map(|dir_to_vertex| dir_to_vertex.dot(*dir))
+                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .unwrap()
+                    * outer_r
+            }
         }
     }
 
@@ -384,21 +524,21 @@ impl ColliderPolygon {
     /// `dir` must be given in object-local space but does not need to be
     /// normalized (note to self: DO NOT USE THE VALUE OF `dir * thing`, only compare).
     /// Returns None only if the shape is Point.
-    pub(super) fn supporting_edge(&self, dir: m::Vec2) -> Option<SupportingEdge> {
+    pub(super) fn supporting_edge(&self, dir: m::Vec2) -> SupportingEdge {
         match *self {
-            Self::Point => None,
-            Self::LineSegment { hl } => Some(SupportingEdge {
+            Self::Point => panic!("Don't call supporting_edge on a point"),
+            Self::LineSegment { hl } => SupportingEdge {
                 edge: Edge {
                     start: m::Vec2::new(hl.copysign(dir.x), 0.0),
                     dir: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(-dir.x), 0.0)),
                     length: 2.0 * hl,
                 },
                 normal: m::Unit::new_unchecked(m::Vec2::new(0.0, 1_f64.copysign(dir.y))),
-            }),
+            },
             Self::Rect { hw, hh } => {
                 let start = m::Vec2::new(hw.copysign(dir.x), hh.copysign(dir.y));
                 if dir.x.abs() > dir.y.abs() {
-                    Some(SupportingEdge {
+                    SupportingEdge {
                         edge: Edge {
                             start,
                             dir: m::Unit::new_unchecked(m::Vec2::new(
@@ -408,9 +548,9 @@ impl ColliderPolygon {
                             length: hh * 2.0,
                         },
                         normal: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(dir.x), 0.0)),
-                    })
+                    }
                 } else {
-                    Some(SupportingEdge {
+                    SupportingEdge {
                         edge: Edge {
                             start,
                             dir: m::Unit::new_unchecked(m::Vec2::new(
@@ -420,7 +560,34 @@ impl ColliderPolygon {
                             length: hw * 2.0,
                         },
                         normal: m::Unit::new_unchecked(m::Vec2::new(0.0, 1_f64.copysign(dir.y))),
-                    })
+                    }
+                }
+            }
+            Self::Triangle { outer_r } => {
+                let (normal, _) = [-m::Unit::unit_y(), AXIS_30_DEG, AXIS_150_DEG]
+                    .into_iter()
+                    .map(|n| (n, n.dot(dir)))
+                    .max_by(|(_, d0), (_, d1)| d0.partial_cmp(d1).unwrap())
+                    .unwrap();
+                let edge_dir = m::unit_left_normal(normal);
+                // edge_dir away from the supporting point
+                let edge_dir = if edge_dir.dot(dir) < 0.0 {
+                    edge_dir
+                } else {
+                    -edge_dir
+                };
+
+                let inner_r = outer_r / 2.0;
+                let half_edge_len = inner_r / FRAC_PI_6_TAN;
+                let edge_start = inner_r * *normal - half_edge_len * *edge_dir;
+
+                SupportingEdge {
+                    edge: Edge {
+                        start: edge_start,
+                        dir: edge_dir,
+                        length: half_edge_len * 2.0,
+                    },
+                    normal,
                 }
             }
         }
@@ -438,22 +605,9 @@ impl ColliderPolygon {
                 panic!("Angle between edges shouldn't be called for points or line segments")
             }
             Self::Rect { .. } => 1.0,
+            // precomputed tan(pi / 3)
+            Self::Triangle { .. } => 1.73205080757,
         }
-    }
-}
-
-/// Type of a collider. Solid ones respond to collisions when attached to bodies.
-/// Triggers only cause an event to be sent.
-#[derive(Clone, Copy, Debug)]
-#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
-pub enum ColliderType {
-    Solid(Material),
-    Trigger,
-}
-
-impl Default for ColliderType {
-    fn default() -> Self {
-        Self::Solid(Material::default())
     }
 }
 
@@ -511,5 +665,107 @@ impl Material {
     /// It is computed as the largest coefficient between the two bodies.
     pub fn restitution_with(&self, other: &Self) -> f64 {
         self.restitution_coef.max(other.restitution_coef)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_POLYGONS: [ColliderPolygon; 2] = [
+        ColliderPolygon::Rect { hw: 0.5, hh: 0.8 },
+        ColliderPolygon::Triangle { outer_r: 1.0 },
+    ];
+
+    /// Closest boundary points are found correctly
+    /// from every Voronoi region of every polygon shape
+    #[test]
+    fn closest_boundary_points() {
+        for shape in TEST_POLYGONS {
+            for edge in (0..shape.edge_count()).map(|i| shape.get_edge(i)) {
+                let assert_print_info = |cond: bool| {
+                    assert!(cond, "shape {:?}\n\nedge {:?}", shape, edge);
+                };
+                for t in [0.3, 0.5, 0.7] {
+                    let pt_on = edge.edge.start + t * edge.edge.length * *edge.edge.dir;
+                    let pt_in = pt_on - 0.05 * *edge.normal;
+                    let cp_in = shape.closest_boundary_point(pt_in);
+                    assert_print_info(cp_in.is_interior);
+                    assert_print_info(
+                        (cp_in.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001,
+                    );
+                    assert_print_info((cp_in.pt - pt_in).dot(*edge.edge.dir).abs() < 0.0001);
+                    let pt_out = pt_on + 0.05 * *edge.normal;
+                    let cp_out = shape.closest_boundary_point(pt_out);
+                    assert_print_info(!cp_out.is_interior);
+                    assert_print_info(
+                        (cp_out.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001,
+                    );
+                    assert_print_info((cp_out.pt - pt_out).dot(*edge.edge.dir).abs() < 0.0001);
+                    let pt_before_out = edge.edge.start - 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
+                    let cp_before_out = shape.closest_boundary_point(pt_before_out);
+                    assert_print_info(!cp_before_out.is_interior);
+                    assert_print_info((cp_before_out.pt - edge.edge.start).mag_sq() < 0.0001);
+                    let edge_end = edge.edge.end_point();
+                    let pt_after_out = edge_end + 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
+                    let cp_after_out = shape.closest_boundary_point(pt_after_out);
+                    assert_print_info(!cp_after_out.is_interior);
+                    assert_print_info((cp_after_out.pt - edge_end).mag_sq() < 0.0001);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn supporting_edges_match_edge_list() {
+        // go around in a circle and make sure supporting_edge always returns an edge
+        // that is also returned by get_edge (and it's the closest one and oriented correctly)
+        for shape in TEST_POLYGONS {
+            dbg!(shape);
+            for dir in sample_unit_circle(20) {
+                let supp = shape.supporting_edge(*dir);
+                let closest_edge = (0..shape.edge_count())
+                    .map(|i| {
+                        let edge = shape.get_edge(i);
+                        if shape.is_symmetrical() && edge.normal.dot(*dir) < 0.0 {
+                            edge.mirrored()
+                        } else {
+                            edge
+                        }
+                    })
+                    .max_by(|e0, e1| {
+                        e0.normal
+                            .dot(*dir)
+                            .partial_cmp(&e1.normal.dot(*dir))
+                            .unwrap()
+                    })
+                    .unwrap();
+                let closest_edge = if closest_edge.edge.dir.dot(*dir) < 0.0 {
+                    closest_edge.edge
+                } else {
+                    closest_edge.edge.flipped()
+                };
+
+                let assert_print_info = |cond: bool| {
+                    assert!(
+                        cond,
+                        "shape {:?}\n\ndir {:?}\n\nsupporting edge {:?}\n\nclosest edge {:?}",
+                        shape, dir, supp, closest_edge
+                    );
+                };
+                assert_print_info((closest_edge.start - supp.edge.start).mag_sq() < 0.0001);
+                assert_print_info((*closest_edge.dir - *supp.edge.dir).mag_sq() < 0.0001);
+                assert_print_info((closest_edge.length - supp.edge.length).abs() < 0.0001);
+            }
+        }
+    }
+
+    fn sample_unit_circle(sample_count: usize) -> impl Iterator<Item = m::Unit<m::Vec2>> {
+        let angle_incr = std::f64::consts::TAU / sample_count as f64;
+        (0..sample_count).map(move |i| {
+            let angle = i as f64 * angle_incr;
+            let (sin, cos) = angle.sin_cos();
+            m::Unit::new_unchecked(m::Vec2::new(cos, sin))
+        })
     }
 }

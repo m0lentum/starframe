@@ -279,15 +279,10 @@ impl game::GameState for State {
             ui.heading("Spawn objects");
             ui.add(egui::Slider::new(&mut self.spawner_circle_r, 0.0..=1.0).text("Radius"));
             ui.horizontal_wrapped(|ui| {
-                if self.spawner_circle_r > 0.0 {
-                    if ui.button("Circle").clicked() {
-                        shape_to_spawn = Some(phys::ColliderPolygon::Point);
-                    }
-                    if ui.button("Capsule").clicked() {
-                        shape_to_spawn = Some(phys::ColliderPolygon::LineSegment {
-                            hl: distr::Uniform::from(0.3..0.5).sample(&mut rng),
-                        });
-                    }
+                if ui.button("Triangle").clicked() {
+                    shape_to_spawn = Some(phys::ColliderPolygon::Triangle {
+                        outer_r: distr::Uniform::from(0.5..0.8).sample(&mut rng),
+                    });
                 }
                 if ui.button("Rect").clicked() {
                     shape_to_spawn = Some(phys::ColliderPolygon::Rect {
@@ -296,6 +291,18 @@ impl game::GameState for State {
                     });
                 }
             });
+            if self.spawner_circle_r > 0.0 {
+                ui.horizontal(|ui| {
+                    if ui.button("Circle").clicked() {
+                        shape_to_spawn = Some(phys::ColliderPolygon::Point);
+                    }
+                    if ui.button("Capsule").clicked() {
+                        shape_to_spawn = Some(phys::ColliderPolygon::LineSegment {
+                            hl: distr::Uniform::from(0.3..0.5).sample(&mut rng),
+                        });
+                    }
+                });
+            }
 
             ui.separator();
             ui.heading("Other controls");

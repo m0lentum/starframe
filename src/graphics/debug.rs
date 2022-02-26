@@ -294,7 +294,7 @@ impl DebugVisualizer {
                 };
                 let pos = pose.c.translation;
                 let r = match body.get_neighbor(&l_coll) {
-                    Some(coll) => coll.c.bounding_sphere_r(),
+                    Some(coll) => coll.c.shape.bounding_sphere_r(),
                     None => 0.0,
                 };
                 let r = m::Vec2::new(r, r);

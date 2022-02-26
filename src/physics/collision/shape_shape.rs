@@ -230,8 +230,7 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 
     let incident_edge_inner_local = shapes[shape_order[1]]
         .polygon
-        .supporting_edge(*pen_axis_wrt_snd)
-        .expect("Don't use generic collision detection with circles");
+        .supporting_edge(*pen_axis_wrt_snd);
     // if neither shape has a circle component, we can possibly early out after this
     let both_simple_polygons =
         shapes[shape_order[0]].circle_r == 0.0 && shapes[shape_order[1]].circle_r == 0.0;
@@ -403,6 +402,7 @@ pub(crate) struct Edge {
     pub length: f64,
 }
 impl Edge {
+    #[inline]
     pub fn transformed(self, pose: Pose) -> Self {
         Self {
             start: pose * self.start,
@@ -411,6 +411,7 @@ impl Edge {
         }
     }
 
+    #[inline]
     pub fn mirrored(self) -> Self {
         Self {
             start: -self.start,
@@ -419,12 +420,30 @@ impl Edge {
         }
     }
 
+    #[inline]
     pub fn offset(self, amount: m::Vec2) -> Self {
         Self {
             start: self.start + amount,
             dir: self.dir,
             length: self.length,
         }
+    }
+
+    // currently only used in tests
+    #[allow(dead_code)]
+    #[inline]
+    pub fn flipped(self) -> Self {
+        Self {
+            start: self.end_point(),
+            dir: -self.dir,
+            length: self.length,
+        }
+    }
+
+    #[allow(dead_code)]
+    #[inline]
+    pub fn end_point(&self) -> m::Vec2 {
+        self.start + self.length * *self.dir
     }
 }
 
