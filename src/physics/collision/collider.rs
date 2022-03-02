@@ -683,8 +683,8 @@ impl ColliderPolygon {
         }
     }
 
-    /// Tangent of half of the angle between edges is needed to compute the edges
-    /// of the outer polygon from the inner polygon.
+    /// Tangent of HALF (future self, remember this) of the angle between edges is needed to
+    /// compute the edges of the outer polygon from the inner polygon.
     ///
     /// For now we only have regular polygons and can get away with returning
     /// a constant with no parameters. If I want general polygons I'll have to think
@@ -695,10 +695,10 @@ impl ColliderPolygon {
                 panic!("Angle between edges shouldn't be called for points or line segments")
             }
             Self::Rect { .. } => 1.0,
-            // tan(pi / 3)
-            Self::Triangle { .. } => 1.73205080757,
-            // tan(2 * pi / 3)
-            Self::Hexagon { .. } => -1.73205080757,
+            // tan(1/2 * pi/3)
+            Self::Triangle { .. } => 0.57735026919,
+            // tan(1/2 * 2pi/3)
+            Self::Hexagon { .. } => 1.73205080757,
         }
     }
 }
