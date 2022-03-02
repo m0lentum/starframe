@@ -17,7 +17,7 @@ pub fn point_collider_bool(point: m::Vec2, pose: &m::Pose, coll: &Collider) -> b
         ColliderPolygon::Rect { hw, hh } => {
             let x_dist = p_wrt_c.x.abs() - hw;
             let y_dist = p_wrt_c.y.abs() - hh;
-            x_dist <= 0.0 || y_dist <= 0.0 || x_dist * x_dist + y_dist * y_dist < r * r
+            (x_dist <= 0.0 && y_dist <= 0.0) || x_dist * x_dist + y_dist * y_dist < r * r
         }
         // this will probably be what I do for all other polygons,
         // but keeping the match explicit so I have to look here every time and think about it
