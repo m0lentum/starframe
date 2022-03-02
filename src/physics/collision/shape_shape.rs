@@ -166,7 +166,8 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     // and access to the closest pair of polygon edges
 
     let mut pen_depth = f64::MAX;
-    let mut pen_axis: Option<PolygonEdge> = None;
+    struct EdgeAndExtent(PolygonEdge, f64);
+    let mut pen_axis: Option<EdgeAndExtent> = None;
     // shape owning the current axis comes first
     let mut shape_order = [0, 1];
     for (edge_idx, s_order) in itertools::chain(
@@ -178,18 +179,18 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         // check that the axis points towards the other object
         let edge = if edge.normal.dot(dist) >= 0.0 {
             edge
-        } else if shapes[s_order[0]].polygon.is_symmetrical() {
+        } else if shapes[s_order[0]].polygon.is_mirror_symmetrical() {
             edge.mirrored()
         } else {
             // we can skip axes that point away and don't have an associated symmetry
-            // (not 100% sure this is true in all cases, if there's a bug make sure to look here)
             continue;
         };
+        let edge_extent = shapes[s_order[0]].polygon.get_edge_extent(edge_idx);
 
         // transform axis such that it's in the other object's local space
         // and points towards the first
         let axis_wrt_other = -(relative_poses[s_order[0]].rotation * edge.normal);
-        let depth = edge.extent
+        let depth = edge_extent
             + shapes[0].circle_r
             + shapes[s_order[1]].polygon.projected_extent(axis_wrt_other)
             + shapes[1].circle_r
@@ -200,14 +201,15 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         }
         if depth < pen_depth {
             pen_depth = depth;
-            pen_axis = Some(edge);
+            pen_axis = Some(EdgeAndExtent(edge, edge_extent));
             shape_order = s_order;
         }
     }
 
     // the only way we can have None here is if we called this for a circle-circle pair,
     // which has a more efficient special case available so shouldn't be used
-    let pen_edge = pen_axis.expect("Don't use generic test for circle-circle pairs");
+    let EdgeAndExtent(pen_edge, pen_edge_extent) =
+        pen_axis.expect("Don't use generic test for circle-circle pairs");
 
     // flip returned result if the axis of penetration is on the second shape
     let orient_result = if shape_order[0] == 0 {
@@ -249,7 +251,7 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         // check if the edge passes on the "inside" of the other,
         // if so this is a two-point contact
         EdgeClipResult::Passes { enters, exits } => {
-            let start_depth = pen_edge.extent + shapes[shape_order[0]].circle_r
+            let start_depth = pen_edge_extent + shapes[shape_order[0]].circle_r
                 - incident_edge_outer.start.dot(*pen_edge.normal);
             let dir_dot_axis = incident_edge_outer.dir.dot(*pen_edge.normal);
 
@@ -352,41 +354,25 @@ pub(super) struct ClosestBoundaryPoint {
     pub is_interior: bool,
 }
 
-/// The edge of a shape's polygon component that's closest to a given direction,
-/// starting from the supporting point in that direction.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct SupportingEdge {
-    pub edge: Edge,
-    /// The normal is used to expand the edge to the edge of the sum shape
-    /// of a circle and polygon.
+pub(crate) struct PolygonEdge {
     pub normal: m::Unit<m::Vec2>,
+    pub edge: Edge,
 }
-
-impl SupportingEdge {
+impl PolygonEdge {
+    /// Transform the edge by a Pose.
     pub fn transformed(self, pose: m::Pose) -> Self {
         Self {
             edge: self.edge.transformed(pose),
             normal: pose.rotation * self.normal,
         }
     }
-}
 
-/// A possible axis of separation, plus related information
-/// about the shape it's related to.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PolygonEdge {
-    pub normal: m::Unit<m::Vec2>,
-    /// Distance of the edge from the polygon's origin
-    pub extent: f64,
-    pub edge: Edge,
-}
-impl PolygonEdge {
     /// Mirror the edge with respect to the point at the origin.
     #[inline]
     pub fn mirrored(self) -> Self {
         Self {
             normal: -self.normal,
-            extent: self.extent,
             edge: self.edge.mirrored(),
         }
     }

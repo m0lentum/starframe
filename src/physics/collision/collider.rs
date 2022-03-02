@@ -1,5 +1,5 @@
 use super::{
-    shape_shape::{ClosestBoundaryPoint, Edge, PolygonEdge, SupportingEdge},
+    shape_shape::{ClosestBoundaryPoint, Edge, PolygonEdge},
     AABB,
 };
 use crate::math as m;
@@ -393,15 +393,17 @@ impl ColliderPolygon {
                 let mut closest_edge_normal = m::Unit::unit_x();
                 // the closest vertex to return if we're in a vertex Voronoi region on the outside
                 let mut closest_vertex: Option<m::Vec2> = None;
-                for edge in (0..self.edge_count()).map(|i| self.get_edge(i)) {
+                for (edge, edge_extent) in
+                    (0..self.edge_count()).map(|i| (self.get_edge(i), self.get_edge_extent(i)))
+                {
                     let dist_towards_edge = edge.normal.dot(pt);
                     let (edge, dist_towards_edge) =
-                        if dist_towards_edge < 0.0 && self.is_symmetrical() {
+                        if dist_towards_edge < 0.0 && self.is_mirror_symmetrical() {
                             (edge.mirrored(), -dist_towards_edge)
                         } else {
                             (edge, dist_towards_edge)
                         };
-                    let dist_from_edge = dist_towards_edge - edge.extent;
+                    let dist_from_edge = dist_towards_edge - edge_extent;
                     if dist_from_edge >= 0.0 {
                         // outside of the shape, either along this edge
                         // or in one of the adjacent vertex Voronoi regions
@@ -453,7 +455,8 @@ impl ColliderPolygon {
 
     /// Whether or not the shape has mirror symmetry with respect to the origin point.
     /// If true, we can only return half the edges and work with their mirror images.
-    pub(crate) fn is_symmetrical(&self) -> bool {
+    #[inline]
+    pub(crate) fn is_mirror_symmetrical(&self) -> bool {
         match *self {
             Self::Point | Self::LineSegment { .. } | Self::Rect { .. } | Self::Hexagon { .. } => {
                 true
@@ -489,7 +492,6 @@ impl ColliderPolygon {
             Self::Point => bad_edge(),
             Self::LineSegment { hl } => PolygonEdge {
                 normal: m::Unit::unit_y(),
-                extent: 0.0,
                 edge: Edge {
                     start: m::Vec2::new(hl, 0.0),
                     dir: -m::Unit::unit_x(),
@@ -499,7 +501,6 @@ impl ColliderPolygon {
             Self::Rect { hw, hh } => match idx {
                 0 => PolygonEdge {
                     normal: m::Unit::unit_x(),
-                    extent: hw,
                     edge: Edge {
                         start: m::Vec2::new(hw, -hh),
                         dir: m::Unit::unit_y(),
@@ -508,7 +509,6 @@ impl ColliderPolygon {
                 },
                 1 => PolygonEdge {
                     normal: m::Unit::unit_y(),
-                    extent: hh,
                     edge: Edge {
                         start: m::Vec2::new(hw, hh),
                         dir: -m::Unit::unit_x(),
@@ -522,7 +522,6 @@ impl ColliderPolygon {
                     normal: -m::Unit::unit_y(),
                     // distance to the endpoints of an equilateral triangle
                     // is double the radius of the inscribed circle
-                    extent: outer_r / 2.0,
                     edge: Edge {
                         start: -outer_r * *AXIS_30_DEG,
                         dir: m::Unit::unit_x(),
@@ -531,7 +530,6 @@ impl ColliderPolygon {
                 },
                 1 => PolygonEdge {
                     normal: AXIS_30_DEG,
-                    extent: outer_r / 2.0,
                     edge: Edge {
                         start: -outer_r * *AXIS_150_DEG,
                         dir: AXIS_120_DEG,
@@ -540,7 +538,6 @@ impl ColliderPolygon {
                 },
                 2 => PolygonEdge {
                     normal: AXIS_150_DEG,
-                    extent: outer_r / 2.0,
                     edge: Edge {
                         start: m::Vec2::new(0.0, outer_r),
                         dir: -AXIS_60_DEG,
@@ -552,10 +549,6 @@ impl ColliderPolygon {
             Self::Hexagon { outer_r } => match idx {
                 0 => PolygonEdge {
                     normal: AXIS_30_DEG,
-                    // TODO: all symmetrical shapes have the same extent in every direction.
-                    // possibly put this in another place so we can cache it instead of
-                    // computing it for every axis
-                    extent: FRAC_PI_6_COS * outer_r,
                     edge: Edge {
                         start: m::Vec2::new(outer_r, 0.0),
                         dir: AXIS_120_DEG,
@@ -564,7 +557,6 @@ impl ColliderPolygon {
                 },
                 1 => PolygonEdge {
                     normal: m::Unit::unit_y(),
-                    extent: FRAC_PI_6_COS * outer_r,
                     edge: Edge {
                         start: outer_r * *AXIS_60_DEG,
                         dir: -m::Unit::unit_x(),
@@ -573,7 +565,6 @@ impl ColliderPolygon {
                 },
                 2 => PolygonEdge {
                     normal: AXIS_150_DEG,
-                    extent: FRAC_PI_6_COS * outer_r,
                     edge: Edge {
                         start: outer_r * *AXIS_120_DEG,
                         dir: -AXIS_60_DEG,
@@ -582,6 +573,27 @@ impl ColliderPolygon {
                 },
                 _ => bad_edge(),
             },
+        }
+    }
+
+    /// Get the perpendicular distance from the shape's center to the given edge.
+    pub(super) fn get_edge_extent(&self, idx: usize) -> f64 {
+        let bad_edge = || {
+            panic!(
+                "Called get_edge for {:?} with an out of bounds index {}",
+                self, idx
+            )
+        };
+        match *self {
+            Self::Point => bad_edge(),
+            Self::LineSegment { .. } => 0.0,
+            Self::Rect { hw, hh } => match idx {
+                0 => hw,
+                1 => hh,
+                _ => bad_edge(),
+            },
+            Self::Triangle { outer_r } => outer_r / 2.0,
+            Self::Hexagon { outer_r } => FRAC_PI_6_COS * outer_r,
         }
     }
 
@@ -619,10 +631,10 @@ impl ColliderPolygon {
     /// `dir` must be given in object-local space but does not need to be
     /// normalized (note to self: DO NOT USE THE VALUE OF `dir * thing`, only compare).
     /// Returns None only if the shape is Point.
-    pub(super) fn supporting_edge(&self, dir: m::Vec2) -> SupportingEdge {
+    pub(super) fn supporting_edge(&self, dir: m::Vec2) -> PolygonEdge {
         match *self {
             Self::Point => panic!("Don't call supporting_edge on a point"),
-            Self::LineSegment { hl } => SupportingEdge {
+            Self::LineSegment { hl } => PolygonEdge {
                 edge: Edge {
                     start: m::Vec2::new(hl.copysign(dir.x), 0.0),
                     dir: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(-dir.x), 0.0)),
@@ -633,7 +645,7 @@ impl ColliderPolygon {
             Self::Rect { hw, hh } => {
                 let start = m::Vec2::new(hw.copysign(dir.x), hh.copysign(dir.y));
                 if dir.x.abs() > dir.y.abs() {
-                    SupportingEdge {
+                    PolygonEdge {
                         edge: Edge {
                             start,
                             dir: m::Unit::new_unchecked(m::Vec2::new(
@@ -645,7 +657,7 @@ impl ColliderPolygon {
                         normal: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(dir.x), 0.0)),
                     }
                 } else {
-                    SupportingEdge {
+                    PolygonEdge {
                         edge: Edge {
                             start,
                             dir: m::Unit::new_unchecked(m::Vec2::new(
@@ -662,7 +674,7 @@ impl ColliderPolygon {
                 let closest_edge = (0..self.edge_count())
                     .map(|i| {
                         let edge = self.get_edge(i);
-                        if self.is_symmetrical() && edge.normal.dot(dir) < 0.0 {
+                        if self.is_mirror_symmetrical() && edge.normal.dot(dir) < 0.0 {
                             edge.mirrored()
                         } else {
                             edge
@@ -671,7 +683,7 @@ impl ColliderPolygon {
                     .max_by(|e0, e1| e0.normal.dot(dir).partial_cmp(&e1.normal.dot(dir)).unwrap())
                     .unwrap();
 
-                SupportingEdge {
+                PolygonEdge {
                     edge: if closest_edge.edge.dir.dot(dir) < 0.0 {
                         closest_edge.edge
                     } else {
@@ -777,7 +789,7 @@ mod tests {
         for shape in TEST_POLYGONS {
             for edge in (0..shape.edge_count()).map(|i| shape.get_edge(i)).chain(
                 // append mirrored edges if the shape is symmetrical
-                if shape.is_symmetrical() {
+                if shape.is_mirror_symmetrical() {
                     0..shape.edge_count()
                 } else {
                     0..0
@@ -843,7 +855,7 @@ mod tests {
                 let closest_edge = (0..shape.edge_count())
                     .map(|i| {
                         let edge = shape.get_edge(i);
-                        if shape.is_symmetrical() && edge.normal.dot(*dir) < 0.0 {
+                        if shape.is_mirror_symmetrical() && edge.normal.dot(*dir) < 0.0 {
                             edge.mirrored()
                         } else {
                             edge
@@ -887,7 +899,7 @@ mod tests {
                     .map(|i| {
                         let edge = shape.get_edge(i);
                         let point_proj = dir.dot(edge.edge.start);
-                        if shape.is_symmetrical() && point_proj < 0.0 {
+                        if shape.is_mirror_symmetrical() && point_proj < 0.0 {
                             -point_proj
                         } else {
                             point_proj
