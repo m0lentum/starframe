@@ -342,117 +342,6 @@ impl ColliderPolygon {
         }
     }
 
-    /// Get the closest point to a point on the exterior edge of the polygon,
-    /// plus whether or not the queried point is inside the polygon.
-    ///
-    /// Used in the special case of circle - other shape collisions.
-    pub(super) fn closest_boundary_point(&self, pt: m::Vec2) -> ClosestBoundaryPoint {
-        match *self {
-            Self::Point => ClosestBoundaryPoint {
-                pt: m::Vec2::zero(),
-                is_interior: false,
-            },
-            Self::LineSegment { hl } => ClosestBoundaryPoint {
-                pt: m::Vec2::new(pt.x.max(-hl).min(hl), 0.0),
-                is_interior: false,
-            },
-            Self::Rect { hw, hh } => {
-                let x_dist = pt.x.abs() - hw;
-                let y_dist = pt.y.abs() - hh;
-                match (x_dist > 0.0, y_dist > 0.0) {
-                    // we're outside the whole rect and closest point is a corner
-                    (true, true) => ClosestBoundaryPoint {
-                        pt: m::Vec2::new(hw.copysign(pt.x), hh.copysign(pt.y)),
-                        is_interior: false,
-                    },
-                    // outside only on the x-axis
-                    (true, false) => ClosestBoundaryPoint {
-                        pt: m::Vec2::new(hw.copysign(pt.x), pt.y),
-                        is_interior: false,
-                    },
-                    // outside only on the y-axis
-                    (false, true) => ClosestBoundaryPoint {
-                        pt: m::Vec2::new(pt.x, hh.copysign(pt.y)),
-                        is_interior: false,
-                    },
-                    // inside
-                    (false, false) => ClosestBoundaryPoint {
-                        pt: if x_dist.abs() < y_dist.abs() {
-                            m::Vec2::new(hw.copysign(pt.x), pt.y)
-                        } else {
-                            m::Vec2::new(pt.x, hh.copysign(pt.y))
-                        },
-                        is_interior: true,
-                    },
-                }
-            }
-            // the following works for any shape using just edge information
-            Self::Triangle { .. } | Self::Hexagon { .. } => {
-                // negative distance used to find the closest edge if we're on the inside
-                let mut closest_edge_dist = f64::MIN;
-                let mut closest_edge_normal = m::Unit::unit_x();
-                // the closest vertex to return if we're in a vertex Voronoi region on the outside
-                let mut closest_vertex: Option<m::Vec2> = None;
-                for (edge, edge_extent) in
-                    (0..self.edge_count()).map(|i| (self.get_edge(i), self.get_edge_extent(i)))
-                {
-                    let dist_towards_edge = edge.normal.dot(pt);
-                    let (edge, dist_towards_edge) =
-                        if dist_towards_edge < 0.0 && self.is_mirror_symmetrical() {
-                            (edge.mirrored(), -dist_towards_edge)
-                        } else {
-                            (edge, dist_towards_edge)
-                        };
-                    let dist_from_edge = dist_towards_edge - edge_extent;
-                    if dist_from_edge >= 0.0 {
-                        // outside of the shape, either along this edge
-                        // or in one of the adjacent vertex Voronoi regions
-                        let edge_t_to_pt = edge.edge.dir.dot(pt - edge.edge.start);
-                        if edge_t_to_pt >= 0.0 && edge_t_to_pt <= edge.edge.length {
-                            // we're within the edge Voronoi region, can return immediately.
-                            // otherwise we might be in a corner region but don't know for sure yet
-                            return ClosestBoundaryPoint {
-                                pt: edge.edge.start + edge_t_to_pt * *edge.edge.dir,
-                                is_interior: false,
-                            };
-                        } else if let Some(pt) = closest_vertex {
-                            // we're outside two edges,
-                            // at this point we know for sure we're closest to a vertex
-                            return ClosestBoundaryPoint {
-                                pt,
-                                is_interior: false,
-                            };
-                        } else {
-                            // we're outside one edge. Wait until another similar edge is found
-                            // (or none is) to see if closest point is on that edge or on the
-                            // vertex between
-                            closest_vertex = Some(
-                                edge.edge.start
-                                    + edge_t_to_pt.max(0.0).min(edge.edge.length) * *edge.edge.dir,
-                            );
-                        }
-                    }
-                    // dist_from_edge is negative, point is on its inside
-                    if dist_from_edge > closest_edge_dist {
-                        closest_edge_dist = dist_from_edge;
-                        closest_edge_normal = edge.normal;
-                    }
-                }
-
-                match closest_vertex {
-                    Some(pt) => ClosestBoundaryPoint {
-                        pt,
-                        is_interior: false,
-                    },
-                    None => ClosestBoundaryPoint {
-                        pt: pt - closest_edge_dist * *closest_edge_normal,
-                        is_interior: true,
-                    },
-                }
-            }
-        }
-    }
-
     /// Whether or not the shape has mirror symmetry with respect to the origin point.
     /// If true, we can only return half the edges and work with their mirror images.
     #[inline]
@@ -462,6 +351,25 @@ impl ColliderPolygon {
                 true
             }
             Self::Triangle { .. } => false,
+        }
+    }
+
+    /// Tangent of HALF (future self, remember this) of the angle between edges is needed to
+    /// compute the edges of the outer polygon from the inner polygon.
+    ///
+    /// For now we only have regular polygons and can get away with returning
+    /// a constant with no parameters. If I want general polygons I'll have to think
+    /// about how to associate a vertex and an edge
+    pub(super) fn half_angle_between_edges_tan(&self) -> f64 {
+        match *self {
+            Self::Point | Self::LineSegment { .. } => {
+                panic!("Angle between edges shouldn't be called for points or line segments")
+            }
+            Self::Rect { .. } => 1.0,
+            // tan(1/2 * pi/3)
+            Self::Triangle { .. } => 0.57735026919,
+            // tan(1/2 * 2pi/3)
+            Self::Hexagon { .. } => 1.73205080757,
         }
     }
 
@@ -695,22 +603,59 @@ impl ColliderPolygon {
         }
     }
 
-    /// Tangent of HALF (future self, remember this) of the angle between edges is needed to
-    /// compute the edges of the outer polygon from the inner polygon.
+    /// Get the closest point to a point on the exterior edge of the polygon,
+    /// plus whether or not the queried point is inside the polygon.
     ///
-    /// For now we only have regular polygons and can get away with returning
-    /// a constant with no parameters. If I want general polygons I'll have to think
-    /// about how to associate a vertex and an edge
-    pub(super) fn half_angle_between_edges_tan(&self) -> f64 {
+    /// Used in the special case of circle - other shape collisions.
+    pub(super) fn closest_boundary_point(&self, pt: m::Vec2) -> ClosestBoundaryPoint {
         match *self {
-            Self::Point | Self::LineSegment { .. } => {
-                panic!("Angle between edges shouldn't be called for points or line segments")
+            Self::Point => ClosestBoundaryPoint {
+                pt: m::Vec2::zero(),
+                is_interior: false,
+            },
+            Self::LineSegment { hl } => ClosestBoundaryPoint {
+                pt: m::Vec2::new(pt.x.max(-hl).min(hl), 0.0),
+                is_interior: false,
+            },
+            Self::Rect { hw, hh } => {
+                let x_dist = pt.x.abs() - hw;
+                let y_dist = pt.y.abs() - hh;
+                match (x_dist > 0.0, y_dist > 0.0) {
+                    // we're outside the whole rect and closest point is a corner
+                    (true, true) => ClosestBoundaryPoint {
+                        pt: m::Vec2::new(hw.copysign(pt.x), hh.copysign(pt.y)),
+                        is_interior: false,
+                    },
+                    // outside only on the x-axis
+                    (true, false) => ClosestBoundaryPoint {
+                        pt: m::Vec2::new(hw.copysign(pt.x), pt.y),
+                        is_interior: false,
+                    },
+                    // outside only on the y-axis
+                    (false, true) => ClosestBoundaryPoint {
+                        pt: m::Vec2::new(pt.x, hh.copysign(pt.y)),
+                        is_interior: false,
+                    },
+                    // inside
+                    (false, false) => ClosestBoundaryPoint {
+                        pt: if x_dist.abs() < y_dist.abs() {
+                            m::Vec2::new(hw.copysign(pt.x), pt.y)
+                        } else {
+                            m::Vec2::new(pt.x, hh.copysign(pt.y))
+                        },
+                        is_interior: true,
+                    },
+                }
             }
-            Self::Rect { .. } => 1.0,
-            // tan(1/2 * pi/3)
-            Self::Triangle { .. } => 0.57735026919,
-            // tan(1/2 * 2pi/3)
-            Self::Hexagon { .. } => 1.73205080757,
+            // the following works for any shape
+            Self::Triangle { .. } | Self::Hexagon { .. } => {
+                let supp = self.supporting_edge(pt);
+                let edge_t_to_pt = supp.edge.dir.dot(pt - supp.edge.start);
+                ClosestBoundaryPoint {
+                    pt: supp.edge.start + edge_t_to_pt.max(0.0) * *supp.edge.dir,
+                    is_interior: supp.normal.dot(pt - supp.edge.start) < 0.0,
+                }
+            }
         }
     }
 }
@@ -796,13 +741,17 @@ mod tests {
                 }
                 .map(|i| shape.get_edge(i).mirrored()),
             ) {
-                let assert_print_info = |cond: bool, pt: m::Vec2, cp: ClosestBoundaryPoint| {
+                let assert_print_info = |cond: bool,
+                                         pt: m::Vec2,
+                                         cp: ClosestBoundaryPoint,
+                                         region: &str,
+                                         t: f64| {
                     assert!(
                         cond,
-                        "shape {:?}\n\nedge {:?}\n\npoint {:?}\n\nclosest {:?}",
-                        shape, edge, pt, cp
+                        "shape {shape:?}\n\nregion {region}\n\nt {t}\n\nedge {edge:?}\n\npoint {pt:?}\n\nclosest {cp:?}",
                     );
                 };
+                // inside voronoi regions
                 for t in [0.3, 0.5, 0.7] {
                     let pt_on = edge.edge.start + t * edge.edge.length * *edge.edge.dir;
                     let pt_in = pt_on - 0.05 * *edge.normal;
@@ -813,33 +762,45 @@ mod tests {
                             && (cp_in.pt - pt_in).dot(*edge.edge.dir).abs() < 0.0001,
                         pt_in,
                         cp_in,
+                        "inside",
+                        t,
                     );
-                    let pt_out = pt_on + 0.05 * *edge.normal;
+                }
+                // outside edge voronoi regions
+                for t in [0.0, 0.01, 0.3, 0.45, 0.5, 0.55, 0.7, 0.99, 1.0] {
+                    let pt_on = edge.edge.start + t * edge.edge.length * *edge.edge.dir;
+                    let pt_out = pt_on + *edge.normal;
                     let cp_out = shape.closest_boundary_point(pt_out);
-                    assert_print_info(!cp_out.is_interior, pt_out, cp_out);
                     assert_print_info(
                         !cp_out.is_interior
                             && (cp_out.pt - edge.edge.start).dot(*edge.normal).abs() < 0.0001
                             && (cp_out.pt - pt_out).dot(*edge.edge.dir).abs() < 0.0001,
                         pt_out,
                         cp_out,
+                        "outside edge",
+                        t,
                     );
                 }
-                let pt_before_out = edge.edge.start - 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
+                // outside vertex voronoi regions
+                let pt_before_out = edge.edge.start - 0.1 * *edge.edge.dir + *edge.normal;
                 let cp_before_out = shape.closest_boundary_point(pt_before_out);
                 assert_print_info(
                     !cp_before_out.is_interior
                         && (cp_before_out.pt - edge.edge.start).mag_sq() < 0.0001,
                     pt_before_out,
                     cp_before_out,
+                    "outside vertex (before edge)",
+                    -0.1,
                 );
                 let edge_end = edge.edge.end_point();
-                let pt_after_out = edge_end + 0.1 * *edge.edge.dir + 0.1 * *edge.normal;
+                let pt_after_out = edge_end + 0.1 * *edge.edge.dir + *edge.normal;
                 let cp_after_out = shape.closest_boundary_point(pt_after_out);
                 assert_print_info(
                     !cp_after_out.is_interior && (cp_after_out.pt - edge_end).mag_sq() < 0.0001,
                     pt_after_out,
                     cp_after_out,
+                    "outside vertex (after edge)",
+                    1.1,
                 );
             }
         }
@@ -877,8 +838,7 @@ mod tests {
                 let assert_print_info = |cond: bool| {
                     assert!(
                         cond,
-                        "shape {:?}\n\ndir {:?}\n\nsupporting edge {:?}\n\nclosest edge {:?}",
-                        shape, dir, supp, closest_edge
+                        "shape {shape:?}\n\ndir {dir:?}\n\nsupporting edge {supp:?}\n\nclosest edge {closest_edge:?}",
                     );
                 };
                 assert_print_info((closest_edge.start - supp.edge.start).mag_sq() < 0.0001);
@@ -910,9 +870,7 @@ mod tests {
 
                 assert!(
                     (proj - farthest_point_proj).abs() < 0.0001,
-                    "shape {:?}\n\ndir {:?}",
-                    shape,
-                    dir
+                    "shape {shape:?}\n\ndir {dir:?}",
                 );
             }
         }
