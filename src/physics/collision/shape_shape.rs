@@ -179,7 +179,7 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         // check that the axis points towards the other object
         let edge = if edge.normal.dot(dist) >= 0.0 {
             edge
-        } else if shapes[s_order[0]].polygon.is_mirror_symmetrical() {
+        } else if shapes[s_order[0]].polygon.is_rotationally_symmetrical() {
             edge.mirrored()
         } else {
             // we can skip axes that point away and don't have an associated symmetry

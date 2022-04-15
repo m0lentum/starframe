@@ -1,3 +1,5 @@
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_3, PI};
+
 use super::{
     shape_shape::{ClosestBoundaryPoint, Edge, PolygonEdge},
     AABB,
@@ -171,7 +173,6 @@ impl ColliderShape {
         if r == 0.0 {
             self.polygon.area()
         } else {
-            use std::f64::consts::PI;
             // area of a circle-convex-polygon sum:
             // the polygon itself
             // plus exactly one circle (sum of all corners),
@@ -181,22 +182,84 @@ impl ColliderShape {
     }
 
     #[inline]
-    pub fn moment_of_inertia_coef(&self) -> f64 {
-        let r = self.circle_r;
-        // from https://en.wikipedia.org/wiki/List_of_moments_of_inertia
+    pub fn second_moment_of_area(&self) -> f64 {
+        use ColliderPolygon::*;
+        if self.circle_r == 0.0 {
+            // simple formulas for pure polygons
+            // from https://en.wikipedia.org/wiki/List_of_second_moments_of_area
+            match self.polygon {
+                Point | LineSegment { .. } => 0.0,
+                Rect { hw, hh } => (4.0 / 3.0) * (hw.powi(3) * hh + hw * hh.powi(3)),
+                // this one is from https://amesweb.info/section/area-moment-of-inertia-of-equilateral-triangle.aspx
+                Triangle { outer_r } => 0.03608 * (outer_r / FRAC_PI_6_TAN).powi(4),
+                Hexagon { outer_r } => (5.0 * SQRT_3 / 8.0) * outer_r.powi(4),
+            }
+        } else if matches!(self.polygon, Point) {
+            // circle, also from above wikipedia
+            FRAC_PI_2 * self.circle_r.powi(4)
+        } else {
+            // rounded polygon. derivation for these is in my notes,
+            // https://github.com/MoleTrooper/notes/blob/main/Gamedev/Starframe/Cards/Generic%20collision%20detection%20for%20polygon-circle%20Minkowski%20sums.md
 
-        // TODO: how does the circular part change this?
-        // maybe we can just add r to all dimensions and call it close enough
-        match self.polygon {
-            ColliderPolygon::Point => r * r / 2.0,
-            // rough estimation of a capsule as a rectangle,
-            // since an accurate formula is not on wikipedia.
-            // TODO: work out all of these with circle component added
-            ColliderPolygon::LineSegment { hl } => (hl * hl + r * r) / 3.0,
-            ColliderPolygon::Rect { hw, hh } => (hw * hw + hh * hh) / 3.0,
-            // quick approximation as a circle for now
-            ColliderPolygon::Triangle { outer_r } | ColliderPolygon::Hexagon { outer_r } => {
-                (outer_r + r) / 2.0
+            let mut edge_sum = 0.0;
+            // compute the points' contributions to each term of the cap formula,
+            // will multiply by r's contribution after
+            let mut cap_sums = [0.0; 5];
+            for edge_idx in 0..self.polygon.edge_count() {
+                let edge = self.polygon.get_edge(edge_idx);
+                let trig_consts = self.polygon.trig_consts(edge_idx);
+
+                // edge
+
+                let edge_outer = edge.edge.offset(self.circle_r * *edge.normal);
+                let Edge { start, dir, length } = edge_outer;
+
+                let edge_integral = if edge_outer.dir.x == 0.0 {
+                    (1.0 / 3.0) * start.x.powi(3) * dir.y * length
+                } else if edge_outer.dir.y == 0.0 {
+                    -(1.0 / 3.0) * start.y.powi(3) * dir.x * length
+                } else {
+                    let dx_div_dy = edge_outer.dir.x / edge_outer.dir.y;
+                    let dy_div_dx = 1.0 / dx_div_dy;
+                    (1.0 / 12.0)
+                        * (dx_div_dy * (start.y.powi(4) - (start.y + length * dir.y).powi(4))
+                            + dy_div_dx * ((start.x + length * dir.x).powi(4) - start.x.powi(4)))
+                };
+                edge_sum += edge_integral;
+
+                // circle cap at the end of the edge
+
+                // the point used here is the circle center, or the inner edge's start
+                let p = edge.edge.start;
+                let (x_sq, y_sq) = (p.x * p.x, p.y * p.y);
+                let (x_cu, y_cu) = (x_sq * p.x, y_sq * p.y);
+
+                cap_sums[0] += p.x * trig_consts.sin_diff - p.y * trig_consts.cos_diff;
+                cap_sums[1] +=
+                    p.x * trig_consts.sin_triple_diff + p.y * trig_consts.cos_triple_diff;
+                cap_sums[2] += (x_sq + y_sq) * trig_consts.angle_diff;
+                cap_sums[3] += x_sq * trig_consts.sin_double_diff - y_sq * trig_consts.sin_diff;
+                cap_sums[4] += x_cu * trig_consts.sin_diff - y_cu * trig_consts.cos_diff;
+            }
+
+            let r = self.circle_r;
+            let r_sq = r * r;
+            let r_cu = r_sq * r;
+
+            let full_cap_integral = (0.75 * r_cu * cap_sums[0])
+                + ((1.0 / 12.0) * r_cu * cap_sums[1])
+                + (0.5 * r_sq * cap_sums[2])
+                + (0.25 * r_sq * cap_sums[3])
+                + ((1.0 / 3.0) * r * cap_sums[4]);
+
+            let full_integral = edge_sum + full_cap_integral;
+
+            // due to the symmetry of the function we're integrating,
+            // we can simply double this for symmetric shapes
+            if self.polygon.is_rotationally_symmetrical() {
+                full_integral * 2.0
+            } else {
+                full_integral
             }
         }
     }
@@ -218,6 +281,18 @@ impl ColliderShape {
         Self {
             circle_r: self.circle_r + amount,
             polygon: self.polygon,
+        }
+    }
+
+    /// Increase rounding such that edges remain the same distance from the origin.
+    /// Works like the CSS "corner-radius" property.
+    ///
+    /// May not have the full effect if the shape reaches the limit of how rounded it can be.
+    pub fn rounded_inward(&self, amount: f64) -> Self {
+        let (shrunk_poly, actual_amount) = self.polygon.shrink(amount);
+        Self {
+            circle_r: self.circle_r + actual_amount,
+            polygon: shrunk_poly,
         }
     }
 }
@@ -269,6 +344,7 @@ pub enum ColliderPolygon {
 // consts for axes pointing at different non-axis-aligned angles
 // (naming convention: angle in degrees CCW from positive x-axis)
 // trig functions aren't const so I have to precompute these
+const SQRT_3: f64 = 1.73205080757;
 const FRAC_PI_6_COS: f64 = 0.866025403784;
 const FRAC_PI_6_SIN: f64 = 0.5;
 const FRAC_PI_6_TAN: f64 = 0.57735026919;
@@ -283,6 +359,17 @@ const AXIS_120_DEG: m::Unit<m::Vec2> =
     m::Unit::new_unchecked(m::Vec2::new(-FRAC_PI_6_SIN, FRAC_PI_6_COS));
 const AXIS_150_DEG: m::Unit<m::Vec2> =
     m::Unit::new_unchecked(m::Vec2::new(-FRAC_PI_3_SIN, FRAC_PI_3_COS));
+
+/// Constants needed to compute accurate second moment of area for rounded polygons
+/// (see ColliderShape::second_moment_of_area)
+struct PolygonTrigConsts {
+    angle_diff: f64,
+    sin_diff: f64,
+    sin_double_diff: f64,
+    sin_triple_diff: f64,
+    cos_diff: f64,
+    cos_triple_diff: f64,
+}
 
 impl ColliderPolygon {
     //
@@ -306,6 +393,37 @@ impl ColliderPolygon {
             Self::Rect { hw, hh } => 4.0 * (hw + hh),
             Self::Triangle { outer_r } => 3.0 * outer_r / FRAC_PI_6_TAN,
             Self::Hexagon { outer_r } => 6.0 * outer_r,
+        }
+    }
+
+    /// Move the edges inward such that the space between the old and new edges is `amount`
+    /// (measured perpendicularly).
+    ///
+    /// Clamps to a small positive value to ensure physics doesn't break,
+    /// and returns the amount of actual shrinking done.
+    fn shrink(&self, amount: f64) -> (Self, f64) {
+        const MIN: f64 = 0.001;
+        match *self {
+            Self::Point | Self::LineSegment { .. } => (*self, 0.0),
+            Self::Rect { hw, hh } => {
+                let hw_ = (hw - amount).max(MIN);
+                let hh_ = (hh - amount).max(MIN);
+                (Self::Rect { hw: hw_, hh: hh_ }, (hw - hw_).min(hh - hh_))
+            }
+            Self::Triangle { outer_r } => {
+                let r_ = (outer_r - amount / FRAC_PI_6_SIN).max(MIN);
+                (
+                    Self::Triangle { outer_r: r_ },
+                    (outer_r - r_) * FRAC_PI_6_SIN,
+                )
+            }
+            Self::Hexagon { outer_r } => {
+                let r_ = (outer_r - amount / FRAC_PI_3_SIN).max(MIN);
+                (
+                    Self::Hexagon { outer_r: r_ },
+                    (outer_r - r_) * FRAC_PI_3_SIN,
+                )
+            }
         }
     }
 
@@ -345,7 +463,7 @@ impl ColliderPolygon {
     /// Whether or not the shape has mirror symmetry with respect to the origin point.
     /// If true, we can only return half the edges and work with their mirror images.
     #[inline]
-    pub(crate) fn is_mirror_symmetrical(&self) -> bool {
+    pub(crate) fn is_rotationally_symmetrical(&self) -> bool {
         match *self {
             Self::Point | Self::LineSegment { .. } | Self::Rect { .. } | Self::Hexagon { .. } => {
                 true
@@ -505,6 +623,119 @@ impl ColliderPolygon {
         }
     }
 
+    /// Constants needed to compute accurate second moment of area for rounded polygons
+    /// (see ColliderShape::second_moment_of_area and linked notes)
+    ///
+    /// Order (VERY IMPORTANT):
+    /// Must match the order of edges given by `get_edge`.
+    /// The angles are between the normal of the edge BEFORE `idx` and the one AT `idx`.
+    ///
+    /// There's a Matlab script to print these out automatically in the scripts/ directory.
+    fn trig_consts(&self, idx: usize) -> PolygonTrigConsts {
+        let bad_edge = || {
+            panic!(
+                "Called get_edge for {:?} with an out of bounds index {}",
+                self, idx
+            )
+        };
+        match *self {
+            Self::Point => bad_edge(),
+            Self::LineSegment { .. } => match idx {
+                // pi/2 to 3pi/2
+                0 => PolygonTrigConsts {
+                    angle_diff: PI,
+                    sin_diff: 2.0,
+                    sin_double_diff: 0.0,
+                    sin_triple_diff: -2.0,
+                    cos_diff: 0.0,
+                    cos_triple_diff: 0.0,
+                },
+                _ => bad_edge(),
+            },
+            Self::Rect { .. } => match idx {
+                // -pi/2 to 0
+                0 => PolygonTrigConsts {
+                    angle_diff: FRAC_PI_2,
+                    sin_diff: 1.0,
+                    sin_double_diff: 0.0,
+                    sin_triple_diff: -1.0,
+                    cos_diff: 1.0,
+                    cos_triple_diff: 1.0,
+                },
+                // 0 to pi/2
+                1 => PolygonTrigConsts {
+                    angle_diff: FRAC_PI_2,
+                    sin_diff: 1.0,
+                    sin_double_diff: 0.0,
+                    sin_triple_diff: -1.0,
+                    cos_diff: -1.0,
+                    cos_triple_diff: -1.0,
+                },
+                _ => bad_edge(),
+            },
+            Self::Triangle { .. } => match idx {
+                // 5pi/6 to 3pi/2
+                0 => PolygonTrigConsts {
+                    angle_diff: 2.0 * FRAC_PI_3,
+                    sin_diff: -1.5,
+                    sin_double_diff: 0.866025403784,
+                    sin_triple_diff: 0.0,
+                    cos_diff: 0.866025403784,
+                    cos_triple_diff: 0.0,
+                },
+                // 3pi/2 to pi/6
+                1 => PolygonTrigConsts {
+                    angle_diff: 2.0 * FRAC_PI_3,
+                    sin_diff: 1.5,
+                    sin_double_diff: 0.866025403784,
+                    sin_triple_diff: 0.0,
+                    cos_diff: 0.866025403784,
+                    cos_triple_diff: 0.0,
+                },
+                // pi/6 to 5pi/6
+                2 => PolygonTrigConsts {
+                    angle_diff: 2.0 * FRAC_PI_3,
+                    sin_diff: 0.0,
+                    sin_double_diff: -1.73205080757,
+                    sin_triple_diff: 0.0,
+                    cos_diff: -1.73205080757,
+                    cos_triple_diff: 0.0,
+                },
+                _ => bad_edge(),
+            },
+            Self::Hexagon { .. } => match idx {
+                // -pi/6 to pi/6
+                0 => PolygonTrigConsts {
+                    angle_diff: FRAC_PI_3,
+                    sin_diff: 1.0,
+                    sin_double_diff: 1.73205080757,
+                    sin_triple_diff: 2.0,
+                    cos_diff: 0.0,
+                    cos_triple_diff: 0.0,
+                },
+                // pi/6 to pi/2
+                1 => PolygonTrigConsts {
+                    angle_diff: FRAC_PI_3,
+                    sin_diff: 0.5,
+                    sin_double_diff: -0.866025403784,
+                    sin_triple_diff: -2.0,
+                    cos_diff: -0.866025403784,
+                    cos_triple_diff: 0.0,
+                },
+                // pi/2 to 5pi/6
+                2 => PolygonTrigConsts {
+                    angle_diff: FRAC_PI_3,
+                    sin_diff: -0.5,
+                    sin_double_diff: -0.866025403784,
+                    sin_triple_diff: 2.0,
+                    cos_diff: -0.866025403784,
+                    cos_triple_diff: 0.0,
+                },
+                _ => bad_edge(),
+            },
+        }
+    }
+
     /// Get the distance from the shape's center to its farthest extent
     /// when projected onto the given axis.
     ///
@@ -582,7 +813,7 @@ impl ColliderPolygon {
                 let closest_edge = (0..self.edge_count())
                     .map(|i| {
                         let edge = self.get_edge(i);
-                        if self.is_mirror_symmetrical() && edge.normal.dot(dir) < 0.0 {
+                        if self.is_rotationally_symmetrical() && edge.normal.dot(dir) < 0.0 {
                             edge.mirrored()
                         } else {
                             edge
@@ -734,7 +965,7 @@ mod tests {
         for shape in TEST_POLYGONS {
             for edge in (0..shape.edge_count()).map(|i| shape.get_edge(i)).chain(
                 // append mirrored edges if the shape is symmetrical
-                if shape.is_mirror_symmetrical() {
+                if shape.is_rotationally_symmetrical() {
                     0..shape.edge_count()
                 } else {
                     0..0
@@ -816,7 +1047,7 @@ mod tests {
                 let closest_edge = (0..shape.edge_count())
                     .map(|i| {
                         let edge = shape.get_edge(i);
-                        if shape.is_mirror_symmetrical() && edge.normal.dot(*dir) < 0.0 {
+                        if shape.is_rotationally_symmetrical() && edge.normal.dot(*dir) < 0.0 {
                             edge.mirrored()
                         } else {
                             edge
@@ -859,7 +1090,7 @@ mod tests {
                     .map(|i| {
                         let edge = shape.get_edge(i);
                         let point_proj = dir.dot(edge.edge.start);
-                        if shape.is_mirror_symmetrical() && point_proj < 0.0 {
+                        if shape.is_rotationally_symmetrical() && point_proj < 0.0 {
                             -point_proj
                         } else {
                             point_proj
@@ -872,6 +1103,54 @@ mod tests {
                     (proj - farthest_point_proj).abs() < 0.0001,
                     "shape {shape:?}\n\ndir {dir:?}",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn round_inward_preserves_edge_distance() {
+        for shape in TEST_POLYGONS.into_iter().map(ColliderShape::from) {
+            let rounded_shape = shape.rounded_inward(0.2);
+            for edge_idx in 0..shape.polygon.edge_count() {
+                let orig_edge = shape.polygon.get_edge(edge_idx);
+                let new_edge_inner = rounded_shape.polygon.get_edge(edge_idx);
+                let new_edge_outer = new_edge_inner
+                    .edge
+                    .offset(rounded_shape.circle_r * *new_edge_inner.normal);
+
+                let dist_diff = new_edge_outer.start.dot(*new_edge_inner.normal)
+                    - orig_edge.edge.start.dot(*orig_edge.normal);
+                assert!(
+                    dist_diff.abs() < 0.0001,
+                    "{shape:?} edge was moved by {dist_diff}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn second_moment_of_area_changes_smoothly_and_monotonically() {
+        // little sanity test to make sure my math does at least vaguely the right thing
+
+        for shape in TEST_POLYGONS.into_iter().map(ColliderShape::from) {
+            dbg!(shape);
+            let mut prev_mom_area = shape.second_moment_of_area();
+
+            const SHRINK_STEP: f64 = 0.02;
+            for shrink in 1..20 {
+                let rounded_shape = shape.rounded_inward(shrink as f64 * SHRINK_STEP);
+                let new_mom_area = rounded_shape.second_moment_of_area();
+                let diff = new_mom_area - prev_mom_area;
+                assert!(
+                    diff < 0.0,
+                    "second moment of area grew on step {shrink} by {diff}"
+                );
+                assert!(
+                    diff > -0.05,
+                    "second moment of area changed unexpectedly much on step {shrink} (changed by {diff})",
+                );
+
+                prev_mom_area = new_mom_area
             }
         }
     }

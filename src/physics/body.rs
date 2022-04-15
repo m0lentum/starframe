@@ -23,16 +23,24 @@ impl Body {
     /// This constructor calculates mass and moment of inertia from the given density and
     /// collider shape.
     pub fn new_dynamic(collider: &Collider, density: f64) -> Self {
-        Self::new_dynamic_const_mass(collider, collider.shape.area() * density)
-    }
-
-    /// Create a dynamic body with the given mass instead of using density.
-    /// The collider is still required to compute moment of inertia.
-    pub fn new_dynamic_const_mass(collider: &Collider, mass: f64) -> Self {
+        let area = collider.shape.area();
+        let mass = area * density;
         Self {
             velocity: Velocity::default(),
             mass: Mass::from(mass),
-            moment_of_inertia: Mass::from(collider.shape.moment_of_inertia_coef() * mass),
+            moment_of_inertia: Mass::from(collider.shape.second_moment_of_area() * density),
+        }
+    }
+
+    /// Create a dynamic body with the given mass instead of using density.
+    /// The collider is still required in order to compute moment of inertia.
+    pub fn new_dynamic_const_mass(collider: &Collider, mass: f64) -> Self {
+        let area = collider.shape.area();
+        let density = mass / area;
+        Self {
+            velocity: Velocity::default(),
+            mass: Mass::from(mass),
+            moment_of_inertia: Mass::from(collider.shape.second_moment_of_area() * density),
         }
     }
 
