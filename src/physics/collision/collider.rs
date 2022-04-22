@@ -4,16 +4,20 @@ use super::{
     shape_shape::{ClosestBoundaryPoint, Edge, PolygonEdge},
     AABB,
 };
-use crate::math as m;
+use crate::{math as m, physics::body};
 
 /// A component that allows a game object to collide with others
 /// or act as a trigger.
+///
+/// TODOC: compound colliders
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde-types", serde(default))]
 pub struct Collider {
     pub shape: ColliderShape,
     pub ty: ColliderType,
+    #[serde(with = "m::serde_pose")]
+    pub offset: m::Pose,
     /// Collision layer, see [`MaskMatrix`][super::MaskMatrix] for info.
     /// Defaults to 0.
     pub layer: usize,
@@ -26,6 +30,7 @@ impl Default for Collider {
                 circle_r: 1.0,
             },
             ty: ColliderType::default(),
+            offset: m::Pose::default(),
             layer: 0,
         }
     }
@@ -131,6 +136,15 @@ impl Collider {
     pub fn is_trigger(&self) -> bool {
         matches!(self.ty, ColliderType::Trigger)
     }
+
+    /// Get the info required to construct a body with this collider.
+    #[inline]
+    pub fn info(&self) -> body::ColliderInfo {
+        body::ColliderInfo {
+            area: self.shape.area(),
+            second_moment_of_area: self.shape.second_moment_of_area(),
+        }
+    }
 }
 
 /// Type of a collider. Solid ones respond to collisions when attached to bodies.
@@ -152,9 +166,19 @@ impl Default for ColliderType {
 /// convex polygon (or point or line segment) and a circle.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
+#[cfg_attr(feature = "serde-types", serde(default))]
 pub struct ColliderShape {
     pub polygon: ColliderPolygon,
     pub circle_r: f64,
+}
+
+impl Default for ColliderShape {
+    fn default() -> Self {
+        Self {
+            polygon: ColliderPolygon::Point,
+            circle_r: 0.0,
+        }
+    }
 }
 
 impl From<ColliderPolygon> for ColliderShape {

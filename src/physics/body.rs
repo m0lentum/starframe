@@ -1,4 +1,4 @@
-use super::{Collider, Velocity};
+use super::Velocity;
 
 /// A body is something that moves, typically a physics-enabled rigid body or particle.
 /// Connect a Body with a Collider to make it collide with other things.
@@ -7,6 +7,12 @@ pub struct Body {
     pub velocity: Velocity,
     pub mass: Mass,
     pub moment_of_inertia: Mass,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ColliderInfo {
+    pub area: f64,
+    pub second_moment_of_area: f64,
 }
 
 impl Body {
@@ -22,25 +28,23 @@ impl Body {
     /// Dynamic bodies respond to external forces and are allowed to rotate.
     /// This constructor calculates mass and moment of inertia from the given density and
     /// collider shape.
-    pub fn new_dynamic(collider: &Collider, density: f64) -> Self {
-        let area = collider.shape.area();
-        let mass = area * density;
+    pub fn new_dynamic(coll_info: ColliderInfo, density: f64) -> Self {
+        let mass = coll_info.area * density;
         Self {
             velocity: Velocity::default(),
             mass: Mass::from(mass),
-            moment_of_inertia: Mass::from(collider.shape.second_moment_of_area() * density),
+            moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
         }
     }
 
     /// Create a dynamic body with the given mass instead of using density.
     /// The collider is still required in order to compute moment of inertia.
-    pub fn new_dynamic_const_mass(collider: &Collider, mass: f64) -> Self {
-        let area = collider.shape.area();
-        let density = mass / area;
+    pub fn new_dynamic_const_mass(coll_info: ColliderInfo, mass: f64) -> Self {
+        let density = mass / coll_info.area;
         Self {
             velocity: Velocity::default(),
             mass: Mass::from(mass),
-            moment_of_inertia: Mass::from(collider.shape.second_moment_of_area() * density),
+            moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
         }
     }
 

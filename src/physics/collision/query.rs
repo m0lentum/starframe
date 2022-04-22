@@ -4,7 +4,7 @@ use super::{Collider, ColliderPolygon};
 use crate::math as m;
 
 /// Check whether or not a point intersects with a collider.
-pub fn point_collider_bool(point: m::Vec2, pose: &m::Pose, coll: &Collider) -> bool {
+pub fn point_collider_bool(point: m::Vec2, pose: m::Pose, coll: Collider) -> bool {
     let r = coll.shape.circle_r;
     let p_wrt_c = pose.inversed() * point;
     match coll.shape.polygon {
@@ -68,7 +68,7 @@ impl Ray {
 }
 
 /// Find the value of t where the ray start + t * dir intersects with the collider.
-pub fn ray_collider(ray: Ray, pose: &m::Pose, coll: &Collider) -> Option<f64> {
+pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
     let r = coll.shape.circle_r;
     match coll.shape.polygon {
         // special cases for circles and line segments
@@ -278,11 +278,11 @@ mod tests {
 
         let should_hit = |ray, expected_t| {
             // tranform the ray with the same pose to keep calculations easy
-            let hit = ray_collider(pose * ray, &pose, &cap).unwrap();
+            let hit = ray_collider(pose * ray, pose, cap).unwrap();
             assert_t_eq(hit, expected_t);
         };
         let should_hit_circle = |ray, circ_pos| {
-            let cap_hit = ray_collider(pose * ray, &pose, &cap);
+            let cap_hit = ray_collider(pose * ray, pose, cap);
             let circ_hit = ray_circle(ray, circ_pos, cap.shape.circle_r);
             match (cap_hit, circ_hit) {
                 (Some(b), Some(c)) => assert_t_eq(b, c),
@@ -290,7 +290,7 @@ mod tests {
                 _ => panic!("one of circle / cap missed but other didn't"),
             }
         };
-        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, &pose, &cap), None);
+        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, pose, cap), None);
 
         let mut ray = Ray {
             start: m::Vec2::new(0.0, -2.0),
@@ -324,10 +324,10 @@ mod tests {
         let rect = Collider::new_rect(4.0, 2.0);
 
         let should_hit = |ray, expected_t| {
-            let hit = ray_collider(pose * ray, &pose, &rect).unwrap();
+            let hit = ray_collider(pose * ray, pose, rect).unwrap();
             assert_t_eq(hit, expected_t);
         };
-        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, &pose, &rect), None);
+        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, pose, rect), None);
 
         let mut ray = Ray {
             start: m::Vec2::new(0.0, -2.0),
@@ -356,11 +356,11 @@ mod tests {
         let rect = Collider::new_rounded_rect(6.0, 4.0, 1.0);
 
         let should_hit = |ray, expected_t| {
-            let hit = ray_collider(pose * ray, &pose, &rect).unwrap();
+            let hit = ray_collider(pose * ray, pose, rect).unwrap();
             assert_t_eq(hit, expected_t);
         };
         let should_hit_circle = |ray, circ_pos| {
-            let box_hit = ray_collider(pose * ray, &pose, &rect);
+            let box_hit = ray_collider(pose * ray, pose, rect);
             let circ_hit = ray_circle(ray, circ_pos, rect.shape.circle_r);
             match (box_hit, circ_hit) {
                 (Some(b), Some(c)) => assert_t_eq(b, c),
@@ -368,7 +368,7 @@ mod tests {
                 _ => panic!("one of circle / box missed but other didn't"),
             }
         };
-        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, &pose, &rect), None);
+        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, pose, rect), None);
 
         let mut ray = Ray {
             start: m::Vec2::new(0.0, -3.0),
@@ -414,7 +414,7 @@ mod tests {
             while angle < 2.0 * std::f64::consts::TAU {
                 let (y, x) = angle.sin_cos();
                 ray.dir = m::Unit::new_unchecked(m::Vec2::new(x, y));
-                let hit = ray_collider(ray, &pose, &coll);
+                let hit = ray_collider(ray, pose, coll);
                 assert!(hit.is_none(), "hit shape {:?} from the inside", coll.shape);
                 angle += 0.05;
             }

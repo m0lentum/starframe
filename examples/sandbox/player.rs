@@ -182,7 +182,7 @@ impl PlayerController {
         let mut mesh_node =
             l_mesh.insert(gx::Mesh::from(gx::MeshShape::Circle { r: R, points: 5 }));
         let coll = phys::Collider::new_circle(R);
-        let body = phys::Body::new_dynamic_const_mass(&coll, 1.0).with_velocity(vel);
+        let body = phys::Body::new_dynamic_const_mass(coll.info(), 1.0).with_velocity(vel);
         let mut coll_node = l_collider.insert(coll);
         let mut body_node = l_body.insert(body);
 

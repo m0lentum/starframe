@@ -476,10 +476,10 @@ impl Physics {
                 Some(b) => coll
                     .c
                     .shape
-                    .aabb(*pose.c)
+                    .aabb(*pose.c * coll.c.offset)
                     .extended(b.c.velocity.linear * frame_dt)
                     .padded(max_expected_accel_over_frame),
-                None => coll.c.shape.aabb(*pose.c),
+                None => coll.c.shape.aabb(*pose.c * coll.c.offset),
             };
 
             let coll_idx = coll.key().idx;
@@ -566,6 +566,11 @@ impl Physics {
             let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
             match colls.map(|c| c.get_neighbor(&l_body_sub).map(|b| b.key().idx)) {
                 [Some(b1), Some(b2)] => {
+                    if b1 == b2 {
+                        // both colliders are part of the same compound collider,
+                        // skip tests between them
+                        continue;
+                    }
                     self.constraint_graph.insert(
                         b1,
                         Edge::Contact {
@@ -1266,7 +1271,7 @@ impl Physics {
                 };
                 let body = coll.get_neighbor(l_body)?;
                 let pose = body.get_neighbor(l_pose)?;
-                if collision::query::point_collider_bool(point, pose.c, coll.c) {
+                if collision::query::point_collider_bool(point, *pose.c * coll.c.offset, *coll.c) {
                     Some((pose, coll, body))
                 } else {
                     None
@@ -1291,7 +1296,7 @@ impl Physics {
                 let their_coll = l_collider.get(coll_key)?;
                 let their_pose = their_coll.get_neighbor(l_pose)?;
                 let result = collision::shape_shape::intersection_check(
-                    [pose, *their_pose.c],
+                    [pose, *their_pose.c * their_coll.c.offset],
                     [shape, their_coll.c.shape],
                 );
                 if result.is_zero() {
@@ -1352,7 +1357,11 @@ impl Physics {
                             Some(pose) => pose,
                             None => continue,
                         };
-                        let t = match collision::query::ray_collider(ray, pose.c, coll.c) {
+                        let t = match collision::query::ray_collider(
+                            ray,
+                            *pose.c * coll.c.offset,
+                            *coll.c,
+                        ) {
                             Some(t) => t,
                             None => continue,
                         };

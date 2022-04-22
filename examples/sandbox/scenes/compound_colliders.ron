@@ -1,0 +1,67 @@
+(
+    recipes: [
+	GenericBody(
+	    pose: ( position: (0, 0), rotation: Deg(1) ),
+	    colliders: [
+		( shape: ( polygon: Hexagon ( outer_r: 0.8 ), circle_r: 0.4 )),
+		( shape: ( polygon: Triangle ( outer_r: 0.5 )),
+		    offset: ( position: (0, 1.25) )),
+		( shape: ( polygon: Triangle ( outer_r: 0.5 )),
+		    offset: ( position: (0, -1.25), rotation: Deg(180) )),
+	    ],
+	),
+	GenericBody(
+	    pose: ( position: (4, 0) ),
+	    colliders: [
+		( shape: ( polygon: Rect ( hw: 2.0, hh: 0.2 ))),
+		( shape: ( polygon: Rect ( hw: 0.2, hh: 1.0 )),
+		    offset: ( position: (1.8, 1.1) )),
+		( shape: ( polygon: Point, circle_r: 0.75 ),
+		    offset: ( position: (1.8, 2.1) )),
+		( shape: ( polygon: Rect ( hw: 0.2, hh: 1.0 )),
+		    offset: ( position: (-1.8, -1.1) )),
+		( shape: ( polygon: Point, circle_r: 0.75 ),
+		    offset: ( position: (-1.8, -2.1) )),
+		( shape: ( polygon: Rect ( hw: 0.5, hh: 0.2 )),
+		    offset: ( position: (0.6, 2.1) )),
+		( shape: ( polygon: Triangle ( outer_r: 0.5 ), circle_r: 0.25 ),
+		    offset: ( position: (0, 2.1), rotation: Deg(90) )),
+	    ],
+	),
+	GenericBody(
+	    pose: ( position: (-4, -2) ),
+	    colliders: [
+		( shape: ( polygon: Rect ( hw: 1.0, hh: 0.2 ))),
+		( shape: ( polygon: Hexagon ( outer_r: 0.5 ), circle_r: 0.5),
+		    offset: ( position: (1.5, 0) )),
+		( shape: ( polygon: Hexagon ( outer_r: 0.5 ), circle_r: 0.5),
+		    offset: ( position: (-1.5, 0) )),
+	    ],
+	),
+	GenericBody(
+	    pose: ( position: (-5, 2) ),
+	    colliders: [
+		( shape: ( polygon: LineSegment ( hl: 1.5 ), circle_r: 0.1 ),
+		    offset: ( position: (0, -1) )),
+		( shape: ( polygon: LineSegment ( hl: 1.5 ), circle_r: 0.1 ),
+		    offset: ( position: (0.87, 0.5), rotation: Deg(-60) )),
+		( shape: ( polygon: LineSegment ( hl: 1.5 ), circle_r: 0.1 ),
+		    offset: ( position: (-0.87, 0.5), rotation: Deg(60) )),
+	    ],
+	),
+	Ball (( radius: 0.5, position: (-5, 2) )),
+        // walls
+        Block (( 
+            width: 20, height: 0.2, pose: ( position: (0, 5) ), is_static: true,
+        )),
+        Block ((
+            width: 20, height: 0.2, pose: ( position: (0, -5) ), is_static: true,
+        )),
+        Block ((
+            width: 0.2, height: 10, pose: ( position: (10, 0) ), is_static: true,
+        )),
+        Block ((
+            width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
+        )),
+    ],
+)

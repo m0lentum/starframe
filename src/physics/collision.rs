@@ -4,6 +4,9 @@ pub use hgrid::{HGrid, HGridParams};
 mod collider;
 pub use collider::*;
 
+mod compound_collider;
+pub use compound_collider::CompoundColliderSetup;
+
 pub mod shape_shape;
 pub use shape_shape::{Contact, ContactIterator, ContactResult};
 

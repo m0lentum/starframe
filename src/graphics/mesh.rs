@@ -101,7 +101,11 @@ impl From<MeshShape> for Mesh {
 
 impl From<Collider> for Mesh {
     fn from(coll: Collider) -> Self {
-        Self::from_collider_shape(&coll.shape, 0.1)
+        let mut mesh = Self::from_collider_shape(&coll.shape, 0.1);
+        for vert in &mut mesh.vertices {
+            *vert = coll.offset * *vert;
+        }
+        mesh
     }
 }
 

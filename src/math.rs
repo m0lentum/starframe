@@ -156,6 +156,35 @@ impl From<Angle> for PoseBuilder {
         PoseBuilder::new().with_rotation(angle)
     }
 }
+impl From<Pose> for PoseBuilder {
+    fn from(pose: Pose) -> Self {
+        PoseBuilder::new()
+            .with_position(pose.translation)
+            .with_rotation(Angle::from(pose.rotation))
+    }
+}
+
+/// Module to deserialize `Pose`s from `PoseBuilder` format without manually converting,
+/// using the serde attribute `#[serde(with = "serde_pose")]`.
+pub mod serde_pose {
+    use super::*;
+
+    pub fn serialize<S>(pose: &Pose, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::Serialize;
+        PoseBuilder::from(*pose).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Pose, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::Deserialize;
+        PoseBuilder::deserialize(deserializer).map(|p| p.build())
+    }
+}
 
 // Vec2 utils
 

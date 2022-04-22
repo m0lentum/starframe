@@ -402,15 +402,16 @@ impl game::GameState for State {
             || m::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
 
         if let Some(polygon) = shape_to_spawn {
-            Recipe::GenericObject {
+            Recipe::GenericBody {
                 pose: m::PoseBuilder::new()
                     .with_position(random_pos())
-                    .with_rotation(random_angle()),
-                shape: phys::ColliderShape {
+                    .with_rotation(random_angle())
+                    .build(),
+                colliders: vec![phys::ColliderShape {
                     polygon,
                     circle_r: self.spawner_circle_r,
-                },
-                is_static: false,
+                }
+                .into()],
             }
             .spawn(&mut self.physics, &self.graph);
         }

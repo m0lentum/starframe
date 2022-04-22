@@ -18,10 +18,10 @@ pub enum Recipe {
     Block(Block),
     Ball(Ball),
     Capsule(Capsule),
-    GenericObject {
-        pose: m::PoseBuilder,
-        shape: phys::ColliderShape,
-        is_static: bool,
+    GenericBody {
+        #[serde(with = "m::serde_pose")]
+        pose: m::Pose,
+        colliders: Vec<phys::Collider>,
     },
     Blockchain {
         width: f64,
@@ -131,7 +131,7 @@ fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::
     pose_node.connect(&mut mesh_node);
 
     if !block.is_static {
-        let body = phys::Body::new_dynamic(&coll, 0.5);
+        let body = phys::Body::new_dynamic(coll.info(), 0.5);
         let mut body_node = l_body.insert(body);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut body_node);
@@ -141,35 +141,47 @@ fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Solid {
+#[derive(Debug)]
+struct Solid<'a> {
     pose: m::Pose,
-    coll: phys::Collider,
+    colliders: &'a [phys::Collider],
     color: [f32; 4],
 }
 
 fn spawn_static(solid: Solid, layers: Layers) {
     let (mut l_pose, mut l_collider, _, mut l_mesh) = layers;
 
-    let mut pose_node = l_pose.insert(solid.pose);
-    let mut coll_node = l_collider.insert(solid.coll);
-    let mut mesh_node = l_mesh.insert(gx::Mesh::from(solid.coll).with_color(solid.color));
-    pose_node.connect(&mut coll_node);
-    pose_node.connect(&mut mesh_node);
+    for coll in solid.colliders {
+        let mut pose_node = l_pose.insert(solid.pose * coll.offset);
+        let mut coll_node = l_collider.insert(*coll);
+        let mut mesh_node = l_mesh.insert(gx::Mesh::from(*coll).with_color(solid.color));
+        pose_node.connect(&mut coll_node);
+        pose_node.connect(&mut mesh_node);
+    }
 }
 
 fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
     let (mut l_pose, mut l_collider, mut l_body, mut l_mesh) = layers;
 
-    let mut pose_node = l_pose.insert(solid.pose);
-    let mut coll_node = l_collider.insert(solid.coll);
-    let mut mesh_node = l_mesh.insert(gx::Mesh::from(solid.coll).with_color(solid.color));
-    let mut body_node = l_body.insert(phys::Body::new_dynamic(&solid.coll, 0.5));
+    let coll_setup = phys::collision::CompoundColliderSetup::new(solid.colliders);
+    let center_of_mass = coll_setup.center_of_mass();
 
-    pose_node.connect(&mut coll_node);
-    pose_node.connect(&mut mesh_node);
-    body_node.connect(&mut coll_node);
+    let mut pose_node = l_pose.insert(solid.pose);
+    let mut body_node = l_body.insert(phys::Body::new_dynamic(
+        coll_setup.info_around_point(center_of_mass),
+        0.5,
+    ));
+
     pose_node.connect(&mut body_node);
+
+    for mut coll in solid.colliders.iter().cloned() {
+        coll.offset.translation -= center_of_mass;
+        let mut coll_node = l_collider.insert(coll);
+        let mut mesh_node = l_mesh.insert(gx::Mesh::from(coll).with_color(solid.color));
+        pose_node.connect(&mut mesh_node);
+        body_node.connect(&mut coll_node);
+        pose_node.connect(&mut coll_node);
+    }
 
     body_node.key()
 }
@@ -195,7 +207,7 @@ impl Recipe {
                 });
                 let solid = Solid {
                     pose,
-                    coll,
+                    colliders: &mut [coll],
                     color: random_color(),
                 };
                 if *is_static {
@@ -219,7 +231,7 @@ impl Recipe {
             }) => {
                 let solid = Solid {
                     pose: (*pose).into(),
-                    coll: phys::Collider::new_capsule(*length, *radius),
+                    colliders: &mut [phys::Collider::new_capsule(*length, *radius)],
                     color: random_color(),
                 };
                 if *is_static {
@@ -228,21 +240,13 @@ impl Recipe {
                     spawn_body(solid, graph.get_layer_bundle());
                 }
             }
-            Recipe::GenericObject {
-                pose,
-                shape,
-                is_static,
-            } => {
+            Recipe::GenericBody { pose, colliders } => {
                 let solid = Solid {
-                    pose: (*pose).into(),
-                    coll: phys::Collider::from(*shape),
+                    pose: *pose,
+                    colliders,
                     color: random_color(),
                 };
-                if *is_static {
-                    spawn_static(solid, graph.get_layer_bundle());
-                } else {
-                    spawn_body(solid, graph.get_layer_bundle());
-                }
+                spawn_body(solid, graph.get_layer_bundle());
             }
             Recipe::Blockchain {
                 width,
@@ -276,7 +280,10 @@ impl Recipe {
                                 .with_position(center)
                                 .with_rotation(m::Angle::Rad(orientation))
                                 .into(),
-                            coll: phys::Collider::new_capsule(caps_full_length - width, radius),
+                            colliders: &mut [phys::Collider::new_capsule(
+                                caps_full_length - width,
+                                radius,
+                            )],
                             color: random_color(),
                         },
                         graph.get_layer_bundle(),

@@ -303,11 +303,19 @@ fn solve_contacts(data: &mut DataView<'_>) {
             let poses = map_pair(colls, |coll| match coll.ctx {
                 ColliderContext::Body(b) => data.poses[b],
                 ColliderContext::Static(pose) => pose,
-            });
+            }
+            * coll.coll.offset);
+
             collision::shape_shape::intersection_check(
                 poses,
                 [colls[0].coll.shape, colls[1].coll.shape],
             )
+            .map(|mut cont| {
+                // map contact to space relative to the object's pose
+                cont.offsets[0] = colls[0].coll.offset * cont.offsets[0];
+                cont.offsets[1] = colls[1].coll.offset * cont.offsets[1];
+                cont
+            })
         };
         // mark latest contact that wasn't zero;
         // this will be available to be queried by the user later

@@ -53,7 +53,7 @@ impl<'a> Iterator for ContactIterator<'a> {
 /// An intersection between two objects.
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
-    /// The normal, facing away from the first object
+    /// The normal in world space, facing away from the first object
     pub normal: m::Unit<m::Vec2>,
     /// Points of contact on the surface of each object, in object-local space.
     pub offsets: [m::Vec2; 2],
