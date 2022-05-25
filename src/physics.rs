@@ -187,7 +187,8 @@ struct Island {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IslandId {
     first_body: usize,
-    // a "checksum" of all constraint graph edges in this island for topology checking.
+    // a "checksum" of all constraint graph edges in this island,
+    // used to identify islands that haven't changed between ticks
     edge_sum: usize,
 }
 #[derive(Clone, Copy, Debug)]
@@ -645,6 +646,10 @@ impl Physics {
                             island.rope_count += 1;
                         }
 
+                        // add 1 to root_body_idx so that we never get zero from this
+                        // (which would essentially allow a constraint to be added
+                        // to the island without changing its identity,
+                        // causing bugs in the vicinity of body index 0)
                         island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
                         search(*body_idx, island, constraint_graph, bufs);
                     }
@@ -678,13 +683,13 @@ impl Physics {
                         // no guarantee constr_idx is stable between frames,
                         // but we still need to stop sleeping when any constraint changes.
                         // adding a root_body_idx should do the job
-                        island.id.edge_sum += root_body_idx;
+                        island.id.edge_sum += root_body_idx + 1;
                     }
                     Edge::StaticContact { pair_idx } => {
                         bufs.sorted_first_pass.coll_pairs.push(*pair_idx);
                         island.pair_count += 1;
 
-                        island.id.edge_sum += root_body_idx;
+                        island.id.edge_sum += root_body_idx + 1;
                     }
                 }
             }
