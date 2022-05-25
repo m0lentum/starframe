@@ -202,16 +202,16 @@ impl HGrid {
 
         let placement_grid = grids.next().unwrap();
 
-        let first_column = (aabb.min.x / placement_grid.spacing) as isize;
-        let last_column = (aabb.max.x / placement_grid.spacing) as isize;
+        let first_column = (aabb.min.x / placement_grid.spacing).floor() as isize;
+        let last_column = (aabb.max.x / placement_grid.spacing).floor() as isize;
         for col in first_column..=last_column {
             // toroidal wrapping for things outside the grid
             let col = col.rem_euclid(placement_grid.column_count as isize) as usize;
             placement_grid.column_bits.entry_mut(col).set(id);
         }
 
-        let first_row = (aabb.min.y / placement_grid.spacing) as isize;
-        let last_row = (aabb.max.y / placement_grid.spacing) as isize;
+        let first_row = (aabb.min.y / placement_grid.spacing).floor() as isize;
+        let last_row = (aabb.max.y / placement_grid.spacing).floor() as isize;
         for row in first_row..=last_row {
             let row = row.rem_euclid(placement_grid.row_count as isize) as usize;
             placement_grid.row_bits.entry_mut(row).set(id);
@@ -275,10 +275,10 @@ impl HGrid {
         self.grids
             .iter()
             .flat_map(move |grid| {
-                let col_range =
-                    ((aabb.min.x / grid.spacing) as isize)..=((aabb.max.x / grid.spacing) as isize);
-                let row_range =
-                    ((aabb.min.y / grid.spacing) as isize)..=((aabb.max.y / grid.spacing) as isize);
+                let col_range = ((aabb.min.x / grid.spacing).floor() as isize)
+                    ..=((aabb.max.x / grid.spacing).floor() as isize);
+                let row_range = ((aabb.min.y / grid.spacing).floor() as isize)
+                    ..=((aabb.max.y / grid.spacing).floor() as isize);
                 col_range.flat_map(move |col| {
                     let col = col.rem_euclid(grid.column_count as isize) as usize;
                     row_range.clone().flat_map(move |row| {
@@ -324,9 +324,9 @@ impl HGrid {
                 if *empty_below {
                     return None;
                 }
-                let col = (point.x / grid.spacing) as isize;
+                let col = (point.x / grid.spacing).floor() as isize;
                 let col = col.rem_euclid(grid.column_count as isize) as usize;
-                let row = (point.y / grid.spacing) as isize;
+                let row = (point.y / grid.spacing).floor() as isize;
                 let row = row.rem_euclid(grid.row_count as isize) as usize;
                 if let Some(mask) = &grid.subgrid_mask {
                     if !mask.entry(col).has(row) {
@@ -364,8 +364,8 @@ impl HGrid {
 
         let top_grid = &self.grids[self.grids.len() - 1];
         // no need to wrap these because we wrapped ray.start
-        let start_col = (ray_gridspace.start.x / top_grid.spacing) as usize;
-        let start_row = (ray_gridspace.start.y / top_grid.spacing) as usize;
+        let start_col = (ray_gridspace.start.x / top_grid.spacing).floor() as usize;
+        let start_row = (ray_gridspace.start.y / top_grid.spacing).floor() as usize;
 
         let ray_iter_stack = Vec::with_capacity(self.grids.len());
         RayTraversal {
