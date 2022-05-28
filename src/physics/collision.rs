@@ -1,5 +1,4 @@
-pub(crate) mod hgrid;
-pub use hgrid::{HGrid, HGridParams};
+pub(crate) mod bvh;
 
 mod collider;
 pub use collider::*;
@@ -27,6 +26,7 @@ pub struct AABB {
 
 impl AABB {
     /// Move the AABB by the given vector without changing its size.
+    #[inline]
     pub fn translated(self, translation: m::Vec2) -> Self {
         Self {
             min: self.min + translation,
@@ -35,6 +35,7 @@ impl AABB {
     }
 
     /// Increase the size of the AABB by the same amount in all directions.
+    #[inline]
     pub fn padded(mut self, amount: f64) -> Self {
         self.min.x -= amount;
         self.min.y -= amount;
@@ -44,6 +45,7 @@ impl AABB {
     }
 
     /// Increase the size of the AABB in the direction of a vector.
+    #[inline]
     pub fn extended(mut self, amount: m::Vec2) -> Self {
         if amount.x < 0.0 {
             self.min.x += amount.x;
@@ -60,15 +62,23 @@ impl AABB {
         self
     }
 
+    #[inline]
     pub fn width(&self) -> f64 {
         self.max.x - self.min.x
     }
 
+    #[inline]
     pub fn height(&self) -> f64 {
         self.max.y - self.min.y
     }
 
+    #[inline]
+    pub fn area(&self) -> f64 {
+        self.width() * self.height()
+    }
+
     /// The smallest box containing both given boxes.
+    #[inline]
     pub fn union(&self, other: &Self) -> Self {
         Self {
             min: self.min.min_by_component(other.min),
@@ -77,6 +87,7 @@ impl AABB {
     }
 
     /// The area that is inside both boxes.
+    #[inline]
     pub fn intersection(&self, other: &Self) -> Option<Self> {
         let min = self.min.max_by_component(other.min);
         let max = self.max.min_by_component(other.max);
@@ -87,16 +98,9 @@ impl AABB {
         }
     }
 
+    #[inline]
     pub fn contains_point(&self, p: m::Vec2) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
-    }
-
-    /// Create an AABB with both extents at the origin. Useful as a filler default in cache.
-    pub(crate) fn zero() -> Self {
-        AABB {
-            min: m::Vec2::zero(),
-            max: m::Vec2::zero(),
-        }
     }
 }
 

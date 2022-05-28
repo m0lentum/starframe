@@ -1,6 +1,6 @@
 //! Intersection queries for points, rays, etc. vs. colliders.
 
-use super::{Collider, ColliderPolygon};
+use super::{Collider, ColliderPolygon, AABB};
 use crate::math as m;
 
 /// Check whether or not a point intersects with a collider.
@@ -67,7 +67,44 @@ impl Ray {
     }
 }
 
-/// Find the value of t where the ray start + t * dir intersects with the collider.
+/// Find the value of t where the ray `start + t * dir` intersects with the AABB.
+pub fn ray_aabb(ray: Ray, aabb: AABB) -> Option<f64> {
+    let ray_to_min = aabb.min - ray.start;
+    let ray_to_max = aabb.max - ray.start;
+
+    let mut t_enter = 0.0_f64;
+    let mut t_exit = f64::MAX;
+    for (ray_to_min, ray_to_max, ray_speed) in
+        [(ray_to_min.x, ray_to_max.x, ray.dir.x), (ray_to_min.y, ray_to_max.y, ray.dir.y)]
+    {
+        if ray_speed.abs() < 0.00001 && ray_to_min.signum() == ray_to_max.signum() {
+            // ray is parallel to this slab and starts outside of it
+            return None;
+        }
+        let speed_inv = 1.0 / ray_speed;
+        let t = [
+            ray_to_min * speed_inv,
+            ray_to_max * speed_inv,
+        ];
+        let t = if t[0] < t[1] { t } else { [t[1], t[0]] };
+        t_enter = t_enter.max(t[0]);
+        t_exit = t_exit.min(t[1]);
+        if t_enter > t_exit {
+            return None;
+        }
+    }
+    Some(t_enter)
+}
+
+/// Find the value of t where the sphere with radius `r` swept along the ray
+/// `start + t * dir` intersects with the collider.
+#[inline]
+pub fn spherecast_collider(ray: Ray, r: f64, pose: m::Pose, mut coll: Collider) -> Option<f64> {
+    coll.shape = coll.shape.expanded(r);
+    ray_collider(ray, pose, coll)
+}
+
+/// Find the value of t where the ray `start + t * dir` intersects with the collider.
 pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
     let r = coll.shape.circle_r;
     match coll.shape.polygon {

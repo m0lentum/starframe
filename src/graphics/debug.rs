@@ -28,12 +28,10 @@ struct Vertex {
 /// Renderer to draw
 pub struct DebugVisualizer {
     line_pipeline: wgpu::RenderPipeline,
-    mesh_pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
-    grid_line_buf: super::util::DynamicBuffer,
-    grid_mesh_bufs: super::util::DynamicMeshBuffers<Vertex>,
     island_line_bufs: super::util::DynamicMeshBuffers<Vertex>,
+    bvh_line_bufs: super::util::DynamicMeshBuffers<Vertex>,
 }
 
 impl DebugVisualizer {
@@ -144,24 +142,21 @@ impl DebugVisualizer {
                 })
         };
         let line_pipeline = pipeline(wgpu::PrimitiveTopology::LineList);
-        let shape_pipeline = pipeline(wgpu::PrimitiveTopology::TriangleList);
+        // filled meshes currently not used, just add this back if you need it
+        // let shape_pipeline = pipeline(wgpu::PrimitiveTopology::TriangleList);
 
         Self {
             line_pipeline,
-            mesh_pipeline: shape_pipeline,
             bind_group,
             uniform_buf,
-            grid_line_buf: super::util::DynamicBuffer::new(
-                Some("debug grid lines"),
-                wgpu::BufferUsages::VERTEX,
-            ),
-            grid_mesh_bufs: super::util::DynamicMeshBuffers::new(Some("debug grid meshes")),
             island_line_bufs: super::util::DynamicMeshBuffers::new(Some("debug island lines")),
+            bvh_line_bufs: super::util::DynamicMeshBuffers::new(Some("debug BVH lines")),
         }
     }
 
-    pub fn draw_spatial_index(
+    pub fn draw_bvh(
         &mut self,
+        depth_to_draw: usize,
         phys: &crate::Physics,
         camera: &impl super::camera::Camera,
         ctx: &mut super::RenderContext,
@@ -174,91 +169,43 @@ impl DebugVisualizer {
         ctx.queue
             .write_buffer(&self.uniform_buf, 0, uniforms.as_bytes());
 
-        // draw populated grid cells
+        let nodes = phys.bvh.all_branch_nodes();
+        if nodes.is_empty() {
+            return;
+        }
 
-        self.grid_mesh_bufs.clear();
-        let hgrid = &phys.spatial_index;
-        for cell in hgrid.populated_cells() {
-            // more opaque for smaller grid levels
-            let alpha = 0.2 * (1.0 - cell.grid_idx as f32 / hgrid.grids.len() as f32);
-            let color = [0.8, 0.5 * alpha, alpha, alpha];
-            let spacing = hgrid.grids[cell.grid_idx].spacing as f32;
-            let min = [
-                hgrid.bounds.min.x as f32 + cell.col_idx as f32 * spacing,
-                hgrid.bounds.min.y as f32 + cell.row_idx as f32 * spacing,
-            ];
-            let max = [min[0] + spacing, min[1] + spacing];
+        self.bvh_line_bufs.clear();
+        for node in nodes.iter().filter(|n| n.depth < depth_to_draw) {
+            let aabb = node.aabb;
 
-            self.grid_mesh_bufs.extend(
+            let color = if node.depth % 2 == 0 {
+                [0.8, 0.1, 0.3, 0.5]
+            } else {
+                [0.1, 0.8, 0.5, 0.5]
+            };
+
+            let min = [aabb.min.x as f32, aabb.min.y as f32];
+            let max = [aabb.max.x as f32, aabb.max.y as f32];
+            self.bvh_line_bufs.extend(
                 [
                     [min[0], min[1]],
                     [max[0], min[1]],
                     [max[0], max[1]],
                     [min[0], max[1]],
                 ]
-                .map(move |position| Vertex { position, color }),
-                [0, 1, 2, 0, 2, 3],
+                .map(|position| Vertex { position, color }),
+                [0, 1, 1, 2, 2, 3, 3, 0],
             );
         }
 
-        self.grid_mesh_bufs.write(ctx);
+        self.bvh_line_bufs.write(ctx);
 
         {
-            let mut pass = ctx.pass(Some("hgrid mesh"));
-            pass.set_pipeline(&self.mesh_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            self.grid_mesh_bufs.set_buffers(&mut pass);
-            pass.draw_indexed(self.grid_mesh_bufs.index_range(), 0, 0..1);
-        }
-
-        // draw grid lines
-
-        let verts: Vec<Vertex> = hgrid
-            .grids
-            .iter()
-            .enumerate()
-            .flat_map(|(grid_idx, grid)| {
-                // less opaque for smaller grid levels
-                let alpha = 0.8 * ((grid_idx + 1) as f32 / hgrid.grids.len() as f32);
-                let color = [0.0, 0.0, 0.0, alpha];
-                (0..=grid.column_count)
-                    .flat_map(move |col| {
-                        let x = (hgrid.bounds.min.x + col as f64 * grid.spacing) as f32;
-                        [
-                            Vertex {
-                                position: [x, hgrid.bounds.min.y as f32],
-                                color,
-                            },
-                            Vertex {
-                                position: [x, hgrid.bounds.max.y as f32],
-                                color,
-                            },
-                        ]
-                    })
-                    .chain((0..=grid.row_count).flat_map(move |row| {
-                        let y = (hgrid.bounds.min.y + row as f64 * grid.spacing) as f32;
-                        [
-                            Vertex {
-                                position: [hgrid.bounds.min.x as f32, y],
-                                color,
-                            },
-                            Vertex {
-                                position: [hgrid.bounds.max.x as f32, y],
-                                color,
-                            },
-                        ]
-                    }))
-            })
-            .collect();
-
-        self.grid_line_buf.write(ctx, &verts);
-
-        {
-            let mut pass = ctx.pass(Some("hgrid lines"));
+            let mut pass = ctx.pass(Some("BVH lines"));
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.grid_line_buf.slice());
-            pass.draw(0..self.grid_line_buf.len() as u32, 0..1);
+            self.bvh_line_bufs.set_buffers(&mut pass);
+            pass.draw_indexed(self.bvh_line_bufs.index_range(), 0, 0..1);
         }
     }
 

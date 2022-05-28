@@ -72,7 +72,8 @@ pub struct State {
     last_egui_paint_cmds: Vec<egui::epaint::ClippedShape>,
     // UI states
     outline_interp: f32,
-    grid_vis_active: bool,
+    bvh_vis_active: bool,
+    bvh_vis_levels: usize,
     island_vis_active: bool,
     spawner_circle_r: f64,
 }
@@ -100,16 +101,6 @@ impl State {
                     // uncomment to help testing collision detection and such
                     // substeps: 1,
                     ..Default::default()
-                },
-                phys::collision::HGridParams {
-                    approx_bounds: phys::collision::AABB {
-                        min: m::Vec2::new(-40.0, -15.0),
-                        max: m::Vec2::new(40.0, 25.0),
-                    },
-                    lowest_spacing: 0.5,
-                    level_count: 2,
-                    spacing_ratio: 3,
-                    initial_capacity: 600,
                 },
                 phys::collision::MaskMatrix::default(),
             ),
@@ -142,7 +133,8 @@ impl State {
             ),
             last_egui_paint_cmds: vec![],
             outline_interp: 0.0,
-            grid_vis_active: false,
+            bvh_vis_active: false,
+            bvh_vis_levels: 3,
             island_vis_active: false,
             spawner_circle_r: 0.0,
         }
@@ -342,7 +334,12 @@ impl game::GameState for State {
 
             ui.separator();
             ui.heading("Visuals");
-            ui.checkbox(&mut self.grid_vis_active, "Display grid");
+            ui.checkbox(&mut self.bvh_vis_active, "Display BVH");
+            if self.bvh_vis_active {
+                ui.add(
+                    egui::Slider::new(&mut self.bvh_vis_levels, 0..=20).text("Tree levels to show"),
+                );
+            }
             ui.checkbox(&mut self.island_vis_active, "Display islands");
             ui.add(
                 egui::Slider::new(&mut self.outline_renderer.params.thickness, 0..=30)
@@ -469,9 +466,13 @@ impl game::GameState for State {
 
         self.outline_renderer.draw(&mut ctx);
 
-        if self.grid_vis_active {
-            self.debug_visualizer
-                .draw_spatial_index(&self.physics, &self.camera, &mut ctx);
+        if self.bvh_vis_active {
+            self.debug_visualizer.draw_bvh(
+                self.bvh_vis_levels,
+                &self.physics,
+                &self.camera,
+                &mut ctx,
+            );
         }
         if self.island_vis_active {
             self.debug_visualizer.draw_islands(

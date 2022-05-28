@@ -12,13 +12,11 @@ use crate::{
 //
 
 pub mod collision;
-use collision::HGrid;
+use collision::bvh::Bvh;
 pub use collision::{
     Collider, ColliderPolygon, ColliderShape, ColliderType, Contact, ContactResult, LayerMask,
     Material, Ray,
 };
-
-pub(crate) mod bitmatrix;
 
 mod constraint;
 pub use constraint::*;
@@ -357,7 +355,7 @@ pub struct Physics {
     pub consts: TuningConstants,
     pub mask_matrix: collision::MaskMatrix,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
-    pub(crate) spatial_index: HGrid,
+    pub(crate) bvh: Bvh,
     constraint_graph: ConstraintGraph,
     sleeping_islands: Vec<SleepingIsland>,
     working_bufs: WorkingBuffers,
@@ -365,16 +363,12 @@ pub struct Physics {
 }
 
 impl Physics {
-    pub fn new(
-        consts: TuningConstants,
-        grid_params: collision::HGridParams,
-        mask_matrix: collision::MaskMatrix,
-    ) -> Self {
+    pub fn new(consts: TuningConstants, mask_matrix: collision::MaskMatrix) -> Self {
         Physics {
             consts,
             mask_matrix,
             user_constraints: sm::DenseSlotMap::with_key(),
-            spatial_index: HGrid::new(grid_params),
+            bvh: Bvh::new(),
             constraint_graph: ConstraintGraph {
                 first_nodes_per_body: Vec::new(),
                 last_nodes_per_body: Vec::new(),
@@ -465,7 +459,7 @@ impl Physics {
         // collisions may be missed if higher accelerations occur
         let max_expected_accel_over_frame = self.consts.max_expected_acceleration * frame_dt;
 
-        self.spatial_index.prepare(l_collider.components.len());
+        self.bvh.clear();
         bufs.coll_pair_idxs.clear();
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
@@ -485,10 +479,15 @@ impl Physics {
 
             let coll_idx = coll.key().idx;
             bufs.coll_pair_idxs.extend(
-                self.spatial_index
-                    .test_and_insert(coll.key(), aabb, coll.c.layer, &self.mask_matrix)
+                self.bvh
+                    .test_aabb(aabb)
+                    .filter(|other| {
+                        self.mask_matrix
+                            .get(coll.c.layer, l_collider.get_unchecked(*other).c.layer)
+                    })
                     .map(move |other| [coll_idx, other.idx]),
-            )
+            );
+            self.bvh.insert(coll.key(), aabb);
         }
 
         #[cfg(feature = "tracy")]
@@ -1251,8 +1250,13 @@ impl Physics {
     }
 
     /// Find every rigid body that intersects with the given point.
+    ///
+    /// Takes a mutable reference because bounding volume hierarchy
+    /// traversal uses a mutable shared stack.
+    /// This is subject to change if I figure out a good way to
+    /// do this with interior mutability. (TODO)
     pub fn query_point_body<'p, 'g: 'p>(
-        &'p self,
+        &'p mut self,
         point: m::Vec2,
         (l_pose, l_collider, l_body): &'g (
             graph::LayerView<'g, m::Pose>,
@@ -1267,21 +1271,19 @@ impl Physics {
             graph::NodeRef<'g, Body>,
         ),
     > {
-        self.spatial_index
-            .test_point(point)
-            .filter_map(move |stored_coll| {
-                let coll = match l_collider.get(stored_coll) {
-                    Some(coll) => coll,
-                    None => return None,
-                };
-                let body = coll.get_neighbor(l_body)?;
-                let pose = body.get_neighbor(l_pose)?;
-                if collision::query::point_collider_bool(point, *pose.c * coll.c.offset, *coll.c) {
-                    Some((pose, coll, body))
-                } else {
-                    None
-                }
-            })
+        self.bvh.test_point(point).filter_map(move |stored_coll| {
+            let coll = match l_collider.get(stored_coll) {
+                Some(coll) => coll,
+                None => return None,
+            };
+            let body = coll.get_neighbor(l_body)?;
+            let pose = body.get_neighbor(l_pose)?;
+            if collision::query::point_collider_bool(point, *pose.c * coll.c.offset, *coll.c) {
+                Some((pose, coll, body))
+            } else {
+                None
+            }
+        })
     }
 
     /// Get all colliders that intersect with the given shape.
@@ -1295,10 +1297,13 @@ impl Physics {
             graph::LayerView<'g, Collider>,
         ),
     ) -> impl '_ + Iterator<Item = graph::NodeRef<'g, Collider>> {
-        self.spatial_index
-            .test_aabb(shape.aabb(pose), mask)
+        self.bvh
+            .test_aabb(shape.aabb(pose))
             .filter_map(move |coll_key| {
                 let their_coll = l_collider.get(coll_key)?;
+                if !mask.get(their_coll.c.layer) {
+                    return None;
+                }
                 let their_pose = their_coll.get_neighbor(l_pose)?;
                 let result = collision::shape_shape::intersection_check(
                     [pose, *their_pose.c * their_coll.c.offset],
@@ -1320,67 +1325,68 @@ impl Physics {
     /// If you need to also know if the ray starts inside something, use
     /// [`query_point_body`][Self::query_point_body] in addition to this.
     pub fn raycast<'p>(
-        // Mutable reference required
-        // because spatial index traversal uses mutation for timestamping.
-        // TODO: think about using interior mutability here
-        // idea: like timestamping but each query sets a single bit
-        // instead of an entire int; use atomics to parallelize
         &'p mut self,
         ray: Ray,
         max_distance: f64,
         (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
     ) -> Option<RayHit> {
-        let mut traversal = self.spatial_index.traverse_ray(ray, max_distance);
-        let mut found_t = max_distance;
-        let mut found_coll: Option<graph::NodeRef<Collider>> = None;
-        loop {
-            let next_step = traversal.step();
-
-            if let Some(coll) = found_coll {
-                if match next_step {
-                    // we can only stop here if the hit point is in the previously covered cell,
-                    // otherwise we might still find something that's closer
-                    // (if we still have cells to go)
-                    Some((_, t_covered)) => found_t <= t_covered,
-                    None => true,
-                } {
-                    return Some(RayHit {
-                        collider: coll.key(),
-                        point: ray.start + found_t * *ray.dir,
-                        t: found_t,
-                    });
-                }
-            }
-
-            match next_step {
-                Some((cell_iter, _)) => {
-                    for coll in cell_iter.filter_map(|coll_key| l_collider.get(coll_key)) {
-                        if !coll.c.is_solid() {
-                            continue;
+        // sweep_aabb returns colliders in spatial order
+        // so we don't need to worry about sorting here
+        self.bvh
+            .sweep_aabb(0.0, ray, max_distance)
+            .find_map(move |coll_key| {
+                let their_coll = l_collider.get(coll_key)?;
+                let their_pose = their_coll.get_neighbor(&l_pose)?;
+                collision::query::ray_collider(ray, *their_pose.c, *their_coll.c).and_then(
+                    |hit_t| {
+                        if hit_t <= max_distance {
+                            Some(RayHit {
+                                collider: coll_key,
+                                point: ray.point_at_t(hit_t),
+                                t: hit_t,
+                            })
+                        } else {
+                            None
                         }
-                        let pose = match coll.get_neighbor(&l_pose) {
-                            Some(pose) => pose,
-                            None => continue,
-                        };
-                        let t = match collision::query::ray_collider(
-                            ray,
-                            *pose.c * coll.c.offset,
-                            *coll.c,
-                        ) {
-                            Some(t) => t,
-                            None => continue,
-                        };
-                        if t < found_t {
-                            found_t = t;
-                            found_coll = Some(coll);
+                    },
+                )
+            })
+    }
+
+    /// Find the first solid collider intersected by a sphere when swept along the given ray.
+    ///
+    /// This currently follows the same logic as [`raycast`][Self::raycast] if the sphere
+    /// starts inside an object. With spherecasts it's quite easy to accidentally pass
+    /// through an object that's up close. I'm not sure what the cleanest way to handle this
+    /// is (TODO think about this), but for now you can use [`query_shape`][Self::query_shape]
+    /// with a circle, similarly to how you would check a point when raycasting.
+    pub fn spherecast<'p>(
+        &'p mut self,
+        radius: f64,
+        ray: Ray,
+        max_distance: f64,
+        (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
+    ) -> Option<RayHit> {
+        self.bvh
+            .sweep_aabb(radius, ray, max_distance)
+            .find_map(move |coll_key| {
+                let their_coll = l_collider.get(coll_key)?;
+                let their_pose = their_coll.get_neighbor(&l_pose)?;
+                collision::query::spherecast_collider(ray, radius, *their_pose.c, *their_coll.c)
+                    .and_then(|hit_t| {
+                        if hit_t <= max_distance {
+                            // TODO: we would like the point on the surface of the object here,
+                            // for this we need query::raycast to return surface normal
+                            Some(RayHit {
+                                collider: coll_key,
+                                point: ray.point_at_t(hit_t),
+                                t: hit_t,
+                            })
+                        } else {
+                            None
                         }
-                    }
-                }
-                None => {
-                    return None;
-                }
-            }
-        }
+                    })
+            })
     }
 
     /// For debug visualization
