@@ -96,16 +96,28 @@ pub fn ray_aabb(ray: Ray, aabb: AABB) -> Option<f64> {
     Some(t_enter)
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct CastHit {
+    pub t: f64,
+    pub normal: m::Unit<m::Vec2>,
+    pub point: m::Vec2,
+}
+
 /// Find the value of t where the sphere with radius `r` swept along the ray
 /// `start + t * dir` intersects with the collider.
 #[inline]
-pub fn spherecast_collider(ray: Ray, r: f64, pose: m::Pose, mut coll: Collider) -> Option<f64> {
+pub fn spherecast_collider(ray: Ray, r: f64, pose: m::Pose, mut coll: Collider) -> Option<CastHit> {
     coll.shape = coll.shape.expanded(r);
-    ray_collider(ray, pose, coll)
+    ray_collider(ray, pose, coll).map(|hit| {
+        CastHit {
+            point: hit.point + r * *hit.normal,
+            ..hit
+        }
+    })
 }
 
 /// Find the value of t where the ray `start + t * dir` intersects with the collider.
-pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
+pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> {
     let r = coll.shape.circle_r;
     match coll.shape.polygon {
         // special cases for circles and line segments
@@ -113,6 +125,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
         // (they aren't actually polygons, but I couldn't come up with a better name for the type)
         ColliderPolygon::Point => ray_circle(ray, pose.translation, r),
         ColliderPolygon::LineSegment { hl } => {
+            let ray_worldspace = ray;
             let ray = pose.inversed() * ray;
 
             // special case where ray is parallel to the capsule
@@ -141,7 +154,11 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
             let x_at_edge_hit = ray.start.x + t_to_facing_edge * ray.dir.x;
             if x_at_edge_hit.abs() <= hl {
                 // hit the flat edge
-                Some(t_to_facing_edge)
+                Some(CastHit {
+                    t: t_to_facing_edge,
+                    normal: pose.rotation * m::Unit::new_unchecked(m::Vec2::new(0.0, ray.start.y.signum())),
+                    point: ray_worldspace.point_at_t(t_to_facing_edge),
+                })
             } else {
                 // missed the flat edge, check circle cap on the side where we missed
                 ray_circle(
@@ -154,6 +171,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
         // this works for all actual polygons
         _ => {
             // work in object-local space
+            let ray_worldspace = ray;
             let ray = pose.inversed() * ray;
 
             // first do a separating axis test against the perpendicular of the ray
@@ -191,6 +209,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
             // we'll need to check against the circle at the closest vertex
             let mut vertex_for_circle_check: Option<m::Vec2> = None;
             let mut closest_hit_t = f64::MAX;
+            let mut closest_edge_normal = m::Unit::unit_x();
             for edge_idx in 0..coll.shape.polygon.edge_count() {
                 let edge = coll.shape.polygon.get_edge(edge_idx);
                 // only consider edges that point towards the ray start direction
@@ -233,6 +252,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
                 }
 
                 closest_hit_t = ray_t_to_edge;
+                closest_edge_normal = edge.normal;
                 vertex_for_circle_check = if edge_t_to_intersection < 0.0 {
                     Some(edge.edge.start)
                 } else if edge_t_to_intersection > edge.edge.length {
@@ -247,14 +267,18 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<f64> {
             } else {
                 match vertex_for_circle_check {
                     Some(vert) => ray_circle(ray, vert, coll.shape.circle_r),
-                    None => Some(closest_hit_t),
+                    None => Some(CastHit {
+                        t: closest_hit_t,
+                        normal: closest_edge_normal,
+                        point: ray_worldspace.point_at_t(closest_hit_t),
+                    }),
                 }
             }
         }
     }
 }
 
-fn ray_circle(ray: Ray, circ_pos: m::Vec2, r: f64) -> Option<f64> {
+fn ray_circle(ray: Ray, circ_pos: m::Vec2, r: f64) -> Option<CastHit> {
     // source: Real-Time Collision Detection chapter 5
 
     // solve t from t^2 + 2(m*d)t + (m*m)-r^2 = 0
@@ -271,7 +295,9 @@ fn ray_circle(ray: Ray, circ_pos: m::Vec2, r: f64) -> Option<f64> {
     }
     let t = -b - discr.sqrt();
     if t >= 0.0 {
-        Some(t)
+        let point = ray.point_at_t(t);
+        let normal = m::Unit::new_normalize(point - circ_pos);
+        Some(CastHit {t, normal, point})
     } else {
         // ray started inside the circle, we consider that a miss here
         None
@@ -316,18 +342,18 @@ mod tests {
         let should_hit = |ray, expected_t| {
             // tranform the ray with the same pose to keep calculations easy
             let hit = ray_collider(pose * ray, pose, cap).unwrap();
-            assert_t_eq(hit, expected_t);
+            assert_t_eq(hit.t, expected_t);
         };
         let should_hit_circle = |ray, circ_pos| {
             let cap_hit = ray_collider(pose * ray, pose, cap);
             let circ_hit = ray_circle(ray, circ_pos, cap.shape.circle_r);
             match (cap_hit, circ_hit) {
-                (Some(b), Some(c)) => assert_t_eq(b, c),
+                (Some(b), Some(c)) => assert_t_eq(b.t, c.t),
                 (None, None) => {}
                 _ => panic!("one of circle / cap missed but other didn't"),
             }
         };
-        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, pose, cap), None);
+        let should_miss = |ray| assert!(ray_collider(pose * ray, pose, cap).is_none());
 
         let mut ray = Ray {
             start: m::Vec2::new(0.0, -2.0),
@@ -362,9 +388,9 @@ mod tests {
 
         let should_hit = |ray, expected_t| {
             let hit = ray_collider(pose * ray, pose, rect).unwrap();
-            assert_t_eq(hit, expected_t);
+            assert_t_eq(hit.t, expected_t);
         };
-        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, pose, rect), None);
+        let should_miss = |ray| assert!(ray_collider(pose * ray, pose, rect).is_none());
 
         let mut ray = Ray {
             start: m::Vec2::new(0.0, -2.0),
@@ -394,18 +420,18 @@ mod tests {
 
         let should_hit = |ray, expected_t| {
             let hit = ray_collider(pose * ray, pose, rect).unwrap();
-            assert_t_eq(hit, expected_t);
+            assert_t_eq(hit.t, expected_t);
         };
         let should_hit_circle = |ray, circ_pos| {
             let box_hit = ray_collider(pose * ray, pose, rect);
             let circ_hit = ray_circle(ray, circ_pos, rect.shape.circle_r);
             match (box_hit, circ_hit) {
-                (Some(b), Some(c)) => assert_t_eq(b, c),
+                (Some(b), Some(c)) => assert_t_eq(b.t, c.t),
                 (None, None) => {}
                 _ => panic!("one of circle / box missed but other didn't"),
             }
         };
-        let should_miss = |ray| assert_eq!(ray_collider(pose * ray, pose, rect), None);
+        let should_miss = |ray| assert!(ray_collider(pose * ray, pose, rect).is_none());
 
         let mut ray = Ray {
             start: m::Vec2::new(0.0, -3.0),

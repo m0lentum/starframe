@@ -137,17 +137,22 @@ impl ContactInfo {
     }
 }
 
-/// Result of a [`raycast`][self::Physics::raycast].
+/// Result of a [`raycast`][self::Physics::raycast] or [`spherecast`][self::Physics::spherecast].
 #[derive(Clone, Debug)]
-pub struct RayHit {
+pub struct CastHit {
     /// A key to the collider that was hit.
     ///
     /// Given as a key to avoid lifetime problems with graph layers.
     pub collider: graph::NodeKey<Collider>,
-    /// The point in world space where the ray intersected the collider.
+    /// The point in world space where the ray or swept shape intersected the collider.
+    ///
+    /// This is always a point on the hit collider's surface.
+    /// To get the center point of the swept shape on impact, use `ray.point_at_t(hit.t)`.
     pub point: m::Vec2,
+    /// The surface normal of the collider at the point of impact.
+    pub normal: m::Unit<m::Vec2>,
     /// The parameter `t` in the ray equation `start + t * dir`
-    /// for the point where the ray intersected the collider.
+    /// for the point where the ray or swept shape intersected the collider.
     ///
     /// Useful with the ray's [`point_at_t`][self::Ray::point_at_t] method,
     /// e.g. if you want to step backward along the ray from the contact point
@@ -1329,27 +1334,29 @@ impl Physics {
         ray: Ray,
         max_distance: f64,
         (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
-    ) -> Option<RayHit> {
+    ) -> Option<CastHit> {
         // sweep_aabb returns colliders in spatial order
         // so we don't need to worry about sorting here
         self.bvh
             .sweep_aabb(0.0, ray, max_distance)
             .find_map(move |coll_key| {
                 let their_coll = l_collider.get(coll_key)?;
+                if !their_coll.c.is_solid() {
+                    return None;
+                }
                 let their_pose = their_coll.get_neighbor(&l_pose)?;
-                collision::query::ray_collider(ray, *their_pose.c, *their_coll.c).and_then(
-                    |hit_t| {
-                        if hit_t <= max_distance {
-                            Some(RayHit {
-                                collider: coll_key,
-                                point: ray.point_at_t(hit_t),
-                                t: hit_t,
-                            })
-                        } else {
-                            None
-                        }
-                    },
-                )
+                collision::query::ray_collider(ray, *their_pose.c, *their_coll.c).and_then(|hit| {
+                    if hit.t <= max_distance {
+                        Some(CastHit {
+                            collider: coll_key,
+                            point: hit.point,
+                            normal: hit.normal,
+                            t: hit.t,
+                        })
+                    } else {
+                        None
+                    }
+                })
             })
     }
 
@@ -1366,21 +1373,23 @@ impl Physics {
         ray: Ray,
         max_distance: f64,
         (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
-    ) -> Option<RayHit> {
+    ) -> Option<CastHit> {
         self.bvh
             .sweep_aabb(radius, ray, max_distance)
             .find_map(move |coll_key| {
                 let their_coll = l_collider.get(coll_key)?;
+                if !their_coll.c.is_solid() {
+                    return None;
+                }
                 let their_pose = their_coll.get_neighbor(&l_pose)?;
                 collision::query::spherecast_collider(ray, radius, *their_pose.c, *their_coll.c)
-                    .and_then(|hit_t| {
-                        if hit_t <= max_distance {
-                            // TODO: we would like the point on the surface of the object here,
-                            // for this we need query::raycast to return surface normal
-                            Some(RayHit {
+                    .and_then(|hit| {
+                        if hit.t <= max_distance {
+                            Some(CastHit {
                                 collider: coll_key,
-                                point: ray.point_at_t(hit_t),
-                                t: hit_t,
+                                point: hit.point,
+                                normal: hit.normal,
+                                t: hit.t,
                             })
                         } else {
                             None
