@@ -138,7 +138,7 @@ impl ContactInfo {
 }
 
 /// Result of a [`raycast`][self::Physics::raycast] or [`spherecast`][self::Physics::spherecast].
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct CastHit {
     /// A key to the collider that was hit.
     ///
@@ -1329,35 +1329,14 @@ impl Physics {
     /// without having to worry about offsetting it just right.
     /// If you need to also know if the ray starts inside something, use
     /// [`query_point_body`][Self::query_point_body] in addition to this.
+    #[inline]
     pub fn raycast<'p>(
         &'p mut self,
         ray: Ray,
         max_distance: f64,
-        (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
+        layers: (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
     ) -> Option<CastHit> {
-        // sweep_aabb returns colliders in spatial order
-        // so we don't need to worry about sorting here
-        self.bvh
-            .sweep_aabb(0.0, ray, max_distance)
-            .find_map(move |coll_key| {
-                let their_coll = l_collider.get(coll_key)?;
-                if !their_coll.c.is_solid() {
-                    return None;
-                }
-                let their_pose = their_coll.get_neighbor(&l_pose)?;
-                collision::query::ray_collider(ray, *their_pose.c, *their_coll.c).and_then(|hit| {
-                    if hit.t <= max_distance {
-                        Some(CastHit {
-                            collider: coll_key,
-                            point: hit.point,
-                            normal: hit.normal,
-                            t: hit.t,
-                        })
-                    } else {
-                        None
-                    }
-                })
-            })
+        self.spherecast(0.0, ray, max_distance, layers)
     }
 
     /// Find the first solid collider intersected by a sphere when swept along the given ray.
@@ -1374,28 +1353,50 @@ impl Physics {
         max_distance: f64,
         (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
     ) -> Option<CastHit> {
-        self.bvh
-            .sweep_aabb(radius, ray, max_distance)
-            .find_map(move |coll_key| {
-                let their_coll = l_collider.get(coll_key)?;
-                if !their_coll.c.is_solid() {
-                    return None;
-                }
-                let their_pose = their_coll.get_neighbor(&l_pose)?;
-                collision::query::spherecast_collider(ray, radius, *their_pose.c, *their_coll.c)
-                    .and_then(|hit| {
-                        if hit.t <= max_distance {
-                            Some(CastHit {
-                                collider: coll_key,
-                                point: hit.point,
-                                normal: hit.normal,
-                                t: hit.t,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-            })
+        // BVH traversal returns colliders in spatial order by their AABBs,
+        // but this may not return the actual closest thing first if there are
+        // small things near something large and diagonal.
+        // we need to keep traversing the BVH until we get something farther than currently found t
+        let mut closest_hit: Option<CastHit> = None;
+        for leaf in self.bvh.sweep_aabb(radius, ray, max_distance) {
+            if leaf.t >= max_distance || matches!(closest_hit, Some(closest) if leaf.t >= closest.t)
+            {
+                return closest_hit;
+            }
+
+            let their_coll = match l_collider.get(leaf.coll_key) {
+                Some(coll) => coll,
+                None => continue,
+            };
+            if !their_coll.c.is_solid() {
+                continue;
+            }
+            let their_pose = match their_coll.get_neighbor(&l_pose) {
+                Some(pose) => pose,
+                None => continue,
+            };
+
+            let hit = match collision::query::spherecast_collider(
+                ray,
+                radius,
+                *their_pose.c,
+                *their_coll.c,
+            ) {
+                Some(hit) if hit.t <= max_distance => hit,
+                _ => continue,
+            };
+            let already_found_closer = matches!(closest_hit, Some(closest) if closest.t <= hit.t);
+            if already_found_closer {
+                continue;
+            }
+            closest_hit = Some(CastHit {
+                collider: leaf.coll_key,
+                point: hit.point,
+                normal: hit.normal,
+                t: hit.t,
+            });
+        }
+        closest_hit
     }
 
     /// For debug visualization

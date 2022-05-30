@@ -169,7 +169,7 @@ impl DebugVisualizer {
         ctx.queue
             .write_buffer(&self.uniform_buf, 0, uniforms.as_bytes());
 
-        let nodes = phys.bvh.all_branch_nodes();
+        let nodes = phys.bvh.all_nodes();
         if nodes.is_empty() {
             return;
         }

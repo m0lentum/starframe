@@ -110,7 +110,7 @@ pub fn spherecast_collider(ray: Ray, r: f64, pose: m::Pose, mut coll: Collider) 
     coll.shape = coll.shape.expanded(r);
     ray_collider(ray, pose, coll).map(|hit| {
         CastHit {
-            point: hit.point + r * *hit.normal,
+            point: hit.point - r * *hit.normal,
             ..hit
         }
     })

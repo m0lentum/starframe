@@ -33,34 +33,37 @@ pub struct RayStack(BinaryHeap<RayStackEntry>);
 
 impl RayStack {
     fn push(&mut self, node_idx: usize, distance: f64) {
-        self.0.push(RayStackEntry { node_idx, distance });
+        self.0.push(RayStackEntry {
+            node_idx,
+            t: distance,
+        });
     }
 
-    fn pop(&mut self) -> Option<usize> {
-        self.0.pop().map(|entry| entry.node_idx)
+    fn pop(&mut self) -> Option<RayStackEntry> {
+        self.0.pop()
     }
 
     fn peek_t(&self) -> Option<f64> {
-        self.0.peek().map(|entry| entry.distance)
+        self.0.peek().map(|entry| entry.t)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RayStackEntry {
     node_idx: usize,
-    distance: f64,
+    t: f64,
 }
 impl Eq for RayStackEntry {}
 impl PartialOrd for RayStackEntry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        other.distance.partial_cmp(&self.distance)
+        other.t.partial_cmp(&self.t)
     }
 }
 impl Ord for RayStackEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other
-            .distance
-            .partial_cmp(&self.distance)
+            .t
+            .partial_cmp(&self.t)
             .expect("Bug in AABB sweep code")
     }
 }
@@ -211,19 +214,22 @@ impl Bvh {
             } else if self.nodes.len() == 1 {
                 ray_aabb(ray, self.nodes[0].aabb.padded(box_half_size)).and_then(|t| {
                     if t <= max_t {
-                        Some(0)
+                        Some(RayStackEntry { node_idx: 0, t })
                     } else {
                         None
                     }
                 })
             } else {
-                Some(0)
+                Some(RayStackEntry {
+                    node_idx: 0,
+                    t: 0.0,
+                })
             },
         }
     }
 
     // Generate a list of AABBS for debug drawing.
-    pub(crate) fn all_branch_nodes(&self) -> Vec<NodeInfo> {
+    pub(crate) fn all_nodes(&self) -> Vec<NodeInfo> {
         if self.nodes.is_empty() {
             return Vec::new();
         }
@@ -390,17 +396,23 @@ pub struct AABBSweep<'a> {
     // state
     stack: &'a mut RayStack,
     nodes: &'a [Node],
-    next_node: Option<usize>,
+    next_node: Option<RayStackEntry>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SweepItem {
+    pub t: f64,
+    pub coll_key: graph::NodeKey<Collider>,
 }
 
 impl<'a> Iterator for AABBSweep<'a> {
-    type Item = graph::NodeKey<Collider>;
+    type Item = SweepItem;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let next_node = self.next_node?;
 
-            match self.nodes[next_node].kind {
+            match self.nodes[next_node.node_idx].kind {
                 NodeKind::Branch { left, right } => {
                     // querying ray against padded AABB is the same as
                     // sweeping AABB against the original AABB
@@ -435,33 +447,42 @@ impl<'a> Iterator for AABBSweep<'a> {
                                 self.next_node = self.stack.pop();
                                 self.stack.push(closer_idx, closer_t);
                             } else {
-                                self.next_node = Some(closer_idx);
+                                self.next_node = Some(RayStackEntry {
+                                    t: closer_t,
+                                    node_idx: closer_idx,
+                                });
                             }
                         }
                         (Some(t_l), None) => {
-                            if t_l < self.max_t {
-                                if matches!(self.stack.peek_t(), Some(nearest_t) if nearest_t < t_l)
-                                {
-                                    self.next_node = self.stack.pop();
-                                    self.stack.push(left, t_l);
-                                } else {
-                                    self.next_node = Some(left);
-                                }
-                            } else {
+                            if t_l >= self.max_t {
                                 self.next_node = self.stack.pop();
+                                continue;
+                            }
+
+                            if matches!(self.stack.peek_t(), Some(nearest_t) if nearest_t < t_l) {
+                                self.next_node = self.stack.pop();
+                                self.stack.push(left, t_l);
+                            } else {
+                                self.next_node = Some(RayStackEntry {
+                                    t: t_l,
+                                    node_idx: left,
+                                });
                             }
                         }
                         (None, Some(t_r)) => {
-                            if t_r < self.max_t {
-                                if matches!(self.stack.peek_t(), Some(nearest_t) if nearest_t < t_r)
-                                {
-                                    self.next_node = self.stack.pop();
-                                    self.stack.push(right, t_r);
-                                } else {
-                                    self.next_node = Some(right);
-                                }
-                            } else {
+                            if t_r >= self.max_t {
                                 self.next_node = self.stack.pop();
+                                continue;
+                            }
+
+                            if matches!(self.stack.peek_t(), Some(nearest_t) if nearest_t < t_r) {
+                                self.next_node = self.stack.pop();
+                                self.stack.push(right, t_r);
+                            } else {
+                                self.next_node = Some(RayStackEntry {
+                                    t: t_r,
+                                    node_idx: right,
+                                });
                             }
                         }
                         (None, None) => {
@@ -471,7 +492,10 @@ impl<'a> Iterator for AABBSweep<'a> {
                 }
                 NodeKind::Leaf { coll_key } => {
                     self.next_node = self.stack.pop();
-                    return Some(coll_key);
+                    return Some(SweepItem {
+                        t: next_node.t,
+                        coll_key,
+                    });
                 }
             }
         }
