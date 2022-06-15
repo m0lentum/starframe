@@ -16,16 +16,16 @@ about vines and fire.
 ![Current state of graphics and physics](demo.gif)
 
 - Novel graph-based entity system inspired by [froggy](https://github.com/kvark/froggy)
-  - [related blog post](https://moletrooper.github.io/blog/2020/08/starframe-1-architecture/)
+  - [related blog post](https://molentum.me/blog/starframe-architecture/)
     (somewhat outdated; many details have changed since)
 - 2D rigid body and particle physics
-  - collider shapes: boxes, circles, and capsules
+  - collider shapes: circles, polygons and rounded polygons
   - particle-based ropes with full coupling with rigid bodies
   - constraint solver based on
     [Extended Position-Based Dynamics](https://matthias-research.github.io/pages/publications/PBDBodies.pdf)
-    - [related blog post](https://moletrooper.github.io/blog/2021/03/starframe-devlog-constraints/)
+    - [related blog post](https://molentum.me/blog/starframe-constraints/)
 - Graphics
-  - Basic 2D mesh rendering with [wgpu](https://github.com/gfx-rs/wgpu-rs)
+  - Basic 2D mesh rendering with [wgpu]
   - Dynamic outlines with the Jump Flood algorithm
 
 Future plans and ideas are constantly changing and can be found in the form of
@@ -34,13 +34,21 @@ repo](https://github.com/MoleTrooper/notes).
 
 ## Blog
 
-I write about this project once in a blue moon on [my website](https://moletrooper.me/blog/).
+I write about this project once in a blue moon on [my website](https://molentum.me/blog/).
 
 ## Sandbox example
 
 I have a little sandbox I use for testing new features where you can throw
 blocks around with the mouse and move a rudimentary platformer character that
 shoots some rather heavy bullets. Here's how you can check it out:
+
+### In the browser
+
+If you have access to a WebGPU-enabled browser (Firefox Nightly or Chrome Canary
+with the right flag set), you can try out [this online build of the sandbox](https://molentum.me/sandbox/)!
+Due to the instability of the feature in current browsers it may or may not work,
+and it might not be the latest version here on git, but it's there and it's cool.
+Thanks [wgpu]!
 
 ### The manual way
 
@@ -75,3 +83,5 @@ V           - change mouse mode between camera and grab
 Mouse drag  - move the camera (in camera mode)
 Mouse wheel - zoom the camera (in camera mode)
 ```
+
+[wgpu]: https://github.com/gfx-rs/wgpu-rs
