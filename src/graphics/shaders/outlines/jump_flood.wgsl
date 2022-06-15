@@ -1,27 +1,29 @@
 struct Uniforms {
-    step_size: u32;
-    l1_weight: f32;
-    l2_weight: f32;
-    inf_weight: f32;
+    step_size: u32,
+    l1_weight: f32,
+    l2_weight: f32,
+    inf_weight: f32,
 };
 
-[[group(0), binding(0)]]
+@group(0)
+@binding(0)
 var<uniform> unif: Uniforms;
 
-[[group(1), binding(0)]]
+@group(1)
+@binding(0)
 var gbuf_tex: texture_2d<f32>;
 
 struct VertexOutput {
-    [[builtin(position)]] position: vec4<f32>;
-    [[location(0)]] uv: vec2<f32>;
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
 };
 
 // vertex shader draws a single full-screen triangle using just vertex indices
 // source: https://www.saschawillems.de/blog/2016/08/13/vulkan-tutorial-on-rendering-a-fullscreen-quad-without-buffers/
 // (y flipped for wgpu)
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[builtin(vertex_index)]] vert_idx: u32,
+    @builtin(vertex_index) vert_idx: u32,
 ) -> VertexOutput {
     var out: VertexOutput;
 
@@ -31,10 +33,10 @@ fn vs_main(
     return out;
 }
 
-[[stage(fragment)]]
+@fragment
 fn fs_main(
     in: VertexOutput,
-) -> [[location(0)]] vec2<f32> {
+) -> @location(0) vec2<f32> {
     // working with integer UVs without a sampler
     let uv_f: vec2<f32> = in.uv * vec2<f32>(textureDimensions(gbuf_tex));
     let uv_i: vec2<i32> = vec2<i32>(uv_f);

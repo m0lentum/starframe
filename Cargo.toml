@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 winit = "0.26.0"
+instant = { version = "0.1", features = ["wasm-bindgen"] }
 wgpu = "0.12.0"
 zerocopy = "0.6.1"
 futures = "0.3.19"
@@ -17,18 +18,31 @@ tracy-client = { version = "0.14.0", default-features = false }
 serde = { version = "1.0.132", features = ["derive"], optional = true }
 rayon = { version = "1.5.1", optional = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2.80"
+web-sys = "0.3.57"
+js-sys = "0.3.57"
+wasm-bindgen-futures = "0.4.30"
+console_error_panic_hook = "0.1.6"
+log = "0.4"
+console_log = "0.1.2"
+
 [features]
-default = ["serde-types", "parallel"]
+# TODO: figure out how to make "parallel" default when not on wasm
+# (cargo-run-wasm doesn't support --no-default-features at the moment)
+default = ["serde-types"]
 parallel = ["rayon"]
 serde-types = ["serde", "ultraviolet/serde", "winit/serde"]
 tracy = ["tracy-client/enable"]
 
 [dev-dependencies]
 rand = "0.8.4"
+getrandom = { version = "0.2.7", features = ["js"] }
 ron = "0.7.0"
 # egui and its wgpu integration deps
 egui = "0.16.1"
-egui_wgpu_backend = "0.16.0"
+# egui_wgpu_backend = "0.16.0"
+egui_wgpu_backend = { path = "../egui_wgpu_backend" }
 egui_winit_platform = "0.13.0"
 
 [[example]]
@@ -37,3 +51,6 @@ required-features = ["serde-types"]
 
 [profile.dev]
 opt-level = 2
+
+[workspace]
+members = ["run-wasm"]

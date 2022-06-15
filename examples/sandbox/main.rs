@@ -8,7 +8,7 @@ use rand::{distributions as distr, distributions::Distribution};
 use egui_winit_platform as egui_wp;
 
 use starframe::{
-    game::{self, Game},
+    game::{self, Game, GameParams},
     graph::{new_graph, Graph},
     graphics as gx,
     input::{Key, MouseButton},
@@ -23,20 +23,24 @@ mod recipes;
 use recipes::Recipe;
 
 fn main() {
+    let window = winit::window::WindowBuilder::new()
+        .with_title("starframe test")
+        .with_inner_size(winit::dpi::LogicalSize {
+            width: 1280.0,
+            height: 720.0,
+        });
+
+    #[cfg(not(target_arch = "wasm32"))]
     use winit::platform::unix::WindowBuilderExtUnix;
-    let game = Game::init(
-        60,
-        winit::window::WindowBuilder::new()
-            .with_title("starframe test")
-            // X11 class I use for a window manager rule to make the game window floating
-            .with_class("game".into(), "game".into())
-            .with_inner_size(winit::dpi::LogicalSize {
-                width: 1280.0,
-                height: 720.0,
-            }),
-    );
-    let state = State::init(&game.renderer);
-    game.run(state, Some(handle_event));
+    // X11 class I use for a window manager rule to make the game window floating on linux
+    #[cfg(not(target_arch = "wasm32"))]
+    let window = window.with_class("game".into(), "game".into());
+
+    Game::run(GameParams {
+        window,
+        fps: 60,
+        on_event: handle_event,
+    });
 }
 
 fn handle_event(state: &mut State, evt: &winit::event::Event<()>) {
@@ -193,6 +197,11 @@ impl Scene {
         Scene::deserialize(&mut deser)
     }
 
+    pub fn read_from_string(s: &str) -> Result<Self, ron::de::Error> {
+        let mut deser = ron::de::Deserializer::from_str(s)?;
+        <Self as serde::Deserialize>::deserialize(&mut deser)
+    }
+
     pub fn instantiate(&self, physics: &mut phys::Physics, graph: &Graph) {
         for recipe in &self.recipes {
             recipe.spawn(physics, graph);
@@ -200,6 +209,7 @@ impl Scene {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_available_scenes() -> Result<Vec<std::path::PathBuf>, std::io::Error> {
     let dir = std::fs::read_dir("./examples/sandbox/scenes")?;
     Ok(dir
@@ -209,6 +219,7 @@ fn read_available_scenes() -> Result<Vec<std::path::PathBuf>, std::io::Error> {
         .collect())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn read_scene(path: &std::path::Path) -> Option<Scene> {
     let file = std::fs::File::open(path);
     match file {
@@ -226,11 +237,53 @@ fn read_scene(path: &std::path::Path) -> Option<Scene> {
     }
 }
 
+// hackery to simulate loading scenes with include_str on the web
+// so I don't have to implement downloading stuff at runtime
+#[cfg(target_arch = "wasm32")]
+fn read_available_scenes() -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+    Ok([
+        "compound_colliders.ron",
+        "minimal.ron",
+        "oscillators.ron",
+        "ropes.ron",
+        "test.ron",
+    ]
+    .into_iter()
+    .map(|s| std::path::PathBuf::from(s))
+    .collect())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_scene(path: &std::path::Path) -> Option<Scene> {
+    let scene_str = match path.to_str().unwrap() {
+        "compound_colliders.ron" => include_str!("scenes/compound_colliders.ron"),
+        "minimal.ron" => include_str!("scenes/minimal.ron"),
+        "oscillators.ron" => include_str!("scenes/oscillators.ron"),
+        "ropes.ron" => include_str!("scenes/ropes.ron"),
+        "test.ron" => include_str!("scenes/test.ron"),
+        _ => {
+            log::error!("Scene not included: {path:?}");
+            return None;
+        }
+    };
+    match Scene::read_from_string(scene_str) {
+        Ok(scene) => Some(scene),
+        Err(err) => {
+            log::error!("Failed to parse scene: {err}");
+            None
+        }
+    }
+}
+
 //
 // State updates
 //
 
 impl game::GameState for State {
+    fn init(renderer: &gx::Renderer) -> Self {
+        Self::init(renderer)
+    }
+
     fn tick(&mut self, dt: f64, game: &Game) -> Option<()> {
         let mut rng = rand::thread_rng();
 

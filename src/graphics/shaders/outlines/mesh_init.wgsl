@@ -1,17 +1,18 @@
 struct Uniforms {
-    view: mat3x3<f32>;
+    view: mat3x3<f32>,
 };
 
-[[group(0), binding(0)]]
+@group(0)
+@binding(0)
 var<uniform> unif: Uniforms;
 
 struct VertexOutput {
-    [[builtin(position)]] position: vec4<f32>;
+    @builtin(position) position: vec4<f32>,
 };
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
-    [[location(0)]] position: vec2<f32>,
+    @location(0) position: vec2<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
@@ -21,9 +22,9 @@ fn vs_main(
     return out;
 }
 
-[[stage(fragment)]]
+@fragment
 fn fs_main(
     in: VertexOutput
-) -> [[location(0)]] vec2<f32> {
+) -> @location(0) vec2<f32> {
     return in.position.xy;
 }

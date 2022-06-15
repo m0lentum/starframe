@@ -39,9 +39,11 @@ impl Renderer {
             .expect("Failed to create wgpu device");
 
         let window_size = window.inner_size();
-        let swapchain_format = surface
-            .get_preferred_format(&adapter)
-            .expect("Failed to get swapchain format");
+
+        // surface.get_preferred_format gives a non-SRGB format on wasm
+        // which screws up colors. not sure if setting it to a constant
+        // is the correct solution but it works on my machines :v)
+        let swapchain_format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,

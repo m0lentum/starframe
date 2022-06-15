@@ -1,12 +1,14 @@
 //! Tools for creating a window and starting a managed game loop.
 
-use std::time::{Duration, Instant};
+use instant::{Duration, Instant};
 
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::{Window, WindowBuilder},
 };
+
+use crate::graphics::Renderer;
 
 // time snapping technique from Tyler Glaiel's blog post
 // https://medium.com/@tglaiel/how-to-make-your-game-run-at-60fps-24c61210fe75
@@ -32,24 +34,44 @@ fn should_snap(dt: u128, target: u128) -> bool {
     }
 }
 
+/// Implement this on your main state type to have [`Game`][self::Game]
+/// manage the game loop for you.
+pub trait GameState: Sized + 'static {
+    /// Create the initial state.
+    ///
+    /// This is called immediately after the game loop is started.
+    /// It is done this way due to async functions involved in the creation of the renderer,
+    /// which is easiest to handle within a single encompassing async function (especially in wasm).
+    fn init(renderer: &Renderer) -> Self;
+    /// Advance the game forward by a timestep. Return None to exit the game.
+    fn tick(&mut self, dt: f64, game: &Game) -> Option<()>;
+    /// Render the game onto the screen.
+    fn draw(&mut self, renderer: &mut crate::graphics::Renderer);
+}
+
+pub struct GameParams<State: GameState> {
+    pub window: WindowBuilder,
+    pub fps: u32,
+    pub on_event: fn(&mut State, &Event<()>),
+}
+
+impl<State: GameState> Default for GameParams<State> {
+    fn default() -> Self {
+        Self {
+            window: WindowBuilder::new()
+                .with_title("starframe")
+                .with_inner_size(winit::dpi::LogicalSize {
+                    width: 1280.0,
+                    height: 720.0,
+                }),
+            fps: 60,
+            on_event: |_, _| {},
+        }
+    }
+}
+
 /// A Game manages the global resources a game needs like a window and a graphics renderer
 /// and handles timing of the game loop.
-///
-/// # Example
-/// ```
-/// # use starframe::{game::{Game, GameState}, graphics::Renderer};
-/// # struct MyState;
-/// # impl MyState {
-/// #    fn init(_: &Renderer) -> Self { Self }
-/// # }
-/// # impl GameState for MyState {
-/// #   fn tick(&mut self, dt: f64, game: &Game) -> Option<()> { None }
-/// #   fn draw(&mut self, renderer: &mut starframe::graphics::Renderer) {}
-/// # }
-/// let game = Game::init(60, winit::window::WindowBuilder::new());
-/// let state = MyState::init(&game.renderer);
-/// game.run(state);
-/// ```
 pub struct Game {
     /// A global input cache that is automatically updated once per tick.
     pub input: crate::InputCache,
@@ -59,45 +81,77 @@ pub struct Game {
     pub renderer: crate::graphics::Renderer,
     nanos_per_frame: u128,
     dt_fixed: f64,
-    // Winit event loop. In an option because we need to take it out in `run`
-    // to avoid lifetime problems with self.
-    events: Option<EventLoop<()>>,
 }
 impl Game {
-    /// Create the resources you need for a game.
-    ///
-    /// This does not immediately start the game, since you may want to
-    /// use e.g. the renderer to initialize some resources first.
-    pub fn init(fps: u32, window_b: WindowBuilder) -> Self {
+    pub fn run<State: GameState>(params: GameParams<State>) {
         let events: EventLoop<()> = EventLoop::new();
-        let window = window_b.build(&events).expect("Failed to create window");
-        let renderer = futures::executor::block_on(crate::graphics::Renderer::init(&window));
-        Game {
+        let window = params
+            .window
+            .build(&events)
+            .expect("Failed to create window");
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            futures::executor::block_on(Self::run_async(
+                params.fps,
+                params.on_event,
+                events,
+                window,
+            ));
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+            console_log::init().expect("Failed to initialize console logger");
+            use winit::platform::web::WindowExtWebSys;
+            let canvas = web_sys::Element::from(window.canvas());
+            web_sys::window()
+                .and_then(|win| win.document())
+                // made-up convention for putting the game in a specific spot in the DOM
+                .and_then(|doc| match doc.get_element_by_id("starframe-game") {
+                    Some(parent) => parent.append_child(&canvas).ok(),
+                    None => doc.body().and_then(|body| body.append_child(&canvas).ok()),
+                })
+                .expect("couldn't append canvas to document body");
+            wasm_bindgen_futures::spawn_local(Self::run_async(
+                params.fps,
+                params.on_event,
+                events,
+                window,
+            ));
+        }
+    }
+
+    async fn run_async<State: GameState>(
+        fps: u32,
+        on_event: fn(&mut State, &Event<()>),
+        events: EventLoop<()>,
+        window: Window,
+    ) {
+        let _tracy_client = tracy_client::Client::start();
+
+        //
+        // init
+        //
+
+        let renderer = Renderer::init(&window).await;
+
+        let mut game = Game {
             input: crate::InputCache::new(),
             window,
             renderer,
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
             dt_fixed: 1.0 / fps as f64,
-            events: Some(events),
-        }
-    }
+        };
+        let mut state = State::init(&game.renderer);
 
-    /// Begin the game loop.
-    pub fn run<State: GameState>(
-        mut self,
-        initial_state: State,
-        on_event: Option<fn(&mut State, &winit::event::Event<()>) -> ()>,
-    ) {
-        let _tracy_client = tracy_client::Client::start();
+        //
+        // loop
+        //
 
-        let mut state = initial_state;
         let mut frame_start_t = Instant::now();
         let mut acc = 0;
-        let events = self.events.take().unwrap();
         events.run(move |event, _, control_flow| {
-            if let Some(f) = on_event {
-                f(&mut state, &event);
-            }
+            (on_event)(&mut state, &event);
 
             *control_flow = ControlFlow::Poll;
 
@@ -124,7 +178,7 @@ impl Game {
 
                     // if we're going too fast just wait, otherwise run as many ticks
                     // as have been passed since last update and draw once
-                    if dt_nanos >= self.nanos_per_frame - acc {
+                    if dt_nanos >= game.nanos_per_frame - acc {
                         frame_start_t = Instant::now();
 
                         acc += dt_nanos;
@@ -133,28 +187,28 @@ impl Game {
                             acc = MAX_ACC_VALUE;
                         }
 
-                        while acc >= self.nanos_per_frame {
+                        while acc >= game.nanos_per_frame {
                             let _frame = tracy_client::non_continuous_frame!("tick");
 
-                            if state.tick(self.dt_fixed, &self).is_none() {
+                            if state.tick(game.dt_fixed, &game).is_none() {
                                 *control_flow = ControlFlow::Exit;
                                 return;
                             }
-                            self.input.tick();
-                            acc -= self.nanos_per_frame;
+                            game.input.tick();
+                            acc -= game.nanos_per_frame;
                         }
 
                         {
                             let _draw_span = tracy_client::span!("draw");
 
-                            state.draw(&mut self.renderer);
+                            state.draw(&mut game.renderer);
                         }
 
                         tracy_client::frame_mark();
 
                         let nanos_this_frame = frame_start_t.elapsed().as_nanos();
                         // acc represents drift from the perfect tick timing that we should correct by
-                        let target_frame_duration = self.nanos_per_frame - acc;
+                        let target_frame_duration = game.nanos_per_frame - acc;
                         // sleep till next frame if we have time to kill
                         if nanos_this_frame < target_frame_duration
                             && target_frame_duration > SPIN_DURATION
@@ -173,11 +227,11 @@ impl Game {
                     }
                 }
                 Event::WindowEvent { event, .. } => {
-                    self.input.track_window_event(&event);
+                    game.input.track_window_event(&event);
                     match event {
                         WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                         WindowEvent::Resized(new_size) => {
-                            self.renderer.resize_swap_chain(new_size);
+                            game.renderer.resize_swap_chain(new_size);
                         }
                         _ => (),
                     }
@@ -186,12 +240,4 @@ impl Game {
             }
         });
     }
-}
-
-/// The state of a game.
-pub trait GameState: Sized + 'static {
-    /// Advance the game forward by a timestep. Return None to exit the game.
-    fn tick(&mut self, dt: f64, game: &Game) -> Option<()>;
-    /// Render the game onto the screen.
-    fn draw(&mut self, renderer: &mut crate::graphics::Renderer);
 }
