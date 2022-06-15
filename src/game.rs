@@ -19,6 +19,11 @@ const SNAP_THRESHOLD: u128 = 200_000;
 
 const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 
+// use winit's ControlFlow::WaitUntil to wait for the next frame,
+// but schedule it to SPIN_DURATION before the actual frame time.
+// spin the rest of the time for accurate timing.
+const SPIN_DURATION: u128 = 200_000;
+
 fn should_snap(dt: u128, target: u128) -> bool {
     if dt < target {
         target - dt < SNAP_THRESHOLD
@@ -151,11 +156,18 @@ impl Game {
                         // acc represents drift from the perfect tick timing that we should correct by
                         let target_frame_duration = self.nanos_per_frame - acc;
                         // sleep till next frame if we have time to kill
-                        if nanos_this_frame < target_frame_duration {
-                            let next_frame_t =
-                                frame_start_t + Duration::from_nanos(target_frame_duration as u64);
-                            *control_flow = ControlFlow::WaitUntil(next_frame_t);
+                        if nanos_this_frame < target_frame_duration
+                            && target_frame_duration > SPIN_DURATION
+                            && nanos_this_frame < target_frame_duration - SPIN_DURATION
+                        {
+                            let wait_until_t = frame_start_t
+                                + Duration::from_nanos(
+                                    (target_frame_duration - SPIN_DURATION) as u64,
+                                );
+                            *control_flow = ControlFlow::WaitUntil(wait_until_t);
                         } else {
+                            // we're at or almost at the next frame threshold,
+                            // spin for accurate timing
                             *control_flow = ControlFlow::Poll;
                         }
                     }
