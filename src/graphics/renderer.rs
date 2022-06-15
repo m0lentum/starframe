@@ -110,6 +110,7 @@ impl Renderer {
             device: &self.device,
             queue,
             target_size,
+            submit_check: SubmitCheck::new(),
         }
     }
 
@@ -130,11 +131,16 @@ impl Renderer {
             device: &self.device,
             queue,
             target_size,
+            submit_check: SubmitCheck::new(),
         }
     }
 }
 
 /// An interface that lets you send draw instructions to the GPU.
+///
+/// You **must** call [`submit`](Self::submit) when you drop the context.
+/// Not doing so would result in a memory leak, so
+/// `RenderContext` will panic on drop if you do this.
 ///
 /// TODOC: example
 pub struct RenderContext<'a> {
@@ -143,6 +149,23 @@ pub struct RenderContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a mut wgpu::Queue,
     pub target_size: (u32, u32),
+    // this is just used to warn if a context was dropped without submitting.
+    // doing that leaks memory
+    submit_check: SubmitCheck,
+}
+
+/// `RenderContext::submit` requires taking ownership and destructuring,
+/// which makes submitting on drop too annoying. Instead,
+struct SubmitCheck(bool);
+impl SubmitCheck {
+    fn new() -> Self {
+        Self(false)
+    }
+}
+impl Drop for SubmitCheck {
+    fn drop(&mut self) {
+        assert!(self.0, "Dropped a RenderContext without submitting");
+    }
 }
 
 pub enum RenderTarget<'a> {
@@ -200,10 +223,11 @@ impl<'a> RenderContext<'a> {
 
     /// Submit the commands made through this context to the GPU.
     /// Must be called or nothing is actually executed!
-    pub fn submit(self) {
+    pub fn submit(mut self) {
         self.queue.submit(Some(self.encoder.finish()));
         if let RenderTarget::Surface { frame, .. } = self.target {
             frame.present();
         }
+        self.submit_check.0 = true;
     }
 }

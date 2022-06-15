@@ -512,21 +512,7 @@ impl OutlineRenderer {
         rend: &mut super::Renderer,
         (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
     ) {
-        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, self.gbuf_size);
-
-        //
-        // Update the uniform buffer
-        //
-
-        let uniforms = InitUniforms {
-            view: camera.view_matrix(ctx.target_size).into(),
-        };
-        ctx.queue
-            .write_buffer(&self.init_step.uniform_buf, 0, uniforms.as_bytes());
-
-        //
-        // Update the vertex buffer
-        //
+        // update the CPU side vertex buffer
 
         self.init_step.mesh_bufs.clear();
         for (mesh, pose) in l_mesh
@@ -544,11 +530,23 @@ impl OutlineRenderer {
             return;
         }
 
+        // only now create a context so we don't do unnecessary work if there's nothing to draw
+
+        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, self.gbuf_size);
+
+        // update the uniform buffer
+
+        let uniforms = InitUniforms {
+            view: camera.view_matrix(ctx.target_size).into(),
+        };
+        ctx.queue
+            .write_buffer(&self.init_step.uniform_buf, 0, uniforms.as_bytes());
+
+        // write the updated vertex buffer
+
         self.init_step.mesh_bufs.write(&ctx);
 
-        //
         // Render
-        //
 
         {
             let mut pass = ctx.pass(Some("outline init"));
