@@ -1,12 +1,3 @@
-#[macro_use]
-mod tracy_helpers {
-    macro_rules! tracy_span {
-        ($name: literal, $func_name: literal) => {
-            tracy_client::Span::new($name, $func_name, file!(), line!(), 100)
-        };
-    }
-}
-
 pub mod graph;
 
 pub mod game;

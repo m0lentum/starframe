@@ -83,6 +83,8 @@ impl Game {
         initial_state: State,
         on_event: Option<fn(&mut State, &winit::event::Event<()>) -> ()>,
     ) {
+        let _tracy_client = tracy_client::Client::start();
+
         let mut state = initial_state;
         let mut frame_start_t = Instant::now();
         let mut acc = 0;
@@ -127,7 +129,7 @@ impl Game {
                         }
 
                         while acc >= self.nanos_per_frame {
-                            let _frame = tracy_client::start_noncontinuous_frame!("tick");
+                            let _frame = tracy_client::non_continuous_frame!("tick");
 
                             if state.tick(self.dt_fixed, &self).is_none() {
                                 *control_flow = ControlFlow::Exit;
@@ -138,12 +140,12 @@ impl Game {
                         }
 
                         {
-                            let _draw_span = tracy_span!("draw", "run");
+                            let _draw_span = tracy_client::span!("draw");
 
                             state.draw(&mut self.renderer);
                         }
 
-                        tracy_client::finish_continuous_frame!();
+                        tracy_client::frame_mark();
 
                         let nanos_this_frame = frame_start_t.elapsed().as_nanos();
                         // acc represents drift from the perfect tick timing that we should correct by

@@ -36,15 +36,6 @@ mod solver;
 use solver::ColliderContext;
 
 //
-
-#[cfg(feature = "tracy")]
-static COLLIDERS_PLOT: tracy_client::Plot = tracy_client::create_plot!("colliders");
-#[cfg(feature = "tracy")]
-static PAIRS_PLOT: tracy_client::Plot = tracy_client::create_plot!("collider pairs tested");
-#[cfg(feature = "tracy")]
-static CONTACTS_PLOT: tracy_client::Plot = tracy_client::create_plot!("contacts");
-
-//
 // public types
 //
 
@@ -433,7 +424,7 @@ impl Physics {
             LayerView<rope::Rope>,
         ),
     ) {
-        let _main_span = tracy_span!("physics tick", "tick");
+        let _main_span = tracy_client::span!("physics tick");
 
         let l_pose_immut = l_pose.subview();
         let l_body_sub = l_body.subview();
@@ -458,7 +449,7 @@ impl Physics {
         // Prepare the spatial index
         //
 
-        let spi_span = tracy_span!("build spatial index", "tick");
+        let spi_span = tracy_client::span!("build spatial index");
 
         // constant for padding bounding volumes to fit movement during substeps,
         // collisions may be missed if higher accelerations occur
@@ -495,11 +486,8 @@ impl Physics {
             self.bvh.insert(coll.key(), aabb);
         }
 
-        #[cfg(feature = "tracy")]
-        {
-            COLLIDERS_PLOT.point(l_collider.iter().count() as f64);
-            PAIRS_PLOT.point(bufs.coll_pair_idxs.len() as f64);
-        }
+        tracy_client::plot!("colliders", l_collider.iter().count() as f64);
+        tracy_client::plot!("collider pairs tested", bufs.coll_pair_idxs.len() as f64);
 
         drop(spi_span);
 
@@ -507,7 +495,7 @@ impl Physics {
         // Build constraint graph
         //
 
-        let constr_graph_span = tracy_span!("build constraint graph", "tick");
+        let constr_graph_span = tracy_client::span!("build constraint graph");
 
         self.constraint_graph.clear();
         self.constraint_graph.resize(l_body_sub.components.len());
@@ -616,7 +604,7 @@ impl Physics {
         bufs.sorted_first_pass.clear();
         bufs.sorted_second_pass.clear();
 
-        let island_span = tracy_span!("build islands", "tick");
+        let island_span = tracy_client::span!("build islands");
 
         fn search(
             root_body_idx: usize,
@@ -802,7 +790,7 @@ impl Physics {
         // Populate working buffers
         //
 
-        let buf_span = tracy_span!("populate buffers", "tick");
+        let buf_span = tracy_client::span!("populate buffers");
 
         // refs in island order, rest of the buffers based on these
         //
@@ -1147,19 +1135,19 @@ impl Physics {
 
         island_iter.for_each(|island_view| {
             for _substep in 0..self.consts.substeps {
-                let _substep_span = tracy_span!("substep", "tick");
+                let _substep_span = tracy_client::span!("substep");
 
                 solver::solve(forcefield, island_view);
             }
         });
 
-        #[cfg(feature = "tracy")]
-        CONTACTS_PLOT.point(
+        tracy_client::plot!(
+            "contacts",
             island_group_views
                 .iter()
                 .flat_map(|island_view| island_view.last_contacts.iter())
                 .filter(|c| !c.is_zero())
-                .count() as f64,
+                .count() as f64
         );
 
         //

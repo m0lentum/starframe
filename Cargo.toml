@@ -13,7 +13,7 @@ ultraviolet = { version = "0.8.1", features = ["f64"] }
 itertools = "0.10.3"
 slotmap = "1.0.6"
 parking_lot = "0.11.2"
-tracy-client = { version = "0.12.6", default-features = false }
+tracy-client = { version = "0.14.0", default-features = false }
 serde = { version = "1.0.132", features = ["derive"], optional = true }
 rayon = { version = "1.5.1", optional = true }
 

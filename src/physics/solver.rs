@@ -119,7 +119,7 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
 //
 
 fn solve_ropes(data: &mut DataView<'_>) {
-    let _span = tracy_span!("solve ropes", "solve_ropes");
+    let _span = tracy_client::span!("solve ropes");
 
     for rope in &*data.ropes {
         let mut curr_particle = rope.start;
@@ -190,7 +190,7 @@ fn solve_ropes(data: &mut DataView<'_>) {
 //
 
 fn solve_constraints(data: &mut DataView<'_>) {
-    let _span = tracy_span!("solve constraints", "solve_constraints");
+    let _span = tracy_client::span!("solve constraints");
 
     for (constraint, pair) in izip!(data.constraints, data.constraint_body_pairs) {
         let inv_masses = map_semi_pair(*pair, |b| data.body_refs[*b].c.mass.inv(), 0.0);
@@ -278,7 +278,7 @@ fn solve_constraints(data: &mut DataView<'_>) {
 //
 
 fn solve_contacts(data: &mut DataView<'_>) {
-    let _span = tracy_span!("solve contacts", "solve_contacts");
+    let _span = tracy_client::span!("solve contacts");
 
     for (colls, contact, last_contact, lambda_n) in izip!(
         data.coll_pairs,
@@ -481,7 +481,7 @@ fn solve_contacts(data: &mut DataView<'_>) {
 //
 
 fn contact_velocity_step(data: &mut DataView<'_>) {
-    let _span = tracy_span!("contact velocity step", "contact_velocity_step");
+    let _span = tracy_client::span!("contact velocity step");
 
     for (colls, contact, lambda_n) in
         izip!(&*data.coll_pairs, &*data.contacts, &*data.contact_lambdas)
@@ -590,7 +590,7 @@ fn contact_velocity_step(data: &mut DataView<'_>) {
 //
 
 fn constraint_damping(data: &mut DataView<'_>) {
-    let _span = tracy_span!("constraint damping", "constrain_damping");
+    let _span = tracy_client::span!("constraint damping");
 
     for (constraint, pair) in izip!(data.constraints, data.constraint_body_pairs) {
         let inv_masses = map_semi_pair(*pair, |b| data.body_refs[*b].c.mass.inv(), 0.0);
@@ -677,7 +677,7 @@ fn constraint_damping(data: &mut DataView<'_>) {
 //
 
 fn rope_velocity_step(data: &mut DataView<'_>) {
-    let _span = tracy_span!("rope velocity step", "rope_velocity_step");
+    let _span = tracy_client::span!("rope velocity step");
 
     for rope in &*data.ropes {
         let mut curr_particle = rope.start;
