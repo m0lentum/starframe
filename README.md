@@ -60,10 +60,8 @@ Thanks [wgpu]!
 
 ### The easy way, using [Nix](https://nixos.org/nix/) (on Linux)
 
-Note that this requires a Nix version that supports flakes (2.4 and up).
-
 1. Clone and navigate to this repository
-2. `nix develop`
+2. `nix shell`
 3. `cargo run --example sandbox`
 
 ### Keybindings
