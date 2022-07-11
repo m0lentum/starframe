@@ -73,7 +73,7 @@ pub struct State {
     // egui stuff
     egui_platform: egui_wp::Platform,
     egui_pass: egui_wgpu_backend::RenderPass,
-    last_egui_paint_cmds: Vec<egui::epaint::ClippedShape>,
+    last_egui_output: egui::FullOutput,
     // UI states
     outline_interp: f32,
     bvh_vis_active: bool,
@@ -135,7 +135,7 @@ impl State {
                 renderer.swapchain_format(),
                 1,
             ),
-            last_egui_paint_cmds: vec![],
+            last_egui_output: Default::default(),
             outline_interp: 0.0,
             bvh_vis_active: false,
             bvh_vis_levels: 3,
@@ -414,8 +414,7 @@ impl game::GameState for State {
             self.scene.instantiate(&mut self.physics, &self.graph);
         }
 
-        let (_output, paint_commands) = self.egui_platform.end_frame(Some(&game.window));
-        self.last_egui_paint_cmds = paint_commands;
+        self.last_egui_output = self.egui_platform.end_frame(Some(&game.window));
 
         // mouse controls
 
@@ -542,18 +541,15 @@ impl game::GameState for State {
         let paint_jobs = self
             .egui_platform
             .context()
-            .tessellate(self.last_egui_paint_cmds.clone());
+            .tessellate(self.last_egui_output.shapes.clone());
         let screen_desc = egui_wgpu_backend::ScreenDescriptor {
             physical_width: ctx.target_size.0,
             physical_height: ctx.target_size.1,
             scale_factor: window_scale_factor as f32,
         };
-        self.egui_pass.update_texture(
-            ctx.device,
-            ctx.queue,
-            &self.egui_platform.context().font_image(),
-        );
-        self.egui_pass.update_user_textures(ctx.device, ctx.queue);
+        self.egui_pass
+            .add_textures(ctx.device, ctx.queue, &self.last_egui_output.textures_delta)
+            .expect("Failed to add egui textures");
         self.egui_pass
             .update_buffers(ctx.device, ctx.queue, &paint_jobs, &screen_desc);
         self.egui_pass

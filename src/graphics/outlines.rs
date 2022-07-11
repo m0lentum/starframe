@@ -189,7 +189,7 @@ impl OutlineRenderer {
 
         let mesh_init_shader = rend
             .device
-            .create_shader_module(&wgpu::ShaderModuleDescriptor {
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("jump flood mesh init"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
                     "shaders/outlines/mesh_init.wgsl"
@@ -267,7 +267,7 @@ impl OutlineRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &mesh_init_shader,
                     entry_point: "fs_main",
-                    targets: &[GBUF_FORMAT.into()],
+                    targets: &[Some(GBUF_FORMAT.into())],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -294,7 +294,7 @@ impl OutlineRenderer {
 
         let jfa_shader = rend
             .device
-            .create_shader_module(&wgpu::ShaderModuleDescriptor {
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("jump flood"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
                     "shaders/outlines/jump_flood.wgsl"
@@ -360,7 +360,7 @@ impl OutlineRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &jfa_shader,
                     entry_point: "fs_main",
-                    targets: &[GBUF_FORMAT.into()],
+                    targets: &[Some(GBUF_FORMAT.into())],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -386,7 +386,7 @@ impl OutlineRenderer {
 
         let draw_shader = rend
             .device
-            .create_shader_module(&wgpu::ShaderModuleDescriptor {
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("outline draw"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
                     "shaders/outlines/draw_outline.wgsl"
@@ -451,11 +451,11 @@ impl OutlineRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &draw_shader,
                     entry_point: "fs_main",
-                    targets: &[wgpu::ColorTargetState {
+                    targets: &[Some(wgpu::ColorTargetState {
                         format: rend.swapchain_format(),
                         blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                         write_mask: wgpu::ColorWrites::ALL,
-                    }],
+                    })],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,

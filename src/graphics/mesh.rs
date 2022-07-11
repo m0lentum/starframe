@@ -223,7 +223,7 @@ impl MeshRenderer {
 
         let shader = rend
             .device
-            .create_shader_module(&wgpu::ShaderModuleDescriptor {
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/mesh.wgsl"))),
             });
@@ -306,7 +306,7 @@ impl MeshRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: "fs_main",
-                    targets: &[rend.swapchain_format().into()],
+                    targets: &[Some(rend.swapchain_format().into())],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,

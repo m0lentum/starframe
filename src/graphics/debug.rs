@@ -38,7 +38,7 @@ impl DebugVisualizer {
     pub fn new(rend: &super::Renderer) -> Self {
         let shader = rend
             .device
-            .create_shader_module(&wgpu::ShaderModuleDescriptor {
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("debug"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/mesh.wgsl"))),
             });
@@ -117,7 +117,7 @@ impl DebugVisualizer {
                     fragment: Some(wgpu::FragmentState {
                         module: &shader,
                         entry_point: "fs_main",
-                        targets: &[wgpu::ColorTargetState {
+                        targets: &[Some(wgpu::ColorTargetState {
                             format: rend.swapchain_format(),
                             blend: Some(wgpu::BlendState {
                                 color: wgpu::BlendComponent {
@@ -128,7 +128,7 @@ impl DebugVisualizer {
                                 alpha: wgpu::BlendComponent::REPLACE,
                             }),
                             write_mask: wgpu::ColorWrites::ALL,
-                        }],
+                        })],
                     }),
                     primitive: wgpu::PrimitiveState {
                         topology,

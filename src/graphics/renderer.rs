@@ -50,7 +50,7 @@ impl Renderer {
             format: swapchain_format,
             width: window_size.width,
             height: window_size.height,
-            present_mode: wgpu::PresentMode::Mailbox,
+            present_mode: wgpu::PresentMode::AutoVsync,
         };
         surface.configure(&device, &surface_config);
 
@@ -193,14 +193,14 @@ impl<'a> RenderContext<'a> {
     pub fn clear(&mut self, color: wgpu::Color) {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("clear"),
-            color_attachments: &[wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: self.target.view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(color),
                     store: true,
                 },
-            }],
+            })],
             depth_stencil_attachment: None,
         });
         // drop the pass immediately, causing the clear instruction
@@ -211,14 +211,14 @@ impl<'a> RenderContext<'a> {
     pub fn pass(&mut self, label: Option<&'static str>) -> wgpu::RenderPass {
         self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label,
-            color_attachments: &[wgpu::RenderPassColorAttachment {
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: self.target.view(),
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: true,
                 },
-            }],
+            })],
             depth_stencil_attachment: None,
         })
     }
