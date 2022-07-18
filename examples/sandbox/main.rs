@@ -431,7 +431,7 @@ impl game::GameState for State {
             MouseMode::Camera => {
                 self.camera
                     .update(&game.input, game.renderer.window_size().into());
-                if (game.input).is_mouse_button_pressed(MouseButton::Middle, Some(0)) {
+                if game.input.button(MouseButton::Middle.into()) {
                     self.camera.pose = uv::DSimilarity2::identity();
                 }
             }
@@ -465,12 +465,12 @@ impl game::GameState for State {
             .spawn(&mut self.physics, &self.graph);
         }
 
-        match (&self.state, game.input.is_key_pressed(Key::Space, Some(0))) {
+        match (&self.state, game.input.button(Key::Space.into())) {
             //
             // Playing or stepping manually
             //
             (StateEnum::Playing, _) | (StateEnum::Paused, true) => {
-                if game.input.is_key_pressed(Key::P, Some(0)) {
+                if game.input.button(Key::P.into()) {
                     self.state = StateEnum::Paused;
                     return Some(());
                 }
@@ -490,7 +490,7 @@ impl game::GameState for State {
             // Paused
             //
             (StateEnum::Paused, false) => {
-                if game.input.is_key_pressed(Key::P, Some(0)) {
+                if game.input.button(Key::P.into()) {
                     self.state = StateEnum::Playing;
                     return Some(());
                 }

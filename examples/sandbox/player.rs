@@ -2,7 +2,7 @@ use starframe::{
     self as sf,
     graph::{Graph, LayerViewMut, NodeKey},
     graphics as gx,
-    input::{Key, KeyAxisState},
+    input::{AxisQuery, Key},
     math as m, physics as phys,
 };
 
@@ -97,10 +97,16 @@ impl PlayerController {
         let mut layers = graph.get_layer_bundle::<Layers>();
         let (l_pose, l_collider, l_body, l_mesh, l_player) = &mut layers;
 
-        let (target_facing, target_hdir) = match input.get_key_axis_state(Key::Right, Key::Left) {
-            KeyAxisState::Zero => (None, 0.0),
-            KeyAxisState::Pos => (Some(Facing::Right), 1.0),
-            KeyAxisState::Neg => (Some(Facing::Left), -1.0),
+        let move_axis = input.axis(AxisQuery {
+            pos_btn: Key::Right.into(),
+            neg_btn: Key::Left.into(),
+        });
+        let (target_facing, target_hdir) = if move_axis == 0.0 {
+            (None, 0.0)
+        } else if move_axis.is_sign_positive() {
+            (Some(Facing::Right), 1.0)
+        } else {
+            (Some(Facing::Left), -1.0)
         };
 
         let mut bullet_delete_queue: Vec<sf::graph::NodeKey<phys::Collider>> = Vec::new();
@@ -124,7 +130,7 @@ impl PlayerController {
 
             // jump
 
-            if input.is_key_pressed(Key::LShift, Some(0)) {
+            if input.button(Key::LShift.into()) {
                 // TODO: only on ground, double jump, custom curve
                 player_body.c.velocity.linear.y = 4.0;
             }
@@ -143,7 +149,7 @@ impl PlayerController {
             // shoot
 
             if player.c.active_bullets.len() < MAX_SIMULTANEOUS_BULLETS
-                && input.is_key_pressed(Key::Z, Some(0))
+                && input.button(Key::Z.into())
             {
                 player.c.active_bullets.push(Self::spawn_bullet(
                     m::PoseBuilder::new()
