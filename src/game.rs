@@ -43,8 +43,8 @@ pub trait GameState: Sized + 'static {
     /// It is done this way due to async functions involved in the creation of the renderer,
     /// which is easiest to handle within a single encompassing async function (especially in wasm).
     fn init(renderer: &Renderer) -> Self;
-    /// Advance the game forward by a timestep. Return None to exit the game.
-    fn tick(&mut self, dt: f64, game: &Game) -> Option<()>;
+    /// Advance the game forward by a timestep of `Game::dt_fixed` seconds. Return None to exit the game.
+    fn tick(&mut self, game: &Game) -> Option<()>;
     /// Render the game onto the screen.
     fn draw(&mut self, renderer: &mut crate::graphics::Renderer);
 }
@@ -80,7 +80,7 @@ pub struct Game {
     /// A renderer that can draw to the game's window.
     pub renderer: crate::graphics::Renderer,
     nanos_per_frame: u128,
-    dt_fixed: f64,
+    pub dt_fixed: f64,
 }
 impl Game {
     pub fn run<State: GameState>(params: GameParams<State>) {
@@ -190,7 +190,7 @@ impl Game {
                         while acc >= game.nanos_per_frame {
                             let _frame = tracy_client::non_continuous_frame!("tick");
 
-                            if state.tick(game.dt_fixed, &game).is_none() {
+                            if state.tick(&game).is_none() {
                                 *control_flow = ControlFlow::Exit;
                                 return;
                             }

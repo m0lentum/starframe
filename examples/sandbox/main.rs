@@ -80,6 +80,7 @@ pub struct State {
     bvh_vis_levels: usize,
     island_vis_active: bool,
     spawner_circle_r: f64,
+    time_scale: f64,
 }
 impl State {
     fn init(renderer: &gx::Renderer) -> Self {
@@ -101,11 +102,7 @@ impl State {
             mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
             physics: phys::Physics::new(
-                phys::TuningConstants {
-                    // uncomment to help testing collision detection and such
-                    // substeps: 1,
-                    ..Default::default()
-                },
+                phys::TuningConstants::default(),
                 phys::collision::MaskMatrix::default(),
             ),
             camera: gx::camera::MouseDragCamera::new(
@@ -141,6 +138,7 @@ impl State {
             bvh_vis_levels: 3,
             island_vis_active: false,
             spawner_circle_r: 0.0,
+            time_scale: 1.0,
         }
     }
 
@@ -284,7 +282,7 @@ impl game::GameState for State {
         Self::init(renderer)
     }
 
-    fn tick(&mut self, dt: f64, game: &Game) -> Option<()> {
+    fn tick(&mut self, game: &Game) -> Option<()> {
         let mut rng = rand::thread_rng();
 
         //
@@ -384,6 +382,7 @@ impl game::GameState for State {
                 egui::Slider::new(&mut self.physics.consts.substeps, 1..=15)
                     .text("Physics substeps"),
             );
+            ui.add(egui::Slider::new(&mut self.time_scale, 0.05..=2.0).text("Time scale"));
 
             ui.separator();
             ui.heading("Visuals");
@@ -475,14 +474,15 @@ impl game::GameState for State {
                     return Some(());
                 }
 
-                {
-                    let grav = phys::forcefield::Gravity(self.scene.gravity.into());
-                    self.physics.tick(dt, &grav, self.graph.get_layer_bundle());
-                }
-                {
-                    self.player
-                        .tick(&game.input, &self.physics, &mut self.graph);
-                }
+                let grav = phys::forcefield::Gravity(self.scene.gravity.into());
+                self.physics.tick(
+                    game.dt_fixed,
+                    Some(self.time_scale),
+                    &grav,
+                    self.graph.get_layer_bundle(),
+                );
+                self.player
+                    .tick(&game.input, &self.physics, &mut self.graph);
 
                 Some(())
             }

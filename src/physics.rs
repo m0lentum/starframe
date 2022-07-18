@@ -308,6 +308,7 @@ impl WorkingBuffers {
 /// Constants used to adjust various features of the physics solver.
 ///
 /// Start with `Default::default()` and adjust as needed.
+#[derive(Clone, Copy, Debug)]
 pub struct TuningConstants {
     /// The number of substeps per frame.
     ///
@@ -416,6 +417,7 @@ impl Physics {
     pub fn tick(
         &mut self,
         frame_dt: f64,
+        time_scale: Option<f64>,
         forcefield: &impl ForceField,
         (mut l_pose, mut l_body, l_collider, l_rope): (
             LayerViewMut<m::Pose>,
@@ -429,7 +431,21 @@ impl Physics {
         let l_pose_immut = l_pose.subview();
         let l_body_sub = l_body.subview();
 
-        let dt = frame_dt / self.consts.substeps as f64;
+        // time scaling is done by adjusting both dt and actual substep count executed.
+        // trying to keep dt as close to constant as possible to avoid any nasty inconsistencies
+        let substeps;
+        let dt;
+        match time_scale {
+            None => {
+                substeps = self.consts.substeps;
+                dt = frame_dt / substeps as f64;
+            }
+            Some(scale) => {
+                substeps = (scale * self.consts.substeps as f64).ceil() as usize;
+                // dt here must be such that `dt * substeps == time_scale * frame_dt
+                dt = scale * frame_dt / substeps as f64;
+            }
+        }
         let inv_dt = 1.0 / dt;
         let inv_dt_sq = inv_dt * inv_dt;
 
@@ -1134,7 +1150,7 @@ impl Physics {
         let island_iter = island_group_views.iter_mut();
 
         island_iter.for_each(|island_view| {
-            for _substep in 0..self.consts.substeps {
+            for _substep in 0..substeps {
                 let _substep_span = tracy_client::span!("substep");
 
                 solver::solve(forcefield, island_view);
