@@ -235,6 +235,7 @@ impl Default for InputCache {
 
 /// A button on any input device (keyboard, mouse, TODO: gamepad).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub enum Button {
     Keyboard(Key),
     Mouse(MouseButton),
@@ -253,6 +254,7 @@ impl From<MouseButton> for Button {
 /// A query for matching against the state of a button.
 /// See [InputCache::button][`self::InputCache::button] for usage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub struct ButtonQuery {
     pub button: Button,
     pub state: ElementState,
@@ -379,6 +381,7 @@ impl From<MouseButton> for ButtonQuery {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub struct AxisQuery {
     pub pos_btn: Button,
     pub neg_btn: Button,
