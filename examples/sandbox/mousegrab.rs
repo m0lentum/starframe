@@ -2,7 +2,7 @@ use starframe::{
     self as sf,
     graph::Graph,
     graphics::camera::Camera,
-    input::MouseButton,
+    input::{ButtonQuery, MouseButton},
     physics::{ConstraintBuilder, ConstraintHandle},
 };
 
@@ -24,7 +24,7 @@ impl MouseGrabber {
         physics: &mut sf::Physics,
         graph: &Graph,
     ) {
-        if input.button(MouseButton::Left.into()) {
+        if input.button(ButtonQuery::mouse(MouseButton::Left).held()) {
             let target_point =
                 camera.point_screen_to_world(viewport_size, input.cursor_position().into());
             match self.constraint {
