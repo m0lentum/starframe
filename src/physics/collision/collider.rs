@@ -107,6 +107,18 @@ impl Collider {
         }
     }
 
+    /// Create a solid hexagon collider that fits inside a circle of the given radius.
+    #[inline]
+    pub fn new_hexagon(outer_r: f64) -> Self {
+        ColliderPolygon::Hexagon { outer_r }.into()
+    }
+
+    /// Create a solid triangle collider that fits inside a circle of the given radius.
+    #[inline]
+    pub fn new_triangle(outer_r: f64) -> Self {
+        ColliderPolygon::Triangle { outer_r }.into()
+    }
+
     /// Set the collider to be solid with the given surface material.
     #[inline]
     pub fn with_material(mut self, mat: Material) -> Self {
