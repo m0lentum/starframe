@@ -1,6 +1,6 @@
 use starframe::{
     self as sf,
-    graph::{Graph, LayerViewMut, NodeKey},
+    graph::{named_layer_bundle, Graph},
     graphics as gx,
     input::{AxisQuery, Key},
     math as m, physics as phys,
@@ -41,17 +41,18 @@ pub struct PlayerRecipe {
     pub position: [f64; 2],
 }
 
-type Layers<'a> = (
-    LayerViewMut<'a, m::Pose>,
-    LayerViewMut<'a, phys::Collider>,
-    LayerViewMut<'a, phys::Body>,
-    LayerViewMut<'a, gx::Mesh>,
-    LayerViewMut<'a, Player>,
-);
+named_layer_bundle! {
+    pub struct PlayerLayers<'a> {
+        pose: w m::Pose,
+        collider: w phys::Collider,
+        body: w phys::Body,
+        mesh: w gx::Mesh,
+        player: w Player,
+    }
+}
 
 impl PlayerRecipe {
-    pub fn spawn(&self, layers: Layers) {
-        let (mut l_pose, mut l_collider, mut l_body, mut l_shape, mut l_player) = layers;
+    pub fn spawn(&self, mut l: PlayerLayers) {
         const R: f64 = 0.1;
         const LENGTH: f64 = 0.2;
 
@@ -61,16 +62,18 @@ impl PlayerRecipe {
             restitution_coef: 0.0,
         });
 
-        let mut pose_node = l_pose.insert(
+        let mut pose_node = l.pose.insert(
             m::PoseBuilder::new()
                 .with_position(self.position)
                 .with_rotation(m::Angle::Deg(90.0))
                 .build(),
         );
-        let mut shape_node = l_shape.insert(gx::Mesh::from(coll).with_color([0.2, 0.8, 0.6, 1.0]));
-        let mut coll_node = l_collider.insert(coll);
-        let mut body_node = l_body.insert(phys::Body::new_particle(1.0));
-        let mut tag_node = l_player.insert(Player::new());
+        let mut shape_node = l
+            .mesh
+            .insert(gx::Mesh::from(coll).with_color([0.2, 0.8, 0.6, 1.0]));
+        let mut coll_node = l.collider.insert(coll);
+        let mut body_node = l.body.insert(phys::Body::new_particle(1.0));
+        let mut tag_node = l.player.insert(Player::new());
         pose_node.connect(&mut body_node);
         pose_node.connect(&mut coll_node);
         body_node.connect(&mut coll_node);
@@ -94,8 +97,7 @@ impl PlayerController {
     }
 
     pub fn tick(&mut self, input: &sf::InputCache, physics: &phys::Physics, graph: &mut Graph) {
-        let mut layers = graph.get_layer_bundle::<Layers>();
-        let (l_pose, l_collider, l_body, l_mesh, l_player) = &mut layers;
+        let mut l = graph.get_layer_bundle::<PlayerLayers>();
 
         let move_axis = input.axis(AxisQuery {
             pos_btn: Key::Right.into(),
@@ -111,9 +113,9 @@ impl PlayerController {
 
         let mut bullet_delete_queue: Vec<sf::graph::NodeKey<phys::Collider>> = Vec::new();
 
-        for mut player in l_player.iter_mut() {
-            let mut player_body = player.get_neighbor_mut(l_body).unwrap();
-            let player_tr = player.get_neighbor_mut(l_pose).unwrap();
+        for mut player in l.player.iter_mut() {
+            let mut player_body = player.get_neighbor_mut(&mut l.body).unwrap();
+            let player_pose = player.get_neighbor_mut(&mut l.pose).unwrap();
 
             // move and orient
 
@@ -151,52 +153,40 @@ impl PlayerController {
             if player.c.active_bullets.len() < MAX_SIMULTANEOUS_BULLETS
                 && input.button(Key::Z.into())
             {
-                player.c.active_bullets.push(Self::spawn_bullet(
+                const R: f64 = 0.05;
+                let player_pos = player_pose.c.translation;
+                let mut b_pose = l.pose.insert(
                     m::PoseBuilder::new()
                         .with_position(
-                            player_tr.c.translation
-                                + player.c.facing.orient_vec(m::Vec2::new(0.2, 0.0)),
+                            player_pos + player.c.facing.orient_vec(m::Vec2::new(0.2, 0.0)),
                         )
                         .build(),
-                    phys::Velocity {
-                        angular: 0.0,
-                        linear: player.c.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
-                    },
-                    (l_pose, l_collider, l_body, l_mesh),
-                ));
+                );
+                let mut b_mesh = l
+                    .mesh
+                    .insert(gx::Mesh::from(gx::MeshShape::Circle { r: R, points: 5 }));
+                let mut b_coll = l.collider.insert(phys::Collider::new_circle(R));
+                let mut b_body = l.body.insert(
+                    phys::Body::new_dynamic_const_mass(b_coll.c.info(), 1.0).with_velocity(
+                        phys::Velocity {
+                            angular: 0.0,
+                            linear: player.c.facing.orient_vec(m::Vec2::new(20.0, 0.1)),
+                        },
+                    ),
+                );
+
+                b_pose.connect(&mut b_body);
+                b_pose.connect(&mut b_coll);
+                b_body.connect(&mut b_coll);
+                b_pose.connect(&mut b_mesh);
+
+                player.c.active_bullets.push(b_coll.key());
             }
         }
 
-        drop(layers);
+        drop(l);
         for bullet in bullet_delete_queue {
             graph.gather(bullet).delete();
         }
-    }
-
-    fn spawn_bullet(
-        pose: m::Pose,
-        vel: phys::Velocity,
-        (l_pose, l_collider, l_body, l_mesh): (
-            &mut LayerViewMut<m::Pose>,
-            &mut LayerViewMut<phys::Collider>,
-            &mut LayerViewMut<phys::Body>,
-            &mut LayerViewMut<gx::Mesh>,
-        ),
-    ) -> NodeKey<phys::Collider> {
-        const R: f64 = 0.05;
-        let mut pose_node = l_pose.insert(pose);
-        let mut mesh_node =
-            l_mesh.insert(gx::Mesh::from(gx::MeshShape::Circle { r: R, points: 5 }));
-        let coll = phys::Collider::new_circle(R);
-        let body = phys::Body::new_dynamic_const_mass(coll.info(), 1.0).with_velocity(vel);
-        let mut coll_node = l_collider.insert(coll);
-        let mut body_node = l_body.insert(body);
-
-        pose_node.connect(&mut body_node);
-        pose_node.connect(&mut coll_node);
-        body_node.connect(&mut coll_node);
-        pose_node.connect(&mut mesh_node);
-
-        coll_node.key()
     }
 }

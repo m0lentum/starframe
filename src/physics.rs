@@ -5,7 +5,7 @@ use slotmap as sm;
 use rayon::prelude::*;
 
 use crate::{
-    graph::{self, LayerView, LayerViewMut},
+    graph::{self, named_layer_bundle},
     math as m,
 };
 
@@ -359,6 +359,15 @@ pub struct Physics {
     contacts: Vec<ContactInfo>,
 }
 
+named_layer_bundle! {
+    pub struct TickLayers<'a> {
+        pose: w m::Pose,
+        body: w Body,
+        collider: r Collider,
+        rope: r rope::Rope,
+    }
+}
+
 impl Physics {
     pub fn new(consts: TuningConstants, mask_matrix: collision::MaskMatrix) -> Self {
         Physics {
@@ -419,17 +428,12 @@ impl Physics {
         frame_dt: f64,
         time_scale: Option<f64>,
         forcefield: &impl ForceField,
-        (mut l_pose, mut l_body, l_collider, l_rope): (
-            LayerViewMut<m::Pose>,
-            LayerViewMut<Body>,
-            LayerView<Collider>,
-            LayerView<rope::Rope>,
-        ),
+        mut l: TickLayers,
     ) {
         let _main_span = tracy_client::span!("physics tick");
 
-        let l_pose_immut = l_pose.subview();
-        let l_body_sub = l_body.subview();
+        let l_pose_sub = l.pose.subview();
+        let l_body_sub = l.body.subview();
 
         // time scaling is done by adjusting both dt and actual substep count executed.
         // trying to keep dt as close to constant as possible to avoid any nasty inconsistencies
@@ -475,9 +479,9 @@ impl Physics {
         bufs.coll_pair_idxs.clear();
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
-        for coll in l_collider.iter() {
+        for coll in l.collider.iter() {
             let pose = coll
-                .get_neighbor(&l_pose_immut)
+                .get_neighbor(&l_pose_sub)
                 .expect("A Collider didn't have a Pose");
             let aabb = match coll.get_neighbor(&l_body_sub) {
                 Some(b) => coll
@@ -495,14 +499,14 @@ impl Physics {
                     .test_aabb(aabb)
                     .filter(|other| {
                         self.mask_matrix
-                            .get(coll.c.layer, l_collider.get_unchecked(*other).c.layer)
+                            .get(coll.c.layer, l.collider.get_unchecked(*other).c.layer)
                     })
                     .map(move |other| [coll_idx, other.idx]),
             );
             self.bvh.insert(coll.key(), aabb);
         }
 
-        tracy_client::plot!("colliders", l_collider.iter().count() as f64);
+        tracy_client::plot!("colliders", l.collider.iter().count() as f64);
         tracy_client::plot!("collider pairs tested", bufs.coll_pair_idxs.len() as f64);
 
         drop(spi_span);
@@ -517,7 +521,7 @@ impl Physics {
         self.constraint_graph.resize(l_body_sub.components.len());
 
         // rope constraints
-        for rope_node in l_rope.iter() {
+        for rope_node in l.rope.iter() {
             let rope_node_idx = rope_node.key().idx;
             let mut iter = rope_node
                 .get_all_neighbors(&l_body_sub)
@@ -572,7 +576,7 @@ impl Physics {
         // this doesn't necessarily cull as much as actually checking collisions,
         // but that would require redoing this every substep which would be costly.
         for (pair_idx, pair) in bufs.coll_pair_idxs.iter().enumerate() {
-            let colls = pair.map(|ci| l_collider.get_unchecked_by_item_idx(ci));
+            let colls = pair.map(|ci| l.collider.get_unchecked_by_item_idx(ci));
             match colls.map(|c| c.get_neighbor(&l_body_sub).map(|b| b.key().idx)) {
                 [Some(b1), Some(b2)] => {
                     if b1 == b2 {
@@ -830,7 +834,7 @@ impl Physics {
         bufs.sorted_rope_views.clear();
         bufs.sorted_rope_views
             .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
-                let rope_node = l_rope.get_unchecked_by_item_idx(*idx);
+                let rope_node = l.rope.get_unchecked_by_item_idx(*idx);
                 let first_particle = rope_node
                     .get_neighbor(&l_body_sub)
                     .expect("A Rope didn't have any particles");
@@ -853,7 +857,7 @@ impl Physics {
         bufs.rope_next_particles.resize(body_refs.len(), None);
         bufs.rope_prev_particles.clear();
         bufs.rope_prev_particles.resize(body_refs.len(), None);
-        for rope_node in l_rope.iter() {
+        for rope_node in l.rope.iter() {
             let node_ref_map = &bufs.node_ref_map;
             let mut iter = rope_node
                 .get_all_neighbors(&l_body_sub)
@@ -872,7 +876,7 @@ impl Physics {
 
         bufs.old_poses.clear();
         bufs.old_poses.extend(body_refs.iter().map(|b| {
-            *(b.get_neighbor(&l_pose_immut))
+            *(b.get_neighbor(&l_pose_sub))
                 .expect("A Body didn't have a Pose")
                 .c
         }));
@@ -896,7 +900,7 @@ impl Physics {
 
         bufs.colliders.clear();
         bufs.colliders.resize(
-            l_collider.components.len(),
+            l.collider.components.len(),
             // meaningless default to fill the gaps where colliders aren't actually alive,
             // we will not access these
             solver::ColliderWithContext {
@@ -905,14 +909,14 @@ impl Physics {
                 ctx: ColliderContext::Static(m::Pose::default()),
             },
         );
-        for coll in l_collider.iter() {
+        for coll in l.collider.iter() {
             let node_idx = coll.key().idx;
             bufs.colliders[node_idx] = solver::ColliderWithContext {
                 node_idx,
                 coll: *coll.c,
                 ctx: match coll.get_neighbor(&l_body_sub) {
                     Some(b) => ColliderContext::Body(bufs.node_ref_map[b.key().idx]),
-                    None => ColliderContext::Static(match coll.get_neighbor(&l_pose_immut) {
+                    None => ColliderContext::Static(match coll.get_neighbor(&l_pose_sub) {
                         Some(pose) => *pose.c,
                         None => m::Pose::default(),
                     }),
@@ -1190,7 +1194,7 @@ impl Physics {
                 .filter_map(|(pair, contact)| {
                     contact.iter().next().map(|cont| ContactInfo {
                         colliders: pair
-                            .map(|c| l_collider.get_unchecked_by_item_idx(c.node_idx).key()),
+                            .map(|c| l.collider.get_unchecked_by_item_idx(c.node_idx).key()),
                         normal: cont.normal,
                         island_id: isl.id,
                     })
@@ -1228,11 +1232,11 @@ impl Physics {
         let body_nodes: Vec<graph::NodeKey<Body>> =
             body_refs.into_iter().map(|br| br.key()).collect();
         drop(l_body_sub);
-        drop(l_pose_immut);
+        drop(l_pose_sub);
 
         for (body, pose_result, vel_result) in izip!(body_nodes, &bufs.poses, &bufs.velocities) {
-            let mut body = l_body.get_mut_unchecked(body);
-            let pose = body.get_neighbor_mut(&mut l_pose).unwrap();
+            let mut body = l.body.get_mut_unchecked(body);
+            let pose = body.get_neighbor_mut(&mut l.pose).unwrap();
             body.c.velocity = *vel_result;
             *pose.c = *pose_result;
         }

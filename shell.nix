@@ -6,6 +6,8 @@ let
   rust = pkgs.rust-bin.stable."1.61.0".default.override {
     targets = [ "wasm32-unknown-unknown" ];
   };
+  # nightly if you need to e.g. test macros with unstable features:
+  # rust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default);
 in
 pkgs.mkShell {
   buildInputs = [

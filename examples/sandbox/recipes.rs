@@ -5,7 +5,7 @@
 
 use starframe::{
     self as sf,
-    graph::{Graph, LayerViewMut},
+    graph::{Graph, named_layer_bundle},
     graphics as gx, math as m,
     physics::{self as phys, rope, Material},
 };
@@ -108,21 +108,21 @@ impl Default for Block {
     }
 }
 
-type Layers<'a> = (
-    LayerViewMut<'a, m::Pose>,
-    LayerViewMut<'a, phys::Collider>,
-    LayerViewMut<'a, phys::Body>,
-    LayerViewMut<'a, gx::Mesh>,
-);
+named_layer_bundle!{
+    pub struct Layers<'a> {
+        pose: w m::Pose,
+        collider: w phys::Collider,
+        body: w phys::Body,
+        mesh: w gx::Mesh,
+    }
+}
 
-fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::Body>> {
-    let (mut l_pose, mut l_collider, mut l_body, mut l_mesh) = layers;
-
-    let mut pose_node = l_pose.insert(block.pose.into());
+fn spawn_block(block: Block, mut l: Layers) -> Option<sf::graph::NodeKey<phys::Body>> {
+    let mut pose_node = l.pose.insert(block.pose.into());
     let coll = phys::Collider::new_rounded_rect(block.width, block.height, block.radius);
-    let mut coll_node = l_collider.insert(coll);
+    let mut coll_node = l.collider.insert(coll);
     let mut mesh_node =
-        l_mesh.insert(gx::Mesh::from(*coll_node.c).with_color(if block.is_static {
+        l.mesh.insert(gx::Mesh::from(*coll_node.c).with_color(if block.is_static {
             [0.7; 4]
         } else {
             random_color()
@@ -132,7 +132,7 @@ fn spawn_block(block: Block, layers: Layers) -> Option<sf::graph::NodeKey<phys::
 
     if !block.is_static {
         let body = phys::Body::new_dynamic(coll.info(), 0.5);
-        let mut body_node = l_body.insert(body);
+        let mut body_node = l.body.insert(body);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut body_node);
         Some(body_node.key())
@@ -148,26 +148,22 @@ struct Solid<'a> {
     color: [f32; 4],
 }
 
-fn spawn_static(solid: Solid, layers: Layers) {
-    let (mut l_pose, mut l_collider, _, mut l_mesh) = layers;
-
+fn spawn_static(solid: Solid, mut l: Layers) {
     for coll in solid.colliders {
-        let mut pose_node = l_pose.insert(solid.pose * coll.offset);
-        let mut coll_node = l_collider.insert(*coll);
-        let mut mesh_node = l_mesh.insert(gx::Mesh::from(*coll).with_color(solid.color));
+        let mut pose_node = l.pose.insert(solid.pose * coll.offset);
+        let mut coll_node = l.collider.insert(*coll);
+        let mut mesh_node = l.mesh.insert(gx::Mesh::from(*coll).with_color(solid.color));
         pose_node.connect(&mut coll_node);
         pose_node.connect(&mut mesh_node);
     }
 }
 
-fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
-    let (mut l_pose, mut l_collider, mut l_body, mut l_mesh) = layers;
-
+fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<phys::Body> {
     let coll_setup = phys::collision::CompoundColliderSetup::new(solid.colliders);
     let center_of_mass = coll_setup.center_of_mass();
 
-    let mut pose_node = l_pose.insert(solid.pose);
-    let mut body_node = l_body.insert(phys::Body::new_dynamic(
+    let mut pose_node = l.pose.insert(solid.pose);
+    let mut body_node = l.body.insert(phys::Body::new_dynamic(
         coll_setup.info_around_point(center_of_mass),
         0.5,
     ));
@@ -176,8 +172,8 @@ fn spawn_body(solid: Solid, layers: Layers) -> sf::graph::NodeKey<phys::Body> {
 
     for mut coll in solid.colliders.iter().cloned() {
         coll.offset.translation -= center_of_mass;
-        let mut coll_node = l_collider.insert(coll);
-        let mut mesh_node = l_mesh.insert(gx::Mesh::from(coll).with_color(solid.color));
+        let mut coll_node = l.collider.insert(coll);
+        let mut mesh_node = l.mesh.insert(gx::Mesh::from(coll).with_color(solid.color));
         pose_node.connect(&mut mesh_node);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut coll_node);

@@ -118,9 +118,42 @@ use std::{
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 //
+// layer bundles and macros
+//
 
 mod layer_bundle;
 pub use layer_bundle::LayerBundle;
+
+/// Helper macro to more concisely create new graphs with a given set of layers.
+/// # Example
+/// ```
+/// # use starframe::{graph::new_graph, math::Pose, physics::{Body, Collider}};
+/// let graph = new_graph! {
+///     Pose,
+///     Body,
+///     Collider,
+/// };
+/// ```
+/// is equivalent to
+/// ```
+/// # use starframe::{graph::Graph, math::Pose, physics::{Body, Collider}};
+/// # use std::any::TypeId;
+/// let graph = Graph::new(&[
+///     TypeId::of::<Pose>(),
+///     TypeId::of::<Body>(),
+///     TypeId::of::<Collider>(),
+/// ]);
+/// ```
+#[macro_export]
+macro_rules! new_graph {
+    ($($types:ty),* $(,)*) => {
+        $crate::graph::Graph::new(&[
+            $(std::any::TypeId::of::<$types>(),)*
+        ])
+    };
+}
+pub use crate::named_layer_bundle;
+pub use crate::new_graph;
 
 //
 // Index & ref types
@@ -948,16 +981,19 @@ impl Graph {
         }
     }
 
-    /// Get a tuple of layer views in one call.
+    /// Get several layer views in one call, either as a tuple or as a named
+    /// struct implementing [`LayerBundle`][self::LayerBundle]
+    /// (typically done using the [`named_layer_bundle`][self::named_layer_bundle] macro).
+    ///
     /// This is a common pattern in arguments for functions that manipulate the graph.
     /// # Example
     /// ```
     /// # use starframe::{
     /// #    math::Pose,
     /// #    physics::{Body, Collider},
-    /// #    graph::{LayerView, LayerViewMut, new_graph}
+    /// #    graph::{LayerView, LayerViewMut, new_graph, named_layer_bundle}
     /// # };
-    /// # let graph = new_graph! { Pose, Body, Collider };
+    /// let graph = new_graph! { Pose, Body, Collider };
     ///
     /// fn do_things_with_bodies(
     ///     how_many_things: usize,
@@ -972,6 +1008,26 @@ impl Graph {
     /// }
     ///
     /// do_things_with_bodies(42, 69, graph.get_layer_bundle());
+    ///
+    /// // same but with a named struct for the bundle
+    ///
+    /// named_layer_bundle!{
+    ///     pub struct DoThingsLayers<'a> {
+    ///         pose: w Pose,
+    ///         body: w Body,
+    ///         collider: r Collider,
+    ///     }
+    /// }
+    ///
+    /// fn do_things_again(
+    ///     how_many_things: usize,
+    ///     for_how_long: usize,
+    ///     layers: DoThingsLayers,
+    /// ) {
+    ///     // more stuff...
+    /// }
+    ///
+    /// do_things_again(420, 690, graph.get_layer_bundle());
     /// ```
     pub fn get_layer_bundle<'a, B: LayerBundle<'a>>(&'a self) -> B {
         B::get_from_graph(self)
@@ -1019,36 +1075,6 @@ impl Graph {
         }
     }
 }
-
-/// Helper macro to more concisely create new graphs with a given set of layers.
-/// # Example
-/// ```
-/// # use starframe::{graph::new_graph, math::Pose, physics::{Body, Collider}};
-/// let graph = new_graph! {
-///     Pose,
-///     Body,
-///     Collider,
-/// };
-/// ```
-/// is equivalent to
-/// ```
-/// # use starframe::{graph::Graph, math::Pose, physics::{Body, Collider}};
-/// # use std::any::TypeId;
-/// let graph = Graph::new(&[
-///     TypeId::of::<Pose>(),
-///     TypeId::of::<Body>(),
-///     TypeId::of::<Collider>(),
-/// ]);
-/// ```
-#[macro_export]
-macro_rules! new_graph {
-    ($($types:ty),* $(,)*) => {
-        $crate::graph::Graph::new(&[
-            $(std::any::TypeId::of::<$types>(),)*
-        ])
-    };
-}
-pub use crate::new_graph;
 
 //
 // Gather & delete
