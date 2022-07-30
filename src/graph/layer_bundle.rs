@@ -64,14 +64,19 @@ impl_tuple!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 #[macro_export]
 macro_rules! named_layer_bundle {
     (pub struct $name:ident<$lt:lifetime> { $($body:tt)* }) => {
-        named_layer_bundle!{struct_content $name $lt {} $($body)*}
-        named_layer_bundle!{bundle_impl $name graph {} $($body)*}
+        $crate::named_layer_bundle_impl!{struct_content $name $lt {} $($body)*}
+        $crate::named_layer_bundle_impl!{bundle_impl $name graph {} $($body)*}
     };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! named_layer_bundle_impl {
     (
         struct_content $name:ident $lt:lifetime { $($done_body:tt)* }
         $field:ident: r $l_type:ty, $($tail:tt)*
     ) => {
-        named_layer_bundle!{
+        $crate::named_layer_bundle_impl!{
             struct_content
             $name
             $lt
@@ -86,7 +91,7 @@ macro_rules! named_layer_bundle {
         struct_content $name:ident $lt:lifetime { $($done_body:tt)* }
         $field:ident: w $l_type:ty, $($tail:tt)*
     ) => {
-        named_layer_bundle!{
+        $crate::named_layer_bundle_impl!{
             struct_content
             $name
             $lt
@@ -103,7 +108,7 @@ macro_rules! named_layer_bundle {
         }
     };
     (bundle_impl $name:ident $graph_var:tt { $($done_body:tt)* } $field:ident: $rw:tt $l_type:ty, $($tail:tt)*) => {
-        named_layer_bundle!{
+        $crate::named_layer_bundle_impl!{
             bundle_impl
             $name
             $graph_var

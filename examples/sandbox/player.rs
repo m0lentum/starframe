@@ -1,6 +1,6 @@
 use starframe::{
     self as sf,
-    graph::{named_layer_bundle, Graph},
+    graph::{self, Graph},
     graphics as gx,
     input::{AxisQuery, Key},
     math as m, physics as phys,
@@ -41,7 +41,7 @@ pub struct PlayerRecipe {
     pub position: [f64; 2],
 }
 
-named_layer_bundle! {
+graph::named_layer_bundle! {
     pub struct PlayerLayers<'a> {
         pose: w m::Pose,
         collider: w phys::Collider,
