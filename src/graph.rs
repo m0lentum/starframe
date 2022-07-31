@@ -739,8 +739,10 @@ impl<'a, T> LayerViewMut<'a, T> {
     }
 
     /// Get an immutable reference to a node if it still exists, otherwise return None.
+    #[inline]
     pub fn get(&self, key: NodeKey<T>) -> Option<NodeRef<'_, T>> {
-        if self.meta.statuses[key.idx].generation != key.gen {
+        if self.meta.statuses.len() <= key.idx || self.meta.statuses[key.idx].generation != key.gen
+        {
             None
         } else {
             Some(self.get_unchecked(key))
