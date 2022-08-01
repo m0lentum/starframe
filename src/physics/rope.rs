@@ -4,7 +4,7 @@ use crate::{
     graph::{self, LayerViewMut},
     graphics::{Mesh, MeshShape},
     math as m,
-    physics::{collision::ROPE_LAYER, Body, Collider, Mass, Material},
+    physics::{collision::ROPE_LAYER, Body, Collider, Mass, PhysicsMaterial},
 };
 
 /// A rope built out of connected particles.
@@ -20,7 +20,7 @@ pub struct Rope {
     pub bending_max_angle: f64,
     pub bending_compliance: f64,
     pub damping: f64,
-    pub material: Material,
+    pub material: PhysicsMaterial,
     pub particle_mass: f64,
 }
 impl Default for Rope {
@@ -32,7 +32,7 @@ impl Default for Rope {
             bending_max_angle: m::Angle::Deg(30.0).rad(),
             bending_compliance: 0.2,
             damping: 20.0,
-            material: Material {
+            material: PhysicsMaterial {
                 static_friction_coef: None,
                 dynamic_friction_coef: Some(1.5),
                 restitution_coef: 0.0,

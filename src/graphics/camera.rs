@@ -12,7 +12,7 @@ pub trait Camera {
 }
 
 /// Tells a camera how to adapt to changing viewport size.
-pub enum ScalingStrategy {
+pub enum CameraScalingStrategy {
     /// Scale so that there are a constant number of viewport pixels
     /// per world coordinate unit at zoom level 1.0.
     ConstantScale { pixels_per_unit: f64 },
@@ -21,14 +21,14 @@ pub enum ScalingStrategy {
     ConstantDisplayArea { width: f64, height: f64 },
 }
 
-impl ScalingStrategy {
+impl CameraScalingStrategy {
     /// Get the uniform scaling factor that will result in the desired field of view
     /// in the given viewport size.
     pub fn scaling_factor(&self, viewport_size: (u32, u32)) -> f64 {
         let (vp_w, vp_h) = viewport_size;
         match self {
-            ScalingStrategy::ConstantScale { pixels_per_unit } => *pixels_per_unit,
-            ScalingStrategy::ConstantDisplayArea { width, height } => {
+            CameraScalingStrategy::ConstantScale { pixels_per_unit } => *pixels_per_unit,
+            CameraScalingStrategy::ConstantDisplayArea { width, height } => {
                 (vp_w as f64 / width).min(vp_h as f64 / height)
             }
         }
@@ -44,7 +44,7 @@ impl ScalingStrategy {
 }
 
 pub struct MouseDragCamera {
-    pub scaling_strategy: ScalingStrategy,
+    pub scaling_strategy: CameraScalingStrategy,
     pub pose: uv::DSimilarity2,
     pub zoom_speed: f64,
     pub min_zoom_out: f64,
@@ -53,7 +53,7 @@ pub struct MouseDragCamera {
 }
 
 impl MouseDragCamera {
-    pub fn new(scaling_strategy: ScalingStrategy) -> Self {
+    pub fn new(scaling_strategy: CameraScalingStrategy) -> Self {
         MouseDragCamera {
             scaling_strategy,
             pose: uv::DSimilarity2::identity(),

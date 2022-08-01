@@ -1,14 +1,8 @@
-use starframe::{
-    self as sf,
-    graph::Graph,
-    graphics::camera::Camera,
-    input::{ButtonQuery, MouseButton},
-    physics::{ConstraintBuilder, ConstraintHandle},
-};
+use starframe as sf;
 
 #[derive(Clone, Copy, Debug)]
 pub struct MouseGrabber {
-    constraint: Option<ConstraintHandle>,
+    constraint: Option<sf::ConstraintHandle>,
 }
 
 impl MouseGrabber {
@@ -19,12 +13,12 @@ impl MouseGrabber {
     pub fn update(
         &mut self,
         input: &sf::InputCache,
-        camera: &impl Camera,
+        camera: &impl sf::Camera,
         viewport_size: (u32, u32),
         physics: &mut sf::Physics,
-        graph: &Graph,
+        graph: &sf::Graph,
     ) {
-        if input.button(ButtonQuery::mouse(MouseButton::Left).held()) {
+        if input.button(sf::ButtonQuery::mouse(sf::MouseButton::Left).held()) {
             let target_point =
                 camera.point_screen_to_world(viewport_size, input.cursor_position().into());
             match self.constraint {
@@ -37,7 +31,7 @@ impl MouseGrabber {
                     let layers = graph.get_layer_bundle();
                     let body = physics.query_point_body(target_point, &layers).next();
                     if let Some((pose, _, rb)) = body {
-                        let constr = ConstraintBuilder::new(rb.key())
+                        let constr = sf::ConstraintBuilder::new(rb.key())
                             .with_origin(pose.c.inversed() * target_point)
                             .with_target_origin(target_point)
                             .with_compliance(0.01)

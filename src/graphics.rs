@@ -4,9 +4,10 @@ pub use renderer::{RenderContext, Renderer};
 pub mod util;
 
 pub mod camera;
+pub use camera::{Camera, CameraScalingStrategy, MouseDragCamera};
 
-mod mesh;
-pub use mesh::*;
+pub(super) mod mesh;
+pub use mesh::{Mesh, MeshRenderer, MeshShape};
 
 mod outlines;
 pub use outlines::{OutlineParams, OutlineRenderer, OutlineShape};

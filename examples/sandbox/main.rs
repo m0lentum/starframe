@@ -7,14 +7,7 @@ use rand::{distributions as distr, distributions::Distribution};
 
 use egui_winit_platform as egui_wp;
 
-use starframe::{
-    game::{self, Game, GameParams},
-    graph::{new_graph, Graph},
-    graphics as gx,
-    input::{Key, MouseButton},
-    math::{self as m, uv},
-    physics as phys,
-};
+use starframe as sf;
 
 mod mousegrab;
 use mousegrab::MouseGrabber;
@@ -36,7 +29,7 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     let window = window.with_class("game".into(), "game".into());
 
-    Game::run(GameParams {
+    sf::Game::run(sf::GameParams {
         window,
         fps: 60,
         on_event: handle_event,
@@ -59,17 +52,17 @@ pub struct State {
     scenes_available: Vec<std::path::PathBuf>,
     scene: Scene,
     state: StateEnum,
-    graph: Graph,
+    graph: sf::Graph,
     // gameplay
     player: player::PlayerController,
     mouse_mode: MouseMode,
     mouse_grabber: MouseGrabber,
-    physics: phys::Physics,
+    physics: sf::Physics,
     // graphics
-    camera: gx::camera::MouseDragCamera,
-    mesh_renderer: gx::MeshRenderer,
-    outline_renderer: gx::OutlineRenderer,
-    debug_visualizer: gx::DebugVisualizer,
+    camera: sf::MouseDragCamera,
+    mesh_renderer: sf::MeshRenderer,
+    outline_renderer: sf::OutlineRenderer,
+    debug_visualizer: sf::DebugVisualizer,
     // egui stuff
     egui_platform: egui_wp::Platform,
     egui_pass: egui_wgpu_backend::RenderPass,
@@ -83,43 +76,41 @@ pub struct State {
     time_scale: f64,
 }
 impl State {
-    fn init(renderer: &gx::Renderer) -> Self {
+    fn init(renderer: &sf::Renderer) -> Self {
         State {
             scenes_available: read_available_scenes().expect("Failed to read scenes directory"),
             scene: Scene::default(),
             state: StateEnum::Playing,
-            graph: new_graph! {
+            graph: sf::new_graph! {
                 // starframe types
-                m::Pose,
-                phys::Body,
-                phys::Collider,
-                phys::rope::Rope,
-                gx::Mesh,
+                sf::Pose,
+                sf::Body,
+                sf::Collider,
+                sf::Rope,
+                sf::Mesh,
                 // our types
                 player::Player,
             },
             player: player::PlayerController::new(),
             mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
-            physics: phys::Physics::new(
-                phys::TuningConstants::default(),
-                phys::collision::MaskMatrix::default(),
+            physics: sf::Physics::new(
+                sf::physics::TuningConstants::default(),
+                sf::CollisionMaskMatrix::default(),
             ),
-            camera: gx::camera::MouseDragCamera::new(
-                gx::camera::ScalingStrategy::ConstantDisplayArea {
-                    width: 20.0,
-                    height: 10.0,
-                },
-            ),
-            mesh_renderer: gx::MeshRenderer::new(renderer),
-            outline_renderer: gx::OutlineRenderer::new(
-                gx::OutlineParams {
+            camera: sf::MouseDragCamera::new(sf::CameraScalingStrategy::ConstantDisplayArea {
+                width: 20.0,
+                height: 10.0,
+            }),
+            mesh_renderer: sf::MeshRenderer::new(renderer),
+            outline_renderer: sf::OutlineRenderer::new(
+                sf::OutlineParams {
                     thickness: 15,
-                    shape: gx::OutlineShape::octagon(),
+                    shape: sf::OutlineShape::octagon(),
                 },
                 renderer,
             ),
-            debug_visualizer: gx::DebugVisualizer::new(renderer),
+            debug_visualizer: sf::DebugVisualizer::new(renderer),
             egui_platform: egui_wp::Platform::new(egui_wp::PlatformDescriptor {
                 physical_width: renderer.window_size().width,
                 physical_height: renderer.window_size().height,
@@ -165,7 +156,7 @@ pub enum MouseMode {
 #[serde(default)]
 pub struct Scene {
     gravity: [f64; 2],
-    spawn_zone: phys::collision::AABB,
+    spawn_zone: sf::AABB,
     recipes: Vec<Recipe>,
 }
 
@@ -173,9 +164,9 @@ impl Default for Scene {
     fn default() -> Self {
         Self {
             gravity: [0.0, -9.81],
-            spawn_zone: phys::collision::AABB {
-                min: m::Vec2::new(-5.0, 1.0),
-                max: m::Vec2::new(5.0, 4.0),
+            spawn_zone: sf::AABB {
+                min: sf::Vec2::new(-5.0, 1.0),
+                max: sf::Vec2::new(5.0, 4.0),
             },
             recipes: vec![],
         }
@@ -200,7 +191,7 @@ impl Scene {
         <Self as serde::Deserialize>::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, physics: &mut phys::Physics, graph: &Graph) {
+    pub fn instantiate(&self, physics: &mut sf::Physics, graph: &sf::Graph) {
         for recipe in &self.recipes {
             recipe.spawn(physics, graph);
         }
@@ -277,12 +268,12 @@ fn read_scene(path: &std::path::Path) -> Option<Scene> {
 // State updates
 //
 
-impl game::GameState for State {
-    fn init(renderer: &gx::Renderer) -> Self {
+impl sf::GameState for State {
+    fn init(renderer: &sf::Renderer) -> Self {
         Self::init(renderer)
     }
 
-    fn tick(&mut self, game: &Game) -> Option<()> {
+    fn tick(&mut self, game: &sf::Game) -> Option<()> {
         let mut rng = rand::thread_rng();
 
         //
@@ -294,7 +285,7 @@ impl game::GameState for State {
 
         let mut exit = false;
         let mut reload = false;
-        let mut shape_to_spawn: Option<phys::ColliderPolygon> = None;
+        let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
         egui::Window::new("Controls").show(&egui_ctx, |ui| {
             ui.heading("Load a scene");
             ui.horizontal_wrapped(|ui| {
@@ -323,18 +314,18 @@ impl game::GameState for State {
             ui.add(egui::Slider::new(&mut self.spawner_circle_r, 0.0..=1.0).text("Radius"));
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Triangle").clicked() {
-                    shape_to_spawn = Some(phys::ColliderPolygon::Triangle {
+                    shape_to_spawn = Some(sf::ColliderPolygon::Triangle {
                         outer_r: distr::Uniform::from(0.5..0.8).sample(&mut rng),
                     });
                 }
                 if ui.button("Rect").clicked() {
-                    shape_to_spawn = Some(phys::ColliderPolygon::Rect {
+                    shape_to_spawn = Some(sf::ColliderPolygon::Rect {
                         hw: distr::Uniform::from(0.4..0.6).sample(&mut rng),
                         hh: distr::Uniform::from(0.3..0.5).sample(&mut rng),
                     });
                 }
                 if ui.button("Hexagon").clicked() {
-                    shape_to_spawn = Some(phys::ColliderPolygon::Hexagon {
+                    shape_to_spawn = Some(sf::ColliderPolygon::Hexagon {
                         outer_r: distr::Uniform::from(0.4..0.7).sample(&mut rng),
                     });
                 }
@@ -342,10 +333,10 @@ impl game::GameState for State {
             if self.spawner_circle_r > 0.0 {
                 ui.horizontal(|ui| {
                     if ui.button("Circle").clicked() {
-                        shape_to_spawn = Some(phys::ColliderPolygon::Point);
+                        shape_to_spawn = Some(sf::ColliderPolygon::Point);
                     }
                     if ui.button("Capsule").clicked() {
-                        shape_to_spawn = Some(phys::ColliderPolygon::LineSegment {
+                        shape_to_spawn = Some(sf::ColliderPolygon::LineSegment {
                             hl: distr::Uniform::from(0.3..0.5).sample(&mut rng),
                         });
                     }
@@ -399,7 +390,7 @@ impl game::GameState for State {
             );
             ui.add(egui::Slider::new(&mut self.outline_interp, 0.0..=1.0).text("Outline shape"));
             self.outline_renderer.params.shape =
-                gx::OutlineShape::octagon().lerp(self.outline_interp, gx::OutlineShape::circle());
+                sf::OutlineShape::octagon().lerp(self.outline_interp, sf::OutlineShape::circle());
             ui.separator();
             if ui.button("exit").clicked() {
                 exit = true;
@@ -430,8 +421,8 @@ impl game::GameState for State {
             MouseMode::Camera => {
                 self.camera
                     .update(&game.input, game.renderer.window_size().into());
-                if game.input.button(MouseButton::Middle.into()) {
-                    self.camera.pose = uv::DSimilarity2::identity();
+                if game.input.button(sf::MouseButton::Middle.into()) {
+                    self.camera.pose = sf::uv::DSimilarity2::identity();
                 }
             }
         }
@@ -441,21 +432,21 @@ impl game::GameState for State {
         let zone = self.scene.spawn_zone;
         let random_pos = || {
             let mut rng = rand::thread_rng();
-            m::Vec2::new(
+            sf::Vec2::new(
                 distr::Uniform::from(zone.min.x..zone.max.x).sample(&mut rng),
                 distr::Uniform::from(zone.min.y..zone.max.y).sample(&mut rng),
             )
         };
         let random_angle =
-            || m::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
+            || sf::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
 
         if let Some(polygon) = shape_to_spawn {
             Recipe::GenericBody {
-                pose: m::PoseBuilder::new()
+                pose: sf::PoseBuilder::new()
                     .with_position(random_pos())
                     .with_rotation(random_angle())
                     .build(),
-                colliders: vec![phys::ColliderShape {
+                colliders: vec![sf::ColliderShape {
                     polygon,
                     circle_r: self.spawner_circle_r,
                 }
@@ -464,17 +455,17 @@ impl game::GameState for State {
             .spawn(&mut self.physics, &self.graph);
         }
 
-        match (&self.state, game.input.button(Key::Space.into())) {
+        match (&self.state, game.input.button(sf::Key::Space.into())) {
             //
             // Playing or stepping manually
             //
             (StateEnum::Playing, _) | (StateEnum::Paused, true) => {
-                if game.input.button(Key::P.into()) {
+                if game.input.button(sf::Key::P.into()) {
                     self.state = StateEnum::Paused;
                     return Some(());
                 }
 
-                let grav = phys::forcefield::Gravity(self.scene.gravity.into());
+                let grav = sf::forcefield::Gravity(self.scene.gravity.into());
                 self.physics.tick(
                     game.dt_fixed,
                     Some(self.time_scale),
@@ -490,7 +481,7 @@ impl game::GameState for State {
             // Paused
             //
             (StateEnum::Paused, false) => {
-                if game.input.button(Key::P.into()) {
+                if game.input.button(sf::Key::P.into()) {
                     self.state = StateEnum::Playing;
                     return Some(());
                 }
@@ -500,7 +491,7 @@ impl game::GameState for State {
         }
     }
 
-    fn draw(&mut self, renderer: &mut gx::Renderer) {
+    fn draw(&mut self, renderer: &mut sf::Renderer) {
         let window_scale_factor = renderer.window_scale_factor();
 
         self.outline_renderer.prepare(renderer);

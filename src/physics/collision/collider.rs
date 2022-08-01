@@ -121,7 +121,7 @@ impl Collider {
 
     /// Set the collider to be solid with the given surface material.
     #[inline]
-    pub fn with_material(mut self, mat: Material) -> Self {
+    pub fn with_material(mut self, mat: PhysicsMaterial) -> Self {
         self.ty = ColliderType::Solid(mat);
         self
     }
@@ -164,13 +164,13 @@ impl Collider {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub enum ColliderType {
-    Solid(Material),
+    Solid(PhysicsMaterial),
     Trigger,
 }
 
 impl Default for ColliderType {
     fn default() -> Self {
-        Self::Solid(Material::default())
+        Self::Solid(PhysicsMaterial::default())
     }
 }
 
@@ -935,7 +935,7 @@ impl ColliderPolygon {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde-types", serde(default))]
-pub struct Material {
+pub struct PhysicsMaterial {
     /// Coefficient of static friction.
     /// Set to None to opt out of static friction.
     pub static_friction_coef: Option<f64>,
@@ -945,9 +945,9 @@ pub struct Material {
     pub restitution_coef: f64,
 }
 
-impl Default for Material {
+impl Default for PhysicsMaterial {
     fn default() -> Self {
-        Material {
+        PhysicsMaterial {
             static_friction_coef: Some(1.6),
             dynamic_friction_coef: Some(1.5),
             restitution_coef: 0.0,
@@ -955,7 +955,7 @@ impl Default for Material {
     }
 }
 
-impl Material {
+impl PhysicsMaterial {
     /// Get the static friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.

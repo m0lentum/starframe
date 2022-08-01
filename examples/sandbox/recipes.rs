@@ -3,12 +3,7 @@
 //! This file has gotten quite large and unwieldy over time.
 //! TODO: streamline this and bring in the Tiled editor integration from Flamegrower
 
-use starframe::{
-    self as sf,
-    graph::{Graph, named_layer_bundle},
-    graphics as gx, math as m,
-    physics::{self as phys, rope, Material},
-};
+use starframe as sf;
 
 use rand::{distributions as distr, distributions::Distribution};
 
@@ -19,9 +14,9 @@ pub enum Recipe {
     Ball(Ball),
     Capsule(Capsule),
     GenericBody {
-        #[serde(with = "m::serde_pose")]
-        pose: m::Pose,
-        colliders: Vec<phys::Collider>,
+        #[serde(with = "sf::serde_pose")]
+        pose: sf::Pose,
+        colliders: Vec<sf::Collider>,
     },
     Blockchain {
         width: f64,
@@ -71,7 +66,7 @@ impl Default for Ball {
 pub struct Capsule {
     pub length: f64,
     pub radius: f64,
-    pub pose: m::PoseBuilder,
+    pub pose: sf::PoseBuilder,
     pub is_static: bool,
 }
 
@@ -92,7 +87,7 @@ pub struct Block {
     pub width: f64,
     pub height: f64,
     pub radius: f64,
-    pub pose: m::PoseBuilder,
+    pub pose: sf::PoseBuilder,
     pub is_static: bool,
 }
 
@@ -108,30 +103,31 @@ impl Default for Block {
     }
 }
 
-named_layer_bundle!{
+sf::named_layer_bundle! {
     pub struct Layers<'a> {
-        pose: w m::Pose,
-        collider: w phys::Collider,
-        body: w phys::Body,
-        mesh: w gx::Mesh,
+        pose: w sf::Pose,
+        collider: w sf::Collider,
+        body: w sf::Body,
+        mesh: w sf::Mesh,
     }
 }
 
-fn spawn_block(block: Block, mut l: Layers) -> Option<sf::graph::NodeKey<phys::Body>> {
+fn spawn_block(block: Block, mut l: Layers) -> Option<sf::NodeKey<sf::Body>> {
     let mut pose_node = l.pose.insert(block.pose.into());
-    let coll = phys::Collider::new_rounded_rect(block.width, block.height, block.radius);
+    let coll = sf::Collider::new_rounded_rect(block.width, block.height, block.radius);
     let mut coll_node = l.collider.insert(coll);
     let mut mesh_node =
-        l.mesh.insert(gx::Mesh::from(*coll_node.c).with_color(if block.is_static {
-            [0.7; 4]
-        } else {
-            random_color()
-        }));
+        l.mesh
+            .insert(sf::Mesh::from(*coll_node.c).with_color(if block.is_static {
+                [0.7; 4]
+            } else {
+                random_color()
+            }));
     pose_node.connect(&mut coll_node);
     pose_node.connect(&mut mesh_node);
 
     if !block.is_static {
-        let body = phys::Body::new_dynamic(coll.info(), 0.5);
+        let body = sf::Body::new_dynamic(coll.info(), 0.5);
         let mut body_node = l.body.insert(body);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut body_node);
@@ -143,8 +139,8 @@ fn spawn_block(block: Block, mut l: Layers) -> Option<sf::graph::NodeKey<phys::B
 
 #[derive(Debug)]
 struct Solid<'a> {
-    pose: m::Pose,
-    colliders: &'a [phys::Collider],
+    pose: sf::Pose,
+    colliders: &'a [sf::Collider],
     color: [f32; 4],
 }
 
@@ -152,18 +148,18 @@ fn spawn_static(solid: Solid, mut l: Layers) {
     for coll in solid.colliders {
         let mut pose_node = l.pose.insert(solid.pose * coll.offset);
         let mut coll_node = l.collider.insert(*coll);
-        let mut mesh_node = l.mesh.insert(gx::Mesh::from(*coll).with_color(solid.color));
+        let mut mesh_node = l.mesh.insert(sf::Mesh::from(*coll).with_color(solid.color));
         pose_node.connect(&mut coll_node);
         pose_node.connect(&mut mesh_node);
     }
 }
 
-fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<phys::Body> {
-    let coll_setup = phys::collision::CompoundColliderSetup::new(solid.colliders);
+fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<sf::Body> {
+    let coll_setup = sf::CompoundColliderSetup::new(solid.colliders);
     let center_of_mass = coll_setup.center_of_mass();
 
     let mut pose_node = l.pose.insert(solid.pose);
-    let mut body_node = l.body.insert(phys::Body::new_dynamic(
+    let mut body_node = l.body.insert(sf::Body::new_dynamic(
         coll_setup.info_around_point(center_of_mass),
         0.5,
     ));
@@ -173,7 +169,7 @@ fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<phys::Body> {
     for mut coll in solid.colliders.iter().cloned() {
         coll.offset.translation -= center_of_mass;
         let mut coll_node = l.collider.insert(coll);
-        let mut mesh_node = l.mesh.insert(gx::Mesh::from(coll).with_color(solid.color));
+        let mut mesh_node = l.mesh.insert(sf::Mesh::from(coll).with_color(solid.color));
         pose_node.connect(&mut mesh_node);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut coll_node);
@@ -183,7 +179,7 @@ fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<phys::Body> {
 }
 
 impl Recipe {
-    pub fn spawn(&self, physics: &mut phys::Physics, graph: &Graph) {
+    pub fn spawn(&self, physics: &mut sf::Physics, graph: &sf::Graph) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(graph.get_layer_bundle()),
             Recipe::Block(block) => {
@@ -196,8 +192,8 @@ impl Recipe {
                 start_velocity,
                 is_static,
             }) => {
-                let pose = m::Pose::new(position.into(), m::Rotor2::identity());
-                let coll = phys::Collider::new_circle(*radius).with_material(Material {
+                let pose = sf::Pose::new(position.into(), sf::Rotor2::identity());
+                let coll = sf::Collider::new_circle(*radius).with_material(sf::PhysicsMaterial {
                     restitution_coef: *restitution,
                     ..Default::default()
                 });
@@ -211,7 +207,7 @@ impl Recipe {
                 } else {
                     let body = spawn_body(solid, graph.get_layer_bundle());
                     graph
-                        .get_layer_mut::<phys::Body>()
+                        .get_layer_mut::<sf::Body>()
                         .get_mut(body)
                         .unwrap()
                         .c
@@ -227,7 +223,7 @@ impl Recipe {
             }) => {
                 let solid = Solid {
                     pose: (*pose).into(),
-                    colliders: &mut [phys::Collider::new_capsule(*length, *radius)],
+                    colliders: &mut [sf::Collider::new_capsule(*length, *radius)],
                     color: random_color(),
                 };
                 if *is_static {
@@ -259,10 +255,10 @@ impl Recipe {
                 let half_spacing = spacing / 2.0;
                 let radius = width / 2.0;
 
-                let mut links_iter = links.iter().map(|p| m::Vec2::new(p[0], p[1])).peekable();
+                let mut links_iter = links.iter().map(|p| sf::Vec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
-                let mut prev_block: Option<(sf::graph::NodeKey<phys::Body>, f64)> = None;
+                let mut prev_block: Option<(sf::graph::NodeKey<sf::Body>, f64)> = None;
                 while let (Some(link1), Some(link2)) = (links_iter.next(), links_iter.peek()) {
                     let distance = *link2 - link1;
                     let dist_norm = distance.mag();
@@ -272,11 +268,11 @@ impl Recipe {
                     let caps_full_length = dist_norm - spacing;
                     let capsule = spawn_body(
                         Solid {
-                            pose: m::PoseBuilder::new()
+                            pose: sf::PoseBuilder::new()
                                 .with_position(center)
-                                .with_rotation(m::Angle::Rad(orientation))
+                                .with_rotation(sf::Angle::Rad(orientation))
                                 .into(),
-                            colliders: &mut [phys::Collider::new_capsule(
+                            colliders: &mut [sf::Collider::new_capsule(
                                 caps_full_length - width,
                                 radius,
                             )],
@@ -287,17 +283,17 @@ impl Recipe {
                     let caps_length_half = caps_full_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(capsule)
+                            sf::ConstraintBuilder::new(capsule)
                                 .with_target(prev_block)
-                                .with_origin(m::Vec2::new(-caps_length_half - half_spacing, 0.0))
-                                .with_target_origin(m::Vec2::new(prev_block_offset, 0.0))
+                                .with_origin(sf::Vec2::new(-caps_length_half - half_spacing, 0.0))
+                                .with_target_origin(sf::Vec2::new(prev_block_offset, 0.0))
                                 .with_compliance(0.015)
                                 .build_attachment(),
                         );
                     } else if *anchored_start {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(capsule)
-                                .with_origin(m::Vec2::new(-caps_length_half - half_spacing, 0.0))
+                            sf::ConstraintBuilder::new(capsule)
+                                .with_origin(sf::Vec2::new(-caps_length_half - half_spacing, 0.0))
                                 .with_target_origin(link1)
                                 .build_attachment(),
                         );
@@ -308,12 +304,12 @@ impl Recipe {
                 if *anchored_end {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
                     physics.add_constraint(
-                        phys::ConstraintBuilder::new(prev_block)
-                            .with_origin(m::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
+                        sf::ConstraintBuilder::new(prev_block)
+                            .with_origin(sf::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
                             .with_target_origin(
                                 links
                                     .iter()
-                                    .map(|p| m::Vec2::new(p[0], p[1]))
+                                    .map(|p| sf::Vec2::new(p[0], p[1]))
                                     .last()
                                     .unwrap(),
                             )
@@ -327,14 +323,14 @@ impl Recipe {
                 target_length,
                 compliance,
             } => {
-                let position: m::Vec2 = position.into();
-                let offset = m::Vec2::new(begin_length / 2.0, 0.0);
+                let position: sf::Vec2 = position.into();
+                let offset = sf::Vec2::new(begin_length / 2.0, 0.0);
                 let b1 = spawn_block(
                     Block {
                         width: 1.0,
                         height: 1.0,
                         radius: 0.0,
-                        pose: m::PoseBuilder::new().with_position(position + offset),
+                        pose: sf::PoseBuilder::new().with_position(position + offset),
                         is_static: false,
                     },
                     graph.get_layer_bundle(),
@@ -345,14 +341,14 @@ impl Recipe {
                         width: 1.0,
                         height: 1.0,
                         radius: 0.0,
-                        pose: m::PoseBuilder::new().with_position(position - offset),
+                        pose: sf::PoseBuilder::new().with_position(position - offset),
                         is_static: false,
                     },
                     graph.get_layer_bundle(),
                 )
                 .unwrap();
                 physics.add_constraint(
-                    phys::ConstraintBuilder::new(b1)
+                    sf::ConstraintBuilder::new(b1)
                         .with_target(b2)
                         .with_compliance(*compliance)
                         .with_linear_damping(0.0)
@@ -367,10 +363,10 @@ impl Recipe {
             } => {
                 let b1 = spawn_block(*block1, graph.get_layer_bundle());
                 let b2 = spawn_block(*block2, graph.get_layer_bundle());
-                let rope_end_1 = block1.pose.build() * m::Vec2::from(offset1);
-                let rope_end_2 = block2.pose.build() * m::Vec2::from(offset2);
-                let rope = rope::spawn_line(
-                    rope::Rope {
+                let rope_end_1 = block1.pose.build() * sf::Vec2::from(offset1);
+                let rope_end_2 = block2.pose.build() * sf::Vec2::from(offset2);
+                let rope = sf::rope::spawn_line(
+                    sf::Rope {
                         ..Default::default()
                     },
                     rope_end_1,
@@ -380,7 +376,7 @@ impl Recipe {
                 match b1 {
                     Some(b1) => {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(rope.first_particle)
+                            sf::ConstraintBuilder::new(rope.first_particle)
                                 .with_target(b1)
                                 .with_target_origin(offset1.into())
                                 .build_attachment(),
@@ -388,7 +384,7 @@ impl Recipe {
                     }
                     None => {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(rope.first_particle)
+                            sf::ConstraintBuilder::new(rope.first_particle)
                                 .with_target_origin(rope_end_1)
                                 .build_attachment(),
                         );
@@ -397,7 +393,7 @@ impl Recipe {
                 match b2 {
                     Some(b2) => {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(rope.last_particle)
+                            sf::ConstraintBuilder::new(rope.last_particle)
                                 .with_target(b2)
                                 .with_target_origin(offset2.into())
                                 .build_attachment(),
@@ -405,7 +401,7 @@ impl Recipe {
                     }
                     None => {
                         physics.add_constraint(
-                            phys::ConstraintBuilder::new(rope.last_particle)
+                            sf::ConstraintBuilder::new(rope.last_particle)
                                 .with_target_origin(rope_end_2)
                                 .build_attachment(),
                         );

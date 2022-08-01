@@ -14,18 +14,18 @@ use crate::{
 pub mod collision;
 use collision::bvh::Bvh;
 pub use collision::{
-    Collider, ColliderPolygon, ColliderShape, ColliderType, Contact, ContactResult, LayerMask,
-    Material, Ray,
+    Collider, ColliderPolygon, ColliderShape, ColliderType, CollisionLayerMask, Contact,
+    ContactResult, PhysicsMaterial, Ray,
 };
 
-mod constraint;
-pub use constraint::*;
+pub(super) mod constraint;
+pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
 
-mod body;
-pub use body::*;
+pub(super) mod body;
+pub use body::{Body, ColliderInfo, Mass};
 
 pub mod rope;
 
@@ -350,7 +350,7 @@ impl Default for TuningConstants {
 
 pub struct Physics {
     pub consts: TuningConstants,
-    pub mask_matrix: collision::MaskMatrix,
+    pub mask_matrix: collision::CollisionMaskMatrix,
     user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
     pub(crate) bvh: Bvh,
     constraint_graph: ConstraintGraph,
@@ -369,7 +369,7 @@ named_layer_bundle! {
 }
 
 impl Physics {
-    pub fn new(consts: TuningConstants, mask_matrix: collision::MaskMatrix) -> Self {
+    pub fn new(consts: TuningConstants, mask_matrix: collision::CollisionMaskMatrix) -> Self {
         Physics {
             consts,
             mask_matrix,
@@ -1304,7 +1304,7 @@ impl Physics {
         &'p mut self,
         pose: m::Pose,
         shape: ColliderShape,
-        mask: LayerMask,
+        mask: CollisionLayerMask,
         (l_pose, l_collider): &'g (
             graph::LayerView<'g, m::Pose>,
             graph::LayerView<'g, Collider>,

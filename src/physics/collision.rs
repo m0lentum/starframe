@@ -1,7 +1,7 @@
 pub(crate) mod bvh;
 
 mod collider;
-pub use collider::*;
+pub use collider::{Collider, ColliderPolygon, ColliderShape, ColliderType, PhysicsMaterial};
 
 mod compound_collider;
 pub use compound_collider::CompoundColliderSetup;
@@ -110,17 +110,17 @@ impl AABB {
 /// There are 64 collision layers; using a value greater than that on any operation
 /// will cause an out of bounds error.
 #[derive(Clone, Copy, Debug)]
-pub struct MaskMatrix([u64; 64]);
+pub struct CollisionMaskMatrix([u64; 64]);
 
 /// A mask determining which collision layers are considered in a query.
 #[derive(Clone, Copy, Debug)]
-pub struct LayerMask(pub u64);
-impl Default for LayerMask {
+pub struct CollisionLayerMask(pub u64);
+impl Default for CollisionLayerMask {
     fn default() -> Self {
         Self(!0)
     }
 }
-impl LayerMask {
+impl CollisionLayerMask {
     /// Check whether the given layer is enabled in this mask.
     pub fn get(&self, other_layer: usize) -> bool {
         self.0 & (1 << other_layer) != 0
@@ -131,7 +131,7 @@ impl LayerMask {
 /// and do not collide with each other.
 pub const ROPE_LAYER: usize = 63;
 
-impl Default for MaskMatrix {
+impl Default for CollisionMaskMatrix {
     fn default() -> Self {
         let mut s = Self([u64::MAX; 64]);
         s.ignore_within(ROPE_LAYER);
@@ -139,7 +139,7 @@ impl Default for MaskMatrix {
     }
 }
 
-impl MaskMatrix {
+impl CollisionMaskMatrix {
     /// Stop collision detection between a pair of collision layers.
     #[inline]
     pub fn ignore(&mut self, layer1: usize, layer2: usize) {
@@ -176,7 +176,7 @@ impl MaskMatrix {
 
     /// Get the mask for a single layer.
     #[inline]
-    pub fn get_mask(&self, layer: usize) -> LayerMask {
-        LayerMask(self.0[layer])
+    pub fn get_mask(&self, layer: usize) -> CollisionLayerMask {
+        CollisionLayerMask(self.0[layer])
     }
 }
