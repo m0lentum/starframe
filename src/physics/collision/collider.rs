@@ -914,14 +914,60 @@ impl ColliderPolygon {
                     },
                 }
             }
-            // the following works for any shape
+            // the following works for any shape:
+            // find the edge where the point's projection is the closest to the point,
+            // return the point's projection
             Self::Triangle { .. } | Self::Hexagon { .. } => {
-                let supp = self.supporting_edge(pt);
-                let edge_t_to_pt = supp.edge.dir.dot(pt - supp.edge.start);
-                ClosestBoundaryPoint {
-                    pt: supp.edge.start + edge_t_to_pt.max(0.0) * *supp.edge.dir,
-                    is_interior: supp.normal.dot(pt - supp.edge.start) < 0.0,
+                let mut min_dist_to_edge = f64::MAX;
+                // meaningless default that is guaranteed to be overwritten
+                let mut closest_point = ClosestBoundaryPoint {
+                    pt: m::Vec2::zero(),
+                    is_interior: false,
+                };
+                for edge in (0..self.edge_count()).map(|i| self.get_edge(i)) {
+                    let PolygonEdge { normal, edge } =
+                        if self.is_rotationally_symmetrical() && edge.normal.dot(pt) < 0.0 {
+                            edge.mirrored()
+                        } else {
+                            edge
+                        };
+                    let edge_start_to_pt = pt - edge.start;
+                    let edge_t_to_pt = edge.dir.dot(edge_start_to_pt);
+                    if edge_t_to_pt < 0.0 {
+                        // projects outside of current edge,
+                        // if this is the closest point overall we're definitely outside the shape
+                        let dist_to_edge = edge_start_to_pt.mag();
+                        if dist_to_edge < min_dist_to_edge {
+                            min_dist_to_edge = dist_to_edge;
+                            closest_point = ClosestBoundaryPoint {
+                                pt: edge.start,
+                                is_interior: false,
+                            }
+                        }
+                    } else if edge_t_to_pt <= edge.length {
+                        // projects inside of current edge,
+                        // need to check which side of the edge we're on
+                        let normal_dist = normal.dot(edge_start_to_pt);
+                        let (normal_dist, is_interior) = if normal_dist >= 0.0 {
+                            (normal_dist, false)
+                        } else {
+                            (-normal_dist, true)
+                        };
+                        if normal_dist < min_dist_to_edge {
+                            min_dist_to_edge = normal_dist;
+                            closest_point = ClosestBoundaryPoint {
+                                pt: edge.start + edge_t_to_pt * *edge.dir,
+                                is_interior,
+                            }
+                        }
+                    } else {
+                        // beyond the far end of the edge which is also the start of another edge,
+                        // we will handle this one when we get to that other edge
+                        continue;
+                    };
                 }
+
+                closest_point
             }
         }
     }
