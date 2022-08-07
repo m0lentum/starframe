@@ -3,8 +3,8 @@
 use crate::{
     graph::LayerView,
     graphics::{
-        mesh::Mesh,
         util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
+        Camera, Mesh,
     },
     math as m,
 };
@@ -508,7 +508,7 @@ impl OutlineRenderer {
     /// Prepare [`Mesh`][crate::graphics::mesh::Mesh]es for outline drawing.
     pub fn init_meshes(
         &mut self,
-        camera: &impl super::camera::Camera,
+        camera: &Camera,
         rend: &mut super::Renderer,
         (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
     ) {

@@ -10,11 +10,11 @@ pub use input::{AxisQuery, Button, ButtonQuery, InputCache, Key, MouseButton};
 pub mod math;
 #[cfg(feature = "serde-types")]
 pub use math::serde_pose;
-pub use math::{uv, Angle, Pose, PoseBuilder, Rotor2, Unit, Vec2};
+pub use math::{uv, Angle, Pose, PoseBuilder, Rotor2, Transform, Unit, Vec2};
 
 pub mod graphics;
 pub use graphics::{
-    camera::{Camera, CameraScalingStrategy, MouseDragCamera},
+    camera::{Camera, CameraScalingStrategy, MouseDragCameraController},
     mesh::{Mesh, MeshRenderer, MeshShape},
     DebugVisualizer, OutlineParams, OutlineRenderer, OutlineShape, RenderContext, Renderer,
 };

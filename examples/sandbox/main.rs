@@ -59,7 +59,8 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     physics: sf::Physics,
     // graphics
-    camera: sf::MouseDragCamera,
+    camera: sf::Camera,
+    camera_ctl: sf::MouseDragCameraController,
     mesh_renderer: sf::MeshRenderer,
     outline_renderer: sf::OutlineRenderer,
     debug_visualizer: sf::DebugVisualizer,
@@ -98,10 +99,11 @@ impl State {
                 sf::physics::TuningConstants::default(),
                 sf::CollisionMaskMatrix::default(),
             ),
-            camera: sf::MouseDragCamera::new(sf::CameraScalingStrategy::ConstantDisplayArea {
+            camera: sf::Camera::new(sf::CameraScalingStrategy::ConstantDisplayArea {
                 width: 20.0,
                 height: 10.0,
             }),
+            camera_ctl: sf::MouseDragCameraController::default(),
             mesh_renderer: sf::MeshRenderer::new(renderer),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
@@ -359,8 +361,8 @@ impl sf::GameState for State {
             }
             ui.add(
                 egui::Slider::new(
-                    &mut self.camera.pose.scale,
-                    self.camera.min_zoom_out..=self.camera.max_zoom_out,
+                    &mut self.camera.transform.scale,
+                    self.camera_ctl.min_zoom_out..=self.camera_ctl.max_zoom_out,
                 )
                 .text("Camera zoom out"),
             );
@@ -419,10 +421,13 @@ impl sf::GameState for State {
                 );
             }
             MouseMode::Camera => {
-                self.camera
-                    .update(&game.input, game.renderer.window_size().into());
+                self.camera_ctl.update(
+                    &mut self.camera,
+                    &game.input,
+                    game.renderer.window_size().into(),
+                );
                 if game.input.button(sf::MouseButton::Middle.into()) {
-                    self.camera.pose = sf::uv::DSimilarity2::identity();
+                    self.camera.transform = sf::Transform::identity();
                 }
             }
         }

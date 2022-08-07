@@ -3,6 +3,7 @@ use crate::{
     graphics::{
         self as gx,
         util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
+        Camera,
     },
     math as m,
     physics::{collision::ColliderPolygon, Collider, ColliderShape},
@@ -330,7 +331,7 @@ impl MeshRenderer {
     /// Draw all the [`mesh`][self::Mesh]s that have associated [`Pose`][crate::math::Pose]s.
     pub fn draw(
         &mut self,
-        camera: &impl gx::camera::Camera,
+        camera: &Camera,
         ctx: &mut gx::RenderContext,
         (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
     ) {

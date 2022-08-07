@@ -8,6 +8,7 @@ use zerocopy::{AsBytes, FromBytes};
 
 use crate::{
     graph::LayerView,
+    graphics::Camera,
     math as m,
     physics::{collision::AABB, Body, Collider},
 };
@@ -158,7 +159,7 @@ impl DebugVisualizer {
         &mut self,
         depth_to_draw: usize,
         phys: &crate::Physics,
-        camera: &impl super::camera::Camera,
+        camera: &Camera,
         ctx: &mut super::RenderContext,
     ) {
         // update uniforms
@@ -212,7 +213,7 @@ impl DebugVisualizer {
     pub fn draw_islands(
         &mut self,
         phys: &crate::Physics,
-        camera: &impl super::camera::Camera,
+        camera: &Camera,
         ctx: &mut super::RenderContext,
         (l_pose, l_body, l_coll): (LayerView<m::Pose>, LayerView<Body>, LayerView<Collider>),
     ) {

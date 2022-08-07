@@ -13,7 +13,7 @@ impl MouseGrabber {
     pub fn update(
         &mut self,
         input: &sf::InputCache,
-        camera: &impl sf::Camera,
+        camera: &sf::Camera,
         viewport_size: (u32, u32),
         physics: &mut sf::Physics,
         graph: &sf::Graph,

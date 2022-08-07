@@ -2,7 +2,15 @@
 use std::f64::consts::PI;
 pub use ultraviolet as uv;
 
+/// A Pose has a rotation and a translation, no scaling.
+///
+/// This is the transformation type used in most of Starframe
+/// because the physics engine does not support scaling transforms.
 pub type Pose = uv::DIsometry2;
+/// A Transform is a [`Pose`][self::Pose] plus a scaling.
+///
+/// Used occasionally for graphics. For physics, Poses are used instead.
+pub type Transform = uv::DSimilarity2;
 pub type Vec2 = uv::DVec2;
 pub type Rotor2 = uv::DRotor2;
 
@@ -99,7 +107,7 @@ where
     }
 }
 
-/// A builder useful for deserializing isometries from RON files.
+/// A builder to create [`Pose`][self::Pose]s.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PoseBuilder {
