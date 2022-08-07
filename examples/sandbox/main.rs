@@ -32,12 +32,10 @@ fn main() {
     sf::Game::run(sf::GameParams {
         window,
         fps: 60,
-        on_event: handle_event,
+        on_event: |state: &mut State, evt| {
+            state.egui_platform.handle_event(evt);
+        },
     });
-}
-
-fn handle_event(state: &mut State, evt: &winit::event::Event<()>) {
-    state.egui_platform.handle_event(evt);
 }
 
 //
@@ -55,7 +53,6 @@ pub struct State {
     graph: sf::Graph,
     // gameplay
     player: player::PlayerController,
-    mouse_mode: MouseMode,
     mouse_grabber: MouseGrabber,
     physics: sf::Physics,
     // graphics
@@ -93,7 +90,6 @@ impl State {
                 player::Player,
             },
             player: player::PlayerController::new(),
-            mouse_mode: MouseMode::Grab,
             mouse_grabber: MouseGrabber::new(),
             physics: sf::Physics::new(
                 sf::physics::TuningConstants::default(),
@@ -103,7 +99,11 @@ impl State {
                 width: 20.0,
                 height: 10.0,
             }),
-            camera_ctl: sf::MouseDragCameraController::default(),
+            camera_ctl: sf::MouseDragCameraController {
+                activate_button: sf::MouseButton::Middle.into(),
+                reset_button: sf::Key::R.into(),
+                ..Default::default()
+            },
             mesh_renderer: sf::MeshRenderer::new(renderer),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
@@ -139,14 +139,6 @@ impl State {
         self.physics.reset();
         self.graph.reset();
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MouseMode {
-    /// Grab objects with the mouse
-    Grab,
-    /// Move the camera with the mouse
-    Camera,
 }
 
 //
@@ -366,11 +358,6 @@ impl sf::GameState for State {
                 )
                 .text("Camera zoom out"),
             );
-            ui.horizontal(|ui| {
-                ui.label("Mouse mode:");
-                ui.selectable_value(&mut self.mouse_mode, MouseMode::Grab, "Grab");
-                ui.selectable_value(&mut self.mouse_mode, MouseMode::Camera, "Camera");
-            });
             ui.add(
                 egui::Slider::new(&mut self.physics.consts.substeps, 1..=15)
                     .text("Physics substeps"),
@@ -410,27 +397,9 @@ impl sf::GameState for State {
 
         // mouse controls
 
-        match self.mouse_mode {
-            MouseMode::Grab => {
-                self.mouse_grabber.update(
-                    &game.input,
-                    &self.camera,
-                    game.renderer.window_size().into(),
-                    &mut self.physics,
-                    &self.graph,
-                );
-            }
-            MouseMode::Camera => {
-                self.camera_ctl.update(
-                    &mut self.camera,
-                    &game.input,
-                    game.renderer.window_size().into(),
-                );
-                if game.input.button(sf::MouseButton::Middle.into()) {
-                    self.camera.transform = sf::Transform::identity();
-                }
-            }
-        }
+        self.mouse_grabber
+            .update(&game.input, &self.camera, &mut self.physics, &self.graph);
+        self.camera_ctl.update(&mut self.camera, &game.input);
 
         // spawn stuff even when paused
 

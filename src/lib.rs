@@ -5,7 +5,7 @@ pub mod game;
 pub use game::{Game, GameParams, GameState};
 
 pub mod input;
-pub use input::{AxisQuery, Button, ButtonQuery, InputCache, Key, MouseButton};
+pub use input::{AxisQuery, Button, ButtonQuery, Input, Key, MouseButton};
 
 pub mod math;
 #[cfg(feature = "serde-types")]

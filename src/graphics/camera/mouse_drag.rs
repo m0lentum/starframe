@@ -1,24 +1,24 @@
 use crate::{
-    input::{Button, DragState, InputCache, MouseButton},
+    input::{Button, ButtonQuery, Input, MouseButton},
     math as m,
 };
 
 pub struct MouseDragCameraController {
     pub activate_button: Button,
+    pub reset_button: Button,
     pub zoom_speed: f64,
     pub min_zoom_out: f64,
     pub max_zoom_out: f64,
-    drag_start: Option<m::Transform>,
 }
 
 impl Default for MouseDragCameraController {
     fn default() -> Self {
         Self {
             activate_button: MouseButton::Left.into(),
+            reset_button: MouseButton::Middle.into(),
             zoom_speed: 0.01,
             min_zoom_out: 0.1,
             max_zoom_out: 10.0,
-            drag_start: None,
         }
     }
 }
@@ -27,36 +27,15 @@ impl MouseDragCameraController {
     /// Update the camera's position using cached drag state.
     ///
     /// Viewport size is needed to scale mouse movements to the right size of camera movements.
-    pub fn update(
-        &mut self,
-        camera: &mut super::Camera,
-        input: &InputCache,
-        viewport_size: (u32, u32),
-    ) {
-        let scaling_factor = camera.scaling_strategy.scaling_factor(viewport_size);
-        match (input.drag_state(), self.drag_start) {
-            (None, _) => self.drag_start = None,
-            (Some(DragState::InProgress { .. }), None) => self.drag_start = Some(camera.transform),
-            (Some(DragState::InProgress { start, .. }), Some(pose_at_start)) => {
-                let cursor_pos = input.cursor_position().get();
-                let offset = m::Vec2::new(
-                    (cursor_pos.x - start.x) as f64,
-                    -(cursor_pos.y - start.y) as f64,
-                );
-                camera.transform = pose_at_start;
-                camera
-                    .transform
-                    .append_translation(-offset * camera.transform.scale / scaling_factor);
-            }
-            (Some(DragState::Completed { start, end, .. }), Some(pose_at_start)) => {
-                let offset = m::Vec2::new((end.x - start.x) as f64, -(end.y - start.y) as f64);
-                camera.transform = pose_at_start;
-                camera
-                    .transform
-                    .append_translation(-offset * camera.transform.scale / scaling_factor);
-                self.drag_start = None;
-            }
-            _ => (),
+    pub fn update(&mut self, camera: &mut super::Camera, input: &Input) {
+        if input.button(self.reset_button.into()) {
+            camera.transform = m::Transform::identity();
+            return;
+        }
+
+        if input.button(ButtonQuery::from(self.activate_button).held_min(1)) {
+            let cursor_delta = input.cursor_movement_world(camera);
+            camera.transform.append_translation(-cursor_delta);
         }
 
         let scroll = input.scroll_delta();

@@ -12,15 +12,13 @@ impl MouseGrabber {
 
     pub fn update(
         &mut self,
-        input: &sf::InputCache,
+        input: &sf::Input,
         camera: &sf::Camera,
-        viewport_size: (u32, u32),
         physics: &mut sf::Physics,
         graph: &sf::Graph,
     ) {
         if input.button(sf::ButtonQuery::mouse(sf::MouseButton::Left).held()) {
-            let target_point =
-                camera.point_screen_to_world(viewport_size, input.cursor_position().into());
+            let target_point = input.cursor_position_world(camera);
             match self.constraint {
                 Some(handle) => {
                     if let Some(constr) = physics.get_constraint_mut(handle) {

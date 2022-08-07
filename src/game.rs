@@ -74,7 +74,7 @@ impl<State: GameState> Default for GameParams<State> {
 /// and handles timing of the game loop.
 pub struct Game {
     /// A global input cache that is automatically updated once per tick.
-    pub input: crate::InputCache,
+    pub input: crate::Input,
     /// The window the game draws to.
     pub window: Window,
     /// A renderer that can draw to the game's window.
@@ -136,7 +136,7 @@ impl Game {
         let renderer = Renderer::init(&window).await;
 
         let mut game = Game {
-            input: crate::InputCache::new(),
+            input: crate::Input::new(renderer.window_size().into()),
             window,
             renderer,
             nanos_per_frame: 1_000_000_000 / u128::from(fps),

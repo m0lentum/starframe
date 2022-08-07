@@ -10,10 +10,8 @@ pub struct Renderer {
 
 impl Renderer {
     /// Create a Renderer.
-    ///
-    /// Most users won't need to create one of these manually;
-    /// the [`Game`][crate::game::Game] API handles it for you.
-    pub async fn init(window: &winit::window::Window) -> Self {
+    /// The [`Game`][crate::game::Game] API does this automatically.
+    pub(crate) async fn init(window: &winit::window::Window) -> Self {
         let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
         let surface = unsafe { instance.create_surface(window) };
 
@@ -69,14 +67,13 @@ impl Renderer {
         self.swapchain_format
     }
 
-    /// Get the size of the window this Renderer draws to.
+    /// Get the size of the window this Renderer draws to in pixels.
     #[inline]
     pub fn window_size(&self) -> winit::dpi::PhysicalSize<u32> {
         winit::dpi::PhysicalSize::new(self.surface_config.width, self.surface_config.height)
     }
 
     /// Get the scale factor of the window this Renderer draws to.
-    /// Useful e.g. when rendering text.
     #[inline]
     pub fn window_scale_factor(&self) -> f64 {
         self.window_scale_factor
@@ -85,7 +82,7 @@ impl Renderer {
     /// Change the size of the frame `draw_to_window` draws into.
     /// This is called automatically by the gameloop when the window size changes.
     #[inline]
-    pub fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub(crate) fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);

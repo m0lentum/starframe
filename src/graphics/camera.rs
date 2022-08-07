@@ -26,19 +26,31 @@ impl Camera {
         vp_scaling * my_transform_inv
     }
 
+    /// Transform a point from camera space into world space.
     pub fn point_screen_to_world(
         &self,
         viewport_size: (u32, u32),
-        point_screenspace: m::Vec2,
+        point_screen: m::Vec2,
     ) -> m::Vec2 {
         let pixels_per_unit = self.scaling_strategy.scaling_factor(viewport_size);
         let half_vp_diag = m::Vec2::new(viewport_size.0 as f64 / 2.0, viewport_size.1 as f64 / 2.0);
         let point_screen_wrt_center = {
-            let p = point_screenspace - half_vp_diag;
+            let p = point_screen - half_vp_diag;
             m::Vec2::new(p.x, -p.y)
         };
 
         self.transform * (point_screen_wrt_center / pixels_per_unit)
+    }
+
+    /// Transform a displacement vector from camera space into world space.
+    pub fn vector_screen_to_world(
+        &self,
+        viewport_size: (u32, u32),
+        vec_screen: m::Vec2,
+    ) -> m::Vec2 {
+        let y_flipped = m::Vec2::new(vec_screen.x, -vec_screen.y);
+        let pixels_per_unit = self.scaling_strategy.scaling_factor(viewport_size);
+        self.transform.scale * y_flipped / pixels_per_unit
     }
 }
 
