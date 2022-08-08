@@ -3,9 +3,11 @@ use crate::{
     math as m,
 };
 
+/// A camera controller that allows movement by dragging with the mouse and zooming
+/// with the scroll wheel. Mainly meant for debugging purposes.
 pub struct MouseDragCameraController {
     pub activate_button: Button,
-    pub reset_button: Button,
+    pub reset_button: Option<Button>,
     pub zoom_speed: f64,
     pub min_zoom_out: f64,
     pub max_zoom_out: f64,
@@ -14,8 +16,8 @@ pub struct MouseDragCameraController {
 impl Default for MouseDragCameraController {
     fn default() -> Self {
         Self {
-            activate_button: MouseButton::Left.into(),
-            reset_button: MouseButton::Middle.into(),
+            activate_button: MouseButton::Middle.into(),
+            reset_button: None,
             zoom_speed: 0.01,
             min_zoom_out: 0.1,
             max_zoom_out: 10.0,
@@ -28,9 +30,11 @@ impl MouseDragCameraController {
     ///
     /// Viewport size is needed to scale mouse movements to the right size of camera movements.
     pub fn update(&mut self, camera: &mut super::Camera, input: &Input) {
-        if input.button(self.reset_button.into()) {
-            camera.transform = m::Transform::identity();
-            return;
+        if let Some(reset_btn) = self.reset_button {
+            if input.button(reset_btn.into()) {
+                camera.transform = m::Transform::identity();
+                return;
+            }
         }
 
         if input.button(ButtonQuery::from(self.activate_button).held_min(1)) {

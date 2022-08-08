@@ -101,7 +101,7 @@ impl State {
             }),
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
-                reset_button: sf::Key::R.into(),
+                reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
             mesh_renderer: sf::MeshRenderer::new(renderer),
