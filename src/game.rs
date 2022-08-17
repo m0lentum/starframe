@@ -45,8 +45,8 @@ pub trait GameState: Sized + 'static {
     fn init(renderer: &Renderer) -> Self;
     /// Advance the game forward by a timestep of `Game::dt_fixed` seconds. Return None to exit the game.
     fn tick(&mut self, game: &Game) -> Option<()>;
-    /// Render the game onto the screen.
-    fn draw(&mut self, renderer: &mut crate::graphics::Renderer);
+    /// Render the game onto the screen. `dt` is the time in seconds since last draw.
+    fn draw(&mut self, renderer: &mut crate::graphics::Renderer, dt: f32);
 }
 
 pub struct GameParams<State: GameState> {
@@ -201,7 +201,7 @@ impl Game {
                         {
                             let _draw_span = tracy_client::span!("draw");
 
-                            state.draw(&mut game.renderer);
+                            state.draw(&mut game.renderer, game.dt_fixed as f32);
                         }
 
                         tracy_client::frame_mark();

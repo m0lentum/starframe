@@ -2,7 +2,7 @@
 
 use crate::{
     graph::{self, LayerViewMut},
-    graphics::{Mesh, MeshShape},
+    graphics::{ConvexMeshShape, StaticMesh},
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, PhysicsMaterial},
 };
@@ -67,7 +67,7 @@ pub fn spawn_line(
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
         LayerViewMut<Rope>,
-        LayerViewMut<Mesh>,
+        LayerViewMut<StaticMesh>,
     ),
 ) -> RopeProperties {
     let dist = end - start;
@@ -104,7 +104,7 @@ pub fn extend_line(
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
-        LayerViewMut<Mesh>,
+        LayerViewMut<StaticMesh>,
     ),
 ) -> RopeProperties {
     let l_body_sub = l_body.subview();
@@ -149,7 +149,7 @@ fn build_line(
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
-        LayerViewMut<Mesh>,
+        LayerViewMut<StaticMesh>,
     ),
 ) -> [graph::NodeKey<Body>; 2] {
     let body_proto = Body {
@@ -162,7 +162,7 @@ fn build_line(
         .with_material(rope_node.c.material);
     // temporary visualisation with individual particle Meshes
     // until I get something more bespoke for this
-    let mesh_proto = Mesh::from(MeshShape::Circle {
+    let mesh_proto = StaticMesh::from(ConvexMeshShape::Circle {
         r: rope_node.c.thickness / 2.0,
         points: 8,
     })

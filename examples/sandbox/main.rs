@@ -58,7 +58,7 @@ pub struct State {
     // graphics
     camera: sf::Camera,
     camera_ctl: sf::MouseDragCameraController,
-    mesh_renderer: sf::MeshRenderer,
+    mesh_renderer: sf::StaticMeshRenderer,
     outline_renderer: sf::OutlineRenderer,
     debug_visualizer: sf::DebugVisualizer,
     // egui stuff
@@ -85,7 +85,7 @@ impl State {
                 sf::Body,
                 sf::Collider,
                 sf::Rope,
-                sf::Mesh,
+                sf::StaticMesh,
                 // our types
                 player::Player,
             },
@@ -104,7 +104,7 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer: sf::MeshRenderer::new(renderer),
+            mesh_renderer: sf::StaticMeshRenderer::new(renderer),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
                     thickness: 15,
@@ -465,7 +465,7 @@ impl sf::GameState for State {
         }
     }
 
-    fn draw(&mut self, renderer: &mut sf::Renderer) {
+    fn draw(&mut self, renderer: &mut sf::Renderer, _dt: f32) {
         let window_scale_factor = renderer.window_scale_factor();
 
         self.outline_renderer.prepare(renderer);
@@ -519,7 +519,7 @@ impl sf::GameState for State {
             .update_buffers(ctx.device, ctx.queue, &paint_jobs, &screen_desc);
         self.egui_pass
             .execute(
-                &mut ctx.encoder,
+                &mut ctx.encoder.0,
                 ctx.target.view(),
                 &paint_jobs,
                 &screen_desc,

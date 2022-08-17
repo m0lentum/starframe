@@ -4,7 +4,7 @@ use crate::{
     graph::LayerView,
     graphics::{
         util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
-        Camera, Mesh,
+        Camera, StaticMesh,
     },
     math as m,
 };
@@ -499,7 +499,7 @@ impl OutlineRenderer {
         }
 
         for gbuf in &self.gbufs {
-            let mut ctx = rend.draw_to_texture(&gbuf.view, self.gbuf_size);
+            let mut ctx = rend.draw_to_texture(&gbuf.view, None, self.gbuf_size);
             ctx.clear(NO_DATA_COLOR);
             ctx.submit();
         }
@@ -510,7 +510,7 @@ impl OutlineRenderer {
         &mut self,
         camera: &Camera,
         rend: &mut super::Renderer,
-        (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
+        (l_mesh, l_pose): (LayerView<StaticMesh>, LayerView<m::Pose>),
     ) {
         // update the CPU side vertex buffer
 
@@ -532,7 +532,7 @@ impl OutlineRenderer {
 
         // only now create a context so we don't do unnecessary work if there's nothing to draw
 
-        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, self.gbuf_size);
+        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, None, self.gbuf_size);
 
         // update the uniform buffer
 
@@ -568,7 +568,8 @@ impl OutlineRenderer {
         for pass in (0..pass_count).rev() {
             let step_pixels = 2u32.pow(pass);
 
-            let mut ctx = rend.draw_to_texture(&self.gbufs[target_gbuf_idx].view, self.gbuf_size);
+            let mut ctx =
+                rend.draw_to_texture(&self.gbufs[target_gbuf_idx].view, None, self.gbuf_size);
 
             let uniforms = DistanceUniforms {
                 step_size: step_pixels,
@@ -603,7 +604,7 @@ impl OutlineRenderer {
             .write_buffer(&self.draw_step.uniform_buf, 0, uniforms.as_bytes());
 
         {
-            let mut pass = ctx.pass(Some("outline draw"));
+            let mut pass = ctx.pass_without_depth(Some("outline draw"));
             pass.set_pipeline(&self.draw_step.pipeline);
             pass.set_bind_group(0, &self.draw_step.uniform_bind_group, &[]);
             pass.set_bind_group(1, &self.gbufs[self.final_gbuf_idx].bind_group, &[]);

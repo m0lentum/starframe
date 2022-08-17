@@ -108,7 +108,7 @@ sf::named_layer_bundle! {
         pose: w sf::Pose,
         collider: w sf::Collider,
         body: w sf::Body,
-        mesh: w sf::Mesh,
+        mesh: w sf::StaticMesh,
     }
 }
 
@@ -116,13 +116,13 @@ fn spawn_block(block: Block, mut l: Layers) -> Option<sf::NodeKey<sf::Body>> {
     let mut pose_node = l.pose.insert(block.pose.into());
     let coll = sf::Collider::new_rounded_rect(block.width, block.height, block.radius);
     let mut coll_node = l.collider.insert(coll);
-    let mut mesh_node =
-        l.mesh
-            .insert(sf::Mesh::from(*coll_node.c).with_color(if block.is_static {
-                [0.7; 4]
-            } else {
-                random_color()
-            }));
+    let mut mesh_node = l.mesh.insert(sf::StaticMesh::from(*coll_node.c).with_color(
+        if block.is_static {
+            [0.7; 4]
+        } else {
+            random_color()
+        },
+    ));
     pose_node.connect(&mut coll_node);
     pose_node.connect(&mut mesh_node);
 
@@ -148,7 +148,9 @@ fn spawn_static(solid: Solid, mut l: Layers) {
     for coll in solid.colliders {
         let mut pose_node = l.pose.insert(solid.pose * coll.offset);
         let mut coll_node = l.collider.insert(*coll);
-        let mut mesh_node = l.mesh.insert(sf::Mesh::from(*coll).with_color(solid.color));
+        let mut mesh_node = l
+            .mesh
+            .insert(sf::StaticMesh::from(*coll).with_color(solid.color));
         pose_node.connect(&mut coll_node);
         pose_node.connect(&mut mesh_node);
     }
@@ -169,7 +171,9 @@ fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<sf::Body> {
     for mut coll in solid.colliders.iter().cloned() {
         coll.offset.translation -= center_of_mass;
         let mut coll_node = l.collider.insert(coll);
-        let mut mesh_node = l.mesh.insert(sf::Mesh::from(coll).with_color(solid.color));
+        let mut mesh_node = l
+            .mesh
+            .insert(sf::StaticMesh::from(coll).with_color(solid.color));
         pose_node.connect(&mut mesh_node);
         body_node.connect(&mut coll_node);
         pose_node.connect(&mut coll_node);

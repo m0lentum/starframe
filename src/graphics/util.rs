@@ -3,17 +3,19 @@
 use crate::math::{self as m, uv};
 use zerocopy::{AsBytes, FromBytes};
 
-/// Utility type to convert transform matrices to a form with appropriate padding
-/// for sending to the GPU.
-#[derive(Clone, Copy, AsBytes, FromBytes)]
+//
+// GPU interface types
+//
+
+/// Type for sending 3x3 matrices to the GPU with appropriate padding.
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 #[repr(transparent)]
-pub struct GpuMat3([[f32; 4]; 3]);
+pub struct GpuMat3(pub [[f32; 4]; 3]);
 
 impl From<uv::DMat3> for GpuMat3 {
     fn from(mat: uv::DMat3) -> Self {
         let ma = mat.as_array();
-        // converting to f32 here for cheaper work on the gpu
-        GpuMat3([
+        Self([
             [ma[0] as f32, ma[1] as f32, ma[2] as f32, 0.0],
             [ma[3] as f32, ma[4] as f32, ma[5] as f32, 0.0],
             [ma[6] as f32, ma[7] as f32, ma[8] as f32, 0.0],
@@ -21,10 +23,27 @@ impl From<uv::DMat3> for GpuMat3 {
     }
 }
 
-/// Utility type for putting 2D vectors in vertex buffers.
-#[derive(Clone, Copy, AsBytes, FromBytes)]
+/// Type for sending 4x4 matrices to the GPU.
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 #[repr(transparent)]
-pub struct GpuVec2([f32; 2]);
+pub struct GpuMat4(pub [[f32; 4]; 4]);
+
+impl From<[[f32; 4]; 4]> for GpuMat4 {
+    fn from(m: [[f32; 4]; 4]) -> Self {
+        Self(m)
+    }
+}
+
+impl From<uv::Mat4> for GpuMat4 {
+    fn from(m: uv::Mat4) -> Self {
+        Self(m.cols.map(|c| *c.as_array()))
+    }
+}
+
+/// Type for putting 2D vectors in vertex buffers.
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[repr(transparent)]
+pub struct GpuVec2(pub [f32; 2]);
 
 impl From<m::Vec2> for GpuVec2 {
     fn from(v: m::Vec2) -> Self {
@@ -32,16 +51,102 @@ impl From<m::Vec2> for GpuVec2 {
     }
 }
 
-/// Utility type for putting 2D vectors in uniform buffers.
-#[derive(Clone, Copy, AsBytes, FromBytes)]
+impl From<[f32; 2]> for GpuVec2 {
+    fn from(v: [f32; 2]) -> Self {
+        Self(v)
+    }
+}
+
+/// Type for putting 2D vectors in uniform buffers.
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 #[repr(transparent)]
-pub struct GpuVec2Padded([f32; 4]);
+pub struct GpuVec2Padded(pub [f32; 4]);
 
 impl From<m::Vec2> for GpuVec2Padded {
     fn from(v: m::Vec2) -> Self {
         Self([v.x as f32, v.y as f32, 0.0, 0.0])
     }
 }
+
+impl From<[f32; 2]> for GpuVec2Padded {
+    fn from(v: [f32; 2]) -> Self {
+        Self([v[0], v[1], 0.0, 0.0])
+    }
+}
+
+/// Type for putting 3D vectors in vertex buffers.
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[repr(transparent)]
+pub struct GpuVec3(pub [f32; 3]);
+
+impl From<m::Vec2> for GpuVec3 {
+    fn from(v: m::Vec2) -> Self {
+        Self([v.x as f32, v.y as f32, 0.0])
+    }
+}
+
+impl From<[f32; 2]> for GpuVec3 {
+    fn from(v: [f32; 2]) -> Self {
+        Self([v[0], v[1], 0.0])
+    }
+}
+
+impl From<uv::Vec3> for GpuVec3 {
+    fn from(v: uv::Vec3) -> Self {
+        Self([v.x, v.y, v.z])
+    }
+}
+
+impl From<[f32; 3]> for GpuVec3 {
+    fn from(v: [f32; 3]) -> Self {
+        Self(v)
+    }
+}
+
+/// Type for sending 4D vectors (like colors) to the GPU.
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[repr(transparent)]
+pub struct GpuVec4(pub [f32; 4]);
+
+impl From<m::Vec2> for GpuVec4 {
+    fn from(v: m::Vec2) -> Self {
+        Self([v.x as f32, v.y as f32, 0.0, 0.0])
+    }
+}
+
+impl From<[f32; 2]> for GpuVec4 {
+    fn from(v: [f32; 2]) -> Self {
+        Self([v[0], v[1], 0.0, 0.0])
+    }
+}
+
+impl From<uv::Vec3> for GpuVec4 {
+    fn from(v: uv::Vec3) -> Self {
+        Self([v.x, v.y, v.z, 0.0])
+    }
+}
+
+impl From<[f32; 3]> for GpuVec4 {
+    fn from(v: [f32; 3]) -> Self {
+        Self([v[0], v[1], v[2], 0.0])
+    }
+}
+
+impl From<uv::Vec4> for GpuVec4 {
+    fn from(v: uv::Vec4) -> Self {
+        Self([v.x, v.y, v.z, v.w])
+    }
+}
+
+impl From<[f32; 4]> for GpuVec4 {
+    fn from(v: [f32; 4]) -> Self {
+        Self(v)
+    }
+}
+
+//
+// dynamic buffers
+//
 
 /// A wgpu Buffer managed like a Vec, i.e. automatically reallocated
 /// when it can't fit its contents.
@@ -69,11 +174,23 @@ impl DynamicBuffer {
     }
 
     /// Reallocate the buffer if needed, then write the given data to it.
+    #[inline]
     pub fn write<Data: AsBytes>(&mut self, ctx: &super::RenderContext, data: &[Data]) {
+        self.write_split_borrow(&ctx.device, &ctx.queue, data)
+    }
+
+    /// Like [`write`][Self::write], but takes the required members of
+    /// [`RenderContext`][super::RenderContext] to facilitate partial borrows.
+    pub fn write_split_borrow<Data: AsBytes>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[Data],
+    ) {
         self.len = data.len();
         let size_needed = data.len() as u64 * std::mem::size_of::<Data>() as u64;
         if self.buf.is_none() || size_needed > self.size {
-            self.buf = Some(ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            self.buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: self.label,
                 size: size_needed,
                 usage: self.usage,
@@ -81,8 +198,7 @@ impl DynamicBuffer {
             }));
             self.size = size_needed;
         }
-        ctx.queue
-            .write_buffer(self.buf.as_ref().unwrap(), 0, data.as_bytes());
+        queue.write_buffer(self.buf.as_ref().unwrap(), 0, data.as_bytes());
     }
 
     /// Get a slice of the entire buffer.
