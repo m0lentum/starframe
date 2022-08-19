@@ -7,93 +7,53 @@ use crate::{
 use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
-/// 3D Mesh with an associated skin deformation, usually animated.
+//
+// types
+//
+
 #[derive(Debug)]
-pub struct Mesh {
-    pub offset: m::Pose,
-    primitives: Vec<MeshPrimitive>,
-    kind: MeshKind,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum AnimationError {
-    NotAnimated,
-    FeatureNotFound,
-}
-
-impl Mesh {
-    /// Activate the animation with the given name, if it exists.
-    /// Returns an error if the name doesn't exist or the mesh is not animated at all.
-    pub fn activate_animation(&mut self, name: &str) -> Result<(), AnimationError> {
-        match &mut self.kind {
-            MeshKind::Skinned(skin_data) => {
-                match skin_data
-                    .animations
-                    .iter()
-                    .enumerate()
-                    .find(|(_, anim)| anim.name.as_deref() == Some(name))
-                {
-                    Some((idx, _)) => skin_data.active_anim_idx = Some(idx),
-                    None => return Err(AnimationError::FeatureNotFound),
-                }
-            }
-            _ => return Err(AnimationError::NotAnimated),
-        }
-        Ok(())
-    }
+pub(super) struct MeshPrimitive {
+    pub vert_buf: wgpu::Buffer,
+    pub idx_buf: wgpu::Buffer,
+    pub idx_count: u32,
 }
 
 #[derive(Debug)]
-struct MeshPrimitive {
-    vert_buf: wgpu::Buffer,
-    idx_buf: wgpu::Buffer,
-    idx_count: u32,
-}
-
-#[derive(Debug)]
-pub enum MeshKind {
-    /// Mesh with a skin and animations attached to it.
-    Skinned(SkinData),
-    /// Mesh with no skin or animations that is drawn in one draw call
-    /// with all other SimpleBatched meshes in the world.
-    SimpleBatched,
-}
-
-#[derive(Debug)]
-pub struct SkinData {
-    skin: Skin,
-    animations: Vec<anim::Animation<AnimationTarget>>,
-    active_anim_idx: Option<usize>,
-    anim_time: f32,
+pub struct SkinnedMesh {
+    pub(super) primitives: Vec<MeshPrimitive>,
+    pub(super) skin: Skin,
+    pub(super) animations: Vec<anim::Animation<AnimationTarget>>,
+    pub(super) active_anim_idx: Option<usize>,
+    pub(super) anim_time: f32,
     // storing per-mesh uniform buffers with the meshes,
     // Option because it's not populated until draw
-    uniforms: Option<MeshUniformBinding>,
+    pub(super) uniforms: Option<MeshUniformBinding>,
 }
 
 #[derive(Debug, Clone)]
-struct Skin {
-    root_transform: uv::Mat4,
-    joints: Vec<Joint>,
+pub(super) struct Skin {
+    pub root_transform: uv::Mat4,
+    pub joints: Vec<Joint>,
 }
 
 #[derive(Debug, Clone)]
-struct Joint {
-    name: Option<String>,
+pub(super) struct Joint {
+    pub name: Option<String>,
     /// index of the joint's parent joint in the skin's `joints` array
-    parent_idx: Option<usize>,
-    local_pose: TransformDecomp,
-    inv_bind_matrix: uv::Mat4,
+    pub parent_idx: Option<usize>,
+    pub local_pose: TransformDecomp,
+    pub inv_bind_matrix: uv::Mat4,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct TransformDecomp {
-    pos: uv::Vec3,
-    rot: uv::Rotor3,
-    scale: uv::Vec3,
+pub(super) struct TransformDecomp {
+    pub pos: uv::Vec3,
+    pub rot: uv::Rotor3,
+    pub scale: uv::Vec3,
 }
 
 impl TransformDecomp {
-    fn from_parts((pos, rot_quat, scale): ([f32; 3], [f32; 4], [f32; 3])) -> Self {
+    pub fn from_parts((pos, rot_quat, scale): ([f32; 3], [f32; 4], [f32; 3])) -> Self {
         Self {
             pos: pos.into(),
             rot: uv::Rotor3::from_quaternion_array(rot_quat),
@@ -101,7 +61,7 @@ impl TransformDecomp {
         }
     }
 
-    fn as_matrix(&self) -> uv::Mat4 {
+    pub fn as_matrix(&self) -> uv::Mat4 {
         uv::Mat4::from_translation(self.pos)
             * self.rot.into_matrix().into_homogeneous()
             * uv::Mat4::from_nonuniform_scale(self.scale)
@@ -109,7 +69,7 @@ impl TransformDecomp {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum AnimationTarget {
+pub(super) enum AnimationTarget {
     Joint {
         id: usize,
         property: AnimatedProperty,
@@ -121,284 +81,25 @@ enum AnimationTarget {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum AnimatedProperty {
+pub(super) enum AnimatedProperty {
     Translation,
     Rotation,
     Scale,
 }
 
 #[derive(Debug)]
-struct MeshUniformBinding {
+pub(super) struct MeshUniformBinding {
     buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
-struct Vertex {
-    position: util::GpuVec3,
-    color: util::GpuVec4,
-    joints: [u16; 4],
-    weights: util::GpuVec4,
-}
-
-impl Mesh {
-    #[cfg(feature = "gltf")]
-    pub fn from_gltf(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> Self {
-        // helper for constructing gltf readers
-        let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
-
-        //
-        // mesh primitives
-        //
-
-        let mut primitives = Vec::new();
-
-        // TODO: support multiple meshes in one document,
-        // also probably don't panic if format isn't supported
-        let mesh = doc.meshes().next().expect("No meshes in gltf document");
-        for prim in mesh.primitives() {
-            let reader = prim.reader(read_buf);
-
-            let vertices: Vec<Vertex> = itertools::izip!(
-                reader
-                    .read_positions()
-                    .expect("glTF mesh must have vertices"),
-                reader
-                    .read_colors(0)
-                    .expect("only glTF meshes with vertex colors are supported")
-                    .into_rgba_f32(),
-                reader
-                    .read_joints(0)
-                    .expect("only glTF meshes with joints are supported")
-                    .into_u16(),
-                reader
-                    .read_weights(0)
-                    .expect("only glTF meshes with weights are supported")
-                    .into_f32(),
-            )
-            .map(|(pos, col, joints, weights)| Vertex {
-                position: pos.into(),
-                color: col.into(),
-                joints,
-                weights: weights.into(),
-            })
-            .collect();
-
-            let indices: Vec<u16> = reader
-                .read_indices()
-                .expect("only glTF meshes with indices are supported")
-                .into_u32()
-                .map(|i| u16::try_from(i).expect("too many indices to fit into u16"))
-                .collect();
-            let idx_count = indices.len() as u32;
-
-            use wgpu::util::DeviceExt;
-            let vert_buf = rend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: mesh.name(),
-                    contents: vertices.as_bytes(),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-            let idx_buf = rend
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: mesh.name(),
-                    contents: indices.as_bytes(),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-
-            primitives.push(MeshPrimitive {
-                vert_buf,
-                idx_buf,
-                idx_count,
-            });
-        }
-
-        //
-        // skin
-        //
-
-        let gltf_skin = match doc.skins().next() {
-            // early out if there's no skin
-            None => {
-                return Self {
-                    offset: m::Pose::identity(),
-                    primitives,
-                    kind: MeshKind::SimpleBatched,
-                };
-            }
-            Some(s) => s,
-        };
-
-        let mut skin = Skin {
-            root_transform: uv::Mat4::identity(),
-            joints: Vec::new(),
-        };
-
-        // inverse bind matrices
-        let reader = gltf_skin.reader(read_buf);
-        if let Some(invs) = reader.read_inverse_bind_matrices() {
-            skin.joints = itertools::zip(gltf_skin.joints(), invs)
-                .map(|(joint, inv_bind)| {
-                    Joint {
-                        name: joint.name().map(String::from),
-                        // parents will be computed once we have all joints
-                        parent_idx: None,
-                        local_pose: TransformDecomp::from_parts(joint.transform().decomposed()),
-                        inv_bind_matrix: inv_bind.into(),
-                    }
-                })
-                .collect();
-        } else {
-            // inverse bind matrices are not provided, meaning they are premultiplied into vertices
-            skin.joints = gltf_skin
-                .joints()
-                .map(|joint| Joint {
-                    name: joint.name().map(String::from),
-                    parent_idx: None,
-                    local_pose: TransformDecomp::from_parts(joint.transform().decomposed()),
-                    inv_bind_matrix: uv::Mat4::identity(),
-                })
-                .collect();
-        }
-
-        // joint parents
-
-        for (parent_idx, joint) in gltf_skin.joints().enumerate() {
-            for child in joint.children() {
-                let child_gltf_id = child.index();
-                if let Some((child_joint_idx, _)) = gltf_skin
-                    .joints()
-                    .enumerate()
-                    .find(|(_, joint)| joint.index() == child_gltf_id)
-                {
-                    skin.joints[child_joint_idx].parent_idx = Some(parent_idx);
-                }
-            }
-        }
-
-        // root transform of the skin:
-        // we need to traverse the node hierarchy to find any nodes above the root joint.
-        // this is because the inverse bind matrices in glTF are relative to the scene root,
-        // and we want them relative to the skin root
-        if let Some(mut curr_search_node) = gltf_skin.joints().next() {
-            loop {
-                let parent = doc.nodes().find(|node| {
-                    node.children()
-                        .any(|child| child.index() == curr_search_node.index())
-                });
-                if let Some(parent) = parent {
-                    skin.root_transform =
-                        skin.root_transform * uv::Mat4::from(parent.transform().matrix());
-                    curr_search_node = parent;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        //
-        // animations
-        //
-
-        let mut animations = Vec::new();
-
-        for gltf_anim in doc.animations() {
-            let channels = gltf_anim
-                .channels()
-                .filter_map(|gltf_chan| -> Option<anim::Channel<AnimationTarget>> {
-                    use gltf::animation::util::ReadOutputs as Out;
-                    use gltf::animation::Interpolation as Interp;
-                    use gltf::animation::Property as Prop;
-
-                    let target = gltf_chan.target();
-                    let target_joint = match gltf_skin
-                        .joints()
-                        .enumerate()
-                        .find(|(_, joint)| joint.index() == target.node().index())
-                    {
-                        Some((joint_idx, _)) => joint_idx,
-                        // TODO: morph targets will add another wrinkle to this
-                        None => return None,
-                    };
-                    let sampler = gltf_chan.sampler();
-                    let chan_reader = gltf_chan.reader(read_buf);
-                    let inputs = chan_reader
-                        .read_inputs()
-                        .expect("Channel with no inputs")
-                        .collect();
-                    let mut outputs: Vec<f32> = Vec::new();
-                    match chan_reader.read_outputs().expect("Channel with no outputs") {
-                        Out::Translations(t) => {
-                            outputs.extend(t.flat_map(|t| t.into_iter()));
-                        }
-                        Out::Rotations(r) => {
-                            outputs.extend(r.into_f32().flat_map(|r| r.into_iter()));
-                        }
-                        Out::Scales(s) => {
-                            outputs.extend(s.flat_map(|s| s.into_iter()));
-                        }
-                        Out::MorphTargetWeights(_) => todo!(),
-                    }
-
-                    Some(anim::Channel {
-                        target: match target.property() {
-                            Prop::Translation => AnimationTarget::Joint {
-                                id: target_joint,
-                                property: AnimatedProperty::Translation,
-                            },
-                            Prop::Rotation => AnimationTarget::Joint {
-                                id: target_joint,
-                                property: AnimatedProperty::Rotation,
-                            },
-                            Prop::Scale => AnimationTarget::Joint {
-                                id: target_joint,
-                                property: AnimatedProperty::Scale,
-                            },
-                            Prop::MorphTargetWeights => todo!(),
-                        },
-                        ty: match target.property() {
-                            Prop::Translation | Prop::Scale => anim::ChannelType::Vector3,
-                            Prop::Rotation => anim::ChannelType::Rotor3,
-                            Prop::MorphTargetWeights => todo!(),
-                        },
-                        interpolation: match sampler.interpolation() {
-                            Interp::Linear => anim::InterpolationMode::Linear,
-                            Interp::Step => anim::InterpolationMode::Step,
-                            Interp::CubicSpline => anim::InterpolationMode::CubicSpline,
-                        },
-                        keyframe_ts: inputs,
-                        data: outputs,
-                    })
-                })
-                .collect();
-
-            animations.push(anim::Animation::new(
-                gltf_anim.name().map(String::from),
-                channels,
-            ));
-        }
-
-        Self {
-            offset: m::Pose::identity(),
-            primitives,
-            kind: MeshKind::Skinned(SkinData {
-                skin,
-                animations,
-                active_anim_idx: None,
-                anim_time: 0.0,
-                uniforms: None,
-            }),
-        }
-    }
-
-    #[inline]
-    pub fn with_offset(mut self, offset: m::Pose) -> Self {
-        self.offset = offset;
-        self
-    }
+pub(super) struct Vertex {
+    pub position: util::GpuVec3,
+    pub color: util::GpuVec4,
+    pub joints: [u16; 4],
+    pub weights: util::GpuVec4,
 }
 
 //
@@ -414,7 +115,7 @@ struct MeshUniforms {
     joint_offset: u32,
 }
 
-pub struct SkinnedMeshRenderer {
+pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     joints_bind_group: wgpu::BindGroup,
     joints_bind_group_layout: wgpu::BindGroupLayout,
@@ -425,7 +126,7 @@ pub struct SkinnedMeshRenderer {
     joint_storage: wgpu::Buffer,
     joint_capacity: usize,
 }
-impl SkinnedMeshRenderer {
+impl Renderer {
     pub fn new(rend: &gx::Renderer) -> Self {
         // shaders
 
@@ -588,9 +289,9 @@ impl SkinnedMeshRenderer {
     }
 
     /// Step all animations forward in time.
-    pub fn step_time(&mut self, dt: f32, mut l_mesh: graph::LayerViewMut<Mesh>) {
+    pub fn step_time(&mut self, dt: f32, mut l_mesh: graph::LayerViewMut<super::Mesh>) {
         for skin_data in l_mesh.iter_mut().filter_map(|mesh| match &mut mesh.c.kind {
-            MeshKind::Skinned(skin_data) => Some(skin_data),
+            super::MeshKind::Skinned(skin_data) => Some(skin_data),
             _ => None,
         }) {
             if let Some(anim_idx) = skin_data.active_anim_idx {
@@ -609,7 +310,7 @@ impl SkinnedMeshRenderer {
         &mut self,
         camera: &gx::Camera,
         ctx: &mut gx::RenderContext,
-        (mut l_mesh, l_pose): (graph::LayerViewMut<Mesh>, graph::LayerView<m::Pose>),
+        (mut l_mesh, l_pose): (graph::LayerViewMut<super::Mesh>, graph::LayerView<m::Pose>),
     ) {
         // collect all joint matrices in the world,
         // we'll shove them all in the storage buffer in one go
@@ -619,7 +320,7 @@ impl SkinnedMeshRenderer {
         let mut global_poses: Vec<Option<uv::Mat4>> = Vec::new();
 
         for skin_data in l_mesh.iter_mut().filter_map(|mesh| match &mut mesh.c.kind {
-            MeshKind::Skinned(skin_data) => Some(skin_data),
+            super::MeshKind::Skinned(skin_data) => Some(skin_data),
             _ => None,
         }) {
             // sample animations
@@ -723,14 +424,14 @@ impl SkinnedMeshRenderer {
         let mut joint_offset = 0_u32;
         for mesh in l_mesh
             .iter_mut()
-            .filter(|m| matches!(&m.c.kind, MeshKind::Skinned(_)))
+            .filter(|m| matches!(&m.c.kind, super::MeshKind::Skinned(_)))
         {
             let pose = mesh
                 .get_neighbor(&l_pose)
                 .map(|p| *p.c)
                 .unwrap_or_else(m::Pose::identity);
             let mut skin_data = match &mut mesh.c.kind {
-                MeshKind::Skinned(s) => s,
+                super::MeshKind::Skinned(s) => s,
                 // other cases were filtered out on the iterator,
                 // but we needed to get the pose before taking this reference to
                 // not break borrowing rules
@@ -771,7 +472,7 @@ impl SkinnedMeshRenderer {
                 .write_buffer(&unif_binding.buffer, 0, uniforms.as_bytes());
 
             // render
-            for prim in &mesh.c.primitives {
+            for prim in &skin_data.primitives {
                 pass.set_bind_group(1, &unif_binding.bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vert_buf.slice(..));
                 pass.set_index_buffer(prim.idx_buf.slice(..), wgpu::IndexFormat::Uint16);

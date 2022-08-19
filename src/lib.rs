@@ -15,7 +15,7 @@ pub use math::{uv, Angle, Pose, PoseBuilder, Rotor2, Transform, Unit, Vec2};
 pub mod graphics;
 pub use graphics::{
     camera::{Camera, CameraScalingStrategy, MouseDragCameraController},
-    mesh::{ConvexMeshShape, Mesh, SkinnedMeshRenderer, StaticMesh, StaticMeshRenderer},
+    mesh::{BatchedMesh, ConvexMeshShape, Mesh, MeshRenderer, SkinnedMesh},
     DebugVisualizer, OutlineParams, OutlineRenderer, OutlineShape, RenderContext, Renderer,
 };
 

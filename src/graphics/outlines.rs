@@ -4,7 +4,7 @@ use crate::{
     graph::LayerView,
     graphics::{
         util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
-        Camera, StaticMesh,
+        Camera, Mesh,
     },
     math as m,
 };
@@ -510,20 +510,24 @@ impl OutlineRenderer {
         &mut self,
         camera: &Camera,
         rend: &mut super::Renderer,
-        (l_mesh, l_pose): (LayerView<StaticMesh>, LayerView<m::Pose>),
+        (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
     ) {
         // update the CPU side vertex buffer
 
         self.init_step.mesh_bufs.clear();
-        for (mesh, pose) in l_mesh
-            .iter()
-            .filter_map(|m| m.get_neighbor(&l_pose).map(|p| (m, p)))
-        {
+        for (mesh, mesh_data) in l_mesh.iter().filter_map(|mesh| match &mesh.c.kind {
+            super::mesh::MeshKind::SimpleBatched(d) => Some((mesh, d)),
+            _ => None,
+        }) {
+            let pose = mesh
+                .get_neighbor(&l_pose)
+                .map(|p| *p.c)
+                .unwrap_or_else(m::Pose::identity);
             self.init_step.mesh_bufs.extend(
-                mesh.c.vertices.iter().map(|vert| InitVertex {
-                    position: (*pose.c * *vert).into(),
+                mesh_data.vertices.iter().map(|vert| InitVertex {
+                    position: (pose * vert.position).into(),
                 }),
-                (1..mesh.c.vertices.len() as u16 - 1).flat_map(|idx| [0, idx, idx + 1]),
+                mesh_data.indices.iter().cloned(),
             );
         }
         if self.init_step.mesh_bufs.indices.is_empty() {

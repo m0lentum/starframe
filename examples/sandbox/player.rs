@@ -40,7 +40,7 @@ sf::named_layer_bundle! {
         pose: w sf::Pose,
         collider: w sf::Collider,
         body: w sf::Body,
-        mesh: w sf::StaticMesh,
+        mesh: w sf::Mesh,
         player: w Player,
     }
 }
@@ -64,7 +64,7 @@ impl PlayerRecipe {
         );
         let mut shape_node = l
             .mesh
-            .insert(sf::StaticMesh::from(coll).with_color([0.2, 0.8, 0.6, 1.0]));
+            .insert(sf::Mesh::from(coll).with_color([0.2, 0.8, 0.6, 1.0]));
         let mut coll_node = l.collider.insert(coll);
         let mut body_node = l.body.insert(sf::Body::new_particle(1.0));
         let mut tag_node = l.player.insert(Player::new());
@@ -156,12 +156,10 @@ impl PlayerController {
                         )
                         .build(),
                 );
-                let mut b_mesh = l
-                    .mesh
-                    .insert(sf::StaticMesh::from(sf::ConvexMeshShape::Circle {
-                        r: R,
-                        points: 5,
-                    }));
+                let mut b_mesh = l.mesh.insert(sf::Mesh::from(sf::ConvexMeshShape::Circle {
+                    r: R,
+                    points: 5,
+                }));
                 let mut b_coll = l.collider.insert(sf::Collider::new_circle(R));
                 let mut b_body = l.body.insert(
                     sf::Body::new_dynamic_const_mass(b_coll.c.info(), 1.0).with_velocity(

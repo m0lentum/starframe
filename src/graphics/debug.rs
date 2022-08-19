@@ -42,7 +42,7 @@ impl DebugVisualizer {
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("debug"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "shaders/mesh_simple.wgsl"
+                    "shaders/mesh_batched.wgsl"
                 ))),
             });
 

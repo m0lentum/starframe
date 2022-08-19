@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
 type Color = [f32; 4];
+const DEFAULT_COLOR: Color = [1.0; 4];
 
 /// Shape that can be used to generate [`BatchedMesh`][self::BatchedMesh]es.
 #[derive(Clone, Copy, Debug)]
@@ -32,28 +33,25 @@ pub enum ConvexMeshShape {
     },
 }
 
-/// A simple static triangle mesh with no skins or animations.
+/// A simple triangle mesh with no skins or animations.
 /// All of these in the world are rendered in one draw call.
-///
-/// Currently this needs to be a convex shape. TODO: support more general meshes
 #[derive(Clone, Debug)]
-pub struct StaticMesh {
-    pub color: Color,
-    pub(crate) vertices: Vec<m::Vec2>,
+pub struct BatchedMesh {
+    pub(crate) vertices: Vec<StoredVertex>,
+    pub(crate) indices: Vec<u16>,
 }
 
-impl Default for StaticMesh {
-    fn default() -> Self {
-        Self {
-            color: [1.0; 4],
-            vertices: Vec::new(),
-        }
-    }
+/// Vertex stored on the CPU side (as opposed to the Vertex used for rendering).
+/// We apply poses and transform into GPU vertices on render.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StoredVertex {
+    pub position: m::Vec2,
+    pub color: [f32; 4],
 }
 
-impl From<ConvexMeshShape> for StaticMesh {
+impl From<ConvexMeshShape> for BatchedMesh {
     fn from(shape: ConvexMeshShape) -> Self {
-        let vertices = match shape {
+        let vertices: Vec<StoredVertex> = match shape {
             ConvexMeshShape::Circle { r, points } => {
                 let angle_incr = 2.0 * std::f64::consts::PI / points as f64;
                 (0..points)
@@ -61,17 +59,27 @@ impl From<ConvexMeshShape> for StaticMesh {
                         let angle = angle_incr * i as f64;
                         m::Vec2::new(r * angle.cos(), r * angle.sin())
                     })
+                    .map(|vert| StoredVertex {
+                        position: vert,
+                        color: DEFAULT_COLOR,
+                    })
                     .collect()
             }
             ConvexMeshShape::Rect { w, h } => {
                 let hw = 0.5 * w;
                 let hh = 0.5 * h;
-                vec![
+                [
                     m::Vec2::new(hw, hh),
                     m::Vec2::new(-hw, hh),
                     m::Vec2::new(-hw, -hh),
                     m::Vec2::new(hw, -hh),
                 ]
+                .into_iter()
+                .map(|vert| StoredVertex {
+                    position: vert,
+                    color: DEFAULT_COLOR,
+                })
+                .collect()
             }
             ConvexMeshShape::Capsule {
                 hl,
@@ -88,30 +96,35 @@ impl From<ConvexMeshShape> for StaticMesh {
                         let angle = angle_incr * i as f64;
                         m::Vec2::new(r * angle.sin() - hl, r * angle.cos())
                     }))
+                    .map(|vert| StoredVertex {
+                        position: vert,
+                        color: DEFAULT_COLOR,
+                    })
                     .collect()
             }
         };
 
-        Self {
-            vertices,
-            ..Default::default()
-        }
+        let indices = (1..vertices.len() as u16 - 1)
+            .flat_map(|idx| [0, idx, idx + 1])
+            .collect();
+
+        Self { vertices, indices }
     }
 }
 
-impl From<Collider> for StaticMesh {
+impl From<Collider> for BatchedMesh {
     fn from(coll: Collider) -> Self {
         let mut mesh = Self::from_collider_shape(&coll.shape, 0.1);
         for vert in &mut mesh.vertices {
-            *vert = coll.offset * *vert;
+            vert.position = coll.offset * vert.position;
         }
         mesh
     }
 }
 
-impl StaticMesh {
+impl BatchedMesh {
     pub fn from_collider_shape(shape: &ColliderShape, max_circle_vert_distance: f64) -> Self {
-        let mut vertices = Vec::new();
+        let mut vertices: Vec<StoredVertex> = Vec::new();
 
         match shape.polygon {
             ColliderPolygon::Point => {
@@ -120,7 +133,10 @@ impl StaticMesh {
                 let angle_increment = m::Rotor2::from_angle(TAU / num_increments);
                 let mut curr_vert = m::Vec2::new(shape.circle_r, 0.0);
                 for _ in 0..(num_increments as usize) {
-                    vertices.push(curr_vert);
+                    vertices.push(StoredVertex {
+                        position: curr_vert,
+                        color: DEFAULT_COLOR,
+                    });
                     curr_vert = angle_increment * curr_vert;
                 }
             }
@@ -148,7 +164,10 @@ impl StaticMesh {
 
                     if shape.circle_r == 0.0 {
                         // just a polygon, all we need are the ends of the edges
-                        vertices.push(next_edge.edge.start);
+                        vertices.push(StoredVertex {
+                            position: next_edge.edge.start,
+                            color: DEFAULT_COLOR,
+                        });
                     } else {
                         // rounded polygon, generate circle caps offset from the vertex
                         let angle_btw_edges = prev_edge.normal.dot(*next_edge.normal).acos();
@@ -158,10 +177,16 @@ impl StaticMesh {
                             m::Rotor2::from_angle(angle_btw_edges / num_increments);
 
                         let mut curr_offset = shape.circle_r * *prev_edge.normal;
-                        vertices.push(next_edge.edge.start + curr_offset);
+                        vertices.push(StoredVertex {
+                            position: next_edge.edge.start + curr_offset,
+                            color: DEFAULT_COLOR,
+                        });
                         for _ in 0..(num_increments as usize) {
                             curr_offset = angle_increment * curr_offset;
-                            vertices.push(next_edge.edge.start + curr_offset);
+                            vertices.push(StoredVertex {
+                                position: next_edge.edge.start + curr_offset,
+                                color: DEFAULT_COLOR,
+                            });
                         }
                     }
                     prev_edge = next_edge;
@@ -176,20 +201,23 @@ impl StaticMesh {
                     let half_vert_count = vertices.len();
                     vertices.extend_from_within(..);
                     for mirror_vert in &mut vertices[half_vert_count..] {
-                        *mirror_vert = -*mirror_vert;
+                        mirror_vert.position = -mirror_vert.position;
                     }
                 }
             }
         }
 
-        Self {
-            vertices,
-            ..Default::default()
-        }
+        let indices = (1..vertices.len() as u16 - 1)
+            .flat_map(|idx| [0, idx, idx + 1])
+            .collect();
+
+        Self { vertices, indices }
     }
     /// Set the color of the mesh in a builder-like fashion.
     pub fn with_color(mut self, color: Color) -> Self {
-        self.color = color;
+        for vert in &mut self.vertices {
+            vert.color = color;
+        }
         self
     }
 }
@@ -199,25 +227,25 @@ impl StaticMesh {
 //
 
 #[repr(C)]
-#[derive(Clone, Copy, AsBytes, FromBytes)]
+#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
 struct GlobalUniforms {
     view: GpuMat3,
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, AsBytes, FromBytes)]
-struct Vertex {
-    position: GpuVec2,
-    color: [f32; 4],
+#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
+pub(super) struct Vertex {
+    pub position: GpuVec2,
+    pub color: [f32; 4],
 }
 
-pub struct StaticMeshRenderer {
+pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     uniform_buf: wgpu::Buffer,
     bufs: DynamicMeshBuffers<Vertex>,
 }
-impl StaticMeshRenderer {
+impl Renderer {
     pub fn new(rend: &gx::Renderer) -> Self {
         // shaders
 
@@ -226,7 +254,7 @@ impl StaticMeshRenderer {
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("mesh"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "../shaders/mesh_simple.wgsl"
+                    "../shaders/mesh_batched.wgsl"
                 ))),
             });
 
@@ -321,7 +349,7 @@ impl StaticMeshRenderer {
                 multiview: None,
             });
 
-        StaticMeshRenderer {
+        Renderer {
             pipeline,
             bind_group,
             uniform_buf,
@@ -334,7 +362,7 @@ impl StaticMeshRenderer {
         &mut self,
         camera: &Camera,
         ctx: &mut gx::RenderContext,
-        (l_mesh, l_pose): (LayerView<StaticMesh>, LayerView<m::Pose>),
+        (l_mesh, l_pose): (LayerView<super::Mesh>, LayerView<m::Pose>),
     ) {
         //
         // Update the uniform buffer
@@ -351,16 +379,20 @@ impl StaticMeshRenderer {
         //
 
         self.bufs.clear();
-        for (mesh, pose) in l_mesh
-            .iter()
-            .filter_map(|m| m.get_neighbor(&l_pose).map(|p| (m, p)))
-        {
+        for (mesh, mesh_data) in l_mesh.iter().filter_map(|mesh| match &mesh.c.kind {
+            super::MeshKind::SimpleBatched(d) => Some((mesh, d)),
+            _ => None,
+        }) {
+            let pose = mesh
+                .get_neighbor(&l_pose)
+                .map(|p| *p.c)
+                .unwrap_or_else(m::Pose::identity);
             self.bufs.extend(
-                mesh.c.vertices.iter().map(|vert| Vertex {
-                    position: (*pose.c * *vert).into(),
-                    color: mesh.c.color,
+                mesh_data.vertices.iter().map(|vert| Vertex {
+                    position: (pose * vert.position).into(),
+                    color: vert.color,
                 }),
-                (1..mesh.c.vertices.len() as u16 - 1).flat_map(|idx| [0, idx, idx + 1]),
+                mesh_data.indices.iter().cloned(),
             );
         }
         if self.bufs.indices.is_empty() {

@@ -58,7 +58,7 @@ pub struct State {
     // graphics
     camera: sf::Camera,
     camera_ctl: sf::MouseDragCameraController,
-    mesh_renderer: sf::StaticMeshRenderer,
+    mesh_renderer: sf::MeshRenderer,
     outline_renderer: sf::OutlineRenderer,
     debug_visualizer: sf::DebugVisualizer,
     // egui stuff
@@ -85,7 +85,7 @@ impl State {
                 sf::Body,
                 sf::Collider,
                 sf::Rope,
-                sf::StaticMesh,
+                sf::Mesh,
                 // our types
                 player::Player,
             },
@@ -104,7 +104,7 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer: sf::StaticMeshRenderer::new(renderer),
+            mesh_renderer: sf::MeshRenderer::new(renderer),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
                     thickness: 15,

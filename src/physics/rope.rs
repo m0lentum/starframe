@@ -2,7 +2,7 @@
 
 use crate::{
     graph::{self, LayerViewMut},
-    graphics::{ConvexMeshShape, StaticMesh},
+    graphics::{BatchedMesh, ConvexMeshShape, Mesh},
     math as m,
     physics::{collision::ROPE_LAYER, Body, Collider, Mass, PhysicsMaterial},
 };
@@ -67,7 +67,7 @@ pub fn spawn_line(
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
         LayerViewMut<Rope>,
-        LayerViewMut<StaticMesh>,
+        LayerViewMut<Mesh>,
     ),
 ) -> RopeProperties {
     let dist = end - start;
@@ -104,7 +104,7 @@ pub fn extend_line(
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
-        LayerViewMut<StaticMesh>,
+        LayerViewMut<Mesh>,
     ),
 ) -> RopeProperties {
     let l_body_sub = l_body.subview();
@@ -149,7 +149,7 @@ fn build_line(
         LayerViewMut<Body>,
         LayerViewMut<m::Pose>,
         LayerViewMut<Collider>,
-        LayerViewMut<StaticMesh>,
+        LayerViewMut<Mesh>,
     ),
 ) -> [graph::NodeKey<Body>; 2] {
     let body_proto = Body {
@@ -162,7 +162,7 @@ fn build_line(
         .with_material(rope_node.c.material);
     // temporary visualisation with individual particle Meshes
     // until I get something more bespoke for this
-    let mesh_proto = StaticMesh::from(ConvexMeshShape::Circle {
+    let mesh_proto = BatchedMesh::from(ConvexMeshShape::Circle {
         r: rope_node.c.thickness / 2.0,
         points: 8,
     })
@@ -171,7 +171,7 @@ fn build_line(
     let mut first_body = l_body.insert(body_proto);
     let mut first_pose = l_pose.insert(m::Pose::new(start, Default::default()));
     let mut first_coll = l_collider.insert(collider_proto);
-    let mut first_mesh = l_mesh.insert(mesh_proto.clone());
+    let mut first_mesh = l_mesh.insert(Mesh::from(mesh_proto.clone()));
     first_body.connect(&mut first_pose);
     first_body.connect(&mut first_coll);
     first_pose.connect(&mut first_coll);
@@ -184,7 +184,7 @@ fn build_line(
         let mut body = l_body.insert(body_proto);
         let mut pose = l_pose.insert(m::Pose::new(next_pos, Default::default()));
         let mut coll = l_collider.insert(collider_proto);
-        let mut mesh = l_mesh.insert(mesh_proto.clone());
+        let mut mesh = l_mesh.insert(Mesh::from(mesh_proto.clone()));
         body.connect(&mut pose);
         pose.connect(&mut coll);
         body.connect(&mut coll);

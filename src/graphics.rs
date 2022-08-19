@@ -10,7 +10,7 @@ pub mod camera;
 pub use camera::{Camera, CameraScalingStrategy, MouseDragCameraController};
 
 pub(super) mod mesh;
-pub use mesh::{ConvexMeshShape, Mesh, SkinnedMeshRenderer, StaticMesh, StaticMeshRenderer};
+pub use mesh::{BatchedMesh, ConvexMeshShape, Mesh, MeshRenderer, SkinnedMesh};
 
 pub mod animation;
 
