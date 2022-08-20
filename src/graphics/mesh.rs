@@ -14,6 +14,7 @@ mod gltf_import;
 #[derive(Debug)]
 pub struct Mesh {
     pub offset: m::Pose,
+    pub has_outline: bool,
     pub kind: MeshKind,
 }
 
@@ -30,18 +31,12 @@ impl Mesh {
     #[cfg(feature = "gltf")]
     #[inline]
     pub fn from_gltf(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> Self {
-        gltf_import::import_mesh(rend, doc, buffers)
+        gltf_import::import_mesh(rend, doc, buffers).into()
     }
 
     #[inline]
     pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
-        Self {
-            offset: m::Pose::identity(),
-            kind: MeshKind::SimpleBatched(batched::BatchedMesh::from_collider_shape(
-                shape,
-                max_circle_vert_distance,
-            )),
-        }
+        batched::BatchedMesh::from_collider_shape(shape, max_circle_vert_distance).into()
     }
 
     /// Set the offset of the mesh from the pose it's attached to.
@@ -63,6 +58,14 @@ impl Mesh {
             }
             _ => {}
         }
+        self
+    }
+
+    /// Opt out of drawing an outline for this mesh when
+    /// [`OutlineRenderer`][super::OutlineRenderer] is run.
+    #[inline]
+    pub fn without_outline(mut self) -> Self {
+        self.has_outline = false;
         self
     }
 
@@ -91,6 +94,7 @@ impl From<BatchedMesh> for Mesh {
     fn from(m: BatchedMesh) -> Self {
         Self {
             offset: m::Pose::identity(),
+            has_outline: true,
             kind: MeshKind::SimpleBatched(m),
         }
     }
@@ -100,6 +104,7 @@ impl From<SkinnedMesh> for Mesh {
     fn from(m: SkinnedMesh) -> Self {
         Self {
             offset: m::Pose::identity(),
+            has_outline: true,
             kind: MeshKind::Skinned(m),
         }
     }

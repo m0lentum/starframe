@@ -156,10 +156,10 @@ impl PlayerController {
                         )
                         .build(),
                 );
-                let mut b_mesh = l.mesh.insert(sf::Mesh::from(sf::ConvexMeshShape::Circle {
-                    r: R,
-                    points: 5,
-                }));
+                let mut b_mesh = l.mesh.insert(
+                    sf::Mesh::from(sf::ConvexMeshShape::Circle { r: R, points: 5 })
+                        .without_outline(),
+                );
                 let mut b_coll = l.collider.insert(sf::Collider::new_circle(R));
                 let mut b_body = l.body.insert(
                     sf::Body::new_dynamic_const_mass(b_coll.c.info(), 1.0).with_velocity(

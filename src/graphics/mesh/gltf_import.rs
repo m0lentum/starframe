@@ -47,10 +47,7 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
                     .map(|i| u16::try_from(i).expect("too many indices to fit into u16")),
             );
         }
-        return super::Mesh {
-            offset: m::Pose::identity(),
-            kind: super::MeshKind::SimpleBatched(super::batched::BatchedMesh { vertices, indices }),
-        };
+        return super::batched::BatchedMesh { vertices, indices }.into();
     }
 
     //
@@ -275,15 +272,13 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
         ));
     }
 
-    super::Mesh {
-        offset: m::Pose::identity(),
-        kind: super::MeshKind::Skinned(skinned::SkinnedMesh {
-            primitives,
-            skin,
-            animations,
-            active_anim_idx: None,
-            anim_time: 0.0,
-            uniforms: None,
-        }),
+    skinned::SkinnedMesh {
+        primitives,
+        skin,
+        animations,
+        active_anim_idx: None,
+        anim_time: 0.0,
+        uniforms: None,
     }
+    .into()
 }

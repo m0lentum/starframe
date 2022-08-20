@@ -472,6 +472,10 @@ impl Renderer {
                 .write_buffer(&unif_binding.buffer, 0, uniforms.as_bytes());
 
             // render
+
+            // stencil for outline rendering
+            pass.set_stencil_reference(if mesh.c.has_outline { 1 } else { 0 });
+
             for prim in &skin_data.primitives {
                 pass.set_bind_group(1, &unif_binding.bind_group, &[]);
                 pass.set_vertex_buffer(0, prim.vert_buf.slice(..));

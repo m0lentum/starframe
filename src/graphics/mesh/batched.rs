@@ -344,7 +344,7 @@ impl Renderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: None,
+                depth_stencil: Some(gx::DepthBuffer::default_depth_stencil_state()),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             });
@@ -357,7 +357,7 @@ impl Renderer {
         }
     }
 
-    /// Draw all the [`mesh`][self::Mesh]s that have associated [`Pose`][crate::math::Pose]s.
+    /// Draw all the SimpleBatched meshes in the world in one pass.
     pub fn draw(
         &mut self,
         camera: &Camera,
@@ -379,22 +379,37 @@ impl Renderer {
         //
 
         self.bufs.clear();
-        for (mesh, mesh_data) in l_mesh.iter().filter_map(|mesh| match &mesh.c.kind {
-            super::MeshKind::SimpleBatched(d) => Some((mesh, d)),
-            _ => None,
-        }) {
-            let pose = mesh
-                .get_neighbor(&l_pose)
-                .map(|p| *p.c)
-                .unwrap_or_else(m::Pose::identity);
-            self.bufs.extend(
-                mesh_data.vertices.iter().map(|vert| Vertex {
-                    position: (pose * vert.position).into(),
-                    color: vert.color,
-                }),
-                mesh_data.indices.iter().cloned(),
-            );
-        }
+        // gather the outlined meshes first and non-outlined next and count vertices of each,
+        // so we can draw them in two draw calls
+        let mut outlined_idx_count: u32 = 0;
+        let mut gather = |has_outline: bool| {
+            for (mesh, mesh_data) in l_mesh
+                .iter()
+                .filter(|mesh| mesh.c.has_outline == has_outline)
+                .filter_map(|mesh| match &mesh.c.kind {
+                    super::MeshKind::SimpleBatched(d) => Some((mesh, d)),
+                    _ => None,
+                })
+            {
+                let pose = mesh
+                    .get_neighbor(&l_pose)
+                    .map(|p| *p.c)
+                    .unwrap_or_else(m::Pose::identity);
+                self.bufs.extend(
+                    mesh_data.vertices.iter().map(|vert| Vertex {
+                        position: (pose * vert.position).into(),
+                        color: vert.color,
+                    }),
+                    mesh_data.indices.iter().cloned(),
+                );
+                if has_outline {
+                    outlined_idx_count += mesh_data.indices.len() as u32;
+                }
+            }
+        };
+        gather(true);
+        gather(false);
+
         if self.bufs.indices.is_empty() {
             return;
         }
@@ -405,11 +420,16 @@ impl Renderer {
         // Render
         //
         {
-            let mut pass = ctx.pass_without_depth(Some("static mesh"));
+            let mut pass = ctx.pass(Some("static mesh"));
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             self.bufs.set_buffers(&mut pass);
-            pass.draw_indexed(self.bufs.index_range(), 0, 0..1);
+            // draw outlined
+            pass.set_stencil_reference(1);
+            pass.draw_indexed(0..outlined_idx_count, 0, 0..1);
+            // draw non-outlined
+            pass.set_stencil_reference(0);
+            pass.draw_indexed(outlined_idx_count..self.bufs.indices.len() as u32, 0, 0..1);
         }
     }
 }

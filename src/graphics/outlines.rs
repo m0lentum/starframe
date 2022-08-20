@@ -1,14 +1,5 @@
 //! Utilities for drawing outlines around things.
 
-use crate::{
-    graph::LayerView,
-    graphics::{
-        util::{DynamicMeshBuffers, GpuMat3, GpuVec2},
-        Camera, Mesh,
-    },
-    math as m,
-};
-
 use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
@@ -16,7 +7,17 @@ use zerocopy::{AsBytes, FromBytes};
 // parameters
 //
 
-/// Renderer that draws outlines for things using the jump flood algorithm.
+// stencil test for renderers that want to support outlines to use.
+// always writes if a pixel is drawn, and writes an "enum" value
+// that determines whether or not outlines are drawn for that pixel
+pub(crate) const WRITE_STENCIL: wgpu::StencilFaceState = wgpu::StencilFaceState {
+    compare: wgpu::CompareFunction::Always,
+    fail_op: wgpu::StencilOperation::Keep,
+    depth_fail_op: wgpu::StencilOperation::Keep,
+    pass_op: wgpu::StencilOperation::Replace,
+};
+
+/// Renderer that draws outlines for things drawn earlier that support it.
 pub struct OutlineRenderer {
     pub params: OutlineParams,
     /// two screen-size textures to alternate between for jump flood passes
@@ -130,22 +131,9 @@ impl Default for OutlineShape {
 /// The initialization step of JFA, drawing seed fragment positions into a texture.
 struct InitStep {
     pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-    uniform_buf: wgpu::Buffer,
-    mesh_bufs: DynamicMeshBuffers<InitVertex>,
-}
-#[repr(C)]
-#[derive(Clone, Copy, AsBytes, FromBytes)]
-struct InitUniforms {
-    view: GpuMat3,
-}
-#[repr(C)]
-#[derive(Clone, Copy, AsBytes, FromBytes)]
-struct InitVertex {
-    position: GpuVec2,
 }
 
-/// The actual jump flooding pass generating a distance field
+/// The actual jump flooding pass generating a distance field.
 struct DistanceStep {
     pipeline: wgpu::RenderPipeline,
     uniform_bind_group: wgpu::BindGroup,
@@ -158,7 +146,7 @@ struct DistanceUniforms {
     shape: OutlineShape,
 }
 
-/// The final step where the results are actually drawn on screen.
+/// The final step where the generated distance field is drawn on screen.
 struct DrawStep {
     pipeline: wgpu::RenderPipeline,
     uniform_bind_group: wgpu::BindGroup,
@@ -192,77 +180,34 @@ impl OutlineRenderer {
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("jump flood mesh init"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "shaders/outlines/mesh_init.wgsl"
+                    "shaders/outlines/init.wgsl"
                 ))),
             });
-
-        // bind group & buffers
-
-        let uniform_buf_size = std::mem::size_of::<InitUniforms>() as wgpu::BufferAddress;
-        let uniform_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
-            size: uniform_buf_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("jump flood mesh init"),
-            mapped_at_creation: false,
-        });
-
-        let bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<InitUniforms>() as _,
-                            ),
-                        },
-                        count: None,
-                    }],
-                    label: Some("jump flood mesh init"),
-                });
-        let init_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
-            label: Some("jump flood mesh init"),
-        });
-
-        let init_vertex_buffers = [wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<InitVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                // position
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: 0,
-                    shader_location: 0,
-                },
-            ],
-        }];
 
         // pipeline
 
         let init_pipeline_layout =
             rend.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("jump flood mesh init"),
-                    bind_group_layouts: &[&bind_group_layout],
+                    label: Some("jump flood init"),
+                    bind_group_layouts: &[],
                     push_constant_ranges: &[],
                 });
+        let init_stencil_test = wgpu::StencilFaceState {
+            compare: wgpu::CompareFunction::LessEqual,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Keep,
+        };
         let init_pipeline = rend
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("jump flood mesh init"),
+                label: Some("jump flood init"),
                 layout: Some(&init_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &mesh_init_shader,
                     entry_point: "vs_main",
-                    buffers: &init_vertex_buffers,
+                    buffers: &[],
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &mesh_init_shader,
@@ -275,15 +220,25 @@ impl OutlineRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: None,
+                // stencil test that discards pixels that aren't in the stencil,
+                // ignoring depth
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: super::depth_buffer::DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState {
+                        front: init_stencil_test,
+                        back: init_stencil_test,
+                        read_mask: 0xff,
+                        write_mask: 0xff,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             });
         let init_step = InitStep {
             pipeline: init_pipeline,
-            bind_group: init_bind_group,
-            uniform_buf,
-            mesh_bufs: DynamicMeshBuffers::new(Some("jump flood mesh init")),
         };
 
         //
@@ -438,6 +393,13 @@ impl OutlineRenderer {
                     bind_group_layouts: &[&unif_bind_group_layout, &gbuf_bind_group_layout],
                     push_constant_ranges: &[],
                 });
+        let draw_stencil_test = wgpu::StencilFaceState {
+            // only draw on pixels that didn't have the stencil activated
+            compare: wgpu::CompareFunction::Equal,
+            fail_op: wgpu::StencilOperation::Keep,
+            depth_fail_op: wgpu::StencilOperation::Keep,
+            pass_op: wgpu::StencilOperation::Keep,
+        };
         let draw_pipeline = rend
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -463,7 +425,18 @@ impl OutlineRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: None,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: super::depth_buffer::DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState {
+                        front: draw_stencil_test,
+                        back: draw_stencil_test,
+                        read_mask: 0xff,
+                        write_mask: 0xff,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             });
@@ -488,6 +461,7 @@ impl OutlineRenderer {
     }
 
     /// Get render textures ready for drawing a new frame of outlines.
+    /// MUST be called before [`compute`][Self::compute].
     pub fn prepare(&mut self, rend: &mut super::Renderer) {
         let window_size: (u32, u32) = rend.window_size().into();
         if window_size != self.gbuf_size {
@@ -505,66 +479,26 @@ impl OutlineRenderer {
         }
     }
 
-    /// Prepare [`Mesh`][crate::graphics::mesh::Mesh]es for outline drawing.
-    pub fn init_meshes(
-        &mut self,
-        camera: &Camera,
-        rend: &mut super::Renderer,
-        (l_mesh, l_pose): (LayerView<Mesh>, LayerView<m::Pose>),
-    ) {
-        // update the CPU side vertex buffer
+    /// Compute a distance field to draw outlines from.
+    pub fn compute(&mut self, rend: &mut super::Renderer) {
+        self.run_init(rend);
+        self.run_jfa(rend);
+    }
 
-        self.init_step.mesh_bufs.clear();
-        for (mesh, mesh_data) in l_mesh.iter().filter_map(|mesh| match &mesh.c.kind {
-            super::mesh::MeshKind::SimpleBatched(d) => Some((mesh, d)),
-            _ => None,
-        }) {
-            let pose = mesh
-                .get_neighbor(&l_pose)
-                .map(|p| *p.c)
-                .unwrap_or_else(m::Pose::identity);
-            self.init_step.mesh_bufs.extend(
-                mesh_data.vertices.iter().map(|vert| InitVertex {
-                    position: (pose * vert.position).into(),
-                }),
-                mesh_data.indices.iter().cloned(),
-            );
-        }
-        if self.init_step.mesh_bufs.indices.is_empty() {
-            return;
-        }
-
-        // only now create a context so we don't do unnecessary work if there's nothing to draw
-
-        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, None, self.gbuf_size);
-
-        // update the uniform buffer
-
-        let uniforms = InitUniforms {
-            view: camera.view_matrix(ctx.target_size).into(),
-        };
-        ctx.queue
-            .write_buffer(&self.init_step.uniform_buf, 0, uniforms.as_bytes());
-
-        // write the updated vertex buffer
-
-        self.init_step.mesh_bufs.write(&ctx);
-
-        // Render
+    fn run_init(&mut self, rend: &mut super::Renderer) {
+        let mut ctx = rend.draw_to_texture_window_depth(&self.gbufs[0].view, self.gbuf_size);
 
         {
             let mut pass = ctx.pass(Some("outline init"));
             pass.set_pipeline(&self.init_step.pipeline);
-            pass.set_bind_group(0, &self.init_step.bind_group, &[]);
-            self.init_step.mesh_bufs.set_buffers(&mut pass);
-            pass.draw_indexed(self.init_step.mesh_bufs.index_range(), 0, 0..1);
+            pass.set_stencil_reference(1);
+            pass.draw(0..3, 0..1);
         }
 
         ctx.submit();
     }
 
-    /// Compute a distance field to draw outlines from.
-    pub fn compute(&mut self, rend: &mut super::Renderer) {
+    fn run_jfa(&mut self, rend: &mut super::Renderer) {
         let pass_count = (self.params.thickness as f64).log2().ceil() as u32;
 
         let mut source_gbuf_idx = 0;
@@ -608,8 +542,10 @@ impl OutlineRenderer {
             .write_buffer(&self.draw_step.uniform_buf, 0, uniforms.as_bytes());
 
         {
-            let mut pass = ctx.pass_without_depth(Some("outline draw"));
+            let mut pass = ctx.pass(Some("outline draw"));
             pass.set_pipeline(&self.draw_step.pipeline);
+            // draw on pixels that didn't have an outlined object already on them
+            pass.set_stencil_reference(0);
             pass.set_bind_group(0, &self.draw_step.uniform_bind_group, &[]);
             pass.set_bind_group(1, &self.gbufs[self.final_gbuf_idx].bind_group, &[]);
             pass.draw(0..3, 0..1);

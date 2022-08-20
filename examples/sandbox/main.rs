@@ -374,7 +374,7 @@ impl sf::GameState for State {
             }
             ui.checkbox(&mut self.island_vis_active, "Display islands");
             ui.add(
-                egui::Slider::new(&mut self.outline_renderer.params.thickness, 0..=30)
+                egui::Slider::new(&mut self.outline_renderer.params.thickness, 0..=100)
                     .text("Outline thickness"),
             );
             ui.add(egui::Slider::new(&mut self.outline_interp, 0.0..=1.0).text("Outline shape"));
@@ -468,11 +468,6 @@ impl sf::GameState for State {
     fn draw(&mut self, renderer: &mut sf::Renderer, _dt: f32) {
         let window_scale_factor = renderer.window_scale_factor();
 
-        self.outline_renderer.prepare(renderer);
-        self.outline_renderer
-            .init_meshes(&self.camera, renderer, self.graph.get_layer_bundle());
-        self.outline_renderer.compute(renderer);
-
         let mut ctx = renderer.draw_to_window();
         ctx.clear(wgpu::Color {
             r: 0.1,
@@ -480,8 +475,6 @@ impl sf::GameState for State {
             b: 0.1,
             a: 1.0,
         });
-
-        self.outline_renderer.draw(&mut ctx);
 
         if self.bvh_vis_active {
             self.debug_visualizer.draw_bvh(
@@ -503,6 +496,14 @@ impl sf::GameState for State {
         self.mesh_renderer
             .draw(&self.camera, &mut ctx, self.graph.get_layer_bundle());
 
+        ctx.submit();
+
+        self.outline_renderer.prepare(renderer);
+        self.outline_renderer.compute(renderer);
+
+        let mut ctx = renderer.draw_to_window();
+        self.outline_renderer.draw(&mut ctx);
+
         let paint_jobs = self
             .egui_platform
             .context()
@@ -520,7 +521,7 @@ impl sf::GameState for State {
         self.egui_pass
             .execute(
                 &mut ctx.encoder.0,
-                ctx.target.view(),
+                ctx.target.view,
                 &paint_jobs,
                 &screen_desc,
                 None,
@@ -528,5 +529,7 @@ impl sf::GameState for State {
             .expect("failed to draw egui");
 
         ctx.submit();
+
+        renderer.present_frame();
     }
 }

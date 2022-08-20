@@ -1,5 +1,9 @@
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+use super::outlines;
 
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
+
+/// Default depth buffer used by the Starframe renderer.
+/// Includes a stencil used to draw outlines.
 pub struct DepthBuffer {
     pub view: wgpu::TextureView,
 }
@@ -29,7 +33,12 @@ impl DepthBuffer {
             format: DEPTH_FORMAT,
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
+            stencil: wgpu::StencilState {
+                front: outlines::WRITE_STENCIL,
+                back: outlines::WRITE_STENCIL,
+                read_mask: 0xff,
+                write_mask: 0xff,
+            },
             bias: wgpu::DepthBiasState::default(),
         }
     }

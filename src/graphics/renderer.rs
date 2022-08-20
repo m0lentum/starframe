@@ -9,6 +9,15 @@ pub struct Renderer {
 
     /// Depth buffer automatically kept in sync with the swapchain size.
     pub window_depth_buffer: super::DepthBuffer,
+
+    // current active frame stored here instead of in RenderContext
+    // so that we can interleave drawing to window and drawing to textures
+    active_frame: Option<Frame>,
+}
+
+struct Frame {
+    surface: wgpu::SurfaceTexture,
+    view: wgpu::TextureView,
 }
 
 impl Renderer {
@@ -66,6 +75,7 @@ impl Renderer {
             swapchain_format,
             window_scale_factor: window.scale_factor(),
             window_depth_buffer: depth_buffer,
+            active_frame: None,
         }
     }
 
@@ -99,13 +109,19 @@ impl Renderer {
 
     /// Begin drawing directly into the game window.
     pub fn draw_to_window(&mut self) -> RenderContext<'_> {
-        let frame = self
-            .surface
-            .get_current_texture()
-            .expect("Failed to get next swap chain texture");
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        // start a new frame if this is the first time we're drawing to the window
+        // since last present
+        if self.active_frame.is_none() {
+            let surface = self
+                .surface
+                .get_current_texture()
+                .expect("Failed to get next swap chain texture");
+            let view = surface
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+
+            self.active_frame = Some(Frame { surface, view });
+        }
         let encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -113,10 +129,10 @@ impl Renderer {
         let queue = &mut self.queue;
 
         RenderContext {
-            target: RenderTarget::Surface {
-                view,
-                frame,
-                depth: &self.window_depth_buffer.view,
+            // active frame was just set so unwrap is safe
+            target: RenderTarget {
+                view: &self.active_frame.as_ref().unwrap().view,
+                depth: Some(&self.window_depth_buffer.view),
             },
             encoder: CommandEncoder(encoder),
             device: &self.device,
@@ -126,7 +142,10 @@ impl Renderer {
         }
     }
 
-    /// Begin drawing to a non-screen texture.
+    /// Begin drawing to a non-screen texture, optionally with a self-provided depth texture.
+    ///
+    /// If you need the depth texture from the window, use
+    /// [`draw_to_texture_window_depth`][Self::draw_to_texture_window_depth]
     pub fn draw_to_texture<'s, 'v: 's>(
         &'s mut self,
         view: &'v wgpu::TextureView,
@@ -139,7 +158,7 @@ impl Renderer {
         let queue = &mut self.queue;
 
         RenderContext {
-            target: RenderTarget::Texture {
+            target: RenderTarget {
                 view,
                 depth: depth_target,
             },
@@ -150,33 +169,43 @@ impl Renderer {
             submit_check: SubmitCheck::new(),
         }
     }
-}
 
-pub enum RenderTarget<'a> {
-    Surface {
-        view: wgpu::TextureView,
-        frame: wgpu::SurfaceTexture,
-        depth: &'a wgpu::TextureView,
-    },
-    Texture {
-        view: &'a wgpu::TextureView,
-        depth: Option<&'a wgpu::TextureView>,
-    },
-}
-impl<'a> RenderTarget<'a> {
-    pub fn view(&self) -> &wgpu::TextureView {
-        match self {
-            RenderTarget::Surface { view, .. } => view,
-            RenderTarget::Texture { view, .. } => view,
+    /// Begin drawing to a non-screen texture, also using the depth buffer of the render window.
+    pub fn draw_to_texture_window_depth<'s, 'v: 's>(
+        &'s mut self,
+        view: &'v wgpu::TextureView,
+        target_size: (u32, u32),
+    ) -> RenderContext<'s> {
+        let encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let queue = &mut self.queue;
+
+        RenderContext {
+            target: RenderTarget {
+                view,
+                depth: Some(&self.window_depth_buffer.view),
+            },
+            encoder: CommandEncoder(encoder),
+            device: &self.device,
+            queue,
+            target_size,
+            submit_check: SubmitCheck::new(),
         }
     }
 
-    pub fn depth(&self) -> Option<&wgpu::TextureView> {
-        match self {
-            RenderTarget::Surface { depth, .. } => Some(depth),
-            RenderTarget::Texture { depth, .. } => *depth,
+    /// Display everything drawn to the window since the last `present_frame` call.
+    /// Must be called at the end of every frame.
+    pub fn present_frame(&mut self) {
+        if let Some(frame) = self.active_frame.take() {
+            frame.surface.present();
         }
     }
+}
+
+pub struct RenderTarget<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub depth: Option<&'a wgpu::TextureView>,
 }
 
 /// An interface that lets you send draw instructions to the GPU.
@@ -231,9 +260,6 @@ impl<'a> RenderContext<'a> {
     /// Must be called or nothing is actually executed!
     pub fn submit(mut self) {
         self.queue.submit(Some(self.encoder.0.finish()));
-        if let RenderTarget::Surface { frame, .. } = self.target {
-            frame.present();
-        }
         self.submit_check.0 = true;
     }
 }
@@ -249,21 +275,24 @@ impl CommandEncoder {
         self.0.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target.view(),
+                view: target.view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(color),
                     store: true,
                 },
             })],
-            depth_stencil_attachment: target.depth().map(|depth| {
+            depth_stencil_attachment: target.depth.map(|depth| {
                 wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: true,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: true,
+                    }),
                 }
             }),
         });
@@ -302,7 +331,7 @@ impl CommandEncoder {
         self.0.begin_render_pass(&wgpu::RenderPassDescriptor {
             label,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target.view(),
+                view: target.view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
@@ -313,14 +342,17 @@ impl CommandEncoder {
                 None
             } else {
                 target
-                    .depth()
+                    .depth
                     .map(|depth| wgpu::RenderPassDepthStencilAttachment {
                         view: depth,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
                             store: true,
                         }),
-                        stencil_ops: None,
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: true,
+                        }),
                     })
             },
         })
