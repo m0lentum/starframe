@@ -345,7 +345,7 @@ impl Renderer {
                     ..Default::default()
                 },
                 depth_stencil: Some(gx::DepthBuffer::default_depth_stencil_state()),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: rend.multisample_state(),
                 multiview: None,
             });
 

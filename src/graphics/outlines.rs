@@ -234,7 +234,7 @@ impl OutlineRenderer {
                     },
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: rend.multisample_state(),
                 multiview: None,
             });
         let init_step = InitStep {
@@ -324,7 +324,7 @@ impl OutlineRenderer {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
+                multisample: rend.multisample_state(),
                 multiview: None,
             });
         let dist_step = DistanceStep {
@@ -437,7 +437,7 @@ impl OutlineRenderer {
                     },
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: rend.multisample_state(),
                 multiview: None,
             });
         let draw_step = DrawStep {
@@ -582,7 +582,7 @@ impl GBuffer {
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: rend.msaa_samples(),
             dimension: wgpu::TextureDimension::D2,
             format: GBUF_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -610,7 +610,7 @@ impl GBuffer {
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                        multisampled: true,
                     },
                     count: None,
                 }],

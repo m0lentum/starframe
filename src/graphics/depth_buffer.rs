@@ -9,7 +9,12 @@ pub struct DepthBuffer {
 }
 
 impl DepthBuffer {
-    pub fn new(device: &wgpu::Device, dimensions: (u32, u32), label: Option<&'static str>) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        dimensions: (u32, u32),
+        sample_count: u32,
+        label: Option<&'static str>,
+    ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
             size: wgpu::Extent3d {
@@ -18,7 +23,7 @@ impl DepthBuffer {
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,

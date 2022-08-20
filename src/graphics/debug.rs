@@ -140,7 +140,7 @@ impl DebugVisualizer {
                         ..Default::default()
                     },
                     depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
+                    multisample: rend.multisample_state(),
                     multiview: None,
                 })
         };
@@ -204,7 +204,7 @@ impl DebugVisualizer {
         self.bvh_line_bufs.write(ctx);
 
         {
-            let mut pass = ctx.pass(Some("BVH lines"));
+            let mut pass = ctx.pass_without_depth(Some("BVH lines"));
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             self.bvh_line_bufs.set_buffers(&mut pass);
@@ -269,7 +269,7 @@ impl DebugVisualizer {
         self.island_line_bufs.write(ctx);
 
         {
-            let mut pass = ctx.pass(Some("island lines"));
+            let mut pass = ctx.pass_without_depth(Some("island lines"));
             pass.set_pipeline(&self.line_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             self.island_line_bufs.set_buffers(&mut pass);

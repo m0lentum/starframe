@@ -10,6 +10,9 @@ pub struct Renderer {
     /// Depth buffer automatically kept in sync with the swapchain size.
     pub window_depth_buffer: super::DepthBuffer,
 
+    msaa_samples: u32,
+    // texture to store multisampling results
+    msaa_texture: wgpu::Texture,
     // current active frame stored here instead of in RenderContext
     // so that we can interleave drawing to window and drawing to textures
     active_frame: Option<Frame>,
@@ -18,6 +21,7 @@ pub struct Renderer {
 struct Frame {
     surface: wgpu::SurfaceTexture,
     view: wgpu::TextureView,
+    msaa_view: wgpu::TextureView,
 }
 
 impl Renderer {
@@ -64,8 +68,18 @@ impl Renderer {
         };
         surface.configure(&device, &surface_config);
 
-        let depth_buffer =
-            super::DepthBuffer::new(&device, window_size.into(), Some("global depth buffer"));
+        // constant number of samples for now,
+        // TODO: make this configurable
+        const MSAA_SAMPLES: u32 = 4;
+        let msaa_texture =
+            Self::create_msaa_texture(&device, swapchain_format, MSAA_SAMPLES, window_size);
+
+        let depth_buffer = super::DepthBuffer::new(
+            &device,
+            window_size.into(),
+            MSAA_SAMPLES,
+            Some("global depth buffer"),
+        );
 
         Renderer {
             device,
@@ -75,8 +89,52 @@ impl Renderer {
             swapchain_format,
             window_scale_factor: window.scale_factor(),
             window_depth_buffer: depth_buffer,
+            msaa_samples: MSAA_SAMPLES,
+            msaa_texture,
             active_frame: None,
         }
+    }
+
+    fn create_msaa_texture(
+        device: &wgpu::Device,
+        swapchain_format: wgpu::TextureFormat,
+        msaa_samples: u32,
+        window_size: winit::dpi::PhysicalSize<u32>,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("screen multisample"),
+            size: wgpu::Extent3d {
+                width: window_size.width,
+                height: window_size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: msaa_samples,
+            dimension: wgpu::TextureDimension::D2,
+            format: swapchain_format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        })
+    }
+
+    /// Change the size of the frame `draw_to_window` draws into.
+    /// This is called automatically by the gameloop when the window size changes.
+    #[inline]
+    pub(crate) fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        self.surface_config.width = new_size.width;
+        self.surface_config.height = new_size.height;
+        self.surface.configure(&self.device, &self.surface_config);
+        self.msaa_texture = Self::create_msaa_texture(
+            &self.device,
+            self.swapchain_format,
+            self.msaa_samples,
+            new_size,
+        );
+        self.window_depth_buffer = super::DepthBuffer::new(
+            &self.device,
+            new_size.into(),
+            self.msaa_samples,
+            Some("global depth buffer"),
+        );
     }
 
     #[inline]
@@ -96,15 +154,18 @@ impl Renderer {
         self.window_scale_factor
     }
 
-    /// Change the size of the frame `draw_to_window` draws into.
-    /// This is called automatically by the gameloop when the window size changes.
     #[inline]
-    pub(crate) fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.surface_config.width = new_size.width;
-        self.surface_config.height = new_size.height;
-        self.surface.configure(&self.device, &self.surface_config);
-        self.window_depth_buffer =
-            super::DepthBuffer::new(&self.device, new_size.into(), Some("global depth buffer"));
+    pub fn msaa_samples(&self) -> u32 {
+        self.msaa_samples
+    }
+
+    #[inline]
+    pub fn multisample_state(&self) -> wgpu::MultisampleState {
+        wgpu::MultisampleState {
+            count: self.msaa_samples,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        }
     }
 
     /// Begin drawing directly into the game window.
@@ -119,8 +180,15 @@ impl Renderer {
             let view = surface
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
+            let msaa_view = self
+                .msaa_texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
 
-            self.active_frame = Some(Frame { surface, view });
+            self.active_frame = Some(Frame {
+                surface,
+                view,
+                msaa_view,
+            });
         }
         let encoder = self
             .device
@@ -128,12 +196,16 @@ impl Renderer {
         let target_size = self.window_size().into();
         let queue = &mut self.queue;
 
+        // active frame was just set so unwrap is safe
+        let active_frame = self.active_frame.as_ref().unwrap();
+        let target = RenderTarget {
+            view: &active_frame.msaa_view,
+            resolve_target: Some(&active_frame.view),
+            depth: Some(&self.window_depth_buffer.view),
+        };
+
         RenderContext {
-            // active frame was just set so unwrap is safe
-            target: RenderTarget {
-                view: &self.active_frame.as_ref().unwrap().view,
-                depth: Some(&self.window_depth_buffer.view),
-            },
+            target,
             encoder: CommandEncoder(encoder),
             device: &self.device,
             queue,
@@ -160,6 +232,7 @@ impl Renderer {
         RenderContext {
             target: RenderTarget {
                 view,
+                resolve_target: None,
                 depth: depth_target,
             },
             encoder: CommandEncoder(encoder),
@@ -171,6 +244,7 @@ impl Renderer {
     }
 
     /// Begin drawing to a non-screen texture, also using the depth buffer of the render window.
+    /// The texture must have the same sample count as [`self.msaa_samples()`][Self::msaa_samples]
     pub fn draw_to_texture_window_depth<'s, 'v: 's>(
         &'s mut self,
         view: &'v wgpu::TextureView,
@@ -184,6 +258,7 @@ impl Renderer {
         RenderContext {
             target: RenderTarget {
                 view,
+                resolve_target: None,
                 depth: Some(&self.window_depth_buffer.view),
             },
             encoder: CommandEncoder(encoder),
@@ -205,6 +280,7 @@ impl Renderer {
 
 pub struct RenderTarget<'a> {
     pub view: &'a wgpu::TextureView,
+    pub resolve_target: Option<&'a wgpu::TextureView>,
     pub depth: Option<&'a wgpu::TextureView>,
 }
 
@@ -213,8 +289,6 @@ pub struct RenderTarget<'a> {
 /// You **must** call [`submit`](Self::submit) when you drop the context.
 /// Not doing so would result in a memory leak, so
 /// `RenderContext` will panic on drop if you do this.
-///
-/// TODOC: example
 pub struct RenderContext<'a> {
     pub target: RenderTarget<'a>,
     pub encoder: CommandEncoder,
@@ -332,7 +406,7 @@ impl CommandEncoder {
             label,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target.view,
-                resolve_target: None,
+                resolve_target: target.resolve_target,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: true,

@@ -11,7 +11,7 @@ var<uniform> unif: Uniforms;
 
 @group(1)
 @binding(0)
-var gbuf_tex: texture_2d<f32>;
+var gbuf_tex: texture_multisampled_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,

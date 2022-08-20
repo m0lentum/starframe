@@ -128,7 +128,7 @@ impl State {
             last_egui_output: Default::default(),
             outline_interp: 0.0,
             bvh_vis_active: false,
-            bvh_vis_levels: 3,
+            bvh_vis_levels: 30,
             island_vis_active: false,
             spawner_circle_r: 0.0,
             time_scale: 1.0,
@@ -369,7 +369,7 @@ impl sf::GameState for State {
             ui.checkbox(&mut self.bvh_vis_active, "Display BVH");
             if self.bvh_vis_active {
                 ui.add(
-                    egui::Slider::new(&mut self.bvh_vis_levels, 0..=20).text("Tree levels to show"),
+                    egui::Slider::new(&mut self.bvh_vis_levels, 0..=50).text("Tree levels to show"),
                 );
             }
             ui.checkbox(&mut self.island_vis_active, "Display islands");
@@ -521,7 +521,7 @@ impl sf::GameState for State {
         self.egui_pass
             .execute(
                 &mut ctx.encoder.0,
-                ctx.target.view,
+                ctx.target.resolve_target.unwrap(),
                 &paint_jobs,
                 &screen_desc,
                 None,
