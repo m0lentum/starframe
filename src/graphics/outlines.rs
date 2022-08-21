@@ -23,8 +23,9 @@ pub struct OutlineRenderer {
     /// two screen-size textures to alternate between for jump flood passes
     gbufs: [GBuffer; 2],
     gbuf_bind_group_layout: wgpu::BindGroupLayout,
-    /// store size so we can resize gbuffers if window size changes
     gbuf_size: (u32, u32),
+    // notifications for window size changes
+    swapchain_gen: usize,
 
     init_step: InitStep,
     dist_step: DistanceStep,
@@ -37,8 +38,9 @@ pub struct OutlineRenderer {
 /// Parameters to configure outline rendering.
 #[derive(Clone, Copy, Debug)]
 pub struct OutlineParams {
-    /// Thickness in pixels.
+    /// Thickness measured in pixels.
     pub thickness: u32,
+    pub color: [f32; 4],
     /// The shape of the outline around corners.
     pub shape: OutlineShape,
 }
@@ -46,6 +48,7 @@ impl Default for OutlineParams {
     fn default() -> Self {
         Self {
             thickness: 10,
+            color: [0.0, 0.0, 0.0, 1.0],
             shape: Default::default(),
         }
     }
@@ -131,6 +134,8 @@ impl Default for OutlineShape {
 /// The initialization step of JFA, drawing seed fragment positions into a texture.
 struct InitStep {
     pipeline: wgpu::RenderPipeline,
+    stencil_bind_group_layout: wgpu::BindGroupLayout,
+    stencil_bind_group: wgpu::BindGroup,
 }
 
 /// The actual jump flooding pass generating a distance field.
@@ -157,6 +162,7 @@ struct DrawStep {
 struct DrawUniforms {
     thickness: u32,
     shape: OutlineShape,
+    color: [f32; 4],
 }
 
 impl OutlineRenderer {
@@ -184,21 +190,20 @@ impl OutlineRenderer {
                 ))),
             });
 
+        // bind group
+
+        let stencil_bind_group_layout = Self::create_stencil_bind_group_layout(rend);
+        let stencil_bind_group = Self::create_stencil_bind_group(rend, &stencil_bind_group_layout);
+
         // pipeline
 
         let init_pipeline_layout =
             rend.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("jump flood init"),
-                    bind_group_layouts: &[],
+                    bind_group_layouts: &[&stencil_bind_group_layout],
                     push_constant_ranges: &[],
                 });
-        let init_stencil_test = wgpu::StencilFaceState {
-            compare: wgpu::CompareFunction::LessEqual,
-            fail_op: wgpu::StencilOperation::Keep,
-            depth_fail_op: wgpu::StencilOperation::Keep,
-            pass_op: wgpu::StencilOperation::Keep,
-        };
         let init_pipeline = rend
             .device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -220,25 +225,16 @@ impl OutlineRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                // stencil test that discards pixels that aren't in the stencil,
-                // ignoring depth
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: super::depth_buffer::DEPTH_FORMAT,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilState {
-                        front: init_stencil_test,
-                        back: init_stencil_test,
-                        read_mask: 0xff,
-                        write_mask: 0xff,
-                    },
-                    bias: wgpu::DepthBiasState::default(),
-                }),
+                // can't use a stencil test here because we need to sample the stencil buffer
+                // in multiple places for antialiasing
+                depth_stencil: None,
                 multisample: rend.multisample_state(),
                 multiview: None,
             });
         let init_step = InitStep {
             pipeline: init_pipeline,
+            stencil_bind_group_layout,
+            stencil_bind_group,
         };
 
         //
@@ -451,6 +447,7 @@ impl OutlineRenderer {
             gbufs,
             gbuf_bind_group_layout,
             gbuf_size,
+            swapchain_gen: rend.generation,
 
             init_step,
             dist_step,
@@ -460,16 +457,65 @@ impl OutlineRenderer {
         }
     }
 
+    fn create_stencil_bind_group_layout(rend: &super::Renderer) -> wgpu::BindGroupLayout {
+        rend.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("outline init stencil buffer"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: true,
+                    },
+                    count: None,
+                }],
+            })
+    }
+
+    fn create_stencil_bind_group(
+        rend: &super::Renderer,
+        bind_group_layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::BindGroup {
+        rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("outline stencil texture binding"),
+            layout: bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(
+                    &rend.window_depth_buffer.stencil_view,
+                ),
+            }],
+        })
+    }
+
+    /// Draw outlines of objects drawn on the screen so far.
+    pub fn draw(&mut self, rend: &mut super::Renderer) {
+        self.prepare(rend);
+        self.run_init(rend);
+        self.run_jfa(rend);
+        let mut ctx = rend.draw_to_window();
+        self.run_draw(&mut ctx);
+        ctx.submit();
+    }
+
     /// Get render textures ready for drawing a new frame of outlines.
-    /// MUST be called before [`compute`][Self::compute].
-    pub fn prepare(&mut self, rend: &mut super::Renderer) {
-        let window_size: (u32, u32) = rend.window_size().into();
-        if window_size != self.gbuf_size {
-            self.gbufs = [
-                GBuffer::new(rend, &self.gbuf_bind_group_layout),
-                GBuffer::new(rend, &self.gbuf_bind_group_layout),
-            ];
-            self.gbuf_size = window_size;
+    fn prepare(&mut self, rend: &mut super::Renderer) {
+        if self.swapchain_gen != rend.generation {
+            self.swapchain_gen = rend.generation;
+            let window_size: (u32, u32) = rend.window_size().into();
+            if window_size != self.gbuf_size {
+                self.gbufs = [
+                    GBuffer::new(rend, &self.gbuf_bind_group_layout),
+                    GBuffer::new(rend, &self.gbuf_bind_group_layout),
+                ];
+                self.gbuf_size = window_size;
+                self.init_step.stencil_bind_group = Self::create_stencil_bind_group(
+                    &rend,
+                    &self.init_step.stencil_bind_group_layout,
+                );
+            }
         }
 
         for gbuf in &self.gbufs {
@@ -479,19 +525,13 @@ impl OutlineRenderer {
         }
     }
 
-    /// Compute a distance field to draw outlines from.
-    pub fn compute(&mut self, rend: &mut super::Renderer) {
-        self.run_init(rend);
-        self.run_jfa(rend);
-    }
-
     fn run_init(&mut self, rend: &mut super::Renderer) {
-        let mut ctx = rend.draw_to_texture_window_depth(&self.gbufs[0].view, self.gbuf_size);
+        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, None, self.gbuf_size);
 
         {
             let mut pass = ctx.pass(Some("outline init"));
             pass.set_pipeline(&self.init_step.pipeline);
-            pass.set_stencil_reference(1);
+            pass.set_bind_group(0, &self.init_step.stencil_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -532,11 +572,12 @@ impl OutlineRenderer {
         self.final_gbuf_idx = source_gbuf_idx;
     }
 
-    /// Draw the computed outlines to a target.
-    pub fn draw(&self, ctx: &mut super::RenderContext) {
+    /// Draw the computed outlines to the screen.
+    fn run_draw(&self, ctx: &mut super::RenderContext) {
         let uniforms = DrawUniforms {
             thickness: self.params.thickness,
             shape: self.params.shape.normalized(),
+            color: self.params.color,
         };
         ctx.queue
             .write_buffer(&self.draw_step.uniform_buf, 0, uniforms.as_bytes());

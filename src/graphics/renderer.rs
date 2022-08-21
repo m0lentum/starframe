@@ -16,6 +16,10 @@ pub struct Renderer {
     // current active frame stored here instead of in RenderContext
     // so that we can interleave drawing to window and drawing to textures
     active_frame: Option<Frame>,
+
+    /// Index incremented whenever the window is resized,
+    /// used to notify rendering subsystems to update their internal textures.
+    pub generation: usize,
 }
 
 struct Frame {
@@ -74,11 +78,11 @@ impl Renderer {
         let msaa_texture =
             Self::create_msaa_texture(&device, swapchain_format, MSAA_SAMPLES, window_size);
 
-        let depth_buffer = super::DepthBuffer::new(
+        let window_depth_buffer = super::DepthBuffer::new(
             &device,
             window_size.into(),
             MSAA_SAMPLES,
-            Some("global depth buffer"),
+            Some("global depth buffer made on init"),
         );
 
         Renderer {
@@ -88,7 +92,8 @@ impl Renderer {
             surface_config,
             swapchain_format,
             window_scale_factor: window.scale_factor(),
-            window_depth_buffer: depth_buffer,
+            window_depth_buffer,
+            generation: 0,
             msaa_samples: MSAA_SAMPLES,
             msaa_texture,
             active_frame: None,
@@ -118,8 +123,10 @@ impl Renderer {
 
     /// Change the size of the frame `draw_to_window` draws into.
     /// This is called automatically by the gameloop when the window size changes.
-    #[inline]
     pub(crate) fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size == self.window_size() {
+            return;
+        }
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
@@ -133,8 +140,9 @@ impl Renderer {
             &self.device,
             new_size.into(),
             self.msaa_samples,
-            Some("global depth buffer"),
+            Some("global depth buffer made on resize"),
         );
+        self.generation += 1;
     }
 
     #[inline]
@@ -243,32 +251,6 @@ impl Renderer {
         }
     }
 
-    /// Begin drawing to a non-screen texture, also using the depth buffer of the render window.
-    /// The texture must have the same sample count as [`self.msaa_samples()`][Self::msaa_samples]
-    pub fn draw_to_texture_window_depth<'s, 'v: 's>(
-        &'s mut self,
-        view: &'v wgpu::TextureView,
-        target_size: (u32, u32),
-    ) -> RenderContext<'s> {
-        let encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        let queue = &mut self.queue;
-
-        RenderContext {
-            target: RenderTarget {
-                view,
-                resolve_target: None,
-                depth: Some(&self.window_depth_buffer.view),
-            },
-            encoder: CommandEncoder(encoder),
-            device: &self.device,
-            queue,
-            target_size,
-            submit_check: SubmitCheck::new(),
-        }
-    }
-
     /// Display everything drawn to the window since the last `present_frame` call.
     /// Must be called at the end of every frame.
     pub fn present_frame(&mut self) {
@@ -295,8 +277,7 @@ pub struct RenderContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a mut wgpu::Queue,
     pub target_size: (u32, u32),
-    // this is just used to warn if a context was dropped without submitting.
-    // doing that leaks memory
+    // this is just used to warn if a context was dropped without submitting
     submit_check: SubmitCheck,
 }
 

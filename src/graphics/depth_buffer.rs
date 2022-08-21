@@ -5,7 +5,11 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusSt
 /// Default depth buffer used by the Starframe renderer.
 /// Includes a stencil used to draw outlines.
 pub struct DepthBuffer {
+    pub texture: wgpu::Texture,
+    /// View of the entire texture with both depth and stencil enabled.
     pub view: wgpu::TextureView,
+    /// View of just the stencil part of the texture.
+    pub stencil_view: wgpu::TextureView,
 }
 
 impl DepthBuffer {
@@ -13,7 +17,7 @@ impl DepthBuffer {
         device: &wgpu::Device,
         dimensions: (u32, u32),
         sample_count: u32,
-        label: Option<&'static str>,
+        label: Option<&str>,
     ) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label,
@@ -29,8 +33,17 @@ impl DepthBuffer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let stencil_view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("global depth texture view, stencil only"),
+            aspect: wgpu::TextureAspect::StencilOnly,
+            ..Default::default()
+        });
 
-        Self { view }
+        Self {
+            texture,
+            view,
+            stencil_view,
+        }
     }
 
     pub fn default_depth_stencil_state() -> wgpu::DepthStencilState {

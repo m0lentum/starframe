@@ -3,6 +3,7 @@ struct Uniforms {
     l1_weight: f32,
     l2_weight: f32,
     inf_weight: f32,
+    color: vec4<f32>,
 };
 
 @group(0)
@@ -37,18 +38,18 @@ fn fs_main(
     let uv_f: vec2<f32> = in.uv * vec2<f32>(textureDimensions(gbuf_tex));
     let uv_i: vec2<i32> = vec2<i32>(uv_f);
     let closest = textureLoad(gbuf_tex, uv_i, 0);
+    if (closest.x < 0.0) {
+        discard;
+    }
 
     let dist = closest.xy - uv_f;
     let dist_norm = unif.l1_weight * (abs(dist.x) + abs(dist.y))
         + unif.l2_weight * length(dist)
         + unif.inf_weight * max(abs(dist.x), abs(dist.y));
 
-    // bump threshold a bit to avoid rounding artifacts on straight edges
-    let threshold = f32(unif.thickness) + 0.25;
-    if (closest.x < 0.0 || dist_norm > threshold) {
-        discard;
-    }
+    // antialias by changing alpha when within a pixel of the line's "true" edge
+    let to_edge = f32(unif.thickness) - dist_norm;
+    let alpha = clamp(to_edge, 0.0, 1.0);
 
-    // TODO customizable color (possibly distance curve or texture)
-    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    return vec4<f32>(unif.color.xyz, unif.color.a * alpha);
 }
