@@ -17,11 +17,14 @@ pub(crate) const WRITE_STENCIL: wgpu::StencilFaceState = wgpu::StencilFaceState 
     pass_op: wgpu::StencilOperation::Replace,
 };
 
+const GBUF_COUNT: usize = 3;
+
 /// Renderer that draws outlines for things drawn earlier that support it.
 pub struct OutlineRenderer {
     pub params: OutlineParams,
-    /// two screen-size textures to alternate between for jump flood passes
-    gbufs: [GBuffer; 2],
+    // two screen-size textures to alternate between for jump flood passes
+    // plus one to store previous frame's result for temporal smoothing
+    gbufs: [GBuffer; GBUF_COUNT],
     gbuf_bind_group_layout: wgpu::BindGroupLayout,
     gbuf_size: (u32, u32),
     // notifications for window size changes
@@ -31,8 +34,9 @@ pub struct OutlineRenderer {
     dist_step: DistanceStep,
     draw_step: DrawStep,
 
-    /// state to figure out which gbuffer to draw from and to
-    final_gbuf_idx: usize,
+    // which buffer we wrote to last frame, to figure out where to draw next
+    // without overwriting history we need for smoothing
+    last_gbuf_idx: usize,
 }
 
 /// Parameters to configure outline rendering.
@@ -170,6 +174,7 @@ impl OutlineRenderer {
         let gbuf_bind_group_layout = GBuffer::bind_group_layout(rend);
 
         let gbufs = [
+            GBuffer::new(rend, &gbuf_bind_group_layout),
             GBuffer::new(rend, &gbuf_bind_group_layout),
             GBuffer::new(rend, &gbuf_bind_group_layout),
         ];
@@ -386,7 +391,13 @@ impl OutlineRenderer {
             rend.device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("outline draw"),
-                    bind_group_layouts: &[&unif_bind_group_layout, &gbuf_bind_group_layout],
+                    bind_group_layouts: &[
+                        &unif_bind_group_layout,
+                        // current frame's result
+                        &gbuf_bind_group_layout,
+                        // last frame's result for temporal smoothing
+                        &gbuf_bind_group_layout,
+                    ],
                     push_constant_ranges: &[],
                 });
         let draw_stencil_test = wgpu::StencilFaceState {
@@ -453,7 +464,7 @@ impl OutlineRenderer {
             dist_step,
             draw_step,
 
-            final_gbuf_idx: 0,
+            last_gbuf_idx: 0,
         }
     }
 
@@ -493,11 +504,7 @@ impl OutlineRenderer {
     /// Draw outlines of objects drawn on the screen so far.
     pub fn draw(&mut self, rend: &mut super::Renderer) {
         self.prepare(rend);
-        self.run_init(rend);
-        self.run_jfa(rend);
-        let mut ctx = rend.draw_to_window();
-        self.run_draw(&mut ctx);
-        ctx.submit();
+        self.run(rend);
     }
 
     /// Get render textures ready for drawing a new frame of outlines.
@@ -509,6 +516,7 @@ impl OutlineRenderer {
                 self.gbufs = [
                     GBuffer::new(rend, &self.gbuf_bind_group_layout),
                     GBuffer::new(rend, &self.gbuf_bind_group_layout),
+                    GBuffer::new(rend, &self.gbuf_bind_group_layout),
                 ];
                 self.gbuf_size = window_size;
                 self.init_step.stencil_bind_group = Self::create_stencil_bind_group(
@@ -518,15 +526,26 @@ impl OutlineRenderer {
             }
         }
 
-        for gbuf in &self.gbufs {
+        // only clear the two buffers we'll use for computing this frame's result
+        for (_, gbuf) in self
+            .gbufs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != self.last_gbuf_idx)
+        {
             let mut ctx = rend.draw_to_texture(&gbuf.view, None, self.gbuf_size);
             ctx.clear(NO_DATA_COLOR);
             ctx.submit();
         }
     }
 
-    fn run_init(&mut self, rend: &mut super::Renderer) {
-        let mut ctx = rend.draw_to_texture(&self.gbufs[0].view, None, self.gbuf_size);
+    fn run(&mut self, rend: &mut super::Renderer) {
+        let first_gbuf_idx = (self.last_gbuf_idx + 1) % GBUF_COUNT;
+
+        //
+        // init
+        //
+        let mut ctx = rend.draw_to_texture(&self.gbufs[first_gbuf_idx].view, None, self.gbuf_size);
 
         {
             let mut pass = ctx.pass(Some("outline init"));
@@ -536,13 +555,15 @@ impl OutlineRenderer {
         }
 
         ctx.submit();
-    }
 
-    fn run_jfa(&mut self, rend: &mut super::Renderer) {
+        //
+        // jump flood
+        //
+
         let pass_count = (self.params.thickness as f64).log2().ceil() as u32;
 
-        let mut source_gbuf_idx = 0;
-        let mut target_gbuf_idx = 1;
+        let mut source_gbuf_idx = first_gbuf_idx;
+        let mut target_gbuf_idx = (source_gbuf_idx + 1) % GBUF_COUNT;
         for pass in (0..pass_count).rev() {
             let step_pixels = 2u32.pow(pass);
 
@@ -569,11 +590,12 @@ impl OutlineRenderer {
             std::mem::swap(&mut source_gbuf_idx, &mut target_gbuf_idx);
         }
 
-        self.final_gbuf_idx = source_gbuf_idx;
-    }
+        //
+        // draw to screen
+        //
 
-    /// Draw the computed outlines to the screen.
-    fn run_draw(&self, ctx: &mut super::RenderContext) {
+        let mut ctx = rend.draw_to_window();
+
         let uniforms = DrawUniforms {
             thickness: self.params.thickness,
             shape: self.params.shape.normalized(),
@@ -585,12 +607,17 @@ impl OutlineRenderer {
         {
             let mut pass = ctx.pass(Some("outline draw"));
             pass.set_pipeline(&self.draw_step.pipeline);
-            // draw on pixels that didn't have an outlined object already on them
+            // stencil to draw only on pixels that didn't have an outlined object on them
             pass.set_stencil_reference(0);
             pass.set_bind_group(0, &self.draw_step.uniform_bind_group, &[]);
-            pass.set_bind_group(1, &self.gbufs[self.final_gbuf_idx].bind_group, &[]);
+            pass.set_bind_group(1, &self.gbufs[source_gbuf_idx].bind_group, &[]);
+            pass.set_bind_group(2, &self.gbufs[self.last_gbuf_idx].bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+
+        ctx.submit();
+
+        self.last_gbuf_idx = source_gbuf_idx;
     }
 }
 
