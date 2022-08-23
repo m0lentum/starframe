@@ -10,10 +10,10 @@ struct Uniforms {
 var<uniform> unif: Uniforms;
 
 @group(1) @binding(0)
-var result_tex: texture_multisampled_2d<f32>;
+var result_tex: texture_2d<f32>;
 
 @group(2) @binding(0)
-var last_frame_tex: texture_multisampled_2d<f32>;
+var last_frame_tex: texture_2d<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,

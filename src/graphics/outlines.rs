@@ -233,7 +233,8 @@ impl OutlineRenderer {
                 // can't use a stencil test here because we need to sample the stencil buffer
                 // in multiple places for antialiasing
                 depth_stencil: None,
-                multisample: rend.multisample_state(),
+                // drawing to a non-multisampled internal texture
+                multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             });
         let init_step = InitStep {
@@ -325,7 +326,7 @@ impl OutlineRenderer {
                     ..Default::default()
                 },
                 depth_stencil: None,
-                multisample: rend.multisample_state(),
+                multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             });
         let dist_step = DistanceStep {
@@ -650,7 +651,7 @@ impl GBuffer {
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: rend.msaa_samples(),
+            sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: GBUF_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -678,7 +679,7 @@ impl GBuffer {
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: false },
                         view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
+                        multisampled: false,
                     },
                     count: None,
                 }],
