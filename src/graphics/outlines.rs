@@ -526,18 +526,6 @@ impl OutlineRenderer {
                 );
             }
         }
-
-        // only clear the two buffers we'll use for computing this frame's result
-        for (_, gbuf) in self
-            .gbufs
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| *i != self.last_gbuf_idx)
-        {
-            let mut ctx = rend.draw_to_texture(&gbuf.view, None, self.gbuf_size);
-            ctx.clear(NO_DATA_COLOR);
-            ctx.submit();
-        }
     }
 
     fn run(&mut self, rend: &mut super::Renderer) {
@@ -625,13 +613,6 @@ impl OutlineRenderer {
 //
 // Utils
 //
-
-const NO_DATA_COLOR: wgpu::Color = wgpu::Color {
-    r: -1.0,
-    g: -1.0,
-    b: -1.0,
-    a: -1.0,
-};
 
 const GBUF_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 

@@ -21,6 +21,9 @@ fn vs_main(
     return out;
 }
 
+// value representing no known closest point
+let EMPTY = vec2<f32>(-1.0, -1.0);
+
 // sample the stencil texture to figure out where within the pixel we are for antialiasing
 // source: https://bgolus.medium.com/the-quest-for-very-wide-outlines-ba82ed442cd9
 @fragment
@@ -41,7 +44,7 @@ fn fs_main(
     }
     // nothing on this pixel
     if stencil_sum == 0i {
-	discard;
+	return EMPTY;
     }
     // entire pixel covered
     if stencil_sum >= sample_count {
