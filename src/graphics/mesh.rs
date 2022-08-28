@@ -21,7 +21,9 @@ pub struct Mesh {
 #[derive(Debug)]
 pub enum MeshKind {
     /// Mesh with a skin and animations attached to it.
-    Skinned(skinned::SkinnedMesh),
+    ///
+    /// Boxed because it's much larger than the unskinned variant.
+    Skinned(Box<skinned::SkinnedMesh>),
     /// Mesh with no skin or animations that is drawn in one draw call
     /// with all other SimpleBatched meshes in the world.
     SimpleBatched(batched::BatchedMesh),
@@ -31,7 +33,7 @@ impl Mesh {
     #[cfg(feature = "gltf")]
     #[inline]
     pub fn from_gltf(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> Self {
-        gltf_import::import_mesh(rend, doc, buffers).into()
+        gltf_import::import_mesh(rend, doc, buffers)
     }
 
     #[inline]
@@ -50,13 +52,10 @@ impl Mesh {
     /// Does not do anything on skinned meshes.
     #[inline]
     pub fn with_color(mut self, color: [f32; 4]) -> Self {
-        match &mut self.kind {
-            MeshKind::SimpleBatched(b) => {
-                for vert in &mut b.vertices {
-                    vert.color = color;
-                }
+        if let MeshKind::SimpleBatched(b) = &mut self.kind {
+            for vert in &mut b.vertices {
+                vert.color = color;
             }
-            _ => {}
         }
         self
     }
@@ -105,7 +104,7 @@ impl From<SkinnedMesh> for Mesh {
         Self {
             offset: m::Pose::identity(),
             has_outline: true,
-            kind: MeshKind::Skinned(m),
+            kind: MeshKind::Skinned(Box::new(m)),
         }
     }
 }

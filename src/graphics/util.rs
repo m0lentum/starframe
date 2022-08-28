@@ -176,7 +176,7 @@ impl DynamicBuffer {
     /// Reallocate the buffer if needed, then write the given data to it.
     #[inline]
     pub fn write<Data: AsBytes>(&mut self, ctx: &super::RenderContext, data: &[Data]) {
-        self.write_split_borrow(&ctx.device, &ctx.queue, data)
+        self.write_split_borrow(ctx.device, ctx.queue, data)
     }
 
     /// Like [`write`][Self::write], but takes the required members of

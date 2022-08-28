@@ -521,7 +521,7 @@ impl OutlineRenderer {
                 ];
                 self.gbuf_size = window_size;
                 self.init_step.stencil_bind_group = Self::create_stencil_bind_group(
-                    &rend,
+                    rend,
                     &self.init_step.stencil_bind_group_layout,
                 );
             }

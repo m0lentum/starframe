@@ -33,9 +33,9 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
                         .expect("only glTF meshes with vertex colors are supported")
                         .into_rgba_f32(),
                 )
-                .map(|(pos, col)| super::batched::StoredVertex {
+                .map(|(pos, color)| super::batched::StoredVertex {
                     position: m::Vec2::new(pos[0] as f64, pos[1] as f64),
-                    color: col.into(),
+                    color,
                 }),
             );
 
