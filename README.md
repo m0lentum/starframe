@@ -1,5 +1,8 @@
 # Starframe
 
+Note: this project is currently on hiatus as the author is busy working on their
+master's thesis. Development is expected to continue in the summer of 2023.
+
 ## What
 
 In disc golf, a starframe occurs when every player in a group scores a birdie
