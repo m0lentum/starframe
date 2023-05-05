@@ -5,9 +5,9 @@ authors = ["Mikael Myyrä <mikael.myyrae@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-winit = "0.26.0"
+winit = "0.28.4"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
-wgpu = "0.13.1"
+wgpu = "0.16.0"
 zerocopy = "0.6.1"
 futures = "0.3.19"
 ultraviolet = { version = "0.9.0", features = ["f64"] }
@@ -41,9 +41,9 @@ rand = "0.8.4"
 getrandom = { version = "0.2.7", features = ["js"] }
 ron = "0.7.0"
 # egui and its wgpu integration deps
-egui = "0.18.1"
-egui_wgpu_backend = "0.18.0"
-egui_winit_platform = "0.15.0"
+egui = "0.21.0"
+egui_wgpu_backend = "0.23.0"
+egui_winit_platform = "0.18.0"
 
 [[example]]
 name = "sandbox"

@@ -23,12 +23,6 @@ fn main() {
             height: 720.0,
         });
 
-    #[cfg(not(target_arch = "wasm32"))]
-    use winit::platform::unix::WindowBuilderExtUnix;
-    // X11 class I use for a window manager rule to make the game window floating on linux
-    #[cfg(not(target_arch = "wasm32"))]
-    let window = window.with_class("game".into(), "game".into());
-
     sf::Game::run(sf::GameParams {
         window,
         fps: 60,

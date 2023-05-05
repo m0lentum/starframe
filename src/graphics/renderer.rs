@@ -32,8 +32,11 @@ impl Renderer {
     /// Create a Renderer.
     /// The [`Game`][crate::game::Game] API does this automatically.
     pub(crate) async fn init(window: &winit::window::Window) -> Self {
-        let instance = wgpu::Instance::new(wgpu::Backends::PRIMARY);
-        let surface = unsafe { instance.create_surface(window) };
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
+        });
+        let surface = unsafe { instance.create_surface(window) }.expect("Failed to create surface");
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -62,6 +65,7 @@ impl Renderer {
         // which screws up colors. not sure if setting it to a constant
         // is the correct solution but it works on my machines :v)
         let swapchain_format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let swapchain_capabilities = surface.get_capabilities(&adapter);
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -69,6 +73,8 @@ impl Renderer {
             width: window_size.width,
             height: window_size.height,
             present_mode: wgpu::PresentMode::AutoVsync,
+            alpha_mode: swapchain_capabilities.alpha_modes[0],
+            view_formats: vec![],
         };
         surface.configure(&device, &surface_config);
 
@@ -118,6 +124,7 @@ impl Renderer {
             dimension: wgpu::TextureDimension::D2,
             format: swapchain_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
         })
     }
 

@@ -1,5 +1,5 @@
 @group(0) @binding(0)
-var stencil_tex: texture_multisampled_2d<f32>;
+var stencil_tex: texture_multisampled_2d<u32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -22,7 +22,7 @@ fn vs_main(
 }
 
 // value representing no known closest point
-let EMPTY = vec2<f32>(-1.0, -1.0);
+const EMPTY = vec2<f32>(-1.0, -1.0);
 
 // sample the stencil texture to figure out where within the pixel we are for antialiasing
 // source: https://bgolus.medium.com/the-quest-for-very-wide-outlines-ba82ed442cd9
@@ -33,7 +33,7 @@ fn fs_main(
     let uv_f: vec2<f32> = in.uv * vec2<f32>(textureDimensions(stencil_tex));
     let uv_i: vec2<i32> = vec2<i32>(uv_f);
 
-    let sample_count: i32 = textureNumSamples(stencil_tex);
+    let sample_count = i32(textureNumSamples(stencil_tex));
     let sample_count_inv = 1.0 / f32(sample_count);
     
     // gather all samples of the stencil buffer at this pixel

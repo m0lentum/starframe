@@ -410,7 +410,7 @@ impl Renderer {
         }
 
         ctx.queue
-            .write_buffer(&self.joint_storage, 0, (&joint_matrices).as_bytes());
+            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
 
         // render the meshes
 
