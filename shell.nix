@@ -3,7 +3,8 @@ let
   rust-overlay = import sources.rust-overlay;
   pkgs = import sources.nixpkgs { overlays = [ rust-overlay ]; };
 
-  rust = pkgs.rust-bin.stable."1.69.0".default.override {
+  rust = pkgs.rust-bin.stable.latest.default.override {
+    extensions = [ "rust-src" ];
     targets = [ "wasm32-unknown-unknown" ];
   };
   # nightly if you need to e.g. test macros with unstable features:
