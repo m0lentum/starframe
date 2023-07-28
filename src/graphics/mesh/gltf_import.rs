@@ -1,11 +1,22 @@
+//! Utilities for loading meshes, skins and animations from glTF documents.
+//!
+//! TODOC: how to construct a skinned and animated mesh
+
 use crate::{
-    graphics::{self as gx, animation as anim, mesh::skinned},
+    animation::{self as anim, gltf_animation as g_anim},
+    graphics::{
+        self as gx,
+        mesh::{skin, skinned},
+    },
     math::{self as m, uv},
 };
 
 use zerocopy::AsBytes;
 
-pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> super::Mesh {
+// TODO: add proper errors instead of using expect and unimplemented
+
+/// Load the vertices of a mesh from a glTF document.
+pub fn load_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> super::Mesh {
     // helper for constructing gltf readers
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
@@ -115,13 +126,23 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
         });
     }
 
-    //
-    // skin
-    //
+    skinned::SkinnedMesh {
+        primitives,
+        uniforms: None,
+    }
+    .into()
+}
 
-    // this was checked at the start to decide which type of mesh to return
-    let gltf_skin = doc.skins().next().unwrap();
-    let mut skin = skinned::Skin {
+/// Load a skin from a glTF document.
+///
+/// Returns None if there are no skins in the document.
+/// Otherwise, returns the first one.
+/// TODO: allow multiple skins per document
+pub fn load_skin(doc: &gltf::Document, buffers: &[&[u8]]) -> Option<skin::Skin> {
+    let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
+
+    let gltf_skin = doc.skins().next()?;
+    let mut skin = skin::Skin {
         root_transform: uv::Mat4::identity(),
         joints: Vec::new(),
     };
@@ -131,14 +152,13 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
     if let Some(invs) = reader.read_inverse_bind_matrices() {
         skin.joints = itertools::zip(gltf_skin.joints(), invs)
             .map(|(joint, inv_bind)| {
-                skinned::Joint {
+                skin::Joint {
                     name: joint.name().map(String::from),
                     // parents will be computed once we have all joints
                     parent_idx: None,
-                    local_pose: skinned::TransformDecomp::from_parts(
-                        joint.transform().decomposed(),
-                    ),
                     inv_bind_matrix: inv_bind.into(),
+                    local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
+                    joint_matrix: Default::default(),
                 }
             })
             .collect();
@@ -146,11 +166,12 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
         // inverse bind matrices are not provided, meaning they are premultiplied into vertices
         skin.joints = gltf_skin
             .joints()
-            .map(|joint| skinned::Joint {
+            .map(|joint| skin::Joint {
                 name: joint.name().map(String::from),
                 parent_idx: None,
-                local_pose: skinned::TransformDecomp::from_parts(joint.transform().decomposed()),
                 inv_bind_matrix: uv::Mat4::identity(),
+                local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
+                joint_matrix: Default::default(),
             })
             .collect();
     }
@@ -190,9 +211,18 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
         }
     }
 
-    //
-    // animations
-    //
+    Some(skin)
+}
+
+/// Load all animations associated with a skin in a glTF document.
+///
+/// This assumes the skin is the first one in the document
+/// (usually there is only one skin).
+/// TODO: handle cases with multiple skins per doc
+pub fn load_animations(doc: &gltf::Document, buffers: &[&[u8]]) -> Option<anim::MeshAnimator> {
+    let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
+
+    let gltf_skin = doc.skins().next()?;
 
     let mut animations = Vec::new();
 
@@ -231,34 +261,40 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
                     Out::Scales(s) => {
                         outputs.extend(s.flat_map(|s| s.into_iter()));
                     }
-                    Out::MorphTargetWeights(_) => todo!(),
+                    Out::MorphTargetWeights(_) => {
+                        unimplemented!("Morph target animations not supported")
+                    }
                 }
 
-                Some(anim::Channel {
+                Some(g_anim::Channel {
                     target: match target.property() {
-                        Prop::Translation => skinned::AnimationTarget::Joint {
+                        Prop::Translation => g_anim::Target::Joint {
                             id: target_joint,
-                            property: skinned::AnimatedProperty::Translation,
+                            property: g_anim::AnimatedProperty::Translation,
                         },
-                        Prop::Rotation => skinned::AnimationTarget::Joint {
+                        Prop::Rotation => g_anim::Target::Joint {
                             id: target_joint,
-                            property: skinned::AnimatedProperty::Rotation,
+                            property: g_anim::AnimatedProperty::Rotation,
                         },
-                        Prop::Scale => skinned::AnimationTarget::Joint {
+                        Prop::Scale => g_anim::Target::Joint {
                             id: target_joint,
-                            property: skinned::AnimatedProperty::Scale,
+                            property: g_anim::AnimatedProperty::Scale,
                         },
-                        Prop::MorphTargetWeights => todo!(),
+                        Prop::MorphTargetWeights => {
+                            unimplemented!("Morph target animations not supported")
+                        }
                     },
                     ty: match target.property() {
-                        Prop::Translation | Prop::Scale => anim::ChannelType::Vector3,
-                        Prop::Rotation => anim::ChannelType::Rotor3,
-                        Prop::MorphTargetWeights => todo!(),
+                        Prop::Translation | Prop::Scale => g_anim::ChannelType::Vector3,
+                        Prop::Rotation => g_anim::ChannelType::Rotor3,
+                        Prop::MorphTargetWeights => {
+                            unimplemented!("Morph target animations not supported")
+                        }
                     },
                     interpolation: match sampler.interpolation() {
-                        Interp::Linear => anim::InterpolationMode::Linear,
-                        Interp::Step => anim::InterpolationMode::Step,
-                        Interp::CubicSpline => anim::InterpolationMode::CubicSpline,
+                        Interp::Linear => g_anim::InterpolationMode::Linear,
+                        Interp::Step => g_anim::InterpolationMode::Step,
+                        Interp::CubicSpline => g_anim::InterpolationMode::CubicSpline,
                     },
                     keyframe_ts: inputs,
                     data: outputs,
@@ -266,19 +302,11 @@ pub fn import_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]])
             })
             .collect();
 
-        animations.push(anim::Animation::new(
+        animations.push(g_anim::GltfAnimation::new(
             gltf_anim.name().map(String::from),
             channels,
         ));
     }
 
-    skinned::SkinnedMesh {
-        primitives,
-        skin,
-        animations,
-        active_anim_idx: None,
-        anim_time: 0.0,
-        uniforms: None,
-    }
-    .into()
+    Some(anim::MeshAnimator::new(animations))
 }

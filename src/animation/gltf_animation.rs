@@ -1,19 +1,19 @@
+use super::interpolation as interp;
 use crate::math::uv;
-use std::ops::{Add, Mul};
 
 /// Interpolated animation for floating point properties.
 ///
 /// Target is an optional per-channel identifier type
 /// for routing animation channels to the things they animate.
 #[derive(Debug, Clone)]
-pub struct Animation<Target = ()> {
+pub struct GltfAnimation {
     pub name: Option<String>,
     pub duration: f32,
-    pub channels: Vec<Channel<Target>>,
+    pub channels: Vec<Channel>,
 }
 
-impl<Target> Animation<Target> {
-    pub fn new(name: Option<String>, channels: Vec<Channel<Target>>) -> Self {
+impl GltfAnimation {
+    pub fn new(name: Option<String>, channels: Vec<Channel>) -> Self {
         Self {
             name,
             duration: channels
@@ -26,8 +26,27 @@ impl<Target> Animation<Target> {
     }
 }
 
+/// Part of the mesh operated on by the animation.
+#[derive(Debug, Clone, Copy)]
+pub enum Target {
+    Joint {
+        id: usize,
+        property: AnimatedProperty,
+    },
+    // this could also be a morph target,
+    // but I don't currently use those so it's not implemented
+}
+
+/// Property of the part operated on by the animation.
+#[derive(Debug, Clone, Copy)]
+pub enum AnimatedProperty {
+    Translation,
+    Rotation,
+    Scale,
+}
+
 #[derive(Debug, Clone)]
-pub struct Channel<Target = ()> {
+pub struct Channel {
     pub target: Target,
     pub ty: ChannelType,
     pub interpolation: InterpolationMode,
@@ -48,7 +67,7 @@ pub enum ChannelType {
     Rotor3,
 }
 
-impl<Target> Channel<Target> {
+impl Channel {
     #[inline]
     pub fn duration(&self) -> f32 {
         self.keyframe_ts.iter().last().cloned().unwrap_or(0.0)
@@ -82,7 +101,7 @@ impl<Target> Channel<Target> {
 
                 let t_normalized = (t - self.keyframe_ts[prev_idx])
                     / (self.keyframe_ts[next_idx] - self.keyframe_ts[prev_idx]);
-                lerp(v_prev, v_next, t_normalized)
+                interp::lerp(v_prev, v_next, t_normalized)
             }
             InterpolationMode::CubicSpline => {
                 // cubic spline interpolation comes with two tangents per value,
@@ -104,7 +123,7 @@ impl<Target> Channel<Target> {
 
                 let t_normalized = (t - self.keyframe_ts[prev_idx])
                     / (self.keyframe_ts[next_idx] - self.keyframe_ts[prev_idx]);
-                cubic_spline(val_prev, tan_prev, val_next, tan_next, t_normalized)
+                interp::cubic_spline(val_prev, tan_prev, val_next, tan_next, t_normalized)
             }
         }
     }
@@ -164,7 +183,8 @@ impl<Target> Channel<Target> {
 
                 let t_normalized = (t - self.keyframe_ts[prev_idx])
                     / (self.keyframe_ts[next_idx] - self.keyframe_ts[prev_idx]);
-                let spline_val = cubic_spline(val_prev, tan_prev, val_next, tan_next, t_normalized);
+                let spline_val =
+                    interp::cubic_spline(val_prev, tan_prev, val_next, tan_next, t_normalized);
                 spline_val.normalized()
             }
         }
@@ -183,24 +203,4 @@ impl<Target> Channel<Target> {
         let end = self.keyframe_ts.len() - 1;
         [end, end]
     }
-}
-
-pub fn lerp<T>(start: T, end: T, t: f32) -> T
-where
-    T: Copy + Mul<f32, Output = T> + Add<T, Output = T>,
-{
-    start * (1.0 - t) + end * t
-}
-
-pub fn cubic_spline<T>(start: T, start_tangent: T, end: T, end_tangent: T, t: f32) -> T
-where
-    T: Copy + Mul<f32, Output = T> + Add<T, Output = T>,
-{
-    let t_sq: f32 = t * t;
-    let t_cu: f32 = t_sq * t;
-    let a: f32 = 2.0 * t_cu - 3.0 * t_sq + 1.0;
-    let b: f32 = t_cu - 2.0 * t_sq + t;
-    let c: f32 = -2.0 * t_cu + 3.0 * t_sq;
-    let d: f32 = t_cu - t_sq;
-    start * a + start_tangent * b + end * c + end_tangent * d
 }

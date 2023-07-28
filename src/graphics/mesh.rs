@@ -6,8 +6,11 @@ pub use batched::{BatchedMesh, ConvexMeshShape};
 mod skinned;
 pub use skinned::SkinnedMesh;
 
+pub(crate) mod skin;
+pub use skin::Skin;
+
 #[cfg(feature = "gltf")]
-mod gltf_import;
+pub mod gltf_import;
 
 /// A triangle mesh for rendering. Can be animated with a skin
 /// and imported from glTF documents (with the `gltf` crate feature enabled).
@@ -33,7 +36,7 @@ impl Mesh {
     #[cfg(feature = "gltf")]
     #[inline]
     pub fn from_gltf(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> Self {
-        gltf_import::import_mesh(rend, doc, buffers)
+        gltf_import::load_mesh(rend, doc, buffers)
     }
 
     #[inline]
@@ -66,26 +69,6 @@ impl Mesh {
     pub fn without_outline(mut self) -> Self {
         self.has_outline = false;
         self
-    }
-
-    /// Activate the animation with the given name, if it exists.
-    /// Returns an error if the name doesn't exist or the mesh is not animated at all.
-    pub fn activate_animation(&mut self, name: &str) -> Result<(), AnimationError> {
-        match &mut self.kind {
-            MeshKind::Skinned(skin_data) => {
-                match skin_data
-                    .animations
-                    .iter()
-                    .enumerate()
-                    .find(|(_, anim)| anim.name.as_deref() == Some(name))
-                {
-                    Some((idx, _)) => skin_data.active_anim_idx = Some(idx),
-                    None => return Err(AnimationError::FeatureNotFound),
-                }
-            }
-            _ => return Err(AnimationError::NotAnimated),
-        }
-        Ok(())
     }
 }
 
@@ -121,12 +104,6 @@ impl From<ConvexMeshShape> for Mesh {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum AnimationError {
-    NotAnimated,
-    FeatureNotFound,
-}
-
 /// Renderer that can draw any kind of mesh, skinned or not.
 pub struct MeshRenderer {
     batched: batched::Renderer,
@@ -141,21 +118,23 @@ impl MeshRenderer {
         }
     }
 
-    /// Step all skin animations forward in time by `dt`.
-    pub fn step_time(&mut self, dt: f32, l_mesh: graph::LayerViewMut<super::Mesh>) {
-        self.skinned.step_time(dt, l_mesh);
-    }
-
     /// Draw all meshes to the screen.
     pub fn draw(
         &mut self,
         camera: &gx::Camera,
         ctx: &mut gx::RenderContext,
-        (mut l_mesh, l_pose): (graph::LayerViewMut<Mesh>, graph::LayerView<m::Pose>),
+        (mut l_mesh, l_skin, l_pose): (
+            graph::LayerViewMut<Mesh>,
+            graph::LayerView<Skin>,
+            graph::LayerView<m::Pose>,
+        ),
     ) {
         self.batched
             .draw(camera, ctx, (l_mesh.subview(), l_pose.subview()));
-        self.skinned
-            .draw(camera, ctx, (l_mesh.subview_mut(), l_pose.subview()));
+        self.skinned.draw(
+            camera,
+            ctx,
+            (l_mesh.subview_mut(), l_skin.subview(), l_pose.subview()),
+        );
     }
 }

@@ -1,6 +1,7 @@
+use super::Skin;
 use crate::{
     graph,
-    graphics::{self as gx, animation as anim, util},
+    graphics::{self as gx, util},
     math as m, uv,
 };
 
@@ -21,70 +22,9 @@ pub(super) struct MeshPrimitive {
 #[derive(Debug)]
 pub struct SkinnedMesh {
     pub(super) primitives: Vec<MeshPrimitive>,
-    pub(super) skin: Skin,
-    pub(super) animations: Vec<anim::Animation<AnimationTarget>>,
-    pub(super) active_anim_idx: Option<usize>,
-    pub(super) anim_time: f32,
     // storing per-mesh uniform buffers with the meshes,
     // Option because it's not populated until draw
     pub(super) uniforms: Option<MeshUniformBinding>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct Skin {
-    pub root_transform: uv::Mat4,
-    pub joints: Vec<Joint>,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct Joint {
-    pub name: Option<String>,
-    /// index of the joint's parent joint in the skin's `joints` array
-    pub parent_idx: Option<usize>,
-    pub local_pose: TransformDecomp,
-    pub inv_bind_matrix: uv::Mat4,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct TransformDecomp {
-    pub pos: uv::Vec3,
-    pub rot: uv::Rotor3,
-    pub scale: uv::Vec3,
-}
-
-impl TransformDecomp {
-    pub fn from_parts((pos, rot_quat, scale): ([f32; 3], [f32; 4], [f32; 3])) -> Self {
-        Self {
-            pos: pos.into(),
-            rot: uv::Rotor3::from_quaternion_array(rot_quat),
-            scale: scale.into(),
-        }
-    }
-
-    pub fn as_matrix(&self) -> uv::Mat4 {
-        uv::Mat4::from_translation(self.pos)
-            * self.rot.into_matrix().into_homogeneous()
-            * uv::Mat4::from_nonuniform_scale(self.scale)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum AnimationTarget {
-    Joint {
-        id: usize,
-        property: AnimatedProperty,
-    },
-    // TODO
-    _MorphTarget {
-        id: usize,
-    },
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) enum AnimatedProperty {
-    Translation,
-    Rotation,
-    Scale,
 }
 
 #[derive(Debug)]
@@ -288,102 +228,27 @@ impl Renderer {
         }
     }
 
-    /// Step all animations forward in time.
-    pub fn step_time(&mut self, dt: f32, mut l_mesh: graph::LayerViewMut<super::Mesh>) {
-        for skin_data in l_mesh.iter_mut().filter_map(|mesh| match &mut mesh.c.kind {
-            super::MeshKind::Skinned(skin_data) => Some(skin_data),
-            _ => None,
-        }) {
-            if let Some(anim_idx) = skin_data.active_anim_idx {
-                skin_data.anim_time += dt;
-                // loop back to the start if we're past the end
-                let overshoot = skin_data.anim_time - skin_data.animations[anim_idx].duration;
-                if overshoot > 0.0 {
-                    skin_data.anim_time = overshoot;
-                }
-            }
-        }
-    }
-
     /// Draw all the skinned meshes in the world.
     pub fn draw(
         &mut self,
         camera: &gx::Camera,
         ctx: &mut gx::RenderContext,
-        (mut l_mesh, l_pose): (graph::LayerViewMut<super::Mesh>, graph::LayerView<m::Pose>),
+        (mut l_mesh, l_skin, l_pose): (
+            graph::LayerViewMut<super::Mesh>,
+            graph::LayerView<Skin>,
+            graph::LayerView<m::Pose>,
+        ),
     ) {
         // collect all joint matrices in the world,
-        // we'll shove them all in the storage buffer in one go
-        let mut joint_matrices: Vec<util::GpuMat4> = Vec::new();
-        // cache global poses so we only compute each of them once
-        // (rather than every time a child joint is computed)
-        let mut global_poses: Vec<Option<uv::Mat4>> = Vec::new();
-
-        for skin_data in l_mesh.iter_mut().filter_map(|mesh| match &mut mesh.c.kind {
-            super::MeshKind::Skinned(skin_data) => Some(skin_data),
-            _ => None,
-        }) {
-            // sample animations
-
-            if let Some(anim_idx) = skin_data.active_anim_idx {
-                let anim = &skin_data.animations[anim_idx];
-                for channel in &anim.channels {
-                    match channel.target {
-                        AnimationTarget::Joint { id, property } => {
-                            let joint = &mut skin_data.skin.joints[id];
-                            match property {
-                                AnimatedProperty::Translation => {
-                                    joint.local_pose.pos = channel.sample_vec3(skin_data.anim_time);
-                                }
-                                AnimatedProperty::Rotation => {
-                                    joint.local_pose.rot =
-                                        channel.sample_rotor3(skin_data.anim_time);
-                                }
-                                AnimatedProperty::Scale => {
-                                    joint.local_pose.scale =
-                                        channel.sample_vec3(skin_data.anim_time);
-                                }
-                            }
-                        }
-                        AnimationTarget::_MorphTarget { .. } => todo!(),
-                    }
-                }
-            }
-
-            // recompute joint matrices
-
-            let skin = &mut skin_data.skin;
-            global_poses.clear();
-            global_poses.extend(std::iter::repeat(None).take(skin.joints.len()));
-            joint_matrices.extend((0..skin.joints.len()).map(|joint_idx| {
-                // traverse recursively until an already computed global parent transform is found
-                fn populate_parents(
-                    joint_idx: usize,
-                    joints: &[Joint],
-                    global_poses: &mut [Option<uv::Mat4>],
-                ) {
-                    if let Some(parent_idx) = joints[joint_idx].parent_idx {
-                        if global_poses[parent_idx].is_none() {
-                            populate_parents(parent_idx, joints, global_poses);
-                        }
-                        global_poses[joint_idx] = Some(
-                            // global pose is guaranteed to exist because we just called
-                            // populate_parents if it didn't
-                            global_poses[parent_idx].unwrap()
-                                * joints[joint_idx].local_pose.as_matrix(),
-                        );
-                    } else {
-                        global_poses[joint_idx] = Some(joints[joint_idx].local_pose.as_matrix());
-                    }
-                }
-                populate_parents(joint_idx, &skin.joints, &mut global_poses);
-                let joint_pose = global_poses[joint_idx].unwrap();
-
-                util::GpuMat4::from(
-                    skin.root_transform * joint_pose * skin.joints[joint_idx].inv_bind_matrix,
-                )
-            }));
-        }
+        // we'll shove them all in the storage buffer in one go.
+        // make sure the iteration order is the same as when rendering
+        // so that each mesh gets the correct offset into the array
+        let mut joint_matrices: Vec<util::GpuMat4> = l_mesh
+            .iter()
+            .filter_map(|mesh| mesh.get_neighbor(&l_skin))
+            .flat_map(|skin| skin.c.joints.iter())
+            .map(|joint| util::GpuMat4::from(joint.joint_matrix))
+            .collect();
 
         // empty bindings not allowed by vulkan,
         // put in one dummy matrix to pass validation
@@ -430,6 +295,7 @@ impl Renderer {
                 .get_neighbor(&l_pose)
                 .map(|p| *p.c)
                 .unwrap_or_else(m::Pose::identity);
+            let skin = mesh.get_neighbor(&l_skin);
             let mut skin_data = match &mut mesh.c.kind {
                 super::MeshKind::Skinned(s) => s,
                 // other cases were filtered out on the iterator,
@@ -483,7 +349,9 @@ impl Renderer {
                 pass.draw_indexed(0..prim.idx_count, 0, 0..1);
             }
 
-            joint_offset += skin_data.skin.joints.len() as u32;
+            if let Some(skin) = skin {
+                joint_offset += skin.c.joints.len() as u32;
+            }
         }
     }
 }

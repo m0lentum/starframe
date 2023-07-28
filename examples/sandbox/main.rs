@@ -80,6 +80,7 @@ impl State {
                 sf::Collider,
                 sf::Rope,
                 sf::Mesh,
+                sf::Skin,
                 // our types
                 player::Player,
             },
