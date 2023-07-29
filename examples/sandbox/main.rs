@@ -65,6 +65,7 @@ pub struct State {
     bvh_vis_levels: usize,
     island_vis_active: bool,
     spawner_circle_r: f64,
+    spawner_obj_count: usize,
     time_scale: f64,
 }
 impl State {
@@ -127,6 +128,7 @@ impl State {
             bvh_vis_levels: 30,
             island_vis_active: false,
             spawner_circle_r: 0.0,
+            spawner_obj_count: 1,
             time_scale: 1.0,
         }
     }
@@ -301,6 +303,10 @@ impl sf::GameState for State {
 
             ui.separator();
             ui.heading("Spawn objects");
+            ui.add(
+                egui::Slider::new(&mut self.spawner_obj_count, 1..=50)
+                    .text("Number of objects to spawn"),
+            );
             ui.add(egui::Slider::new(&mut self.spawner_circle_r, 0.0..=1.0).text("Radius"));
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Triangle").clicked() {
@@ -410,19 +416,21 @@ impl sf::GameState for State {
         let random_angle =
             || sf::Angle::Deg(distr::Uniform::from(0.0..360.0).sample(&mut rand::thread_rng()));
 
-        if let Some(polygon) = shape_to_spawn {
-            Recipe::GenericBody {
-                pose: sf::PoseBuilder::new()
-                    .with_position(random_pos())
-                    .with_rotation(random_angle())
-                    .build(),
-                colliders: vec![sf::ColliderShape {
-                    polygon,
-                    circle_r: self.spawner_circle_r,
+        for _ in 0..self.spawner_obj_count {
+            if let Some(polygon) = shape_to_spawn {
+                Recipe::GenericBody {
+                    pose: sf::PoseBuilder::new()
+                        .with_position(random_pos())
+                        .with_rotation(random_angle())
+                        .build(),
+                    colliders: vec![sf::ColliderShape {
+                        polygon,
+                        circle_r: self.spawner_circle_r,
+                    }
+                    .into()],
                 }
-                .into()],
+                .spawn(&mut self.physics, &self.graph);
             }
-            .spawn(&mut self.physics, &self.graph);
         }
 
         match (&self.state, game.input.button(sf::Key::Space.into())) {

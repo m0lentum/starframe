@@ -1,5 +1,5 @@
 (
-    spawn_zone: ( min: (x: -20, y: 5), max: (x: 20, y: 10) ),
+    spawn_zone: ( min: (x: -30, y: 5), max: (x: 30, y: 15) ),
     recipes: [
         Player (( position: (-7, 3) )),
         RopeConnectedBlocks(
