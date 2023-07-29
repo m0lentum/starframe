@@ -103,7 +103,7 @@ impl State {
             mesh_renderer: sf::MeshRenderer::new(renderer),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
-                    thickness: 15,
+                    thickness: 10,
                     color: [0.0, 0.0, 0.0, 1.0],
                     shape: sf::OutlineShape::octagon(),
                 },
@@ -473,10 +473,10 @@ impl sf::GameState for State {
         let window_scale_factor = renderer.window_scale_factor();
 
         let mut ctx = renderer.draw_to_window();
-        ctx.clear(wgpu::Color {
-            r: 0.1,
-            g: 0.1,
-            b: 0.1,
+        ctx.clear(sf::wgpu::Color {
+            r: 0.00802,
+            g: 0.0137,
+            b: 0.02732,
             a: 1.0,
         });
 
