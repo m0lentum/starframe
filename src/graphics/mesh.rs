@@ -1,47 +1,218 @@
-use crate::{graph, graphics as gx, math as m, physics as phys};
-
-mod batched;
-pub use batched::{BatchedMesh, ConvexMeshShape};
-
-mod skinned;
-pub use skinned::SkinnedMesh;
-
 pub(crate) mod skin;
 pub use skin::Skin;
 
 #[cfg(feature = "gltf")]
 pub mod gltf_import;
 
+//
+
+use crate::{
+    graph, graphics as gx,
+    math::{self as m, uv},
+    physics as phys,
+};
+use std::borrow::Cow;
+use zerocopy::{AsBytes, FromBytes};
+
+//
+// types
+//
+
 /// A triangle mesh for rendering. Can be animated with a skin
 /// and imported from glTF documents (with the `gltf` crate feature enabled).
 #[derive(Debug)]
 pub struct Mesh {
+    pub label: Option<String>,
     pub offset: m::Pose,
     pub has_outline: bool,
-    pub kind: MeshKind,
+    primitives: Vec<MeshPrimitive>,
+    // resources are uploaded to the GPU on first draw
+    gpu_resources: Option<GpuMeshResources>,
+}
+
+/// A single primitive as defined by the glTF spec.
+/// A single mesh can have more than one.
+#[derive(Debug, Clone)]
+pub struct MeshPrimitive {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u16>,
 }
 
 #[derive(Debug)]
-pub enum MeshKind {
-    /// Mesh with a skin and animations attached to it.
-    ///
-    /// Boxed because it's much larger than the unskinned variant.
-    Skinned(Box<skinned::SkinnedMesh>),
-    /// Mesh with no skin or animations that is drawn in one draw call
-    /// with all other SimpleBatched meshes in the world.
-    SimpleBatched(batched::BatchedMesh),
+struct GpuMeshResources {
+    primitives: Vec<GpuMeshPrimitive>,
+    uniform_buf: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
+}
+
+#[derive(Debug)]
+struct GpuMeshPrimitive {
+    pub vert_buf: wgpu::Buffer,
+    pub idx_buf: wgpu::Buffer,
+    pub idx_count: u32,
+}
+
+/// The GPU representation of a mesh vertex.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+pub struct Vertex {
+    pub position: gx::util::GpuVec3,
+    pub color: gx::util::GpuVec4,
+    pub joints: [u16; 4],
+    pub weights: gx::util::GpuVec4,
+}
+
+//
+// constructors
+//
+
+impl Default for Mesh {
+    fn default() -> Self {
+        Self {
+            label: None,
+            offset: m::Pose::default(),
+            has_outline: true,
+            primitives: Vec::new(),
+            gpu_resources: None,
+        }
+    }
+}
+
+impl Clone for Mesh {
+    fn clone(&self) -> Self {
+        Self {
+            label: self.label.clone(),
+            offset: self.offset,
+            has_outline: self.has_outline,
+            primitives: self.primitives.clone(),
+            // gpu resources cannot be shared between multiple meshes
+            gpu_resources: None,
+        }
+    }
+}
+
+/// Shape that can be used to generate [`Mesh`][self::Mesh]es.
+#[derive(Clone, Copy, Debug)]
+pub enum ConvexMeshShape {
+    Circle {
+        r: f64,
+        points: usize,
+    },
+    Rect {
+        w: f64,
+        h: f64,
+    },
+    Capsule {
+        hl: f64,
+        r: f64,
+        points_per_cap: usize,
+    },
 }
 
 impl Mesh {
     #[cfg(feature = "gltf")]
     #[inline]
-    pub fn from_gltf(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> Self {
-        gltf_import::load_mesh(rend, doc, buffers)
+    pub fn from_gltf(doc: &gltf::Document, buffers: &[&[u8]]) -> Self {
+        Self {
+            label: doc
+                .meshes()
+                .next()
+                .and_then(|mesh| mesh.name().map(String::from)),
+            primitives: gltf_import::load_primitives(doc, buffers),
+            ..Self::default()
+        }
     }
 
-    #[inline]
     pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
-        batched::BatchedMesh::from_collider_shape(shape, max_circle_vert_distance).into()
+        let mut vertices: Vec<m::Vec2> = Vec::new();
+
+        match shape.polygon {
+            phys::ColliderPolygon::Point => {
+                use std::f64::consts::TAU;
+                let num_increments = (TAU * shape.circle_r / max_circle_vert_distance).ceil();
+                let angle_increment = m::Rotor2::from_angle(TAU / num_increments);
+                let mut curr_vert = m::Vec2::new(shape.circle_r, 0.0);
+                for _ in 0..(num_increments as usize) {
+                    vertices.push(curr_vert);
+                    curr_vert = angle_increment * curr_vert;
+                }
+            }
+            _ => {
+                let edge_count = shape.polygon.edge_count();
+                let mut curr_edge_idx = 0;
+                let mut prev_edge = shape.polygon.get_edge(0);
+                loop {
+                    let mut next_edge_idx = curr_edge_idx + 1;
+                    let is_last_vert = next_edge_idx >= edge_count;
+                    if is_last_vert {
+                        next_edge_idx = 0;
+                    }
+
+                    let next_edge = shape.polygon.get_edge(next_edge_idx);
+                    // we only generate one corner from the mirrored edge,
+                    // the rest can be generated by mirroring all vertices created so far
+                    // (if the shape is symmetrical, otherwise we've already generated the whole
+                    // thing by now)
+                    let next_edge = if is_last_vert && shape.polygon.is_rotationally_symmetrical() {
+                        next_edge.mirrored()
+                    } else {
+                        next_edge
+                    };
+
+                    if shape.circle_r == 0.0 {
+                        // just a polygon, all we need are the ends of the edges
+                        vertices.push(next_edge.edge.start);
+                    } else {
+                        // rounded polygon, generate circle caps offset from the vertex
+                        let angle_btw_edges = prev_edge.normal.dot(*next_edge.normal).acos();
+                        let num_increments =
+                            (angle_btw_edges * shape.circle_r / max_circle_vert_distance).ceil();
+                        let angle_increment =
+                            m::Rotor2::from_angle(angle_btw_edges / num_increments);
+
+                        let mut curr_offset = shape.circle_r * *prev_edge.normal;
+                        vertices.push(next_edge.edge.start + curr_offset);
+                        for _ in 0..(num_increments as usize) {
+                            curr_offset = angle_increment * curr_offset;
+                            vertices.push(next_edge.edge.start + curr_offset);
+                        }
+                    }
+                    prev_edge = next_edge;
+                    curr_edge_idx = next_edge_idx;
+
+                    if is_last_vert {
+                        break;
+                    }
+                }
+
+                if shape.polygon.is_rotationally_symmetrical() {
+                    let half_vert_count = vertices.len();
+                    vertices.extend_from_within(..);
+                    for mirror_vert in &mut vertices[half_vert_count..] {
+                        *mirror_vert = -*mirror_vert;
+                    }
+                }
+            }
+        }
+
+        let vertices: Vec<Vertex> = vertices
+            .iter()
+            .map(|&vert| Vertex {
+                position: vert.into(),
+                color: DEFAULT_COLOR.into(),
+                joints: [0; 4],
+                weights: [0.0; 4].into(),
+            })
+            .collect();
+
+        let indices = (1..vertices.len() as u16 - 1)
+            .flat_map(|idx| [0, idx, idx + 1])
+            .collect();
+
+        Self {
+            primitives: vec![MeshPrimitive { vertices, indices }],
+            ..Self::default()
+        }
     }
 
     /// Set the offset of the mesh from the pose it's attached to.
@@ -51,15 +222,24 @@ impl Mesh {
         self
     }
 
+    /// Add a debug label to the mesh.
+    #[inline]
+    pub fn with_label(mut self, label: String) -> Self {
+        self.label = Some(label);
+        self
+    }
+
     /// Overwrite the color of every vertex with a new one.
-    /// Does not do anything on skinned meshes.
     #[inline]
     pub fn with_color(mut self, color: [f32; 4]) -> Self {
-        if let MeshKind::SimpleBatched(b) = &mut self.kind {
-            for vert in &mut b.vertices {
+        let color = gx::util::GpuVec4::from(color);
+        for prim in &mut self.primitives {
+            for vert in &mut prim.vertices {
                 vert.color = color;
             }
         }
+        // re-upload the resources next draw if they were already uploaded before
+        self.gpu_resources = None;
         self
     }
 
@@ -70,71 +250,420 @@ impl Mesh {
         self.has_outline = false;
         self
     }
-}
 
-impl From<BatchedMesh> for Mesh {
-    fn from(m: BatchedMesh) -> Self {
-        Self {
-            offset: m::Pose::identity(),
-            has_outline: true,
-            kind: MeshKind::SimpleBatched(m),
-        }
+    /// Create the needed buffers and push the mesh data to the GPU.
+    pub fn upload(&mut self, mesh_rend: &MeshRenderer, device: &wgpu::Device) {
+        let primitives = self
+            .primitives
+            .iter()
+            .map(|prim| {
+                use wgpu::util::DeviceExt;
+                let vert_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: self.label.as_deref(),
+                    contents: prim.vertices.as_bytes(),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                let idx_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: self.label.as_deref(),
+                    contents: prim.indices.as_bytes(),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+                GpuMeshPrimitive {
+                    vert_buf,
+                    idx_buf,
+                    idx_count: prim.indices.len() as u32,
+                }
+            })
+            .collect();
+
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: std::mem::size_of::<MeshUniforms>() as _,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            label: Some("skinned mesh uniforms"),
+            mapped_at_creation: false,
+        });
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &mesh_rend.unif_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buf.as_entire_binding(),
+            }],
+            label: Some("skinned mesh uniforms"),
+        });
+
+        self.gpu_resources = Some(GpuMeshResources {
+            primitives,
+            uniform_buf,
+            uniform_bind_group,
+        });
     }
 }
 
-impl From<SkinnedMesh> for Mesh {
-    fn from(m: SkinnedMesh) -> Self {
+type Color = [f32; 4];
+const DEFAULT_COLOR: Color = [1.0; 4];
+
+impl From<ConvexMeshShape> for Mesh {
+    fn from(shape: ConvexMeshShape) -> Self {
+        let vertices: Vec<Vertex> = match shape {
+            ConvexMeshShape::Circle { r, points } => {
+                let angle_incr = 2.0 * std::f64::consts::PI / points as f64;
+                (0..points)
+                    .map(|i| {
+                        let angle = angle_incr * i as f64;
+                        m::Vec2::new(r * angle.cos(), r * angle.sin())
+                    })
+                    .map(|vert| Vertex {
+                        position: vert.into(),
+                        color: DEFAULT_COLOR.into(),
+                        joints: [0; 4],
+                        weights: [0.0; 4].into(),
+                    })
+                    .collect()
+            }
+            ConvexMeshShape::Rect { w, h } => {
+                let hw = 0.5 * w;
+                let hh = 0.5 * h;
+                [
+                    m::Vec2::new(hw, hh),
+                    m::Vec2::new(-hw, hh),
+                    m::Vec2::new(-hw, -hh),
+                    m::Vec2::new(hw, -hh),
+                ]
+                .into_iter()
+                .map(|vert| Vertex {
+                    position: vert.into(),
+                    color: DEFAULT_COLOR.into(),
+                    joints: [0; 4],
+                    weights: [0.0; 4].into(),
+                })
+                .collect()
+            }
+            ConvexMeshShape::Capsule {
+                hl,
+                r,
+                points_per_cap,
+            } => {
+                let angle_incr = std::f64::consts::PI / points_per_cap as f64;
+                (0..=points_per_cap)
+                    .map(|i| {
+                        let angle = angle_incr * i as f64;
+                        m::Vec2::new(r * angle.sin() + hl, r * angle.cos())
+                    })
+                    .chain((points_per_cap..=2 * points_per_cap).map(|i| {
+                        let angle = angle_incr * i as f64;
+                        m::Vec2::new(r * angle.sin() - hl, r * angle.cos())
+                    }))
+                    .map(|vert| Vertex {
+                        position: vert.into(),
+                        color: DEFAULT_COLOR.into(),
+                        joints: [0; 4],
+                        weights: [0.0; 4].into(),
+                    })
+                    .collect()
+            }
+        };
+
+        let indices = (1..vertices.len() as u16 - 1)
+            .flat_map(|idx| [0, idx, idx + 1])
+            .collect();
+
         Self {
-            offset: m::Pose::identity(),
-            has_outline: true,
-            kind: MeshKind::Skinned(Box::new(m)),
+            primitives: vec![MeshPrimitive { vertices, indices }],
+            ..Self::default()
         }
     }
 }
 
 impl From<phys::Collider> for Mesh {
     fn from(coll: phys::Collider) -> Self {
-        BatchedMesh::from(coll).into()
+        Self::from_collider_shape(&coll.shape, 0.1).with_offset(coll.offset)
     }
 }
 
-impl From<ConvexMeshShape> for Mesh {
-    fn from(shape: ConvexMeshShape) -> Self {
-        BatchedMesh::from(shape).into()
-    }
+//
+// renderer
+//
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
+struct MeshUniforms {
+    model_view: gx::util::GpuMat3,
+    _pad: [u32; 3],
+    /// offset into the global joint matrix buffer
+    joint_offset: u32,
 }
 
-/// Renderer that can draw any kind of mesh, skinned or not.
 pub struct MeshRenderer {
-    batched: batched::Renderer,
-    skinned: skinned::Renderer,
+    pipeline: wgpu::RenderPipeline,
+    joints_bind_group: wgpu::BindGroup,
+    joints_bind_group_layout: wgpu::BindGroupLayout,
+    unif_bind_group_layout: wgpu::BindGroupLayout,
+    // joint storage which grows if needed.
+    // not using util::DynamicBuffer because we also need to update a bind group
+    // whenever this is reallocated
+    joint_storage: wgpu::Buffer,
+    joint_capacity: usize,
 }
-
 impl MeshRenderer {
     pub fn new(rend: &gx::Renderer) -> Self {
+        // shaders
+
+        let shader = rend
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("mesh"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                    "./shaders/mesh.wgsl"
+                ))),
+            });
+
+        //
+        // bind groups & buffers
+        //
+
+        // joints
+
+        let joint_storage = rend.device.create_buffer(&wgpu::BufferDescriptor {
+            size: std::mem::size_of::<gx::util::GpuMat4>() as _,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            label: Some("mesh joints"),
+            mapped_at_creation: false,
+        });
+
+        use std::mem::size_of;
+
+        let joints_bind_group_layout =
+            rend.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        // storage buffer for joint matrices
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    size_of::<gx::util::GpuMat4>() as _,
+                                ),
+                            },
+                            count: None,
+                        },
+                    ],
+                    label: Some("skinned mesh joints"),
+                });
+        let joints_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &joints_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: joint_storage.as_entire_binding(),
+            }],
+            label: Some("mesh joints"),
+        });
+
+        // layout for per-mesh uniforms, actual bind groups are made later
+
+        let unif_bind_group_layout =
+            rend.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    entries: &[
+                        // mesh uniforms
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    size_of::<MeshUniforms>() as _
+                                ),
+                            },
+                            count: None,
+                        },
+                    ],
+                    label: Some("skinned mesh uniforms"),
+                });
+
+        // vertices
+
+        let vertex_buffers = [wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                // position is 3D for meshes with depth
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                // color
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: std::mem::size_of::<gx::util::GpuVec3>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                },
+                // joints
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Uint16x4,
+                    offset: std::mem::size_of::<(gx::util::GpuVec3, gx::util::GpuVec4)>()
+                        as wgpu::BufferAddress,
+                    shader_location: 2,
+                },
+                // weights
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: std::mem::size_of::<(gx::util::GpuVec3, [u16; 4], gx::util::GpuVec4)>()
+                        as wgpu::BufferAddress,
+                    shader_location: 3,
+                },
+            ],
+        }];
+
+        //
+        // pipeline
+        //
+
+        let pipeline_layout = rend
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("mesh"),
+                bind_group_layouts: &[&joints_bind_group_layout, &unif_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let pipeline = rend
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &vertex_buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(rend.swapchain_format().into())],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(gx::DepthBuffer::default_depth_stencil_state()),
+                multisample: rend.multisample_state(),
+                multiview: None,
+            });
+
         Self {
-            batched: batched::Renderer::new(rend),
-            skinned: skinned::Renderer::new(rend),
+            pipeline,
+            joints_bind_group,
+            joints_bind_group_layout,
+            unif_bind_group_layout,
+            joint_storage,
+            joint_capacity: 0,
         }
     }
 
-    /// Draw all meshes to the screen.
+    /// Draw all the meshes in the world.
     pub fn draw(
         &mut self,
         camera: &gx::Camera,
         ctx: &mut gx::RenderContext,
         (mut l_mesh, l_skin, l_pose): (
-            graph::LayerViewMut<Mesh>,
+            graph::LayerViewMut<super::Mesh>,
             graph::LayerView<Skin>,
             graph::LayerView<m::Pose>,
         ),
     ) {
-        self.batched
-            .draw(camera, ctx, (l_mesh.subview(), l_pose.subview()));
-        self.skinned.draw(
-            camera,
-            ctx,
-            (l_mesh.subview_mut(), l_skin.subview(), l_pose.subview()),
-        );
+        // collect all joint matrices in the world,
+        // we'll shove them all in the storage buffer in one go.
+        // make sure the iteration order is the same as when rendering
+        // so that each mesh gets the correct offset into the array
+        let mut joint_matrices: Vec<gx::util::GpuMat4> = l_mesh
+            .iter()
+            .filter_map(|mesh| mesh.get_neighbor(&l_skin))
+            .flat_map(|skin| skin.c.joints.iter())
+            .map(|joint| gx::util::GpuMat4::from(joint.joint_matrix))
+            .collect();
+
+        // empty bindings not allowed by vulkan,
+        // put in one dummy matrix to pass validation
+        if joint_matrices.is_empty() {
+            joint_matrices.push(uv::Mat4::identity().into());
+        }
+
+        // resize joint buffer if needed
+        if joint_matrices.len() > self.joint_capacity {
+            self.joint_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("skinned mesh joints"),
+                size: (std::mem::size_of::<gx::util::GpuMat4>() * joint_matrices.len()) as _,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.joints_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.joints_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.joint_storage.as_entire_binding(),
+                }],
+                label: Some("skinned mesh joints"),
+            });
+        }
+
+        ctx.queue
+            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
+
+        // render the meshes
+
+        let view = camera.view_matrix(ctx.target_size);
+
+        let mut pass = ctx.encoder.pass(&ctx.target, Some("skinned meshes"));
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.joints_bind_group, &[]);
+
+        // joint buffer is shared between all meshes; mesh's offset into it
+        let mut joint_offset = 0_u32;
+        for mesh in l_mesh.iter_mut() {
+            let pose = mesh
+                .get_neighbor(&l_pose)
+                .map(|p| *p.c)
+                .unwrap_or_else(m::Pose::identity);
+            let skin = mesh.get_neighbor(&l_skin);
+
+            // mesh uniforms
+            // initialize the per-mesh GPU resources on first render
+            if mesh.c.gpu_resources.is_none() {
+                mesh.c.upload(self, ctx.device);
+            }
+            // now mesh.c.gpu_resources has been created for sure
+            let gpu_res = mesh.c.gpu_resources.as_ref().unwrap();
+
+            let uniforms = MeshUniforms {
+                model_view: (view * (pose * mesh.c.offset).into_homogeneous_matrix()).into(),
+                _pad: [0; 3],
+                joint_offset,
+            };
+
+            ctx.queue
+                .write_buffer(&gpu_res.uniform_buf, 0, uniforms.as_bytes());
+
+            // render
+
+            // stencil for outline rendering
+            pass.set_stencil_reference(if mesh.c.has_outline { 1 } else { 0 });
+
+            for prim in &gpu_res.primitives {
+                pass.set_bind_group(1, &gpu_res.uniform_bind_group, &[]);
+                pass.set_vertex_buffer(0, prim.vert_buf.slice(..));
+                pass.set_index_buffer(prim.idx_buf.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(0..prim.idx_count, 0, 0..1);
+            }
+
+            if let Some(skin) = skin {
+                joint_offset += skin.c.joints.len() as u32;
+            }
+        }
     }
 }

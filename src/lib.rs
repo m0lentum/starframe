@@ -20,7 +20,7 @@ pub mod graphics;
 pub use graphics::mesh::gltf_import;
 pub use graphics::{
     camera::{Camera, CameraScalingStrategy, MouseDragCameraController},
-    mesh::{BatchedMesh, ConvexMeshShape, Mesh, MeshRenderer, Skin, SkinnedMesh},
+    mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin},
     DebugVisualizer, OutlineParams, OutlineRenderer, OutlineShape, RenderContext, Renderer,
 };
 

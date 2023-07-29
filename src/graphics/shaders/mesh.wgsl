@@ -28,18 +28,24 @@ fn vs_main(
 
     out.color = color;
 
-    // skin
+    // skin if the vertex has any weights,
+    // otherwise just use the model matrix
 
-    let j0 = unif.joint_offset + (joints[0] & 0xFFFFu);
-    let j1 = unif.joint_offset + (joints[0] >> 16u);
-    let j2 = unif.joint_offset + (joints[1] & 0xFFFFu);
-    let j3 = unif.joint_offset + (joints[1] >> 16u);
-    let skin_mat: mat4x4<f32> =
-	weights.x * joint_mats[j0]
-	+ weights.y * joint_mats[j1]
-	+ weights.z * joint_mats[j2]
-	+ weights.w * joint_mats[j3];
-    let skinned: vec4<f32> = skin_mat * vec4<f32>(position, 1.0);
+    var skinned: vec4<f32>;
+    if weights.x != 0.0 || weights.y != 0.0 || weights.z != 0.0 || weights.w != 0.0 {
+	let j0 = unif.joint_offset + (joints[0] & 0xFFFFu);
+	let j1 = unif.joint_offset + (joints[0] >> 16u);
+	let j2 = unif.joint_offset + (joints[1] & 0xFFFFu);
+	let j3 = unif.joint_offset + (joints[1] >> 16u);
+	let skin_mat: mat4x4<f32> =
+	    weights.x * joint_mats[j0]
+	    + weights.y * joint_mats[j1]
+	    + weights.z * joint_mats[j2]
+	    + weights.w * joint_mats[j3];
+	skinned = skin_mat * vec4<f32>(position, 1.0);
+    } else {
+	skinned = vec4<f32>(position, 1.0);
+    }
     
     // view transform
 

@@ -41,9 +41,7 @@ impl DebugVisualizer {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("debug"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "shaders/mesh_batched.wgsl"
-                ))),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/debug.wgsl"))),
             });
 
         let uniform_buf_size = std::mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;

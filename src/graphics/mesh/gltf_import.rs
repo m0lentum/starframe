@@ -4,133 +4,65 @@
 
 use crate::{
     animation::{self as anim, gltf_animation as g_anim},
-    graphics::{
-        self as gx,
-        mesh::{skin, skinned},
-    },
-    math::{self as m, uv},
+    graphics::mesh::skin,
+    math::uv,
 };
-
-use zerocopy::AsBytes;
 
 // TODO: add proper errors instead of using expect and unimplemented
 
 /// Load the vertices of a mesh from a glTF document.
-pub fn load_mesh(rend: &gx::Renderer, doc: &gltf::Document, buffers: &[&[u8]]) -> super::Mesh {
+pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::MeshPrimitive> {
     // helper for constructing gltf readers
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
     // TODO: support multiple meshes in one document,
     // also probably don't panic if format isn't supported
     let mesh = doc.meshes().next().expect("No meshes in gltf document");
-
-    //
-    // if mesh isn't skinned, return a simple batched mesh
-    //
-
-    if doc.skins().next().is_none() {
-        let mut vertices: Vec<super::batched::StoredVertex> = Vec::new();
-        let mut indices: Vec<u16> = Vec::new();
-        for prim in mesh.primitives() {
+    mesh.primitives()
+        .map(|prim| {
             let reader = prim.reader(read_buf);
 
-            vertices.extend(
-                itertools::izip!(
-                    reader
-                        .read_positions()
-                        .expect("glTF mesh must have vertices"),
-                    reader
-                        .read_colors(0)
-                        .expect("only glTF meshes with vertex colors are supported")
-                        .into_rgba_f32(),
-                )
-                .map(|(pos, color)| super::batched::StoredVertex {
-                    position: m::Vec2::new(pos[0] as f64, pos[1] as f64),
-                    color,
-                }),
-            );
-
-            indices.extend(
-                reader
-                    .read_indices()
-                    .expect("only glTF meshes with indices are supported")
-                    .into_u32()
-                    .map(|i| u16::try_from(i).expect("too many indices to fit into u16")),
-            );
-        }
-        return super::batched::BatchedMesh { vertices, indices }.into();
-    }
-
-    //
-    // mesh primitives
-    //
-
-    let mut primitives = Vec::new();
-
-    for prim in mesh.primitives() {
-        let reader = prim.reader(read_buf);
-
-        let vertices: Vec<skinned::Vertex> = itertools::izip!(
-            reader
+            let positions = reader
                 .read_positions()
-                .expect("glTF mesh must have vertices"),
-            reader
+                .expect("glTF mesh must have vertices");
+            let colors = reader
                 .read_colors(0)
                 .expect("only glTF meshes with vertex colors are supported")
-                .into_rgba_f32(),
-            reader
-                .read_joints(0)
-                .expect("if mesh has a skin, it must have joints")
-                .into_u16(),
-            reader
-                .read_weights(0)
-                .expect("if mesh has a skin, it must have weights")
-                .into_f32(),
-        )
-        .map(|(pos, col, joints, weights)| skinned::Vertex {
-            position: pos.into(),
-            color: col.into(),
-            joints,
-            weights: weights.into(),
+                .into_rgba_f32();
+            let joints = reader.read_joints(0);
+            let weights = reader.read_weights(0);
+
+            let vertices: Vec<super::Vertex> = match (joints, weights) {
+                (Some(joints), Some(weights)) => {
+                    itertools::izip!(positions, colors, joints.into_u16(), weights.into_f32())
+                        .map(|(pos, col, joints, weights)| super::Vertex {
+                            position: pos.into(),
+                            color: col.into(),
+                            joints,
+                            weights: weights.into(),
+                        })
+                        .collect()
+                }
+                _ => itertools::izip!(positions, colors)
+                    .map(|(pos, col)| super::Vertex {
+                        position: pos.into(),
+                        color: col.into(),
+                        joints: [0; 4],
+                        weights: [0.0; 4].into(),
+                    })
+                    .collect(),
+            };
+
+            let indices: Vec<u16> = reader
+                .read_indices()
+                .expect("only glTF meshes with indices are supported")
+                .into_u32()
+                .map(|i| u16::try_from(i).expect("too many indices to fit into u16"))
+                .collect();
+
+            super::MeshPrimitive { vertices, indices }
         })
-        .collect();
-
-        let indices: Vec<u16> = reader
-            .read_indices()
-            .expect("only glTF meshes with indices are supported")
-            .into_u32()
-            .map(|i| u16::try_from(i).expect("too many indices to fit into u16"))
-            .collect();
-        let idx_count = indices.len() as u32;
-
-        use wgpu::util::DeviceExt;
-        let vert_buf = rend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: mesh.name(),
-                contents: vertices.as_bytes(),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-        let idx_buf = rend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: mesh.name(),
-                contents: indices.as_bytes(),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-
-        primitives.push(skinned::MeshPrimitive {
-            vert_buf,
-            idx_buf,
-            idx_count,
-        });
-    }
-
-    skinned::SkinnedMesh {
-        primitives,
-        uniforms: None,
-    }
-    .into()
+        .collect()
 }
 
 /// Load a skin from a glTF document.
