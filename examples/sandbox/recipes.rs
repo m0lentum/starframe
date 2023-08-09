@@ -146,7 +146,7 @@ struct Solid<'a> {
 
 fn spawn_static(solid: Solid, mut l: Layers) {
     for coll in solid.colliders {
-        let mut pose_node = l.pose.insert(solid.pose * coll.offset);
+        let mut pose_node = l.pose.insert(solid.pose * coll.pose);
         let mut coll_node = l.collider.insert(*coll);
         let mut mesh_node = l.mesh.insert(sf::Mesh::from(*coll).with_color(solid.color));
         pose_node.connect(&mut coll_node);
@@ -167,7 +167,7 @@ fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<sf::Body> {
     pose_node.connect(&mut body_node);
 
     for mut coll in solid.colliders.iter().cloned() {
-        coll.offset.translation -= center_of_mass;
+        coll.pose.translation -= center_of_mass;
         let mut coll_node = l.collider.insert(coll);
         let mut mesh_node = l.mesh.insert(sf::Mesh::from(coll).with_color(solid.color));
         pose_node.connect(&mut mesh_node);
@@ -179,7 +179,7 @@ fn spawn_body(solid: Solid, mut l: Layers) -> sf::graph::NodeKey<sf::Body> {
 }
 
 impl Recipe {
-    pub fn spawn(&self, physics: &mut sf::Physics, graph: &sf::Graph) {
+    pub fn spawn(&self, physics: &mut sf::PhysicsWorld, graph: &sf::Graph) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(graph.get_layer_bundle()),
             Recipe::Block(block) => {

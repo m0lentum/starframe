@@ -1,8 +1,13 @@
 //! A Bounding Volume Hierarchy implementation
 //! for speeding up collision detection and other spatial queries.
 
-use super::{query::ray_aabb, Collider, Ray, AABB};
-use crate::{graph, math as m};
+use crate::{
+    math as m,
+    physics::{
+        collision::{query::ray_aabb, Ray, AABB},
+        ColliderKey,
+    },
+};
 
 use std::collections::BinaryHeap;
 
@@ -19,7 +24,7 @@ struct Node {
 #[derive(Clone, Copy, Debug)]
 enum NodeKind {
     Branch { left: usize, right: usize },
-    Leaf { coll_key: graph::NodeKey<Collider> },
+    Leaf { coll_key: ColliderKey },
 }
 
 /// A "call stack" for efficient recursion through the tree.
@@ -96,7 +101,7 @@ impl Bvh {
         self.nodes.clear();
     }
 
-    pub fn insert(&mut self, coll_key: graph::NodeKey<Collider>, aabb: AABB) {
+    pub fn insert(&mut self, coll_key: ColliderKey, aabb: AABB) {
         let new_node = Node {
             aabb,
             kind: NodeKind::Leaf { coll_key },
@@ -287,7 +292,7 @@ pub struct AABBIter<'a> {
 }
 
 impl<'a> Iterator for AABBIter<'a> {
-    type Item = graph::NodeKey<Collider>;
+    type Item = ColliderKey;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -343,7 +348,7 @@ pub struct PointIter<'a> {
 }
 
 impl<'a> Iterator for PointIter<'a> {
-    type Item = graph::NodeKey<Collider>;
+    type Item = ColliderKey;
 
     fn next(&mut self) -> Option<Self::Item> {
         // exact same thing as above but with a point instead of aabb
@@ -402,7 +407,7 @@ pub struct AABBSweep<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct SweepItem {
     pub t: f64,
-    pub coll_key: graph::NodeKey<Collider>,
+    pub coll_key: ColliderKey,
 }
 
 impl<'a> Iterator for AABBSweep<'a> {

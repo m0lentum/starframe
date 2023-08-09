@@ -90,7 +90,7 @@ impl PlayerController {
         }
     }
 
-    pub fn tick(&mut self, input: &sf::Input, physics: &sf::Physics, graph: &mut sf::Graph) {
+    pub fn tick(&mut self, input: &sf::Input, physics: &sf::PhysicsWorld, graph: &mut sf::Graph) {
         let mut l = graph.get_layer_bundle::<PlayerLayers>();
 
         let move_axis = input.axis(sf::AxisQuery {

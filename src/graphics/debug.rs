@@ -158,7 +158,7 @@ impl DebugVisualizer {
     pub fn draw_bvh(
         &mut self,
         depth_to_draw: usize,
-        phys: &crate::Physics,
+        phys: &crate::PhysicsWorld,
         camera: &Camera,
         ctx: &mut super::RenderContext,
     ) {
@@ -212,7 +212,7 @@ impl DebugVisualizer {
 
     pub fn draw_islands(
         &mut self,
-        phys: &crate::Physics,
+        phys: &crate::PhysicsWorld,
         camera: &Camera,
         ctx: &mut super::RenderContext,
         (l_pose, l_body, l_coll): (LayerView<m::Pose>, LayerView<Body>, LayerView<Collider>),

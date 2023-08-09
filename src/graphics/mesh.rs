@@ -376,7 +376,7 @@ impl From<ConvexMeshShape> for Mesh {
 
 impl From<phys::Collider> for Mesh {
     fn from(coll: phys::Collider) -> Self {
-        Self::from_collider_shape(&coll.shape, 0.1).with_offset(coll.offset)
+        Self::from_collider_shape(&coll.shape, 0.1).with_offset(coll.pose)
     }
 }
 

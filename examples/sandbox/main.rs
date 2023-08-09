@@ -48,7 +48,7 @@ pub struct State {
     // gameplay
     player: player::PlayerController,
     mouse_grabber: MouseGrabber,
-    physics: sf::Physics,
+    physics: sf::PhysicsWorld,
     // graphics
     camera: sf::Camera,
     camera_ctl: sf::MouseDragCameraController,
@@ -87,7 +87,7 @@ impl State {
             },
             player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
-            physics: sf::Physics::new(
+            physics: sf::PhysicsWorld::new(
                 sf::physics::TuningConstants::default(),
                 sf::CollisionMaskMatrix::default(),
             ),
@@ -183,7 +183,7 @@ impl Scene {
         <Self as serde::Deserialize>::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, physics: &mut sf::Physics, graph: &sf::Graph) {
+    pub fn instantiate(&self, physics: &mut sf::PhysicsWorld, graph: &sf::Graph) {
         for recipe in &self.recipes {
             recipe.spawn(physics, graph);
         }

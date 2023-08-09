@@ -2,7 +2,7 @@ use starframe as sf;
 
 #[derive(Clone, Copy, Debug)]
 pub struct MouseGrabber {
-    constraint: Option<sf::ConstraintHandle>,
+    constraint: Option<sf::ConstraintKey>,
 }
 
 impl MouseGrabber {
@@ -14,7 +14,7 @@ impl MouseGrabber {
         &mut self,
         input: &sf::Input,
         camera: &sf::Camera,
-        physics: &mut sf::Physics,
+        physics: &mut sf::PhysicsWorld,
         graph: &sf::Graph,
     ) {
         if input.button(sf::ButtonQuery::mouse(sf::MouseButton::Left).held()) {

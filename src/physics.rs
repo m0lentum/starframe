@@ -1,13 +1,10 @@
 use itertools::izip;
-use slotmap as sm;
+use thunderdome as td;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::{
-    graph::{self, named_layer_bundle},
-    math as m,
-};
+use crate::math as m;
 
 //
 
@@ -29,11 +26,14 @@ pub use body::{Body, ColliderInfo, Mass};
 
 pub mod rope;
 
+mod component_graph;
+use component_graph::ComponentGraph;
+pub use component_graph::{BodyKey, ColliderKey};
+
 mod constraint_graph;
 use constraint_graph::*;
 
 mod solver;
-use solver::ColliderContext;
 
 //
 // public types
@@ -106,14 +106,10 @@ impl std::ops::Mul<f64> for Velocity {
     }
 }
 
-sm::new_key_type! {
-    pub struct ConstraintHandle;
-}
-
 /// Pertinent information about a contact between two colliders.
 #[derive(Clone, Copy, Debug)]
 pub struct ContactInfo {
-    pub colliders: [graph::NodeKey<Collider>; 2],
+    pub entities: [hecs::Entity; 2],
     pub normal: m::Unit<m::Vec2>,
     // island id stored to allow retaining of sleeping contacts
     island_id: IslandId,
@@ -121,7 +117,7 @@ pub struct ContactInfo {
 impl ContactInfo {
     pub(self) fn flip(self) -> Self {
         Self {
-            colliders: [self.colliders[1], self.colliders[0]],
+            entities: [self.entities[1], self.entities[0]],
             normal: -self.normal,
             island_id: self.island_id,
         }
@@ -131,10 +127,8 @@ impl ContactInfo {
 /// Result of a [`raycast`][self::Physics::raycast] or [`spherecast`][self::Physics::spherecast].
 #[derive(Clone, Copy, Debug)]
 pub struct CastHit {
-    /// A key to the collider that was hit.
-    ///
-    /// Given as a key to avoid lifetime problems with graph layers.
-    pub collider: graph::NodeKey<Collider>,
+    /// The entity containing the collider that was hit.
+    pub collider: hecs::Entity,
     /// The point in world space where the ray or swept shape intersected the collider.
     ///
     /// This is always a point on the hit collider's surface.
@@ -222,9 +216,9 @@ struct WorkingBuffers {
     user_constraints: Vec<Constraint>,
     sorted_constraints: Vec<Constraint>,
     sorted_rope_views: Vec<solver::RopeView>,
-    sorted_coll_pairs: Vec<[solver::ColliderWithContext; 2]>,
+    sorted_coll_pairs: Vec<[ColliderKey; 2]>,
 
-    node_ref_map: Vec<usize>,
+    body_order: Vec<usize>,
     rope_next_particles: Vec<Option<usize>>,
     rope_prev_particles: Vec<Option<usize>>,
     rope_lateral_corrections: Vec<Option<m::Vec2>>,
@@ -237,8 +231,7 @@ struct WorkingBuffers {
     ext_f_accelerations: Vec<m::Vec2>,
 
     constraint_body_pairs: Vec<(usize, Option<usize>)>,
-    colliders: Vec<solver::ColliderWithContext>,
-    coll_pair_idxs: Vec<[usize; 2]>,
+    coll_pair_keys: Vec<[ColliderKey; 2]>,
     contacts: Vec<ContactResult>,
     last_contacts: Vec<ContactResult>,
     contact_lambdas: Vec<f64>,
@@ -279,7 +272,7 @@ impl WorkingBuffers {
             sorted_rope_views: Vec::new(),
             sorted_coll_pairs: Vec::new(),
 
-            node_ref_map: Vec::new(),
+            body_order: Vec::new(),
             rope_next_particles: Vec::new(),
             rope_prev_particles: Vec::new(),
             rope_lateral_corrections: Vec::new(),
@@ -293,13 +286,16 @@ impl WorkingBuffers {
 
             constraint_body_pairs: Vec::new(),
             colliders: Vec::new(),
-            coll_pair_idxs: Vec::new(),
+            coll_pair_keys: Vec::new(),
             contacts: Vec::new(),
             last_contacts: Vec::new(),
             contact_lambdas: Vec::new(),
         }
     }
 }
+
+/// Key type to look up a constraint stored in the physics world.
+pub struct ConstraintKey(td::Index);
 
 //
 // physics proper
@@ -348,33 +344,26 @@ impl Default for TuningConstants {
     }
 }
 
-pub struct Physics {
+pub struct PhysicsWorld {
     pub consts: TuningConstants,
     pub mask_matrix: collision::CollisionMaskMatrix,
-    user_constraints: sm::DenseSlotMap<ConstraintHandle, Constraint>,
+    user_constraints: td::Arena<Constraint>,
     pub(crate) bvh: Bvh,
+    component_graph: ComponentGraph,
     constraint_graph: ConstraintGraph,
     sleeping_islands: Vec<SleepingIsland>,
     working_bufs: WorkingBuffers,
     contacts: Vec<ContactInfo>,
 }
 
-named_layer_bundle! {
-    pub struct TickLayers<'a> {
-        pose: w m::Pose,
-        body: w Body,
-        collider: r Collider,
-        rope: r rope::Rope,
-    }
-}
-
-impl Physics {
+impl PhysicsWorld {
     pub fn new(consts: TuningConstants, mask_matrix: collision::CollisionMaskMatrix) -> Self {
-        Physics {
+        PhysicsWorld {
             consts,
             mask_matrix,
-            user_constraints: sm::DenseSlotMap::with_key(),
+            user_constraints: td::Arena::new(),
             bvh: Bvh::new(),
+            component_graph: ComponentGraph::new(),
             constraint_graph: ConstraintGraph {
                 first_nodes_per_body: Vec::new(),
                 last_nodes_per_body: Vec::new(),
@@ -386,22 +375,23 @@ impl Physics {
         }
     }
 
-    /// Add a user-defined constraint to the system. Returns a handle that can be used to remove it later.
+    /// Add a user-defined constraint to the system.
+    /// Returns a key that can be used to remove it later.
     #[inline]
-    pub fn add_constraint(&mut self, constraint: Constraint) -> ConstraintHandle {
-        self.user_constraints.insert(constraint)
+    pub fn add_constraint(&mut self, constraint: Constraint) -> ConstraintKey {
+        ConstraintKey(self.user_constraints.insert(constraint))
     }
 
-    /// Access a constraint if it still exists.
+    /// Access a constraint, if it still exists.
     #[inline]
-    pub fn get_constraint(&self, handle: ConstraintHandle) -> Option<&Constraint> {
-        self.user_constraints.get(handle)
+    pub fn get_constraint(&self, key: ConstraintKey) -> Option<&Constraint> {
+        self.user_constraints.get(key.0)
     }
 
-    /// Mutably access a constraint if it still exists.
+    /// Mutably access a constraint, if it still exists.
     #[inline]
-    pub fn get_constraint_mut(&mut self, handle: ConstraintHandle) -> Option<&mut Constraint> {
-        self.user_constraints.get_mut(handle)
+    pub fn get_constraint_mut(&mut self, key: ConstraintKey) -> Option<&mut Constraint> {
+        self.user_constraints.get_mut(key.0)
     }
 
     /// Remove a constraint from the system. Returns the constraint if it still existed.
@@ -410,8 +400,44 @@ impl Physics {
     /// are destroyed, so it's not guaranteed the constraint will exist
     /// even if it hasn't been explicitly removed before.
     #[inline]
-    pub fn remove_constraint(&mut self, handle: ConstraintHandle) -> Option<Constraint> {
-        self.user_constraints.remove(handle)
+    pub fn remove_constraint(&mut self, key: ConstraintKey) -> Option<Constraint> {
+        self.user_constraints.remove(key.0)
+    }
+
+    /// Insert a dynamic body into the world.
+    #[inline]
+    pub fn insert_body(&mut self, body: Body) -> BodyKey {
+        self.component_graph.insert_body(body.0)
+    }
+
+    /// Access a [`Body`][self::Body] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_body(&self, body: BodyKey) -> Option<&Body> {
+        self.component_graph.bodies.get(body.0)
+    }
+
+    /// Mutably access a [`Body`][self::Body] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_body_mut(&mut self, body: BodyKey) -> Option<&mut Body> {
+        self.component_graph.bodies.get_mut(body.0)
+    }
+
+    /// Attach a collider to a dynamic body.
+    #[inline]
+    pub fn attach_collider(&mut self, body: BodyKey, coll: Collider) -> ColliderKey {
+        self.component_graph.attach_collider(body, coll)
+    }
+
+    /// Access a [`Collider`][self::Collider] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_collider(&self, coll: ColliderKey) -> Option<&Collider> {
+        self.component_graph.colliders.get(coll)
+    }
+
+    /// Mutably access a [`Collider`][self::Collider] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_collider_mut(&self, coll: ColliderKey) -> Option<&mut Collider> {
+        self.component_graph.colliders.get_mut(coll)
     }
 
     /// Remove all constraints and reset internal state.
@@ -422,18 +448,9 @@ impl Physics {
         self.contacts.clear();
     }
 
-    /// Detect collisions, solve constraint forces and move bodies.
-    pub fn tick(
-        &mut self,
-        frame_dt: f64,
-        time_scale: Option<f64>,
-        forcefield: &impl ForceField,
-        mut l: TickLayers,
-    ) {
+    /// Advance the simulation forward by `frame_dt` seconds.
+    pub fn tick(&mut self, frame_dt: f64, time_scale: Option<f64>, forcefield: &impl ForceField) {
         let _main_span = tracy_client::span!("physics tick");
-
-        let l_pose_sub = l.pose.subview();
-        let l_body_sub = l.body.subview();
 
         // time scaling is done by adjusting both dt and actual substep count executed.
         // trying to keep dt as close to constant as possible to avoid any nasty inconsistencies
@@ -457,9 +474,9 @@ impl Physics {
 
         // remove constraints where one or both participating bodies have been destroyed
         self.user_constraints.retain(|_, c| {
-            l_body_sub.get(c.owner).is_some()
+            self.component_graph.bodies.get(c.owner).is_some()
                 && c.target
-                    .map(|t| l_body_sub.get(t).is_some())
+                    .map(|t| self.component_graph.bodies.get(t).is_some())
                     .unwrap_or(true)
         });
         bufs.user_constraints.clear();
@@ -476,38 +493,44 @@ impl Physics {
         let max_expected_accel_over_frame = self.consts.max_expected_acceleration * frame_dt;
 
         self.bvh.clear();
-        bufs.coll_pair_idxs.clear();
+        bufs.coll_pair_keys.clear();
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
-        for coll in l.collider.iter() {
-            let pose = coll
-                .get_neighbor(&l_pose_sub)
-                .expect("A Collider didn't have a Pose");
-            let aabb = match coll.get_neighbor(&l_body_sub) {
-                Some(b) => coll
-                    .c
-                    .shape
-                    .aabb(*pose.c * coll.c.offset)
-                    .extended(b.c.velocity.linear * frame_dt)
-                    .padded(max_expected_accel_over_frame),
-                None => coll.c.shape.aabb(*pose.c * coll.c.offset),
+        for (coll_key, coll) in self.component_graph.colliders.iter() {
+            let body = self
+                .component_graph
+                .coll_bodies
+                .get(coll_key)
+                .and_then(|body_key| self.component_graph.bodies.get(body_key.0));
+            let aabb = match body {
+                Some(body) => {
+                    let pose = body.pose * coll.pose;
+                    coll.shape
+                        .aabb(pose)
+                        .extended(body.velocity.linear * frame_dt)
+                        .padded(max_expected_accel_over_frame)
+                }
+                None => coll.shape.aabb(coll.pose),
             };
 
-            let coll_idx = coll.key().idx;
-            bufs.coll_pair_idxs.extend(
+            bufs.coll_pair_keys.extend(
                 self.bvh
                     .test_aabb(aabb)
                     .filter(|other| {
-                        self.mask_matrix
-                            .get(coll.c.layer, l.collider.get_unchecked(*other).c.layer)
+                        self.mask_matrix.get(
+                            coll.layer,
+                            // unwrap is safe here because we rebuild the BVH every frame,
+                            // hence nothing has had the opportunity to be deleted at this point
+                            self.component_graph.colliders.get(*other).unwrap().layer,
+                        )
                     })
-                    .map(move |other| [coll_idx, other.idx]),
+                    .map(move |other| [coll_key, other]),
             );
-            self.bvh.insert(coll.key(), aabb);
+            self.bvh.insert(coll_key, aabb);
         }
 
-        tracy_client::plot!("colliders", l.collider.iter().count() as f64);
-        tracy_client::plot!("collider pairs tested", bufs.coll_pair_idxs.len() as f64);
+        tracy_client::plot!("colliders", self.component_graph.colliders.len() as f64);
+        tracy_client::plot!("collider pairs tested", bufs.coll_pair_keys.len() as f64);
 
         drop(spi_span);
 
@@ -518,7 +541,9 @@ impl Physics {
         let constr_graph_span = tracy_client::span!("build constraint graph");
 
         self.constraint_graph.clear();
-        self.constraint_graph.resize(l_body_sub.components.len());
+        // TODO: instead of capacity, the highest slot index in the arena should be used
+        self.constraint_graph
+            .resize(self.component_graph.bodies.capacity());
 
         // rope constraints
         for rope_node in l.rope.iter() {
@@ -548,12 +573,10 @@ impl Physics {
         }
         // custom constraints
         for (constr_idx, constr) in bufs.user_constraints.iter().enumerate() {
-            let owner = constr.owner.idx;
             match constr.target {
                 Some(target) => {
-                    let target = target.idx;
                     self.constraint_graph.insert(
-                        owner,
+                        constr.owner,
                         Edge::Constraint {
                             body_idx: target,
                             constr_idx,
@@ -562,22 +585,22 @@ impl Physics {
                     self.constraint_graph.insert(
                         target,
                         Edge::Constraint {
-                            body_idx: owner,
+                            body_idx: constr.owner.0.slot(),
                             constr_idx,
                         },
                     );
                 }
                 None => self
                     .constraint_graph
-                    .insert(owner, Edge::StaticConstraint { constr_idx }),
+                    .insert(constr.owner.0.slot(), Edge::StaticConstraint { constr_idx }),
             }
         }
         // potential contacts from spatial index.
         // this doesn't necessarily cull as much as actually checking collisions,
         // but that would require redoing this every substep which would be costly.
-        for (pair_idx, pair) in bufs.coll_pair_idxs.iter().enumerate() {
-            let colls = pair.map(|ci| l.collider.get_unchecked_by_item_idx(ci));
-            match colls.map(|c| c.get_neighbor(&l_body_sub).map(|b| b.key().idx)) {
+        for (pair_idx, pair) in bufs.coll_pair_keys.iter().enumerate() {
+            let colls = pair.map(|ci| self.component_graph.colliders.get(ci).unwrap());
+            match pair.map(|ci| self.component_graph.coll_bodies.get(ci).map(|b| b.0.slot())) {
                 [Some(b1), Some(b2)] => {
                     if b1 == b2 {
                         // both colliders are part of the same compound collider,
@@ -619,7 +642,7 @@ impl Physics {
 
         bufs.island_assigned.clear();
         bufs.island_assigned
-            .resize(l_body_sub.components.len(), false);
+            .resize(self.component_graph.bodies.capacity(), false);
         bufs.islands.clear();
         bufs.sorted_first_pass.clear();
         bufs.sorted_second_pass.clear();
@@ -707,14 +730,13 @@ impl Physics {
             }
         }
 
-        for body in l_body_sub.iter() {
-            let bi = body.key().idx;
-            if bufs.island_assigned[bi] {
+        for (body_key, body) in self.component_graph.bodies.iter() {
+            if bufs.island_assigned[body_key.slot()] {
                 continue;
             }
             let mut island = Island {
                 id: IslandId {
-                    first_body: bi,
+                    first_body: body_key.slot(),
                     edge_sum: 0, // this is incremented during search
                 },
                 can_sleep: true,
@@ -727,7 +749,7 @@ impl Physics {
                 pair_range_start: bufs.sorted_first_pass.coll_pairs.len(),
                 pair_count: 0,
             };
-            search(bi, &mut island, &self.constraint_graph, bufs);
+            search(body_key.slot(), &mut island, &self.constraint_graph, bufs);
             bufs.islands.push(island);
         }
 
@@ -750,12 +772,8 @@ impl Physics {
                     [isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
                     .any(|bi| {
-                        l_body_sub
-                            .get_unchecked_by_item_idx(*bi)
-                            .c
-                            .velocity
-                            .mag_sq()
-                            >= self.consts.sleep_vel_threshold
+                        let body = self.component_graph.bodies.get_by_slot(bi).unwrap().1;
+                        body.velocity.mag_sq() >= self.consts.sleep_vel_threshold
                     })
                 {
                     return true;
@@ -812,23 +830,13 @@ impl Physics {
 
         let buf_span = tracy_client::span!("populate buffers");
 
-        // refs in island order, rest of the buffers based on these
-        //
-        // would be nice to have this as part of workingbuffers to avoid a few allocs
-        // but we can't persist references across frames
-        // and it would take some unsafe shenanigans to hold on to these
-        let body_refs: Vec<graph::NodeRef<Body>> = bufs
-            .sorted_second_pass
-            .bodies
-            .iter()
-            .map(|&bi| l_body_sub.get_unchecked_by_item_idx(bi))
-            .collect();
-        // node_ref_map maps from the position of a node in the graph layer
-        // to the position of a node in body_refs
+        // maps from the slot of a body in the thunderdome arena
+        // to the index of a body in bufs.sorted_second_pass.bodies.
         // we don't need to clear it because gaps will just never be touched
-        bufs.node_ref_map.resize(l_body_sub.components.len(), 0);
-        for (ref_pos, node) in body_refs.iter().enumerate() {
-            bufs.node_ref_map[node.key().idx] = ref_pos;
+        bufs.body_order
+            .resize(self.component_graph.bodies.capacity(), 0);
+        for (sorted_idx, body_slot) in bufs.sorted_second_pass.bodies.iter().enumerate() {
+            bufs.body_order[body_slot] = sorted_idx;
         }
 
         bufs.sorted_rope_views.clear();
@@ -840,7 +848,7 @@ impl Physics {
                     .expect("A Rope didn't have any particles");
                 solver::RopeView {
                     info: *rope_node.c,
-                    start: bufs.node_ref_map[first_particle.key().idx],
+                    start: bufs.body_order[first_particle.key().idx],
                 }
             }));
 
@@ -854,11 +862,13 @@ impl Physics {
 
         // store indices into neighboring particles for rope nodes
         bufs.rope_next_particles.clear();
-        bufs.rope_next_particles.resize(body_refs.len(), None);
+        bufs.rope_next_particles
+            .resize(bufs.sorted_second_pass.bodies.len(), None);
         bufs.rope_prev_particles.clear();
-        bufs.rope_prev_particles.resize(body_refs.len(), None);
+        bufs.rope_prev_particles
+            .resize(bufs.sorted_second_pass.bodies.len(), None);
         for rope_node in l.rope.iter() {
-            let node_ref_map = &bufs.node_ref_map;
+            let node_ref_map = &bufs.body_order;
             let mut iter = rope_node
                 .get_all_neighbors(&l_body_sub)
                 .map(|node| node_ref_map[node.key().idx])
@@ -872,14 +882,15 @@ impl Physics {
         }
         // store lateral position corrections (bending resistance) for velocity correction
         bufs.rope_lateral_corrections.clear();
-        bufs.rope_lateral_corrections.resize(body_refs.len(), None);
+        bufs.rope_lateral_corrections
+            .resize(bufs.sorted_second_pass.bodies.len(), None);
 
         bufs.old_poses.clear();
-        bufs.old_poses.extend(body_refs.iter().map(|b| {
-            *(b.get_neighbor(&l_pose_sub))
-                .expect("A Body didn't have a Pose")
-                .c
-        }));
+        bufs.old_poses
+            .extend(bufs.sorted_second_pass.bodies.iter().map(|bi| {
+                let body = self.component_graph.bodies.get_by_slot(bi).unwrap().1;
+                body.pose
+            }));
         // poses after velocity and constraints are applied, used for rope normal correction
         bufs.pre_contact_poses.clear();
         bufs.pre_contact_poses.extend_from_slice(&bufs.old_poses);
@@ -889,47 +900,24 @@ impl Physics {
         // old velocities used for restitution
         bufs.old_velocities.clear();
         bufs.old_velocities
-            .extend(body_refs.iter().map(|body| body.c.velocity));
+            .extend(bufs.sorted_second_pass.bodies.iter().map(|bi| {
+                let body = self.component_graph.bodies.get_by_slot(bi).unwrap().1;
+                body.velocity
+            }));
 
         bufs.velocities.clear();
         bufs.velocities.extend_from_slice(&bufs.old_velocities);
         // accelerations from external forces used as a speed limit for restitution
         bufs.ext_f_accelerations.clear();
         bufs.ext_f_accelerations
-            .resize(body_refs.len(), m::Vec2::default());
-
-        bufs.colliders.clear();
-        bufs.colliders.resize(
-            l.collider.components.len(),
-            // meaningless default to fill the gaps where colliders aren't actually alive,
-            // we will not access these
-            solver::ColliderWithContext {
-                node_idx: usize::MAX,
-                coll: Collider::new_circle(0.0),
-                ctx: ColliderContext::Static(m::Pose::default()),
-            },
-        );
-        for coll in l.collider.iter() {
-            let node_idx = coll.key().idx;
-            bufs.colliders[node_idx] = solver::ColliderWithContext {
-                node_idx,
-                coll: *coll.c,
-                ctx: match coll.get_neighbor(&l_body_sub) {
-                    Some(b) => ColliderContext::Body(bufs.node_ref_map[b.key().idx]),
-                    None => ColliderContext::Static(match coll.get_neighbor(&l_pose_sub) {
-                        Some(pose) => *pose.c,
-                        None => m::Pose::default(),
-                    }),
-                },
-            };
-        }
+            .resize(bufs.sorted_second_pass.bodies.len(), m::Vec2::default());
 
         bufs.constraint_body_pairs.clear();
         bufs.constraint_body_pairs
             .extend(bufs.sorted_constraints.iter().map(|c| {
                 (
-                    bufs.node_ref_map[c.owner.idx],
-                    c.target.map(|t| bufs.node_ref_map[t.idx]),
+                    bufs.body_order[c.owner.idx],
+                    c.target.map(|t| bufs.body_order[t.idx]),
                 )
             }));
 
@@ -938,7 +926,7 @@ impl Physics {
             bufs.sorted_second_pass
                 .coll_pairs
                 .iter()
-                .map(|pi| bufs.coll_pair_idxs[*pi].map(|ci| bufs.colliders[ci])),
+                .map(|pi| bufs.coll_pair_keys[*pi]),
         );
         // store latest contacts for use in the velocity step
         bufs.contacts.clear();
@@ -1121,7 +1109,7 @@ impl Physics {
                 dt,
                 inv_dt,
                 inv_dt_sq,
-                body_refs,
+                bodies: body_refs,
                 old_poses,
                 pre_contact_poses,
                 poses,
@@ -1193,7 +1181,7 @@ impl Physics {
                 )
                 .filter_map(|(pair, contact)| {
                     contact.iter().next().map(|cont| ContactInfo {
-                        colliders: pair
+                        entities: pair
                             .map(|c| l.collider.get_unchecked_by_item_idx(c.node_idx).key()),
                         normal: cont.normal,
                         island_id: isl.id,
@@ -1252,9 +1240,9 @@ impl Physics {
         coll: graph::NodeKey<Collider>,
     ) -> impl '_ + Iterator<Item = ContactInfo> {
         self.contacts.iter().filter_map(move |&cont| {
-            if cont.colliders[0] == coll {
+            if cont.entities[0] == coll {
                 Some(cont)
-            } else if cont.colliders[1] == coll {
+            } else if cont.entities[1] == coll {
                 Some(cont.flip())
             } else {
                 None
