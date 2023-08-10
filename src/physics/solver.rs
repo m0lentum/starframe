@@ -13,12 +13,11 @@ pub struct DataView<'a> {
     pub dt: f64,
     pub inv_dt: f64,
     pub inv_dt_sq: f64,
-    pub comp_graph: &'a ComponentGraph,
+    pub get_collider_body: &'a dyn Fn(ColliderKey) -> Option<usize>,
     pub bodies: &'a mut [Body],
     pub old_poses: &'a mut [m::Pose],
     pub pre_contact_poses: &'a mut [m::Pose],
     pub old_velocities: &'a mut [Velocity],
-    pub velocities: &'a mut [Velocity],
     pub ext_f_accelerations: &'a mut [m::Vec2],
     pub ropes: &'a mut [RopeView],
     pub rope_next_particles: &'a [Option<usize>],
@@ -37,26 +36,25 @@ pub struct DataView<'a> {
 unsafe impl<'a> Sync for DataView<'a> {}
 unsafe impl<'a> Send for DataView<'a> {}
 
-pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
+pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
     // apply external forces and estimate post-step pose with explicit Euler step
-    for (body, old_pose, old_vel, vel, ext_accel) in izip!(
+    for (body, old_pose, old_vel, ext_accel) in izip!(
         data.bodies,
         &mut *data.old_poses,
         &mut *data.old_velocities,
-        &mut *data.velocities,
         &mut *data.ext_f_accelerations
     ) {
         if let Mass::Finite { .. } = body.mass {
             // TODO: rename forcefield to accelerationfield or allow it to depend on mass
             let ff_accel = forcefield.value_at(body.pose.translation);
-            vel.linear += ff_accel * data.dt;
+            body.velocity.linear += ff_accel * data.dt;
             *ext_accel = ff_accel;
         }
 
         // old_vel is velocity after external forces but before collisions
-        *old_vel = *vel;
+        *old_vel = body.velocity;
         *old_pose = body.pose;
-        body.pose = vel.apply_to_pose(data.dt, body.pose);
+        body.pose = body.velocity.apply_to_pose(data.dt, body.pose);
     }
 
     if !data.ropes.is_empty() {
@@ -70,23 +68,19 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>) {
         *pre_cont_pose = body.pose;
     }
     if !data.contacts.is_empty() {
-        solve_contacts(data);
+        solve_contacts(data, comp_graph);
     }
 
     // update velocities from pose differences
-    for (old_pose, body, vel) in izip!(
-        &mut *data.old_poses,
-        &mut *data.bodies,
-        &mut *data.velocities
-    ) {
-        vel.linear = (body.pose.translation - old_pose.translation) * data.inv_dt;
+    for (old_pose, body) in izip!(&mut *data.old_poses, &mut *data.bodies,) {
+        body.velocity.linear = (body.pose.translation - old_pose.translation) * data.inv_dt;
         // I'm sure there are more efficient ways to handle the angle but this'll do
-        vel.angular =
+        body.velocity.angular =
             m::Angle::from(body.pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
     }
 
     if !data.contacts.is_empty() {
-        contact_velocity_step(data);
+        contact_velocity_step(data, comp_graph);
     }
     if !data.constraints.is_empty() {
         constraint_damping(data);
@@ -267,45 +261,46 @@ fn solve_constraints(data: &mut DataView<'_>) {
 // Solve contacts
 //
 
-fn solve_contacts(data: &mut DataView<'_>) {
+fn solve_contacts(data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
     let _span = tracy_client::span!("solve contacts");
 
-    for (colls, contact, last_contact, lambda_n) in izip!(
+    for (coll_keys, contact, last_contact, lambda_n) in izip!(
         data.coll_pairs,
         &mut *data.contacts,
         &mut *data.last_contacts,
         &mut *data.contact_lambdas
     ) {
-        if !match colls[0].ctx {
-            ColliderContext::Body(bi) => data.bodies[bi].sees_forces(),
-            ColliderContext::Static(_) => false,
-        } && !match colls[1].ctx {
-            ColliderContext::Body(bi) => data.bodies[bi].sees_forces(),
-            ColliderContext::Static(_) => false,
-        } {
+        let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| (data.get_collider_body)(*c));
+
+        if !bodies[0]
+            .map(|bi| data.bodies[bi].sees_forces())
+            .unwrap_or(false)
+            && !bodies[1]
+                .map(|bi| data.bodies[bi].sees_forces())
+                .unwrap_or(false)
+        {
             // both bodies are kinematic or static, skip this pair
             *contact = ContactResult::Zero;
             continue;
         }
 
+        let colls: [&Collider; 2] = map_pair(coll_keys, |c| comp_graph.colliders.get(c.0).unwrap());
+
         // check for collision
         *contact = {
-            let poses = map_pair(colls, |coll| match coll.ctx {
-                ColliderContext::Body(b) => data.poses[b],
-                ColliderContext::Static(pose) => pose,
-            }
-            * coll.coll.pose);
+            let poses = map_pair(&[0, 1], |&i| match bodies[i] {
+                Some(bi) => data.bodies[bi].pose * colls[i].pose,
+                None => colls[i].pose,
+            });
 
-            collision::shape_shape::intersection_check(
-                poses,
-                [colls[0].coll.shape, colls[1].coll.shape],
+            collision::shape_shape::intersection_check(poses, [colls[0].shape, colls[1].shape]).map(
+                |mut cont| {
+                    // map contact to space relative to the object's pose
+                    cont.offsets[0] = colls[0].pose * cont.offsets[0];
+                    cont.offsets[1] = colls[1].pose * cont.offsets[1];
+                    cont
+                },
             )
-            .map(|mut cont| {
-                // map contact to space relative to the object's pose
-                cont.offsets[0] = colls[0].coll.pose * cont.offsets[0];
-                cont.offsets[1] = colls[1].coll.pose * cont.offsets[1];
-                cont
-            })
         };
         // mark latest contact that wasn't zero;
         // this will be available to be queried by the user later
@@ -318,8 +313,8 @@ fn solve_contacts(data: &mut DataView<'_>) {
         //
         // (because rope colliders are circles, only the One case is possible here)
         if let ContactResult::One(contact) = contact {
-            for (coll, normal_dir) in izip!(colls, [1.0, -1.0]) {
-                if let ColliderContext::Body(bi) = coll.ctx {
+            for (body, normal_dir) in izip!(bodies, [1.0, -1.0]) {
+                if let Some(bi) = body {
                     if let (Some(prev), Some(next)) =
                         (data.rope_prev_particles[bi], data.rope_next_particles[bi])
                     {
@@ -344,7 +339,7 @@ fn solve_contacts(data: &mut DataView<'_>) {
             }
         }
 
-        let materials = match (colls[0].coll.ty, colls[1].coll.ty) {
+        let materials = match (colls[0].ty, colls[1].ty) {
             (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
             // one of the colliders was a trigger, no physics response
             _ => {
@@ -371,10 +366,10 @@ fn solve_contacts(data: &mut DataView<'_>) {
                 eff_inv_mass_tan: f64,
             }
             let vars = map_pair(&[0, 1], |&i| {
-                match colls[i].ctx {
+                match bodies[i] {
                     // no body attached -> static body, infinite mass
-                    ColliderContext::Static(pose) => {
-                        let offset_worldspace = pose * contact.offsets[i];
+                    None => {
+                        let offset_worldspace = colls[i].pose * contact.offsets[i];
                         WorkingVars {
                             offset_worldspace,
                             offset_wedge_normal: 0.0,
@@ -384,15 +379,15 @@ fn solve_contacts(data: &mut DataView<'_>) {
                             eff_inv_mass_tan: 0.0,
                         }
                     }
-                    ColliderContext::Body(bi) => {
+                    Some(bi) => {
                         let im = data.bodies[bi].mass.inv();
                         let imi = data.bodies[bi].moment_of_inertia.inv();
-                        let offset_rotated = data.poses[bi].rotation * contact.offsets[i];
+                        let offset_rotated = data.bodies[bi].pose.rotation * contact.offsets[i];
                         let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
                         let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
 
                         WorkingVars {
-                            offset_worldspace: data.poses[bi] * contact.offsets[i],
+                            offset_worldspace: data.bodies[bi].pose * contact.offsets[i],
                             offset_wedge_normal,
                             eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
                             offset_worldspace_old: data.old_poses[bi] * contact.offsets[i],
@@ -413,19 +408,23 @@ fn solve_contacts(data: &mut DataView<'_>) {
 
             *lambda_n = -depth / (vars[0].eff_inv_mass_n + vars[1].eff_inv_mass_n);
 
-            if let ColliderContext::Body(bi) = colls[0].ctx {
+            if let Some(bi) = bodies[0] {
                 let im = data.bodies[bi].mass.inv();
                 let imi = data.bodies[bi].moment_of_inertia.inv();
-                data.poses[bi].append_translation(im * *lambda_n * *contact.normal);
-                data.poses[bi].prepend_rotation(
+                data.bodies[bi]
+                    .pose
+                    .append_translation(im * *lambda_n * *contact.normal);
+                data.bodies[bi].pose.prepend_rotation(
                     m::Angle::Rad(imi * *lambda_n * vars[0].offset_wedge_normal).into(),
                 );
             }
-            if let ColliderContext::Body(bi) = colls[1].ctx {
+            if let Some(bi) = bodies[1] {
                 let im = data.bodies[bi].mass.inv();
                 let imi = data.bodies[bi].moment_of_inertia.inv();
-                data.poses[bi].append_translation(-im * *lambda_n * *contact.normal);
-                data.poses[bi].prepend_rotation(
+                data.bodies[bi]
+                    .pose
+                    .append_translation(-im * *lambda_n * *contact.normal);
+                data.bodies[bi].pose.prepend_rotation(
                     m::Angle::Rad(-imi * *lambda_n * vars[1].offset_wedge_normal).into(),
                 );
             }
@@ -444,19 +443,23 @@ fn solve_contacts(data: &mut DataView<'_>) {
                     -motion_along_tan / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
 
                 if lambda_t < max_coulomb_dx {
-                    if let ColliderContext::Body(bi) = colls[0].ctx {
+                    if let Some(bi) = bodies[0] {
                         let im = data.bodies[bi].mass.inv();
                         let imi = data.bodies[bi].moment_of_inertia.inv();
-                        data.poses[bi].append_translation(im * lambda_t * tangent);
-                        data.poses[bi].prepend_rotation(
+                        data.bodies[bi]
+                            .pose
+                            .append_translation(im * lambda_t * tangent);
+                        data.bodies[bi].pose.prepend_rotation(
                             m::Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
                         );
                     }
-                    if let ColliderContext::Body(bi) = colls[1].ctx {
+                    if let Some(bi) = bodies[1] {
                         let im = data.bodies[bi].mass.inv();
                         let imi = data.bodies[bi].moment_of_inertia.inv();
-                        data.poses[bi].append_translation(-im * lambda_t * tangent);
-                        data.poses[bi].prepend_rotation(
+                        data.bodies[bi]
+                            .pose
+                            .append_translation(-im * lambda_t * tangent);
+                        data.bodies[bi].pose.prepend_rotation(
                             m::Angle::Rad(-imi * lambda_t * vars[1].offset_wedge_tan).into(),
                         );
                     }
@@ -470,19 +473,23 @@ fn solve_contacts(data: &mut DataView<'_>) {
 // Contact velocity step
 //
 
-fn contact_velocity_step(data: &mut DataView<'_>) {
+fn contact_velocity_step(data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
     let _span = tracy_client::span!("contact velocity step");
 
-    for (colls, contact, lambda_n) in
+    for (coll_keys, contact, lambda_n) in
         izip!(&*data.coll_pairs, &*data.contacts, &*data.contact_lambdas)
     {
-        let materials = match (colls[0].coll.ty, colls[1].coll.ty) {
+        let colls: [&Collider; 2] = map_pair(coll_keys, |c| comp_graph.colliders.get(c.0).unwrap());
+
+        let materials = match (colls[0].ty, colls[1].ty) {
             (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
-            // one of the colliders was a trigger, no physics response
             _ => {
+                // one of the colliders was a sensor, no physics response
                 continue;
             }
         };
+
+        let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| (data.get_collider_body)(*c));
 
         for contact in contact.iter() {
             struct WorkingVars {
@@ -493,23 +500,23 @@ fn contact_velocity_step(data: &mut DataView<'_>) {
                 old_point_vel: m::Vec2,
                 ext_f_accel: m::Vec2,
             }
-            let vars = map_pair(&[0, 1], |&i| match colls[i].ctx {
+            let vars = map_pair(&[0, 1], |&i| match bodies[i] {
                 // no body => infinite mass
-                ColliderContext::Static(pose) => WorkingVars {
+                None => WorkingVars {
                     inv_mass: 0.0,
                     inv_mom_inertia: 0.0,
-                    offset_rotated: pose.rotation * contact.offsets[i],
+                    offset_rotated: colls[i].pose.rotation * contact.offsets[i],
                     point_vel: m::Vec2::zero(),
                     old_point_vel: m::Vec2::zero(),
                     ext_f_accel: m::Vec2::zero(),
                 },
-                ColliderContext::Body(bi) => {
-                    let offset_rotated = data.poses[bi].rotation * contact.offsets[i];
+                Some(bi) => {
+                    let offset_rotated = data.bodies[bi].pose.rotation * contact.offsets[i];
                     WorkingVars {
                         inv_mass: data.bodies[bi].mass.inv(),
                         inv_mom_inertia: data.bodies[bi].moment_of_inertia.inv(),
                         offset_rotated,
-                        point_vel: data.velocities[bi].point_velocity(offset_rotated),
+                        point_vel: data.bodies[bi].velocity.point_velocity(offset_rotated),
                         old_point_vel: data.old_velocities[bi].point_velocity(offset_rotated),
                         ext_f_accel: data.ext_f_accelerations[bi],
                     }
@@ -561,14 +568,14 @@ fn contact_velocity_step(data: &mut DataView<'_>) {
             });
             let impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
-            if let ColliderContext::Body(bi) = colls[0].ctx {
-                data.velocities[bi].linear += vars[0].inv_mass * impulse_mag * vel_update_dir;
-                data.velocities[bi].angular +=
+            if let Some(bi) = bodies[0] {
+                data.bodies[bi].velocity.linear += vars[0].inv_mass * impulse_mag * vel_update_dir;
+                data.bodies[bi].velocity.angular +=
                     vars[0].inv_mom_inertia * impulse_mag * offsets_wedge_dv[0];
             }
-            if let ColliderContext::Body(bi) = colls[1].ctx {
-                data.velocities[bi].linear -= vars[1].inv_mass * impulse_mag * vel_update_dir;
-                data.velocities[bi].angular -=
+            if let Some(bi) = bodies[1] {
+                data.bodies[bi].velocity.linear -= vars[1].inv_mass * impulse_mag * vel_update_dir;
+                data.bodies[bi].velocity.angular -=
                     vars[1].inv_mom_inertia * impulse_mag * offsets_wedge_dv[1];
             }
         }
@@ -591,11 +598,15 @@ fn constraint_damping(data: &mut DataView<'_>) {
             Some(p1) => {
                 let pair = [pair.0, p1];
                 let offsets_rotated = map_pair(&[0, 1], |&i| {
-                    data.poses[pair[i]].rotation * constraint.offsets[i]
+                    data.bodies[pair[i]].pose.rotation * constraint.offsets[i]
                 });
 
-                let relative_vel = data.velocities[pair[0]].point_velocity(offsets_rotated[0])
-                    - data.velocities[pair[1]].point_velocity(offsets_rotated[1]);
+                let relative_vel = data.bodies[pair[0]]
+                    .velocity
+                    .point_velocity(offsets_rotated[0])
+                    - data.bodies[pair[1]]
+                        .velocity
+                        .point_velocity(offsets_rotated[1]);
                 let relative_vel_mag = relative_vel.mag();
                 if relative_vel_mag == 0.0 {
                     continue;
@@ -611,29 +622,29 @@ fn constraint_damping(data: &mut DataView<'_>) {
                     -relative_vel_mag * (constraint.linear_damping * data.dt).min(1.0);
                 let linear_impulse_mag = vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
-                data.velocities[pair[0]].linear += inv_masses[0] * linear_impulse_mag * dir;
-                data.velocities[pair[0]].angular +=
+                data.bodies[pair[0]].velocity.linear += inv_masses[0] * linear_impulse_mag * dir;
+                data.bodies[pair[0]].velocity.angular +=
                     inv_mom_inertias[0] * linear_impulse_mag * offsets_wedge_dir[0];
-                data.velocities[pair[1]].linear -= inv_masses[1] * linear_impulse_mag * dir;
-                data.velocities[pair[1]].angular -=
+                data.bodies[pair[1]].velocity.linear -= inv_masses[1] * linear_impulse_mag * dir;
+                data.bodies[pair[1]].velocity.angular -=
                     inv_mom_inertias[1] * linear_impulse_mag * offsets_wedge_dir[1];
 
                 if constraint.angular_damping > 0.0 {
-                    let rel_angular_vel =
-                        data.velocities[pair[0]].angular - data.velocities[pair[1]].angular;
+                    let rel_angular_vel = data.bodies[pair[0]].velocity.angular
+                        - data.bodies[pair[1]].velocity.angular;
                     let ang_vel_update_mag =
                         -rel_angular_vel * (constraint.angular_damping * data.dt).min(1.0);
                     let angular_impulse =
                         ang_vel_update_mag / (eff_inv_masses[0] + eff_inv_masses[1]);
 
-                    data.velocities[pair[1]].angular -= inv_mom_inertias[1] * angular_impulse;
-                    data.velocities[pair[0]].angular += inv_mom_inertias[0] * angular_impulse;
+                    data.bodies[pair[1]].velocity.angular -= inv_mom_inertias[1] * angular_impulse;
+                    data.bodies[pair[0]].velocity.angular += inv_mom_inertias[0] * angular_impulse;
                 };
             }
             None => {
-                let offset_rotated = data.poses[pair.0].rotation * constraint.offsets[0];
+                let offset_rotated = data.bodies[pair.0].pose.rotation * constraint.offsets[0];
 
-                let point_vel = data.velocities[pair.0].point_velocity(offset_rotated);
+                let point_vel = data.bodies[pair.0].velocity.point_velocity(offset_rotated);
                 let point_vel_mag = point_vel.mag();
                 if point_vel_mag == 0.0 {
                     continue;
@@ -647,15 +658,15 @@ fn constraint_damping(data: &mut DataView<'_>) {
                     -point_vel_mag * (constraint.linear_damping * data.dt).min(1.0);
                 let linear_impulse_mag = vel_update_mag / eff_inv_mass;
 
-                data.velocities[pair.0].linear += inv_masses[0] * linear_impulse_mag * dir;
-                data.velocities[pair.0].angular +=
+                data.bodies[pair.0].velocity.linear += inv_masses[0] * linear_impulse_mag * dir;
+                data.bodies[pair.0].velocity.angular +=
                     inv_mom_inertias[0] * linear_impulse_mag * offset_wedge_dir;
 
                 if constraint.angular_damping > 0.0 {
-                    let ang_vel_update_mag = data.velocities[pair.0].angular
+                    let ang_vel_update_mag = data.bodies[pair.0].velocity.angular
                         * (constraint.angular_damping * data.dt).min(1.0);
                     let angular_impulse = -ang_vel_update_mag / eff_inv_mass;
-                    data.velocities[pair.0].angular += inv_mom_inertias[0] * angular_impulse;
+                    data.bodies[pair.0].velocity.angular += inv_mom_inertias[0] * angular_impulse;
                 };
             }
         }
@@ -673,8 +684,8 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
         let mut curr_particle = rope.start;
         let mut next_particle = data.rope_next_particles[curr_particle].unwrap();
         loop {
-            let relative_vel =
-                data.velocities[curr_particle].linear - data.velocities[next_particle].linear;
+            let relative_vel = data.bodies[curr_particle].velocity.linear
+                - data.bodies[next_particle].velocity.linear;
             let relative_vel_mag = relative_vel.mag();
             if relative_vel_mag != 0.0 {
                 let dir = relative_vel / relative_vel_mag;
@@ -684,9 +695,9 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
                     / (data.bodies[curr_particle].mass.inv()
                         + data.bodies[next_particle].mass.inv());
 
-                data.velocities[curr_particle].linear +=
+                data.bodies[curr_particle].velocity.linear +=
                     data.bodies[curr_particle].mass.inv() * linear_impulse_mag * dir;
-                data.velocities[next_particle].linear -=
+                data.bodies[next_particle].velocity.linear -=
                     data.bodies[next_particle].mass.inv() * linear_impulse_mag * dir;
             }
 
@@ -707,13 +718,13 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
                 let vel_from_corr = corr_mag * data.inv_dt;
 
                 let dir = corr / corr_mag;
-                let vel_in_dir = data.velocities[particle].linear.dot(dir);
+                let vel_in_dir = data.bodies[particle].velocity.linear.dot(dir);
                 let vel_clamped = vel_in_dir.min(vel_from_corr).max(-vel_from_corr);
 
                 let impulse_mag = -vel_clamped
                     / (data.bodies[particle].mass.inv()
                         + rope.info.bending_compliance * data.inv_dt);
-                data.velocities[particle].linear +=
+                data.bodies[particle].velocity.linear +=
                     data.bodies[particle].mass.inv() * impulse_mag * dir;
             }
 

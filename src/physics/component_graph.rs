@@ -6,6 +6,7 @@ use thunderdome as td;
 ///
 /// When using a [`hecs`][crate::hecs] World, this type should be stored
 /// in the world instead of [`Collider`][super::Collider].
+#[derive(Clone, Copy, Debug)]
 pub struct ColliderKey(pub(super) td::Index);
 
 impl ColliderKey {
@@ -22,6 +23,7 @@ impl ColliderKey {
 ///
 /// When using a [`hecs`][crate::hecs] World, this type should be stored
 /// in the world instead of [`Body`][super::Body].
+#[derive(Clone, Copy, Debug)]
 pub struct BodyKey(pub(super) td::Index);
 
 impl BodyKey {
@@ -39,8 +41,15 @@ impl BodyKey {
 /// and colliders can be attached to dynamic bodies or be static.
 #[derive(Default)]
 pub(super) struct ComponentGraph {
+    // pub fields instead of immutable accessors because I'm lazy,
+    // there are some invariants that can be violated with these when inserting/removing
+    // but I only use them in the physics solver where I don't do those things
     pub bodies: td::Arena<Body>,
+    // keeping track of highest slot indices
+    // because slots are used for addressing during physics solve
+    pub body_slot_count: usize,
     pub colliders: td::Arena<Collider>,
+    pub coll_slot_count: usize,
     pub coll_bodies: td::Arena<BodyKey>,
 }
 
@@ -51,26 +60,45 @@ impl ComponentGraph {
     }
 
     /// Insert a dynamic body into the world.
-    #[inline]
     pub fn insert_body(&mut self, body: Body) -> BodyKey {
-        BodyKey(self.bodies.insert(body))
+        let key = self.bodies.insert(body);
+        let slot = key.slot() as usize;
+        if slot >= self.body_slot_count {
+            self.body_slot_count = slot + 1;
+        }
+        BodyKey(key)
     }
 
     /// Attach a collider to a dynamic body.
-    #[inline]
     pub fn attach_collider(&mut self, body: BodyKey, coll: Collider) -> ColliderKey {
         // TODO: moment of inertia (and maybe mass from density)
         // could totally be computed here instead of in the Body constructors.
         // think about it
-        let coll_key = self.colliders.insert(coll);
-        self.coll_bodies.insert_at(coll_key, body);
-        ColliderKey(coll_key)
+        let coll_key = self.insert_collider(coll);
+        self.coll_bodies.insert_at(coll_key.0, body);
+        coll_key
     }
 
     /// Insert a collider that isn't attached to a dynamic body
     /// (typically a static collider or a sensor).
-    #[inline]
     pub fn insert_collider(&mut self, coll: Collider) -> ColliderKey {
-        ColliderKey(self.colliders.insert(coll))
+        let key = self.colliders.insert(coll);
+        let slot = key.slot() as usize;
+        if slot >= self.coll_slot_count {
+            self.coll_slot_count = slot + 1;
+        }
+        ColliderKey(key)
     }
+
+    pub fn clear(&mut self) {
+        self.bodies.clear();
+        self.body_slot_count = 0;
+        self.colliders.clear();
+        self.coll_slot_count = 0;
+        self.coll_bodies.clear();
+    }
+
+    // TODO:
+    // - remove bodies
+    // - cleanup step at the start of tick to remove colliders that were attached to that body
 }

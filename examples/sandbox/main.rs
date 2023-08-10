@@ -134,7 +134,7 @@ impl State {
     }
 
     fn reset(&mut self) {
-        self.physics.reset();
+        self.physics.clear();
         self.graph.reset();
     }
 }

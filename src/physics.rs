@@ -109,7 +109,7 @@ impl std::ops::Mul<f64> for Velocity {
 /// Pertinent information about a contact between two colliders.
 #[derive(Clone, Copy, Debug)]
 pub struct ContactInfo {
-    pub entities: [hecs::Entity; 2],
+    pub colliders: [ColliderKey; 2],
     pub normal: m::Unit<m::Vec2>,
     // island id stored to allow retaining of sleeping contacts
     island_id: IslandId,
@@ -117,7 +117,7 @@ pub struct ContactInfo {
 impl ContactInfo {
     pub(self) fn flip(self) -> Self {
         Self {
-            entities: [self.entities[1], self.entities[0]],
+            colliders: [self.colliders[1], self.colliders[0]],
             normal: -self.normal,
             island_id: self.island_id,
         }
@@ -218,6 +218,9 @@ struct WorkingBuffers {
     sorted_rope_views: Vec<solver::RopeView>,
     sorted_coll_pairs: Vec<[ColliderKey; 2]>,
 
+    // bodies, sorted in island order
+    bodies: Vec<Body>,
+    // map from body keys to their position in the sorted buffer
     body_order: Vec<usize>,
     rope_next_particles: Vec<Option<usize>>,
     rope_prev_particles: Vec<Option<usize>>,
@@ -225,9 +228,7 @@ struct WorkingBuffers {
 
     old_poses: Vec<m::Pose>,
     pre_contact_poses: Vec<m::Pose>,
-    poses: Vec<m::Pose>,
     old_velocities: Vec<Velocity>,
-    velocities: Vec<Velocity>,
     ext_f_accelerations: Vec<m::Vec2>,
 
     constraint_body_pairs: Vec<(usize, Option<usize>)>,
@@ -258,8 +259,8 @@ impl SortedIndices {
         self.coll_pairs.clear();
     }
 }
-impl WorkingBuffers {
-    fn new() -> Self {
+impl Default for WorkingBuffers {
+    fn default() -> Self {
         Self {
             sorted_first_pass: SortedIndices::new(),
             sorted_second_pass: SortedIndices::new(),
@@ -272,6 +273,7 @@ impl WorkingBuffers {
             sorted_rope_views: Vec::new(),
             sorted_coll_pairs: Vec::new(),
 
+            bodies: Vec::new(),
             body_order: Vec::new(),
             rope_next_particles: Vec::new(),
             rope_prev_particles: Vec::new(),
@@ -279,13 +281,10 @@ impl WorkingBuffers {
 
             old_poses: Vec::new(),
             pre_contact_poses: Vec::new(),
-            poses: Vec::new(),
             old_velocities: Vec::new(),
-            velocities: Vec::new(),
             ext_f_accelerations: Vec::new(),
 
             constraint_body_pairs: Vec::new(),
-            colliders: Vec::new(),
             coll_pair_keys: Vec::new(),
             contacts: Vec::new(),
             last_contacts: Vec::new(),
@@ -293,8 +292,14 @@ impl WorkingBuffers {
         }
     }
 }
+impl WorkingBuffers {
+    fn new() -> Self {
+        Self::default()
+    }
+}
 
 /// Key type to look up a constraint stored in the physics world.
+#[derive(Clone, Copy, Debug)]
 pub struct ConstraintKey(td::Index);
 
 //
@@ -348,6 +353,7 @@ pub struct PhysicsWorld {
     pub consts: TuningConstants,
     pub mask_matrix: collision::CollisionMaskMatrix,
     user_constraints: td::Arena<Constraint>,
+    ropes: Vec<rope::Rope>,
     pub(crate) bvh: Bvh,
     component_graph: ComponentGraph,
     constraint_graph: ConstraintGraph,
@@ -372,6 +378,7 @@ impl PhysicsWorld {
             sleeping_islands: Vec::new(),
             working_bufs: WorkingBuffers::new(),
             contacts: Vec::new(),
+            ropes: Vec::new(),
         }
     }
 
@@ -407,7 +414,7 @@ impl PhysicsWorld {
     /// Insert a dynamic body into the world.
     #[inline]
     pub fn insert_body(&mut self, body: Body) -> BodyKey {
-        self.component_graph.insert_body(body.0)
+        self.component_graph.insert_body(body)
     }
 
     /// Access a [`Body`][self::Body] in the physics world, if it still exists.
@@ -431,21 +438,22 @@ impl PhysicsWorld {
     /// Access a [`Collider`][self::Collider] in the physics world, if it still exists.
     #[inline]
     pub fn get_collider(&self, coll: ColliderKey) -> Option<&Collider> {
-        self.component_graph.colliders.get(coll)
+        self.component_graph.colliders.get(coll.0)
     }
 
     /// Mutably access a [`Collider`][self::Collider] in the physics world, if it still exists.
     #[inline]
     pub fn get_collider_mut(&self, coll: ColliderKey) -> Option<&mut Collider> {
-        self.component_graph.colliders.get_mut(coll)
+        self.component_graph.colliders.get_mut(coll.0)
     }
 
     /// Remove all constraints and reset internal state.
-    #[inline]
-    pub fn reset(&mut self) {
+    pub fn clear(&mut self) {
+        self.component_graph.clear();
         self.user_constraints.clear();
         self.sleeping_islands.clear();
         self.contacts.clear();
+        self.working_bufs = WorkingBuffers::default();
     }
 
     /// Advance the simulation forward by `frame_dt` seconds.
@@ -480,7 +488,8 @@ impl PhysicsWorld {
                     .unwrap_or(true)
         });
         bufs.user_constraints.clear();
-        bufs.user_constraints.extend(self.user_constraints.values());
+        bufs.user_constraints
+            .extend(self.user_constraints.iter().map(|(_, v)| v));
 
         //
         // Prepare the spatial index
@@ -497,10 +506,11 @@ impl PhysicsWorld {
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
         for (coll_key, coll) in self.component_graph.colliders.iter() {
+            let coll_key = ColliderKey(coll_key);
             let body = self
                 .component_graph
                 .coll_bodies
-                .get(coll_key)
+                .get(coll_key.0)
                 .and_then(|body_key| self.component_graph.bodies.get(body_key.0));
             let aabb = match body {
                 Some(body) => {
@@ -521,7 +531,7 @@ impl PhysicsWorld {
                             coll.layer,
                             // unwrap is safe here because we rebuild the BVH every frame,
                             // hence nothing has had the opportunity to be deleted at this point
-                            self.component_graph.colliders.get(*other).unwrap().layer,
+                            self.component_graph.colliders.get(other.0).unwrap().layer,
                         )
                     })
                     .map(move |other| [coll_key, other]),
@@ -541,9 +551,8 @@ impl PhysicsWorld {
         let constr_graph_span = tracy_client::span!("build constraint graph");
 
         self.constraint_graph.clear();
-        // TODO: instead of capacity, the highest slot index in the arena should be used
         self.constraint_graph
-            .resize(self.component_graph.bodies.capacity());
+            .resize(self.component_graph.body_slot_count);
 
         // rope constraints
         for rope_node in l.rope.iter() {
@@ -641,8 +650,7 @@ impl PhysicsWorld {
         //
 
         bufs.island_assigned.clear();
-        bufs.island_assigned
-            .resize(self.component_graph.bodies.capacity(), false);
+        bufs.island_assigned.resize(bufs.bodies.len(), false);
         bufs.islands.clear();
         bufs.sorted_first_pass.clear();
         bufs.sorted_second_pass.clear();
@@ -731,12 +739,12 @@ impl PhysicsWorld {
         }
 
         for (body_key, body) in self.component_graph.bodies.iter() {
-            if bufs.island_assigned[body_key.slot()] {
+            if bufs.island_assigned[body_key.slot() as usize] {
                 continue;
             }
             let mut island = Island {
                 id: IslandId {
-                    first_body: body_key.slot(),
+                    first_body: body_key.slot() as usize,
                     edge_sum: 0, // this is incremented during search
                 },
                 can_sleep: true,
@@ -749,7 +757,12 @@ impl PhysicsWorld {
                 pair_range_start: bufs.sorted_first_pass.coll_pairs.len(),
                 pair_count: 0,
             };
-            search(body_key.slot(), &mut island, &self.constraint_graph, bufs);
+            search(
+                body_key.slot() as usize,
+                &mut island,
+                &self.constraint_graph,
+                bufs,
+            );
             bufs.islands.push(island);
         }
 
@@ -772,7 +785,8 @@ impl PhysicsWorld {
                     [isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
                     .any(|bi| {
-                        let body = self.component_graph.bodies.get_by_slot(bi).unwrap().1;
+                        let (_, body) =
+                            self.component_graph.bodies.get_by_slot(*bi as u32).unwrap();
                         body.velocity.mag_sq() >= self.consts.sleep_vel_threshold
                     })
                 {
@@ -830,13 +844,23 @@ impl PhysicsWorld {
 
         let buf_span = tracy_client::span!("populate buffers");
 
+        bufs.bodies.clear();
+        bufs.bodies
+            .extend(bufs.sorted_second_pass.bodies.iter().map(|bi| {
+                self.component_graph
+                    .bodies
+                    .get_by_slot(*bi as u32)
+                    .unwrap()
+                    .1
+            }));
         // maps from the slot of a body in the thunderdome arena
-        // to the index of a body in bufs.sorted_second_pass.bodies.
+        // to the index of a body in bufs.bodies.
         // we don't need to clear it because gaps will just never be touched
+        bufs.body_order.clear();
         bufs.body_order
-            .resize(self.component_graph.bodies.capacity(), 0);
+            .resize(self.component_graph.body_slot_count, 0);
         for (sorted_idx, body_slot) in bufs.sorted_second_pass.bodies.iter().enumerate() {
-            bufs.body_order[body_slot] = sorted_idx;
+            bufs.body_order[*body_slot] = sorted_idx;
         }
 
         bufs.sorted_rope_views.clear();
@@ -862,11 +886,9 @@ impl PhysicsWorld {
 
         // store indices into neighboring particles for rope nodes
         bufs.rope_next_particles.clear();
-        bufs.rope_next_particles
-            .resize(bufs.sorted_second_pass.bodies.len(), None);
+        bufs.rope_next_particles.resize(bufs.bodies.len(), None);
         bufs.rope_prev_particles.clear();
-        bufs.rope_prev_particles
-            .resize(bufs.sorted_second_pass.bodies.len(), None);
+        bufs.rope_prev_particles.resize(bufs.bodies.len(), None);
         for rope_node in l.rope.iter() {
             let node_ref_map = &bufs.body_order;
             let mut iter = rope_node
@@ -886,27 +908,15 @@ impl PhysicsWorld {
             .resize(bufs.sorted_second_pass.bodies.len(), None);
 
         bufs.old_poses.clear();
-        bufs.old_poses
-            .extend(bufs.sorted_second_pass.bodies.iter().map(|bi| {
-                let body = self.component_graph.bodies.get_by_slot(bi).unwrap().1;
-                body.pose
-            }));
+        bufs.old_poses.extend(bufs.bodies.iter().map(|b| b.pose));
         // poses after velocity and constraints are applied, used for rope normal correction
         bufs.pre_contact_poses.clear();
         bufs.pre_contact_poses.extend_from_slice(&bufs.old_poses);
-        // actual poses used in most calculations
-        bufs.poses.clear();
-        bufs.poses.extend_from_slice(&bufs.old_poses);
         // old velocities used for restitution
         bufs.old_velocities.clear();
         bufs.old_velocities
-            .extend(bufs.sorted_second_pass.bodies.iter().map(|bi| {
-                let body = self.component_graph.bodies.get_by_slot(bi).unwrap().1;
-                body.velocity
-            }));
+            .extend(bufs.bodies.iter().map(|b| b.velocity));
 
-        bufs.velocities.clear();
-        bufs.velocities.extend_from_slice(&bufs.old_velocities);
         // accelerations from external forces used as a speed limit for restitution
         bufs.ext_f_accelerations.clear();
         bufs.ext_f_accelerations
@@ -916,8 +926,8 @@ impl PhysicsWorld {
         bufs.constraint_body_pairs
             .extend(bufs.sorted_constraints.iter().map(|c| {
                 (
-                    bufs.body_order[c.owner.idx],
-                    c.target.map(|t| bufs.body_order[t.idx]),
+                    bufs.body_order[c.owner.0.slot() as usize],
+                    c.target.map(|t| bufs.body_order[t.0.slot() as usize]),
                 )
             }));
 
@@ -956,7 +966,8 @@ impl PhysicsWorld {
 
         #[cfg(feature = "parallel")]
         {
-            let ideal_body_count = (body_refs.len() + thread_count - 1) / thread_count;
+            let ideal_body_count =
+                (self.component_graph.bodies.len() + thread_count - 1) / thread_count;
             let ideal_body_count = ideal_body_count.max(self.consts.min_bodies_per_thread);
 
             let mut covered_body_count = 0;
@@ -1007,12 +1018,10 @@ impl PhysicsWorld {
 
         let mut island_group_views: Vec<solver::DataView<'_>> = Vec::with_capacity(thread_count);
 
-        let mut body_refs_s = body_refs.as_slice();
+        let mut bodies_s = bufs.bodies.as_mut_slice();
         let mut old_poses_s = bufs.old_poses.as_mut_slice();
         let mut pre_cont_poses_s = bufs.pre_contact_poses.as_mut_slice();
-        let mut poses_s = bufs.poses.as_mut_slice();
         let mut old_vels_s = bufs.old_velocities.as_mut_slice();
-        let mut vels_s = bufs.velocities.as_mut_slice();
         let mut ext_f_acc_s = bufs.ext_f_accelerations.as_mut_slice();
         let mut rope_s = bufs.sorted_rope_views.as_mut_slice();
         let mut rope_next_p_s = bufs.rope_next_particles.as_mut_slice();
@@ -1041,18 +1050,14 @@ impl PhysicsWorld {
             let constr_count = group.iter().map(|isl| isl.constr_count).sum();
             let pair_count = group.iter().map(|isl| isl.pair_count).sum();
 
-            let (body_refs, br_rest) = body_refs_s.split_at(body_count);
-            body_refs_s = br_rest;
+            let (bodies, body_rest) = bodies_s.split_at_mut(body_count);
+            bodies_s = body_rest;
             let (old_poses, old_pose_rest) = old_poses_s.split_at_mut(body_count);
             old_poses_s = old_pose_rest;
             let (pre_contact_poses, pcp_rest) = pre_cont_poses_s.split_at_mut(body_count);
             pre_cont_poses_s = pcp_rest;
-            let (poses, pose_rest) = poses_s.split_at_mut(body_count);
-            poses_s = pose_rest;
             let (old_velocities, old_v_rest) = old_vels_s.split_at_mut(body_count);
             old_vels_s = old_v_rest;
-            let (velocities, vel_rest) = vels_s.split_at_mut(body_count);
-            vels_s = vel_rest;
             let (ext_f_accelerations, ext_f_rest) = ext_f_acc_s.split_at_mut(body_count);
             ext_f_acc_s = ext_f_rest;
 
@@ -1089,15 +1094,15 @@ impl PhysicsWorld {
                 }
             }
 
+            // map from collider to the body index in the slice given to the island
+            let get_collider_body = |coll_key: ColliderKey| {
+                let body_key = self.component_graph.coll_bodies.get(coll_key.0)?;
+                let slot = body_key.0.slot() as usize;
+                Some(bufs.body_order[slot] - island_start_idx)
+            };
+
             let (coll_pairs, coll_p_rest) = coll_pairs_s.split_at_mut(pair_count);
             coll_pairs_s = coll_p_rest;
-            for pair in coll_pairs.iter_mut() {
-                for coll in pair {
-                    if let ColliderContext::Body(bi) = &mut coll.ctx {
-                        *bi -= island_start_idx;
-                    }
-                }
-            }
             let (contacts, contacts_rest) = contacts_s.split_at_mut(pair_count);
             contacts_s = contacts_rest;
             let (last_contacts, last_conts_rest) = last_contacts_s.split_at_mut(pair_count);
@@ -1109,12 +1114,11 @@ impl PhysicsWorld {
                 dt,
                 inv_dt,
                 inv_dt_sq,
-                bodies: body_refs,
+                get_collider_body: &get_collider_body,
+                bodies,
                 old_poses,
                 pre_contact_poses,
-                poses,
                 old_velocities,
-                velocities,
                 ext_f_accelerations,
                 ropes,
                 rope_next_particles,
@@ -1145,7 +1149,7 @@ impl PhysicsWorld {
             for _substep in 0..substeps {
                 let _substep_span = tracy_client::span!("substep");
 
-                solver::solve(forcefield, island_view);
+                solver::solve(forcefield, island_view, &self.component_graph);
             }
         });
 
@@ -1196,9 +1200,9 @@ impl PhysicsWorld {
 
         for isl in &bufs.islands {
             if isl.can_sleep
-                && bufs.velocities[isl.body_range_start..isl.body_range_start + isl.body_count]
+                && bufs.bodies[isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
-                    .all(|vel| vel.mag_sq() < self.consts.sleep_vel_threshold)
+                    .all(|body| body.velocity.mag_sq() < self.consts.sleep_vel_threshold)
             {
                 if let Some(already_sleeping) = self
                     .sleeping_islands
@@ -1213,20 +1217,12 @@ impl PhysicsWorld {
         }
 
         //
-        // apply results back to state from temp buffers
+        // apply results back to retained state
         //
 
-        // drop body_refs and immutable views so we can get mutable references
-        let body_nodes: Vec<graph::NodeKey<Body>> =
-            body_refs.into_iter().map(|br| br.key()).collect();
-        drop(l_body_sub);
-        drop(l_pose_sub);
-
-        for (body, pose_result, vel_result) in izip!(body_nodes, &bufs.poses, &bufs.velocities) {
-            let mut body = l.body.get_mut_unchecked(body);
-            let pose = body.get_neighbor_mut(&mut l.pose).unwrap();
-            body.c.velocity = *vel_result;
-            *pose.c = *pose_result;
+        for (body_key, body) in self.component_graph.bodies.iter_mut() {
+            let working_body = bufs.body_order[body_key.slot()];
+            *body = working_body;
         }
     }
 
