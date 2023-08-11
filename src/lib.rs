@@ -30,9 +30,8 @@ pub use physics::{
         AABB,
     },
     constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType},
-    forcefield,
-    rope::{self, Rope, RopeProperties},
-    BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Velocity,
+    forcefield, BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope,
+    RopeParameters, RopeSet, Velocity,
 };
 
 // re-exported libraries used in public APIs to guarantee versions match

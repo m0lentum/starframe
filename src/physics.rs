@@ -24,11 +24,14 @@ pub use forcefield::ForceField;
 pub(super) mod body;
 pub use body::{Body, ColliderInfo, Mass};
 
-pub mod rope;
+mod rope;
+pub use rope::{Rope, RopeParameters, RopeSet};
 
-mod component_graph;
-use component_graph::ComponentGraph;
-pub use component_graph::{BodyKey, ColliderKey};
+mod entity_set;
+pub use entity_set::{BodyKey, ColliderKey, EntitySet};
+
+mod constraint_set;
+pub use constraint_set::ConstraintSet;
 
 mod constraint_graph;
 use constraint_graph::*;
@@ -39,9 +42,7 @@ mod solver;
 // public types
 //
 
-/// Velocity of an object.
-///
-// Equivalent to a Vec3 but with names for the translational and rotational part.
+/// Linear and angular velocity of an object.
 #[derive(Copy, Clone, Debug)]
 pub struct Velocity {
     /// Linear velocity in metres per second.
@@ -124,7 +125,8 @@ impl ContactInfo {
     }
 }
 
-/// Result of a [`raycast`][self::Physics::raycast] or [`spherecast`][self::Physics::spherecast].
+/// Result of a [`raycast`][self::PhysicsWorld::raycast]
+/// or [`spherecast`][self::PhysicsWorld::spherecast].
 #[derive(Clone, Copy, Debug)]
 pub struct CastHit {
     /// The entity containing the collider that was hit.
@@ -299,7 +301,7 @@ impl WorkingBuffers {
 }
 
 /// Key type to look up a constraint stored in the physics world.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConstraintKey(td::Index);
 
 //
@@ -349,13 +351,14 @@ impl Default for TuningConstants {
     }
 }
 
+/// The top-level container for all the data the physics engine uses.
 pub struct PhysicsWorld {
     pub consts: TuningConstants,
     pub mask_matrix: collision::CollisionMaskMatrix,
-    user_constraints: td::Arena<Constraint>,
-    ropes: Vec<rope::Rope>,
+    pub entity_set: EntitySet,
+    pub rope_set: RopeSet,
+    pub constraint_set: ConstraintSet,
     pub(crate) bvh: Bvh,
-    component_graph: ComponentGraph,
     constraint_graph: ConstraintGraph,
     sleeping_islands: Vec<SleepingIsland>,
     working_bufs: WorkingBuffers,
@@ -367,9 +370,10 @@ impl PhysicsWorld {
         PhysicsWorld {
             consts,
             mask_matrix,
-            user_constraints: td::Arena::new(),
+            entity_set: EntitySet::new(),
+            rope_set: RopeSet::new(),
+            constraint_set: ConstraintSet::new(),
             bvh: Bvh::new(),
-            component_graph: ComponentGraph::new(),
             constraint_graph: ConstraintGraph {
                 first_nodes_per_body: Vec::new(),
                 last_nodes_per_body: Vec::new(),
@@ -378,79 +382,14 @@ impl PhysicsWorld {
             sleeping_islands: Vec::new(),
             working_bufs: WorkingBuffers::new(),
             contacts: Vec::new(),
-            ropes: Vec::new(),
         }
-    }
-
-    /// Add a user-defined constraint to the system.
-    /// Returns a key that can be used to remove it later.
-    #[inline]
-    pub fn add_constraint(&mut self, constraint: Constraint) -> ConstraintKey {
-        ConstraintKey(self.user_constraints.insert(constraint))
-    }
-
-    /// Access a constraint, if it still exists.
-    #[inline]
-    pub fn get_constraint(&self, key: ConstraintKey) -> Option<&Constraint> {
-        self.user_constraints.get(key.0)
-    }
-
-    /// Mutably access a constraint, if it still exists.
-    #[inline]
-    pub fn get_constraint_mut(&mut self, key: ConstraintKey) -> Option<&mut Constraint> {
-        self.user_constraints.get_mut(key.0)
-    }
-
-    /// Remove a constraint from the system. Returns the constraint if it still existed.
-    ///
-    /// Constraints can also disappear on their own if the objects they're associated with
-    /// are destroyed, so it's not guaranteed the constraint will exist
-    /// even if it hasn't been explicitly removed before.
-    #[inline]
-    pub fn remove_constraint(&mut self, key: ConstraintKey) -> Option<Constraint> {
-        self.user_constraints.remove(key.0)
-    }
-
-    /// Insert a dynamic body into the world.
-    #[inline]
-    pub fn insert_body(&mut self, body: Body) -> BodyKey {
-        self.component_graph.insert_body(body)
-    }
-
-    /// Access a [`Body`][self::Body] in the physics world, if it still exists.
-    #[inline]
-    pub fn get_body(&self, body: BodyKey) -> Option<&Body> {
-        self.component_graph.bodies.get(body.0)
-    }
-
-    /// Mutably access a [`Body`][self::Body] in the physics world, if it still exists.
-    #[inline]
-    pub fn get_body_mut(&mut self, body: BodyKey) -> Option<&mut Body> {
-        self.component_graph.bodies.get_mut(body.0)
-    }
-
-    /// Attach a collider to a dynamic body.
-    #[inline]
-    pub fn attach_collider(&mut self, body: BodyKey, coll: Collider) -> ColliderKey {
-        self.component_graph.attach_collider(body, coll)
-    }
-
-    /// Access a [`Collider`][self::Collider] in the physics world, if it still exists.
-    #[inline]
-    pub fn get_collider(&self, coll: ColliderKey) -> Option<&Collider> {
-        self.component_graph.colliders.get(coll.0)
-    }
-
-    /// Mutably access a [`Collider`][self::Collider] in the physics world, if it still exists.
-    #[inline]
-    pub fn get_collider_mut(&self, coll: ColliderKey) -> Option<&mut Collider> {
-        self.component_graph.colliders.get_mut(coll.0)
     }
 
     /// Remove all constraints and reset internal state.
     pub fn clear(&mut self) {
-        self.component_graph.clear();
-        self.user_constraints.clear();
+        self.entity_set.clear();
+        self.rope_set.clear();
+        self.constraint_set.clear();
         self.sleeping_islands.clear();
         self.contacts.clear();
         self.working_bufs = WorkingBuffers::default();
@@ -481,15 +420,15 @@ impl PhysicsWorld {
         let bufs = &mut self.working_bufs;
 
         // remove constraints where one or both participating bodies have been destroyed
-        self.user_constraints.retain(|_, c| {
-            self.component_graph.bodies.get(c.owner).is_some()
+        self.constraint_set.constraints.retain(|_, c| {
+            self.entity_set.get_body(c.owner).is_some()
                 && c.target
-                    .map(|t| self.component_graph.bodies.get(t).is_some())
+                    .map(|t| self.entity_set.get_body(t).is_some())
                     .unwrap_or(true)
         });
         bufs.user_constraints.clear();
         bufs.user_constraints
-            .extend(self.user_constraints.iter().map(|(_, v)| v));
+            .extend(self.constraint_set.constraints.iter().map(|(_, v)| v));
 
         //
         // Prepare the spatial index
@@ -505,13 +444,13 @@ impl PhysicsWorld {
         bufs.coll_pair_keys.clear();
         // generate potentially colliding pairs,
         // these will be used to re-detect collisions every substep.
-        for (coll_key, coll) in self.component_graph.colliders.iter() {
+        for (coll_key, coll) in self.entity_set.colliders.iter() {
             let coll_key = ColliderKey(coll_key);
             let body = self
-                .component_graph
+                .entity_set
                 .coll_bodies
                 .get(coll_key.0)
-                .and_then(|body_key| self.component_graph.bodies.get(body_key.0));
+                .and_then(|body_key| self.entity_set.get_body(*body_key));
             let aabb = match body {
                 Some(body) => {
                     let pose = body.pose * coll.pose;
@@ -531,7 +470,7 @@ impl PhysicsWorld {
                             coll.layer,
                             // unwrap is safe here because we rebuild the BVH every frame,
                             // hence nothing has had the opportunity to be deleted at this point
-                            self.component_graph.colliders.get(other.0).unwrap().layer,
+                            self.entity_set.get_collider(*other).unwrap().layer,
                         )
                     })
                     .map(move |other| [coll_key, other]),
@@ -539,7 +478,7 @@ impl PhysicsWorld {
             self.bvh.insert(coll_key, aabb);
         }
 
-        tracy_client::plot!("colliders", self.component_graph.colliders.len() as f64);
+        tracy_client::plot!("colliders", self.entity_set.colliders.len() as f64);
         tracy_client::plot!("collider pairs tested", bufs.coll_pair_keys.len() as f64);
 
         drop(spi_span);
@@ -552,29 +491,26 @@ impl PhysicsWorld {
 
         self.constraint_graph.clear();
         self.constraint_graph
-            .resize(self.component_graph.body_slot_count);
+            .resize(self.entity_set.body_slot_count);
 
         // rope constraints
-        for rope_node in l.rope.iter() {
-            let rope_node_idx = rope_node.key().idx;
-            let mut iter = rope_node
-                .get_all_neighbors(&l_body_sub)
-                .map(|node| node.key().idx)
-                .peekable();
+        for (rope_key, rope) in self.rope_set.ropes.iter() {
+            let rope_slot = rope_key.slot() as usize;
+            let mut iter = rope.particles.iter().peekable();
             while let Some(particle) = iter.next() {
                 if let Some(&next_particle) = iter.peek() {
                     self.constraint_graph.insert(
-                        particle,
+                        particle.0.slot() as usize,
                         Edge::Rope {
-                            body_idx: next_particle,
-                            rope_node_idx,
+                            body_idx: next_particle.0.slot() as usize,
+                            rope_slot,
                         },
                     );
                     self.constraint_graph.insert(
-                        next_particle,
+                        next_particle.0.slot() as usize,
                         Edge::Rope {
-                            body_idx: particle,
-                            rope_node_idx,
+                            body_idx: particle.0.slot() as usize,
+                            rope_slot,
                         },
                     );
                 }
@@ -585,31 +521,37 @@ impl PhysicsWorld {
             match constr.target {
                 Some(target) => {
                     self.constraint_graph.insert(
-                        constr.owner,
+                        constr.owner.0.slot() as usize,
                         Edge::Constraint {
-                            body_idx: target,
+                            body_idx: target.0.slot() as usize,
                             constr_idx,
                         },
                     );
                     self.constraint_graph.insert(
-                        target,
+                        target.0.slot() as usize,
                         Edge::Constraint {
-                            body_idx: constr.owner.0.slot(),
+                            body_idx: constr.owner.0.slot() as usize,
                             constr_idx,
                         },
                     );
                 }
-                None => self
-                    .constraint_graph
-                    .insert(constr.owner.0.slot(), Edge::StaticConstraint { constr_idx }),
+                None => self.constraint_graph.insert(
+                    constr.owner.0.slot() as usize,
+                    Edge::StaticConstraint { constr_idx },
+                ),
             }
         }
         // potential contacts from spatial index.
         // this doesn't necessarily cull as much as actually checking collisions,
         // but that would require redoing this every substep which would be costly.
         for (pair_idx, pair) in bufs.coll_pair_keys.iter().enumerate() {
-            let colls = pair.map(|ci| self.component_graph.colliders.get(ci).unwrap());
-            match pair.map(|ci| self.component_graph.coll_bodies.get(ci).map(|b| b.0.slot())) {
+            let colls = pair.map(|ci| self.entity_set.get_collider(ci).unwrap());
+            match pair.map(|ci| {
+                self.entity_set
+                    .coll_bodies
+                    .get(ci.0)
+                    .map(|b| b.0.slot() as usize)
+            }) {
                 [Some(b1), Some(b2)] => {
                     if b1 == b2 {
                         // both colliders are part of the same compound collider,
@@ -673,7 +615,7 @@ impl PhysicsWorld {
                 match edge {
                     Edge::Rope {
                         body_idx,
-                        rope_node_idx,
+                        rope_slot: rope_node_idx,
                     } => {
                         // sleeping causes problems with current rope implementation
                         // (indices are collected into buffers in a way that breaks with sleeping).
@@ -738,7 +680,7 @@ impl PhysicsWorld {
             }
         }
 
-        for (body_key, body) in self.component_graph.bodies.iter() {
+        for (body_key, body) in self.entity_set.bodies.iter() {
             if bufs.island_assigned[body_key.slot() as usize] {
                 continue;
             }
@@ -785,8 +727,7 @@ impl PhysicsWorld {
                     [isl.body_range_start..isl.body_range_start + isl.body_count]
                     .iter()
                     .any(|bi| {
-                        let (_, body) =
-                            self.component_graph.bodies.get_by_slot(*bi as u32).unwrap();
+                        let (_, body) = self.entity_set.bodies.get_by_slot(*bi as u32).unwrap();
                         body.velocity.mag_sq() >= self.consts.sleep_vel_threshold
                     })
                 {
@@ -845,20 +786,17 @@ impl PhysicsWorld {
         let buf_span = tracy_client::span!("populate buffers");
 
         bufs.bodies.clear();
-        bufs.bodies
-            .extend(bufs.sorted_second_pass.bodies.iter().map(|bi| {
-                self.component_graph
-                    .bodies
-                    .get_by_slot(*bi as u32)
-                    .unwrap()
-                    .1
-            }));
+        bufs.bodies.extend(
+            bufs.sorted_second_pass
+                .bodies
+                .iter()
+                .map(|bi| self.entity_set.bodies.get_by_slot(*bi as u32).unwrap().1),
+        );
         // maps from the slot of a body in the thunderdome arena
         // to the index of a body in bufs.bodies.
         // we don't need to clear it because gaps will just never be touched
         bufs.body_order.clear();
-        bufs.body_order
-            .resize(self.component_graph.body_slot_count, 0);
+        bufs.body_order.resize(self.entity_set.body_slot_count, 0);
         for (sorted_idx, body_slot) in bufs.sorted_second_pass.bodies.iter().enumerate() {
             bufs.body_order[*body_slot] = sorted_idx;
         }
@@ -1096,7 +1034,7 @@ impl PhysicsWorld {
 
             // map from collider to the body index in the slice given to the island
             let get_collider_body = |coll_key: ColliderKey| {
-                let body_key = self.component_graph.coll_bodies.get(coll_key.0)?;
+                let body_key = self.entity_set.coll_bodies.get(coll_key.0)?;
                 let slot = body_key.0.slot() as usize;
                 Some(bufs.body_order[slot] - island_start_idx)
             };
@@ -1149,7 +1087,7 @@ impl PhysicsWorld {
             for _substep in 0..substeps {
                 let _substep_span = tracy_client::span!("substep");
 
-                solver::solve(forcefield, island_view, &self.component_graph);
+                solver::solve(forcefield, island_view, &self.entity_set);
             }
         });
 
@@ -1185,8 +1123,7 @@ impl PhysicsWorld {
                 )
                 .filter_map(|(pair, contact)| {
                     contact.iter().next().map(|cont| ContactInfo {
-                        entities: pair
-                            .map(|c| l.collider.get_unchecked_by_item_idx(c.node_idx).key()),
+                        colliders: *pair,
                         normal: cont.normal,
                         island_id: isl.id,
                     })
@@ -1220,9 +1157,9 @@ impl PhysicsWorld {
         // apply results back to retained state
         //
 
-        for (body_key, body) in self.component_graph.bodies.iter_mut() {
-            let working_body = bufs.body_order[body_key.slot()];
-            *body = working_body;
+        for (body_key, body) in self.entity_set.bodies.iter_mut() {
+            let working_body = bufs.body_order[body_key.slot() as usize];
+            *body = bufs.bodies[working_body];
         }
     }
 

@@ -3,7 +3,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RopeView {
-    pub info: rope::Rope,
+    pub info: rope::RopeParameters,
     pub start: usize,
 }
 
@@ -36,7 +36,7 @@ pub struct DataView<'a> {
 unsafe impl<'a> Sync for DataView<'a> {}
 unsafe impl<'a> Send for DataView<'a> {}
 
-pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
+pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, comp_graph: &EntitySet) {
     // apply external forces and estimate post-step pose with explicit Euler step
     for (body, old_pose, old_vel, ext_accel) in izip!(
         data.bodies,
@@ -261,7 +261,7 @@ fn solve_constraints(data: &mut DataView<'_>) {
 // Solve contacts
 //
 
-fn solve_contacts(data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
+fn solve_contacts(data: &mut DataView<'_>, comp_graph: &EntitySet) {
     let _span = tracy_client::span!("solve contacts");
 
     for (coll_keys, contact, last_contact, lambda_n) in izip!(
@@ -473,7 +473,7 @@ fn solve_contacts(data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
 // Contact velocity step
 //
 
-fn contact_velocity_step(data: &mut DataView<'_>, comp_graph: &ComponentGraph) {
+fn contact_velocity_step(data: &mut DataView<'_>, comp_graph: &EntitySet) {
     let _span = tracy_client::span!("contact velocity step");
 
     for (coll_keys, contact, lambda_n) in

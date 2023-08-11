@@ -366,7 +366,7 @@ impl Recipe {
                 let rope_end_1 = block1.pose.build() * sf::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * sf::Vec2::from(offset2);
                 let rope = sf::rope::spawn_line(
-                    sf::Rope {
+                    sf::RopeParameters {
                         ..Default::default()
                     },
                     rope_end_1,

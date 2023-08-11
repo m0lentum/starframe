@@ -6,7 +6,7 @@ use thunderdome as td;
 ///
 /// When using a [`hecs`][crate::hecs] World, this type should be stored
 /// in the world instead of [`Collider`][super::Collider].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ColliderKey(pub(super) td::Index);
 
 impl ColliderKey {
@@ -23,7 +23,7 @@ impl ColliderKey {
 ///
 /// When using a [`hecs`][crate::hecs] World, this type should be stored
 /// in the world instead of [`Body`][super::Body].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodyKey(pub(super) td::Index);
 
 impl BodyKey {
@@ -36,27 +36,69 @@ impl BodyKey {
     }
 }
 
-/// Internal representation of objects in the physics world.
+/// Internal representation of objects in the physics world,
+/// comprised of bodies and colliders.
+///
 /// Represented as a graph where dynamic bodies can have multiple colliders
 /// and colliders can be attached to dynamic bodies or be static.
 #[derive(Default)]
-pub(super) struct ComponentGraph {
+pub struct EntitySet {
     // pub fields instead of immutable accessors because I'm lazy,
     // there are some invariants that can be violated with these when inserting/removing
     // but I only use them in the physics solver where I don't do those things
-    pub bodies: td::Arena<Body>,
+    pub(super) bodies: td::Arena<Body>,
     // keeping track of highest slot indices
     // because slots are used for addressing during physics solve
-    pub body_slot_count: usize,
-    pub colliders: td::Arena<Collider>,
-    pub coll_slot_count: usize,
-    pub coll_bodies: td::Arena<BodyKey>,
+    pub(super) body_slot_count: usize,
+    pub(super) colliders: td::Arena<Collider>,
+    pub(super) coll_slot_count: usize,
+    pub(super) coll_bodies: td::Arena<BodyKey>,
 }
 
-impl ComponentGraph {
+impl EntitySet {
     #[inline]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// Access a [`Body`][super::Body] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_body(&self, body: BodyKey) -> Option<&Body> {
+        self.bodies.get(body.0)
+    }
+
+    /// Mutably access a [`Body`][super::Body] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_body_mut(&mut self, body: BodyKey) -> Option<&mut Body> {
+        self.bodies.get_mut(body.0)
+    }
+
+    /// Access a [`Collider`][super::Collider] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_collider(&self, coll: ColliderKey) -> Option<&Collider> {
+        self.colliders.get(coll.0)
+    }
+
+    /// Mutably access a [`Collider`][super::Collider] in the physics world, if it still exists.
+    #[inline]
+    pub fn get_collider_mut(&self, coll: ColliderKey) -> Option<&mut Collider> {
+        self.colliders.get_mut(coll.0)
+    }
+
+    /// Access the Body connected to the given Collider, if both still exist.
+    #[inline]
+    pub fn get_collider_body(&self, coll: ColliderKey) -> Option<&Body> {
+        self.coll_bodies
+            .get(coll.0)
+            .and_then(|b| self.bodies.get(b.0))
+    }
+
+    /// Mutably access the Body connected to the given Collider, if both still exist.
+    #[inline]
+    pub fn get_collider_body_mut(&mut self, coll: ColliderKey) -> Option<&mut Body> {
+        self.coll_bodies
+            .get(coll.0)
+            .and_then(|b| self.bodies.get_mut(b.0))
     }
 
     /// Insert a dynamic body into the world.
@@ -90,7 +132,8 @@ impl ComponentGraph {
         ColliderKey(key)
     }
 
-    pub fn clear(&mut self) {
+    // not exposed to users, must use through PhysicsWorld::clear
+    pub(super) fn clear(&mut self) {
         self.bodies.clear();
         self.body_slot_count = 0;
         self.colliders.clear();
