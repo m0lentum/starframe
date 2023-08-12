@@ -136,7 +136,7 @@ impl Rope {
     /// Returns the [`Rope`][crate::physics::rope::Rope] nodes of the two rope parts
     /// if the particle is part of a rope and not its last particle,
     /// otherwise returns `None`.
-    pub fn cut_after(mut self, particle: BodyKey, entities: &mut EntitySet) -> Option<[Rope; 2]> {
+    pub fn cut_after(mut self, particle: BodyKey) -> Option<[Rope; 2]> {
         let particle_idx = self
             .particles
             .iter()
@@ -185,7 +185,7 @@ impl RopeSet {
 
     /// Mutably access a Rope in the physics world, if it still exists.
     #[inline]
-    pub fn get_mut(&self, key: RopeKey) -> Option<&mut Rope> {
+    pub fn get_mut(&mut self, key: RopeKey) -> Option<&mut Rope> {
         self.ropes.get_mut(key.0)
     }
 

@@ -25,15 +25,15 @@ impl ConstraintSet {
         ConstraintKey(self.constraints.insert(constraint))
     }
 
-    /// Access a Rope in the physics world, if it still exists.
+    /// Access a Constraint in the physics world, if it still exists.
     #[inline]
     pub fn get(&self, key: ConstraintKey) -> Option<&Constraint> {
         self.constraints.get(key.0)
     }
 
-    /// Mutably access a Rope in the physics world, if it still exists.
+    /// Mutably access a Constraint in the physics world, if it still exists.
     #[inline]
-    pub fn get_mut(&self, key: ConstraintKey) -> Option<&mut Constraint> {
+    pub fn get_mut(&mut self, key: ConstraintKey) -> Option<&mut Constraint> {
         self.constraints.get_mut(key.0)
     }
 

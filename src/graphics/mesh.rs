@@ -7,7 +7,7 @@ pub mod gltf_import;
 //
 
 use crate::{
-    graph, graphics as gx,
+    graphics as gx,
     math::{self as m, uv},
     physics as phys,
 };
@@ -571,20 +571,19 @@ impl MeshRenderer {
         &mut self,
         camera: &gx::Camera,
         ctx: &mut gx::RenderContext,
-        (mut l_mesh, l_skin, l_pose): (
-            graph::LayerViewMut<super::Mesh>,
-            graph::LayerView<Skin>,
-            graph::LayerView<m::Pose>,
-        ),
+        world: &mut hecs::World,
     ) {
+        type Query<'a> = (&'a mut Mesh, Option<&'a Skin>, Option<&'a m::Pose>);
+
         // collect all joint matrices in the world,
         // we'll shove them all in the storage buffer in one go.
         // make sure the iteration order is the same as when rendering
         // so that each mesh gets the correct offset into the array
-        let mut joint_matrices: Vec<gx::util::GpuMat4> = l_mesh
-            .iter()
-            .filter_map(|mesh| mesh.get_neighbor(&l_skin))
-            .flat_map(|skin| skin.c.joints.iter())
+        let mut joint_matrices: Vec<gx::util::GpuMat4> = world
+            .query_mut::<Query>()
+            .into_iter()
+            .filter_map(|(_, (_, skin, _))| skin)
+            .flat_map(|skin| skin.joints.iter())
             .map(|joint| gx::util::GpuMat4::from(joint.joint_matrix))
             .collect();
 
@@ -625,23 +624,21 @@ impl MeshRenderer {
 
         // joint buffer is shared between all meshes; mesh's offset into it
         let mut joint_offset = 0_u32;
-        for mesh in l_mesh.iter_mut() {
-            let pose = mesh
-                .get_neighbor(&l_pose)
-                .map(|p| *p.c)
-                .unwrap_or_else(m::Pose::identity);
-            let skin = mesh.get_neighbor(&l_skin);
-
+        for (_, (mesh, skin, pose)) in world.query_mut::<Query>() {
             // mesh uniforms
             // initialize the per-mesh GPU resources on first render
-            if mesh.c.gpu_resources.is_none() {
-                mesh.c.upload(self, ctx.device);
+            if mesh.gpu_resources.is_none() {
+                mesh.upload(self, ctx.device);
             }
             // now mesh.c.gpu_resources has been created for sure
-            let gpu_res = mesh.c.gpu_resources.as_ref().unwrap();
+            let gpu_res = mesh.gpu_resources.as_ref().unwrap();
 
+            let mesh_pose = match pose {
+                Some(entity_pose) => *entity_pose * mesh.offset,
+                None => mesh.offset,
+            };
             let uniforms = MeshUniforms {
-                model_view: (view * (pose * mesh.c.offset).into_homogeneous_matrix()).into(),
+                model_view: (view * mesh_pose.into_homogeneous_matrix()).into(),
                 _pad: [0; 3],
                 joint_offset,
             };
@@ -652,7 +649,7 @@ impl MeshRenderer {
             // render
 
             // stencil for outline rendering
-            pass.set_stencil_reference(if mesh.c.has_outline { 1 } else { 0 });
+            pass.set_stencil_reference(if mesh.has_outline { 1 } else { 0 });
 
             for prim in &gpu_res.primitives {
                 pass.set_bind_group(1, &gpu_res.uniform_bind_group, &[]);
@@ -662,7 +659,7 @@ impl MeshRenderer {
             }
 
             if let Some(skin) = skin {
-                joint_offset += skin.c.joints.len() as u32;
+                joint_offset += skin.joints.len() as u32;
             }
         }
     }

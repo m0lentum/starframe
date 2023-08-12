@@ -1,5 +1,4 @@
 use itertools::izip;
-use thunderdome as td;
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -31,7 +30,7 @@ mod entity_set;
 pub use entity_set::{BodyKey, ColliderKey, EntitySet};
 
 mod constraint_set;
-pub use constraint_set::ConstraintSet;
+pub use constraint_set::{ConstraintKey, ConstraintSet};
 
 mod constraint_graph;
 use constraint_graph::*;
@@ -300,10 +299,6 @@ impl WorkingBuffers {
     }
 }
 
-/// Key type to look up a constraint stored in the physics world.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ConstraintKey(td::Index);
-
 //
 // physics proper
 //
@@ -395,9 +390,35 @@ impl PhysicsWorld {
         self.working_bufs = WorkingBuffers::default();
     }
 
+    /// Sync poses from a hecs world to the physics world.
+    /// Call before [`tick`][Self::tick].
+    ///
+    /// Poses are synced for entities that have a [`Pose`][crate::Pose]
+    /// and a [`BodyKey`][self::BodyKey].
+    pub fn sync_from_hecs(&mut self, world: &mut hecs::World) {
+        for (_, (pose, body_key)) in world.query_mut::<(&m::Pose, &BodyKey)>() {
+            let Some(body) = self.entity_set.get_body_mut(*body_key) else {continue;};
+            body.pose = *pose;
+        }
+    }
+
+    /// Sync poses back to a hecs world from the physics world.
+    /// Call after [`tick`][Self::tick].
+    ///
+    /// Poses are synced for entities that have a [`Pose`][crate::Pose]
+    /// and a [`BodyKey`][self::BodyKey].
+    pub fn sync_to_hecs(&mut self, world: &mut hecs::World) {
+        for (_, (pose, body_key)) in world.query_mut::<(&mut m::Pose, &BodyKey)>() {
+            let Some(body) = self.entity_set.get_body_mut(*body_key) else {continue;};
+            *pose = body.pose;
+        }
+    }
+
     /// Advance the simulation forward by `frame_dt` seconds.
     pub fn tick(&mut self, frame_dt: f64, time_scale: Option<f64>, forcefield: &impl ForceField) {
         let _main_span = tracy_client::span!("physics tick");
+
+        self.entity_set.remove_orphan_colliders();
 
         // time scaling is done by adjusting both dt and actual substep count executed.
         // trying to keep dt as close to constant as possible to avoid any nasty inconsistencies
@@ -545,7 +566,6 @@ impl PhysicsWorld {
         // this doesn't necessarily cull as much as actually checking collisions,
         // but that would require redoing this every substep which would be costly.
         for (pair_idx, pair) in bufs.coll_pair_keys.iter().enumerate() {
-            let colls = pair.map(|ci| self.entity_set.get_collider(ci).unwrap());
             match pair.map(|ci| {
                 self.entity_set
                     .coll_bodies
@@ -592,7 +612,8 @@ impl PhysicsWorld {
         //
 
         bufs.island_assigned.clear();
-        bufs.island_assigned.resize(bufs.bodies.len(), false);
+        bufs.island_assigned
+            .resize(self.entity_set.body_slot_count, false);
         bufs.islands.clear();
         bufs.sorted_first_pass.clear();
         bufs.sorted_second_pass.clear();
@@ -680,7 +701,7 @@ impl PhysicsWorld {
             }
         }
 
-        for (body_key, body) in self.entity_set.bodies.iter() {
+        for (body_key, _) in self.entity_set.bodies.iter() {
             if bufs.island_assigned[body_key.slot() as usize] {
                 continue;
             }
@@ -825,7 +846,7 @@ impl PhysicsWorld {
         bufs.rope_next_particles.resize(bufs.bodies.len(), None);
         bufs.rope_prev_particles.clear();
         bufs.rope_prev_particles.resize(bufs.bodies.len(), None);
-        for (rope_key, rope) in self.rope_set.ropes.iter() {
+        for (_, rope) in self.rope_set.ropes.iter() {
             let mut iter = rope.particles.iter().peekable();
             while let Some(particle) = iter.next() {
                 if let Some(next_particle) = iter.peek() {
@@ -900,8 +921,7 @@ impl PhysicsWorld {
 
         #[cfg(feature = "parallel")]
         {
-            let ideal_body_count =
-                (self.component_graph.bodies.len() + thread_count - 1) / thread_count;
+            let ideal_body_count = (self.entity_set.bodies.len() + thread_count - 1) / thread_count;
             let ideal_body_count = ideal_body_count.max(self.consts.min_bodies_per_thread);
 
             let mut covered_body_count = 0;
@@ -1028,13 +1048,6 @@ impl PhysicsWorld {
                 }
             }
 
-            // map from collider to the body index in the slice given to the island
-            let get_collider_body = |coll_key: ColliderKey| {
-                let body_key = self.entity_set.coll_bodies.get(coll_key.0)?;
-                let slot = body_key.0.slot() as usize;
-                Some(bufs.body_order[slot] - island_start_idx)
-            };
-
             let (coll_pairs, coll_p_rest) = coll_pairs_s.split_at_mut(pair_count);
             coll_pairs_s = coll_p_rest;
             let (contacts, contacts_rest) = contacts_s.split_at_mut(pair_count);
@@ -1048,7 +1061,8 @@ impl PhysicsWorld {
                 dt,
                 inv_dt,
                 inv_dt_sq,
-                get_collider_body: &get_collider_body,
+                island_offset: island_start_idx,
+                global_body_order: &bufs.body_order,
                 bodies,
                 old_poses,
                 pre_contact_poses,
@@ -1254,7 +1268,7 @@ impl PhysicsWorld {
     /// If you need to also know if the ray starts inside something, use
     /// [`query_point_body`][Self::query_point_body] in addition to this.
     #[inline]
-    pub fn raycast<'p>(&'p mut self, ray: Ray, max_distance: f64) -> Option<CastHit> {
+    pub fn raycast(&mut self, ray: Ray, max_distance: f64) -> Option<CastHit> {
         self.spherecast(0.0, ray, max_distance)
     }
 
@@ -1265,12 +1279,7 @@ impl PhysicsWorld {
     /// through an object that's up close. I'm not sure what the cleanest way to handle this
     /// is (TODO think about this), but for now you can use [`query_shape`][Self::query_shape]
     /// with a circle, similarly to how you would check a point when raycasting.
-    pub fn spherecast<'p>(
-        &'p mut self,
-        radius: f64,
-        ray: Ray,
-        max_distance: f64,
-    ) -> Option<CastHit> {
+    pub fn spherecast(&mut self, radius: f64, ray: Ray, max_distance: f64) -> Option<CastHit> {
         // BVH traversal returns colliders in spatial order by their AABBs,
         // but this may not return the actual closest thing first if there are
         // small things near something large and diagonal.

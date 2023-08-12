@@ -44,7 +44,7 @@ pub struct State {
     scenes_available: Vec<std::path::PathBuf>,
     scene: Scene,
     state: StateEnum,
-    graph: sf::Graph,
+    world: sf::hecs::World,
     // gameplay
     player: player::PlayerController,
     mouse_grabber: MouseGrabber,
@@ -74,17 +74,7 @@ impl State {
             scenes_available: read_available_scenes().expect("Failed to read scenes directory"),
             scene: Scene::default(),
             state: StateEnum::Playing,
-            graph: sf::new_graph! {
-                // starframe types
-                sf::Pose,
-                sf::Body,
-                sf::Collider,
-                sf::Rope,
-                sf::Mesh,
-                sf::Skin,
-                // our types
-                player::Player,
-            },
+            world: sf::hecs::World::new(),
             player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
             physics: sf::PhysicsWorld::new(
@@ -135,7 +125,7 @@ impl State {
 
     fn reset(&mut self) {
         self.physics.clear();
-        self.graph.reset();
+        self.world.clear();
     }
 }
 
@@ -183,9 +173,9 @@ impl Scene {
         <Self as serde::Deserialize>::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, physics: &mut sf::PhysicsWorld, graph: &sf::Graph) {
+    pub fn instantiate(&self, physics: &mut sf::PhysicsWorld, world: &mut hecs::World) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, graph);
+            recipe.spawn(physics, world);
         }
     }
 }
@@ -392,7 +382,7 @@ impl sf::GameState for State {
         }
         if reload {
             self.reset();
-            self.scene.instantiate(&mut self.physics, &self.graph);
+            self.scene.instantiate(&mut self.physics, &mut self.world);
         }
 
         self.last_egui_output = self.egui_platform.end_frame(Some(&game.window));
@@ -400,7 +390,7 @@ impl sf::GameState for State {
         // mouse controls
 
         self.mouse_grabber
-            .update(&game.input, &self.camera, &mut self.physics, &self.graph);
+            .update(&game.input, &self.camera, &mut self.physics);
         self.camera_ctl.update(&mut self.camera, &game.input);
 
         // spawn stuff even when paused
@@ -429,7 +419,7 @@ impl sf::GameState for State {
                     }
                     .into()],
                 }
-                .spawn(&mut self.physics, &self.graph);
+                .spawn(&mut self.physics, &mut self.world);
             }
         }
 
@@ -444,14 +434,12 @@ impl sf::GameState for State {
                 }
 
                 let grav = sf::forcefield::Gravity(self.scene.gravity.into());
-                self.physics.tick(
-                    game.dt_fixed,
-                    Some(self.time_scale),
-                    &grav,
-                    self.graph.get_layer_bundle(),
-                );
+                self.physics.sync_from_hecs(&mut self.world);
+                self.physics
+                    .tick(game.dt_fixed, Some(self.time_scale), &grav);
+                self.physics.sync_to_hecs(&mut self.world);
                 self.player
-                    .tick(&game.input, &self.physics, &mut self.graph);
+                    .tick(&game.input, &mut self.physics, &mut self.world);
 
                 Some(())
             }
@@ -489,16 +477,12 @@ impl sf::GameState for State {
             );
         }
         if self.island_vis_active {
-            self.debug_visualizer.draw_islands(
-                &self.physics,
-                &self.camera,
-                &mut ctx,
-                self.graph.get_layer_bundle(),
-            );
+            self.debug_visualizer
+                .draw_islands(&self.physics, &self.camera, &mut ctx);
         }
 
         self.mesh_renderer
-            .draw(&self.camera, &mut ctx, self.graph.get_layer_bundle());
+            .draw(&self.camera, &mut ctx, &mut self.world);
 
         ctx.submit();
 

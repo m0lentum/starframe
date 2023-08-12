@@ -13,7 +13,11 @@ pub struct DataView<'a> {
     pub dt: f64,
     pub inv_dt: f64,
     pub inv_dt_sq: f64,
-    pub get_collider_body: &'a dyn Fn(ColliderKey) -> Option<usize>,
+    /// index of the first body in the island in the global buffers
+    pub island_offset: usize,
+    /// map from the entity_set body storage to the sorted order
+    pub global_body_order: &'a [usize],
+    /// slice of sorted bodies that are part of the island
     pub bodies: &'a mut [Body],
     pub old_poses: &'a mut [m::Pose],
     pub pre_contact_poses: &'a mut [m::Pose],
@@ -36,10 +40,22 @@ pub struct DataView<'a> {
 unsafe impl<'a> Sync for DataView<'a> {}
 unsafe impl<'a> Send for DataView<'a> {}
 
-pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, comp_graph: &EntitySet) {
+/// Get the index of the body connected to a collider within this island's slice.
+fn get_collider_body(
+    global_body_order: &[usize],
+    island_offset: usize,
+    coll_key: ColliderKey,
+    entity_set: &EntitySet,
+) -> Option<usize> {
+    let body_key = entity_set.coll_bodies.get(coll_key.0)?;
+    let slot = body_key.0.slot() as usize;
+    Some(global_body_order[slot] - island_offset)
+}
+
+pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: &EntitySet) {
     // apply external forces and estimate post-step pose with explicit Euler step
     for (body, old_pose, old_vel, ext_accel) in izip!(
-        data.bodies,
+        &mut *data.bodies,
         &mut *data.old_poses,
         &mut *data.old_velocities,
         &mut *data.ext_f_accelerations
@@ -68,7 +84,7 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, comp_graph: 
         *pre_cont_pose = body.pose;
     }
     if !data.contacts.is_empty() {
-        solve_contacts(data, comp_graph);
+        solve_contacts(data, entity_set);
     }
 
     // update velocities from pose differences
@@ -80,7 +96,7 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, comp_graph: 
     }
 
     if !data.contacts.is_empty() {
-        contact_velocity_step(data, comp_graph);
+        contact_velocity_step(data, entity_set);
     }
     if !data.constraints.is_empty() {
         constraint_damping(data);
@@ -261,7 +277,7 @@ fn solve_constraints(data: &mut DataView<'_>) {
 // Solve contacts
 //
 
-fn solve_contacts(data: &mut DataView<'_>, comp_graph: &EntitySet) {
+fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
     let _span = tracy_client::span!("solve contacts");
 
     for (coll_keys, contact, last_contact, lambda_n) in izip!(
@@ -270,7 +286,9 @@ fn solve_contacts(data: &mut DataView<'_>, comp_graph: &EntitySet) {
         &mut *data.last_contacts,
         &mut *data.contact_lambdas
     ) {
-        let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| (data.get_collider_body)(*c));
+        let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| {
+            get_collider_body(data.global_body_order, data.island_offset, *c, entity_set)
+        });
 
         if !bodies[0]
             .map(|bi| data.bodies[bi].sees_forces())
@@ -284,7 +302,7 @@ fn solve_contacts(data: &mut DataView<'_>, comp_graph: &EntitySet) {
             continue;
         }
 
-        let colls: [&Collider; 2] = map_pair(coll_keys, |c| comp_graph.colliders.get(c.0).unwrap());
+        let colls: [&Collider; 2] = map_pair(coll_keys, |c| entity_set.colliders.get(c.0).unwrap());
 
         // check for collision
         *contact = {
@@ -473,13 +491,13 @@ fn solve_contacts(data: &mut DataView<'_>, comp_graph: &EntitySet) {
 // Contact velocity step
 //
 
-fn contact_velocity_step(data: &mut DataView<'_>, comp_graph: &EntitySet) {
+fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
     let _span = tracy_client::span!("contact velocity step");
 
     for (coll_keys, contact, lambda_n) in
-        izip!(&*data.coll_pairs, &*data.contacts, &*data.contact_lambdas)
+        izip!(data.coll_pairs, &*data.contacts, &*data.contact_lambdas)
     {
-        let colls: [&Collider; 2] = map_pair(coll_keys, |c| comp_graph.colliders.get(c.0).unwrap());
+        let colls: [&Collider; 2] = map_pair(coll_keys, |c| entity_set.colliders.get(c.0).unwrap());
 
         let materials = match (colls[0].ty, colls[1].ty) {
             (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
@@ -489,7 +507,9 @@ fn contact_velocity_step(data: &mut DataView<'_>, comp_graph: &EntitySet) {
             }
         };
 
-        let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| (data.get_collider_body)(*c));
+        let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| {
+            get_collider_body(data.global_body_order, data.island_offset, *c, entity_set)
+        });
 
         for contact in contact.iter() {
             struct WorkingVars {

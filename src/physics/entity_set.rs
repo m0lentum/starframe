@@ -53,6 +53,12 @@ pub struct EntitySet {
     pub(super) colliders: td::Arena<Collider>,
     pub(super) coll_slot_count: usize,
     pub(super) coll_bodies: td::Arena<BodyKey>,
+    // there's no direct connection from bodies to colliders
+    // (because there can be multiple colliders per body
+    // and expressing that efficiently is tricky),
+    // so we keep track of deleted bodies and delete their colliders
+    // in a separate sync step
+    removed_bodies: Vec<BodyKey>,
 }
 
 impl EntitySet {
@@ -81,7 +87,7 @@ impl EntitySet {
 
     /// Mutably access a [`Collider`][super::Collider] in the physics world, if it still exists.
     #[inline]
-    pub fn get_collider_mut(&self, coll: ColliderKey) -> Option<&mut Collider> {
+    pub fn get_collider_mut(&mut self, coll: ColliderKey) -> Option<&mut Collider> {
         self.colliders.get_mut(coll.0)
     }
 
@@ -121,6 +127,13 @@ impl EntitySet {
         coll_key
     }
 
+    /// Attach an already existing collider to a dynamic body.
+    /// If it was attached to another body before, that connection is removed.
+    #[inline]
+    pub fn attach_existing_collider(&mut self, body: BodyKey, coll: ColliderKey) {
+        self.coll_bodies.insert_at(coll.0, body);
+    }
+
     /// Insert a collider that isn't attached to a dynamic body
     /// (typically a static collider or a sensor).
     pub fn insert_collider(&mut self, coll: Collider) -> ColliderKey {
@@ -132,6 +145,52 @@ impl EntitySet {
         ColliderKey(key)
     }
 
+    /// Remove a [`Body`][super::Body] from the physics world,
+    /// returning it if it still existed.
+    ///
+    /// Colliders associated with this body will be automatically removed
+    /// at the next physics tick.
+    pub fn remove_body(&mut self, body: BodyKey) -> Option<Body> {
+        let removed = self.bodies.remove(body.0);
+        if removed.is_some() {
+            self.removed_bodies.push(body);
+        }
+        removed
+    }
+
+    /// Remove a [`Collider`][super::Collider] from the physics world,
+    /// returning it if it still existed.
+    ///
+    /// If a body is associated with this collider, it will not be automatically removed.
+    /// In such cases, prefer to remove the body instead.
+    #[inline]
+    pub fn remove_collider(&mut self, coll: ColliderKey) -> Option<Collider> {
+        self.coll_bodies.remove(coll.0);
+        self.colliders.remove(coll.0)
+    }
+
+    /// Remove colliders that have had their corresponding bodies removed.
+    pub(super) fn remove_orphan_colliders(&mut self) {
+        if self.removed_bodies.is_empty() {
+            return;
+        }
+
+        self.colliders.retain(|k, _| {
+            if let Some(&b) = self.coll_bodies.get(k) {
+                if self.removed_bodies.iter().any(|&removed| b == removed) {
+                    self.coll_bodies.remove(k);
+                    false
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        });
+
+        self.removed_bodies.clear();
+    }
+
     // not exposed to users, must use through PhysicsWorld::clear
     pub(super) fn clear(&mut self) {
         self.bodies.clear();
@@ -140,8 +199,4 @@ impl EntitySet {
         self.coll_slot_count = 0;
         self.coll_bodies.clear();
     }
-
-    // TODO:
-    // - remove bodies
-    // - cleanup step at the start of tick to remove colliders that were attached to that body
 }
