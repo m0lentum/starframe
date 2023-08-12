@@ -129,8 +129,8 @@ impl ContactInfo {
 /// or [`spherecast`][self::PhysicsWorld::spherecast].
 #[derive(Clone, Copy, Debug)]
 pub struct CastHit {
-    /// The entity containing the collider that was hit.
-    pub collider: hecs::Entity,
+    /// A key to the collider that was hit.
+    pub collider: ColliderKey,
     /// The point in world space where the ray or swept shape intersected the collider.
     ///
     /// This is always a point on the hit collider's surface.
@@ -804,13 +804,11 @@ impl PhysicsWorld {
         bufs.sorted_rope_views.clear();
         bufs.sorted_rope_views
             .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
-                let rope_node = l.rope.get_unchecked_by_item_idx(*idx);
-                let first_particle = rope_node
-                    .get_neighbor(&l_body_sub)
-                    .expect("A Rope didn't have any particles");
+                let rope = self.rope_set.ropes.get_by_slot(*idx as u32).unwrap().1;
+                let first_particle = rope.particles[0];
                 solver::RopeView {
-                    info: *rope_node.c,
-                    start: bufs.body_order[first_particle.key().idx],
+                    params: rope.params,
+                    start: bufs.body_order[first_particle.0.slot() as usize],
                 }
             }));
 
@@ -827,16 +825,14 @@ impl PhysicsWorld {
         bufs.rope_next_particles.resize(bufs.bodies.len(), None);
         bufs.rope_prev_particles.clear();
         bufs.rope_prev_particles.resize(bufs.bodies.len(), None);
-        for rope_node in l.rope.iter() {
-            let node_ref_map = &bufs.body_order;
-            let mut iter = rope_node
-                .get_all_neighbors(&l_body_sub)
-                .map(|node| node_ref_map[node.key().idx])
-                .peekable();
+        for (rope_key, rope) in self.rope_set.ropes.iter() {
+            let mut iter = rope.particles.iter().peekable();
             while let Some(particle) = iter.next() {
                 if let Some(next_particle) = iter.peek() {
-                    bufs.rope_next_particles[particle] = Some(*next_particle);
-                    bufs.rope_prev_particles[*next_particle] = Some(particle);
+                    let slot = particle.0.slot() as usize;
+                    let next_slot = next_particle.0.slot() as usize;
+                    bufs.rope_next_particles[slot] = Some(next_slot);
+                    bufs.rope_prev_particles[next_slot] = Some(slot);
                 }
             }
         }
@@ -1170,12 +1166,12 @@ impl PhysicsWorld {
     /// faces away from it.
     pub fn contacts_for_collider(
         &self,
-        coll: graph::NodeKey<Collider>,
+        coll: ColliderKey,
     ) -> impl '_ + Iterator<Item = ContactInfo> {
         self.contacts.iter().filter_map(move |&cont| {
-            if cont.entities[0] == coll {
+            if cont.colliders[0] == coll {
                 Some(cont)
-            } else if cont.entities[1] == coll {
+            } else if cont.colliders[1] == coll {
                 Some(cont.flip())
             } else {
                 None
@@ -1183,37 +1179,32 @@ impl PhysicsWorld {
         })
     }
 
-    /// Find every rigid body that intersects with the given point.
+    /// Find every collider that intersects with the given point.
+    /// Returns a key to the collider, and if it's attached to a body,
+    /// also a key to the body.
     ///
     /// Takes a mutable reference because bounding volume hierarchy
     /// traversal uses a mutable shared stack.
     /// This is subject to change if I figure out a good way to
     /// do this with interior mutability. (TODO)
-    pub fn query_point_body<'p, 'g: 'p>(
-        &'p mut self,
+    pub fn query_point(
+        &mut self,
         point: m::Vec2,
-        (l_pose, l_collider, l_body): &'g (
-            graph::LayerView<'g, m::Pose>,
-            graph::LayerView<'g, Collider>,
-            graph::LayerView<'g, Body>,
-        ),
-    ) -> impl 'p
-           + Iterator<
-        Item = (
-            graph::NodeRef<'g, m::Pose>,
-            graph::NodeRef<'g, Collider>,
-            graph::NodeRef<'g, Body>,
-        ),
-    > {
-        self.bvh.test_point(point).filter_map(move |stored_coll| {
-            let coll = match l_collider.get(stored_coll) {
-                Some(coll) => coll,
-                None => return None,
+    ) -> impl '_ + Iterator<Item = (ColliderKey, Option<BodyKey>)> {
+        // TODO: using this requires dropping the iterator.
+        // restructure this such that references to the collider and body
+        // can be acquired during iteration
+        let entity_set = &self.entity_set;
+        self.bvh.test_point(point).filter_map(move |coll_key| {
+            let coll = entity_set.get_collider(coll_key)?;
+            let body_key = entity_set.coll_bodies.get(coll_key.0).copied();
+            let body = body_key.and_then(|k| entity_set.get_body(k));
+            let pose = match body {
+                Some(body) => body.pose * coll.pose,
+                None => coll.pose,
             };
-            let body = coll.get_neighbor(l_body)?;
-            let pose = body.get_neighbor(l_pose)?;
-            if collision::query::point_collider_bool(point, *pose.c * coll.c.offset, *coll.c) {
-                Some((pose, coll, body))
+            if collision::query::point_collider_bool(point, pose, *coll) {
+                Some((coll_key, body_key))
             } else {
                 None
             }
@@ -1221,32 +1212,36 @@ impl PhysicsWorld {
     }
 
     /// Get all colliders that intersect with the given shape.
+    /// Returns a key to the collider, and if it's attached to a body,
+    /// also a key to the body.
     pub fn query_shape<'p, 'g: 'p>(
         &'p mut self,
         pose: m::Pose,
         shape: ColliderShape,
         mask: CollisionLayerMask,
-        (l_pose, l_collider): &'g (
-            graph::LayerView<'g, m::Pose>,
-            graph::LayerView<'g, Collider>,
-        ),
-    ) -> impl '_ + Iterator<Item = graph::NodeRef<'g, Collider>> {
+    ) -> impl '_ + Iterator<Item = (ColliderKey, Option<BodyKey>)> {
+        let entity_set = &self.entity_set;
         self.bvh
             .test_aabb(shape.aabb(pose))
             .filter_map(move |coll_key| {
-                let their_coll = l_collider.get(coll_key)?;
-                if !mask.get(their_coll.c.layer) {
+                let coll = entity_set.get_collider(coll_key)?;
+                if !mask.get(coll.layer) {
                     return None;
                 }
-                let their_pose = their_coll.get_neighbor(l_pose)?;
+                let body_key = entity_set.coll_bodies.get(coll_key.0).copied();
+                let body = body_key.and_then(|k| entity_set.get_body(k));
+                let their_pose = match body {
+                    Some(body) => body.pose * coll.pose,
+                    None => coll.pose,
+                };
                 let result = collision::shape_shape::intersection_check(
-                    [pose, *their_pose.c * their_coll.c.offset],
-                    [shape, their_coll.c.shape],
+                    [pose, their_pose],
+                    [shape, coll.shape],
                 );
                 if result.is_zero() {
                     None
                 } else {
-                    Some(their_coll)
+                    Some((coll_key, body_key))
                 }
             })
     }
@@ -1259,13 +1254,8 @@ impl PhysicsWorld {
     /// If you need to also know if the ray starts inside something, use
     /// [`query_point_body`][Self::query_point_body] in addition to this.
     #[inline]
-    pub fn raycast<'p>(
-        &'p mut self,
-        ray: Ray,
-        max_distance: f64,
-        layers: (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
-    ) -> Option<CastHit> {
-        self.spherecast(0.0, ray, max_distance, layers)
+    pub fn raycast<'p>(&'p mut self, ray: Ray, max_distance: f64) -> Option<CastHit> {
+        self.spherecast(0.0, ray, max_distance)
     }
 
     /// Find the first solid collider intersected by a sphere when swept along the given ray.
@@ -1280,7 +1270,6 @@ impl PhysicsWorld {
         radius: f64,
         ray: Ray,
         max_distance: f64,
-        (l_pose, l_collider): (graph::LayerView<m::Pose>, graph::LayerView<Collider>),
     ) -> Option<CastHit> {
         // BVH traversal returns colliders in spatial order by their AABBs,
         // but this may not return the actual closest thing first if there are
@@ -1293,24 +1282,24 @@ impl PhysicsWorld {
                 return closest_hit;
             }
 
-            let their_coll = match l_collider.get(leaf.coll_key) {
-                Some(coll) => coll,
+            let coll = match self.entity_set.get_collider(leaf.coll_key) {
+                Some(c) => c,
                 None => continue,
             };
-            if !their_coll.c.is_solid() {
+            if !coll.is_solid() {
                 continue;
             }
-            let their_pose = match their_coll.get_neighbor(&l_pose) {
-                Some(pose) => pose,
-                None => continue,
+            let body = self
+                .entity_set
+                .coll_bodies
+                .get(leaf.coll_key.0)
+                .and_then(|bk| self.entity_set.get_body(*bk));
+            let pose = match body {
+                Some(body) => body.pose * coll.pose,
+                None => coll.pose,
             };
 
-            let hit = match collision::query::spherecast_collider(
-                ray,
-                radius,
-                *their_pose.c,
-                *their_coll.c,
-            ) {
+            let hit = match collision::query::spherecast_collider(ray, radius, pose, *coll) {
                 Some(hit) if hit.t <= max_distance => hit,
                 _ => continue,
             };
@@ -1329,14 +1318,16 @@ impl PhysicsWorld {
     }
 
     /// For debug visualization
-    pub(crate) fn islands<'s, 'b: 's>(
-        &'s self,
-        l_body: &'b graph::LayerView<Body>,
-    ) -> impl 's + Iterator<Item = impl 's + Iterator<Item = graph::NodeRef<Body>>> {
+    pub(crate) fn islands(&self) -> impl '_ + Iterator<Item = impl '_ + Iterator<Item = &'_ Body>> {
         self.working_bufs.islands.iter().map(move |island| {
-            (island.body_range_start..island.body_range_start + island.body_count).map(move |bi| {
-                l_body.get_unchecked_by_item_idx(self.working_bufs.sorted_second_pass.bodies[bi])
-            })
+            (island.body_range_start..island.body_range_start + island.body_count).filter_map(
+                move |bi| {
+                    self.entity_set
+                        .bodies
+                        .get_by_slot(self.working_bufs.sorted_second_pass.bodies[bi] as u32)
+                        .map(|(_, b)| b)
+                },
+            )
         })
     }
 }

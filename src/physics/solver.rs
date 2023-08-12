@@ -3,7 +3,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RopeView {
-    pub info: rope::RopeParameters,
+    pub params: rope::RopeParameters,
     pub start: usize,
 }
 
@@ -106,12 +106,12 @@ fn solve_ropes(data: &mut DataView<'_>) {
                 - data.bodies[curr_particle].pose.translation;
             let dist_mag = dist.mag();
             let dir = dist / dist_mag;
-            let error = rope.info.spacing - dist_mag;
+            let error = rope.params.spacing - dist_mag;
 
             let lambda = -error
                 / (data.bodies[curr_particle].mass.inv()
                     + data.bodies[next_particle].mass.inv()
-                    + rope.info.compliance * data.inv_dt_sq);
+                    + rope.params.compliance * data.inv_dt_sq);
 
             data.bodies[curr_particle]
                 .pose
@@ -135,11 +135,11 @@ fn solve_ropes(data: &mut DataView<'_>) {
                 .normalized()
                 .dot(curr_to_next.normalized())
                 .acos();
-            let error = angle - rope.info.bending_max_angle;
+            let error = angle - rope.params.bending_max_angle;
             if error > 0.0 {
                 let lambda = -error
                     / (data.bodies[particle_after_next].mass.inv()
-                        + rope.info.bending_compliance * data.inv_dt_sq);
+                        + rope.params.bending_compliance * data.inv_dt_sq);
 
                 let lambda_oriented = if m::left_normal(curr_to_next).dot(next_to_after) > 0.0 {
                     lambda
@@ -689,7 +689,7 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
             let relative_vel_mag = relative_vel.mag();
             if relative_vel_mag != 0.0 {
                 let dir = relative_vel / relative_vel_mag;
-                let vel_update_mag = -relative_vel_mag * (rope.info.damping * data.dt).min(1.0);
+                let vel_update_mag = -relative_vel_mag * (rope.params.damping * data.dt).min(1.0);
 
                 let linear_impulse_mag = vel_update_mag
                     / (data.bodies[curr_particle].mass.inv()
@@ -723,7 +723,7 @@ fn rope_velocity_step(data: &mut DataView<'_>) {
 
                 let impulse_mag = -vel_clamped
                     / (data.bodies[particle].mass.inv()
-                        + rope.info.bending_compliance * data.inv_dt);
+                        + rope.params.bending_compliance * data.inv_dt);
                 data.bodies[particle].velocity.linear +=
                     data.bodies[particle].mass.inv() * impulse_mag * dir;
             }
