@@ -30,8 +30,10 @@ pub use physics::{
         AABB,
     },
     constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType},
-    forcefield, BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope,
-    RopeParameters, RopeSet, Velocity,
+    forcefield,
+    hecs_sync::{HecsSyncManager, HecsSyncOptions},
+    BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope, RopeParameters,
+    RopeSet, Velocity,
 };
 
 // re-exported libraries used in public APIs to guarantee versions match

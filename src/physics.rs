@@ -37,6 +37,8 @@ use constraint_graph::*;
 
 mod solver;
 
+pub mod hecs_sync;
+
 //
 // public types
 //
@@ -388,40 +390,6 @@ impl PhysicsWorld {
         self.sleeping_islands.clear();
         self.contacts.clear();
         self.working_bufs = WorkingBuffers::default();
-    }
-
-    /// Sync poses from a hecs world to the physics world.
-    /// Call before [`tick`][Self::tick].
-    ///
-    /// Poses are synced for entities that have a [`Pose`][crate::Pose]
-    /// and a [`BodyKey`][self::BodyKey] or a [`ColliderKey`][self::ColliderKey].
-    pub fn sync_from_hecs(&mut self, world: &mut hecs::World) {
-        // sync pose into the body if it exists, otherwise into the collider
-        for (_, (pose, body_key)) in world.query_mut::<(&m::Pose, &BodyKey)>() {
-            let Some(body) = self.entity_set.get_body_mut(*body_key) else { continue };
-            body.pose = *pose;
-        }
-        for (_, (pose, coll_key)) in world
-            .query_mut::<(&m::Pose, &ColliderKey)>()
-            .without::<&BodyKey>()
-        {
-            let Some(coll) = self.entity_set.get_collider_mut(*coll_key) else { continue };
-            coll.pose = *pose;
-        }
-    }
-
-    /// Sync poses back to a hecs world from the physics world.
-    /// Call after [`tick`][Self::tick].
-    ///
-    /// Poses are synced for entities that have a [`Pose`][crate::Pose]
-    /// and a [`BodyKey`][self::BodyKey].
-    pub fn sync_to_hecs(&mut self, world: &mut hecs::World) {
-        for (_, (pose, body_key)) in world.query_mut::<(&mut m::Pose, &BodyKey)>() {
-            let Some(body) = self.entity_set.get_body(*body_key) else { continue };
-            *pose = body.pose;
-        }
-        // colliders without bodies do not move during physics
-        // so we don't need to sync them back here
     }
 
     /// Advance the simulation forward by `frame_dt` seconds.

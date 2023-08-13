@@ -45,10 +45,11 @@ pub struct State {
     scene: Scene,
     state: StateEnum,
     world: sf::hecs::World,
+    physics: sf::PhysicsWorld,
+    hecs_sync: sf::HecsSyncManager,
     // gameplay
     player: player::PlayerController,
     mouse_grabber: MouseGrabber,
-    physics: sf::PhysicsWorld,
     // graphics
     camera: sf::Camera,
     camera_ctl: sf::MouseDragCameraController,
@@ -75,12 +76,13 @@ impl State {
             scene: Scene::default(),
             state: StateEnum::Playing,
             world: sf::hecs::World::new(),
-            player: player::PlayerController::new(),
-            mouse_grabber: MouseGrabber::new(),
             physics: sf::PhysicsWorld::new(
                 sf::physics::TuningConstants::default(),
                 sf::CollisionMaskMatrix::default(),
             ),
+            hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::enable_all()),
+            player: player::PlayerController::new(),
+            mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::new(sf::CameraScalingStrategy::ConstantDisplayArea {
                 width: 20.0,
                 height: 10.0,
@@ -442,10 +444,12 @@ impl sf::GameState for State {
                 }
 
                 let grav = sf::forcefield::Gravity(self.scene.gravity.into());
-                self.physics.sync_from_hecs(&mut self.world);
+                self.hecs_sync
+                    .sync_hecs_to_physics(&mut self.physics, &mut self.world);
                 self.physics
                     .tick(game.dt_fixed, Some(self.time_scale), &grav);
-                self.physics.sync_to_hecs(&mut self.world);
+                self.hecs_sync
+                    .sync_physics_to_hecs(&self.physics, &mut self.world);
                 self.player
                     .tick(&game.input, &mut self.physics, &mut self.world);
 
