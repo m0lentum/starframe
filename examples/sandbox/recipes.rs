@@ -161,17 +161,17 @@ fn spawn_body(
         .with_pose(solid.pose);
     let body_key = physics.entity_set.insert_body(body);
 
-    for mut coll in solid.colliders.iter().cloned() {
+    for (idx, mut coll) in solid.colliders.iter().cloned().enumerate() {
         coll.pose.translation -= center_of_mass;
         physics.entity_set.attach_collider(body_key, coll);
-    }
-    // for visualization, for each collider,
-    // spawn a new mesh entity that gets its position synced from the shared body
-    if !solid.colliders.is_empty() {
-        let mesh = sf::Mesh::from(solid.colliders[0])
-            .with_color(solid.color)
-            .with_offset(solid.colliders[0].pose);
-        world.spawn((solid.pose, body_key, mesh));
+
+        // WIP visualization, TODO: mesh for every collider
+        if idx == 0 {
+            let mesh = sf::Mesh::from(coll)
+                .with_color(solid.color)
+                .with_offset(coll.pose);
+            world.spawn((solid.pose, body_key, mesh));
+        }
     }
 
     body_key

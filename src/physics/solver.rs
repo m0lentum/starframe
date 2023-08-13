@@ -413,9 +413,7 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                             offset_worldspace: data.bodies[bi].pose * contact.offsets[i],
                             offset_wedge_normal,
                             eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
-                            offset_worldspace_old: data.old_poses[bi]
-                                * colls[i].pose
-                                * contact.offsets[i],
+                            offset_worldspace_old: data.old_poses[bi] * contact.offsets[i],
                             offset_wedge_tan,
                             eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
                         }
