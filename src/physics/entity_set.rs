@@ -53,12 +53,6 @@ pub struct EntitySet {
     pub(super) colliders: td::Arena<Collider>,
     pub(super) coll_slot_count: usize,
     pub(super) coll_bodies: td::Arena<BodyKey>,
-    // there's no direct connection from bodies to colliders
-    // (because there can be multiple colliders per body
-    // and expressing that efficiently is tricky),
-    // so we keep track of deleted bodies and delete their colliders
-    // in a separate sync step
-    removed_bodies: Vec<BodyKey>,
 }
 
 impl EntitySet {
@@ -150,12 +144,9 @@ impl EntitySet {
     ///
     /// Colliders associated with this body will be automatically removed
     /// at the next physics tick.
+    #[inline]
     pub fn remove_body(&mut self, body: BodyKey) -> Option<Body> {
-        let removed = self.bodies.remove(body.0);
-        if removed.is_some() {
-            self.removed_bodies.push(body);
-        }
-        removed
+        self.bodies.remove(body.0)
     }
 
     /// Remove a [`Collider`][super::Collider] from the physics world,
@@ -171,24 +162,13 @@ impl EntitySet {
 
     /// Remove colliders that have had their corresponding bodies removed.
     pub(super) fn remove_orphan_colliders(&mut self) {
-        if self.removed_bodies.is_empty() {
-            return;
-        }
-
         self.colliders.retain(|k, _| {
             if let Some(&b) = self.coll_bodies.get(k) {
-                if self.removed_bodies.iter().any(|&removed| b == removed) {
-                    self.coll_bodies.remove(k);
-                    false
-                } else {
-                    true
-                }
+                self.bodies.contains(b.0)
             } else {
                 true
             }
         });
-
-        self.removed_bodies.clear();
     }
 
     // not exposed to users, must use through PhysicsWorld::clear

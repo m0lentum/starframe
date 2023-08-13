@@ -139,7 +139,9 @@ struct Solid<'a> {
 
 fn spawn_static(solid: Solid, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
     for coll in solid.colliders {
-        let coll_key = physics.entity_set.insert_collider(*coll);
+        let coll_key = physics
+            .entity_set
+            .insert_collider(coll.with_pose(solid.pose));
         let mesh = sf::Mesh::from(*coll)
             .with_color(solid.color)
             .with_offset(solid.pose * coll.pose);
@@ -155,18 +157,21 @@ fn spawn_body(
     let coll_setup = sf::CompoundColliderSetup::new(solid.colliders);
     let center_of_mass = coll_setup.center_of_mass();
 
-    let body = sf::Body::new_dynamic(coll_setup.info_around_point(center_of_mass), 0.5);
+    let body = sf::Body::new_dynamic(coll_setup.info_around_point(center_of_mass), 0.5)
+        .with_pose(solid.pose);
     let body_key = physics.entity_set.insert_body(body);
 
     for mut coll in solid.colliders.iter().cloned() {
         coll.pose.translation -= center_of_mass;
         physics.entity_set.attach_collider(body_key, coll);
-        // for visualization, for each collider,
-        // spawn a new mesh entity that gets its position synced from the shared body
-        let mesh = sf::Mesh::from(coll)
+    }
+    // for visualization, for each collider,
+    // spawn a new mesh entity that gets its position synced from the shared body
+    if !solid.colliders.is_empty() {
+        let mesh = sf::Mesh::from(solid.colliders[0])
             .with_color(solid.color)
-            .with_offset(coll.pose);
-        world.spawn((sf::Pose::identity(), body_key, mesh));
+            .with_offset(solid.colliders[0].pose);
+        world.spawn((solid.pose, body_key, mesh));
     }
 
     body_key

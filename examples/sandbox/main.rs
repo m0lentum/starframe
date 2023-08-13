@@ -267,6 +267,7 @@ impl sf::GameState for State {
 
         let mut exit = false;
         let mut reload = false;
+        let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
         egui::Window::new("Controls").show(&egui_ctx, |ui| {
             ui.heading("Load a scene");
@@ -331,18 +332,25 @@ impl sf::GameState for State {
 
             ui.separator();
             ui.heading("Other controls");
-            match self.state {
-                StateEnum::Playing => {
-                    if ui.button("Pause").clicked() {
-                        self.state = StateEnum::Paused;
+            ui.horizontal(|ui| {
+                match self.state {
+                    StateEnum::Playing => {
+                        if ui.button("Pause").clicked() {
+                            self.state = StateEnum::Paused;
+                        }
+                    }
+                    StateEnum::Paused => {
+                        if ui.button("Unpause").clicked() {
+                            self.state = StateEnum::Playing;
+                        }
                     }
                 }
-                StateEnum::Paused => {
-                    if ui.button("Unpause").clicked() {
-                        self.state = StateEnum::Playing;
+                if let StateEnum::Paused = self.state {
+                    if ui.button("Step a frame").clicked() {
+                        step_one = true;
                     }
                 }
-            }
+            });
             ui.add(
                 egui::Slider::new(
                     &mut self.camera.transform.scale,
@@ -423,7 +431,7 @@ impl sf::GameState for State {
             }
         }
 
-        match (&self.state, game.input.button(sf::Key::Space.into())) {
+        match (&self.state, step_one) {
             //
             // Playing or stepping manually
             //

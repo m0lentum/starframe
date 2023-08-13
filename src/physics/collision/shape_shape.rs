@@ -206,10 +206,17 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
         }
     }
 
-    // the only way we can have None here is if we called this for a circle-circle pair,
-    // which has a more efficient special case available so shouldn't be used
-    let EdgeAndExtent(pen_edge, pen_edge_extent) =
-        pen_axis.expect("Don't use generic test for circle-circle pairs");
+    // two ways we can have None here:
+    // either if we called this for a circle-circle pair,
+    // which has a more efficient special case available so shouldn't be used,
+    // or there was a NaN in a pose.
+    // The first case is definitely a bug in the library,
+    // the second case is also probably a bug but can be on the user end
+    // and probably shouldn't panic
+    let Some(EdgeAndExtent(pen_edge, pen_edge_extent)) = pen_axis else {
+        eprintln!("There's a NaN in a pose somewhere");
+        return ContactResult::Zero;
+    };
 
     // flip returned result if the axis of penetration is on the second shape
     let orient_result = if shape_order[0] == 0 {

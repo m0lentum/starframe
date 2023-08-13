@@ -303,23 +303,26 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
         }
 
         let colls: [&Collider; 2] = map_pair(coll_keys, |c| entity_set.colliders.get(c.0).unwrap());
+        // if a body is attached,
+        // the pose of a collider is in the local space of the body
+        let poses_worldspace: [m::Pose; 2] = map_pair(&[0, 1], |&i| match bodies[i] {
+            Some(bi) => data.bodies[bi].pose * colls[i].pose,
+            None => colls[i].pose,
+        });
 
         // check for collision
-        *contact = {
-            let poses = map_pair(&[0, 1], |&i| match bodies[i] {
-                Some(bi) => data.bodies[bi].pose * colls[i].pose,
-                None => colls[i].pose,
+        *contact = collision::shape_shape::intersection_check(
+            poses_worldspace,
+            [colls[0].shape, colls[1].shape],
+        )
+        .map(|mut cont| {
+            // transform contact to local space of bodies if attached
+            cont.offsets = map_pair(&[0, 1], |&i| match bodies[i] {
+                Some(_) => colls[i].pose * cont.offsets[i],
+                None => cont.offsets[i],
             });
-
-            collision::shape_shape::intersection_check(poses, [colls[0].shape, colls[1].shape]).map(
-                |mut cont| {
-                    // map contact to space relative to the object's pose
-                    cont.offsets[0] = colls[0].pose * cont.offsets[0];
-                    cont.offsets[1] = colls[1].pose * cont.offsets[1];
-                    cont
-                },
-            )
-        };
+            cont
+        });
         // mark latest contact that wasn't zero;
         // this will be available to be queried by the user later
         if !matches!(contact, ContactResult::Zero) {
@@ -400,6 +403,8 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                     Some(bi) => {
                         let im = data.bodies[bi].mass.inv();
                         let imi = data.bodies[bi].moment_of_inertia.inv();
+                        // do NOT apply collider pose here;
+                        // contact was transformed into the body's local space
                         let offset_rotated = data.bodies[bi].pose.rotation * contact.offsets[i];
                         let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
                         let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
@@ -408,7 +413,9 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                             offset_worldspace: data.bodies[bi].pose * contact.offsets[i],
                             offset_wedge_normal,
                             eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
-                            offset_worldspace_old: data.old_poses[bi] * contact.offsets[i],
+                            offset_worldspace_old: data.old_poses[bi]
+                                * colls[i].pose
+                                * contact.offsets[i],
                             offset_wedge_tan,
                             eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
                         }
@@ -531,6 +538,8 @@ fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
                     ext_f_accel: m::Vec2::zero(),
                 },
                 Some(bi) => {
+                    // the contact was transformed into the body's local space in `solve_contacts`,
+                    // thus no collider pose applied here
                     let offset_rotated = data.bodies[bi].pose.rotation * contact.offsets[i];
                     WorkingVars {
                         inv_mass: data.bodies[bi].mass.inv(),

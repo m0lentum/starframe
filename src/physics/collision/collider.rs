@@ -694,7 +694,7 @@ impl ColliderPolygon {
                 [m::Unit::unit_y(), -AXIS_30_DEG, -AXIS_150_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir))
-                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .max_by(|p0, p1| p0.total_cmp(p1))
                     .unwrap()
                     * outer_r
             }
@@ -702,7 +702,7 @@ impl ColliderPolygon {
                 [m::Unit::unit_x(), AXIS_60_DEG, AXIS_120_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir).abs())
-                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .max_by(|p0, p1| p0.total_cmp(p1))
                     .unwrap()
                     * outer_r
             }

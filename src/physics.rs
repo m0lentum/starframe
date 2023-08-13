@@ -394,11 +394,19 @@ impl PhysicsWorld {
     /// Call before [`tick`][Self::tick].
     ///
     /// Poses are synced for entities that have a [`Pose`][crate::Pose]
-    /// and a [`BodyKey`][self::BodyKey].
+    /// and a [`BodyKey`][self::BodyKey] or a [`ColliderKey`][self::ColliderKey].
     pub fn sync_from_hecs(&mut self, world: &mut hecs::World) {
+        // sync pose into the body if it exists, otherwise into the collider
         for (_, (pose, body_key)) in world.query_mut::<(&m::Pose, &BodyKey)>() {
-            let Some(body) = self.entity_set.get_body_mut(*body_key) else {continue;};
+            let Some(body) = self.entity_set.get_body_mut(*body_key) else { continue };
             body.pose = *pose;
+        }
+        for (_, (pose, coll_key)) in world
+            .query_mut::<(&m::Pose, &ColliderKey)>()
+            .without::<&BodyKey>()
+        {
+            let Some(coll) = self.entity_set.get_collider_mut(*coll_key) else { continue };
+            coll.pose = *pose;
         }
     }
 
@@ -409,9 +417,11 @@ impl PhysicsWorld {
     /// and a [`BodyKey`][self::BodyKey].
     pub fn sync_to_hecs(&mut self, world: &mut hecs::World) {
         for (_, (pose, body_key)) in world.query_mut::<(&mut m::Pose, &BodyKey)>() {
-            let Some(body) = self.entity_set.get_body_mut(*body_key) else {continue;};
+            let Some(body) = self.entity_set.get_body(*body_key) else { continue };
             *pose = body.pose;
         }
+        // colliders without bodies do not move during physics
+        // so we don't need to sync them back here
     }
 
     /// Advance the simulation forward by `frame_dt` seconds.
@@ -467,11 +477,7 @@ impl PhysicsWorld {
         // these will be used to re-detect collisions every substep.
         for (coll_key, coll) in self.entity_set.colliders.iter() {
             let coll_key = ColliderKey(coll_key);
-            let body = self
-                .entity_set
-                .coll_bodies
-                .get(coll_key.0)
-                .and_then(|body_key| self.entity_set.get_body(*body_key));
+            let body = self.entity_set.get_collider_body(coll_key);
             let aabb = match body {
                 Some(body) => {
                     let pose = body.pose * coll.pose;
@@ -815,9 +821,14 @@ impl PhysicsWorld {
         );
         // maps from the slot of a body in the thunderdome arena
         // to the index of a body in bufs.bodies.
-        // we don't need to clear it because gaps will just never be touched
+        // usize::MAX indicates slots that were sleeping.
+        // could use Option here, but the only time this is relevant is at the end of the step
+        // when bodies are synced back into self.entity_set.
+        // in the solver it's guaranteed all bodies are live,
+        // and unwrapping Options everywhere would be annoying
         bufs.body_order.clear();
-        bufs.body_order.resize(self.entity_set.body_slot_count, 0);
+        bufs.body_order
+            .resize(self.entity_set.body_slot_count, usize::MAX);
         for (sorted_idx, body_slot) in bufs.sorted_second_pass.bodies.iter().enumerate() {
             bufs.body_order[*body_slot] = sorted_idx;
         }
@@ -1169,6 +1180,10 @@ impl PhysicsWorld {
 
         for (body_key, body) in self.entity_set.bodies.iter_mut() {
             let working_body = bufs.body_order[body_key.slot() as usize];
+            if working_body == usize::MAX {
+                // this body is sleeping
+                continue;
+            }
             *body = bufs.bodies[working_body];
         }
     }
