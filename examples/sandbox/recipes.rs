@@ -430,6 +430,7 @@ impl Recipe {
                         );
                     }
                 }
+                physics.rope_set.insert(rope);
             }
         }
     }

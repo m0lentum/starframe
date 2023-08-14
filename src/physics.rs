@@ -829,10 +829,10 @@ impl PhysicsWorld {
             let mut iter = rope.particles.iter().peekable();
             while let Some(particle) = iter.next() {
                 if let Some(next_particle) = iter.peek() {
-                    let slot = particle.0.slot() as usize;
-                    let next_slot = next_particle.0.slot() as usize;
-                    bufs.rope_next_particles[slot] = Some(next_slot);
-                    bufs.rope_prev_particles[next_slot] = Some(slot);
+                    let body_idx = bufs.body_order[particle.0.slot() as usize];
+                    let next_body_idx = bufs.body_order[next_particle.0.slot() as usize];
+                    bufs.rope_next_particles[body_idx] = Some(next_body_idx);
+                    bufs.rope_prev_particles[next_body_idx] = Some(body_idx);
                 }
             }
         }

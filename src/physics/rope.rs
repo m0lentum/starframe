@@ -1,7 +1,6 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    graphics::{ConvexMeshShape, Mesh},
     math as m,
     physics::{collision::ROPE_LAYER, Body, BodyKey, Collider, EntitySet, PhysicsMaterial},
 };
@@ -181,12 +180,18 @@ impl RopeSet {
         self.ropes.get_mut(key.0)
     }
 
-    /// Remove a Rope from the physics world, returning it if it still exists.
+    /// Remove a Rope and all its particles from the physics world.
     #[inline]
-    pub fn remove(&mut self, key: RopeKey) -> Option<Rope> {
-        self.ropes.remove(key.0)
+    pub fn remove(&mut self, key: RopeKey, entities: &mut EntitySet) {
+        let Some(rope) = self.ropes.remove(key.0) else { return };
+        for particle in rope.particles {
+            entities.remove_body(particle);
+        }
     }
 
+    /// Remove all ropes. Does NOT remove the particles,
+    /// and should only be used during full clear of the physics world,
+    /// hence only pub(super)
     #[inline]
     pub(super) fn clear(&mut self) {
         self.ropes.clear();
