@@ -85,19 +85,23 @@ impl EntitySet {
         self.colliders.get_mut(coll.0)
     }
 
+    /// Get the key to the Body connected to the given Collider, if there is one.
+    #[inline]
+    pub fn get_collider_body_key(&self, coll: ColliderKey) -> Option<BodyKey> {
+        self.coll_bodies.get(coll.0).cloned()
+    }
+
     /// Access the Body connected to the given Collider, if both still exist.
     #[inline]
     pub fn get_collider_body(&self, coll: ColliderKey) -> Option<&Body> {
-        self.coll_bodies
-            .get(coll.0)
+        self.get_collider_body_key(coll)
             .and_then(|b| self.bodies.get(b.0))
     }
 
     /// Mutably access the Body connected to the given Collider, if both still exist.
     #[inline]
     pub fn get_collider_body_mut(&mut self, coll: ColliderKey) -> Option<&mut Body> {
-        self.coll_bodies
-            .get(coll.0)
+        self.get_collider_body_key(coll)
             .and_then(|b| self.bodies.get_mut(b.0))
     }
 

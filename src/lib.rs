@@ -32,8 +32,8 @@ pub use physics::{
     constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType},
     forcefield,
     hecs_sync::{HecsSyncManager, HecsSyncOptions},
-    BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope, RopeParameters,
-    RopeSet, Velocity,
+    BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope, RopeKey,
+    RopeParameters, RopeSet, Velocity,
 };
 
 // re-exported libraries used in public APIs to guarantee versions match

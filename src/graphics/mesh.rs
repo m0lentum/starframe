@@ -630,7 +630,7 @@ impl MeshRenderer {
             if mesh.gpu_resources.is_none() {
                 mesh.upload(self, ctx.device);
             }
-            // now mesh.c.gpu_resources has been created for sure
+            // now mesh.gpu_resources has been created for sure
             let gpu_res = mesh.gpu_resources.as_ref().unwrap();
 
             let mesh_pose = match pose {

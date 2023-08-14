@@ -24,7 +24,7 @@ pub(super) mod body;
 pub use body::{Body, ColliderInfo, Mass};
 
 mod rope;
-pub use rope::{Rope, RopeParameters, RopeSet};
+pub use rope::{Rope, RopeKey, RopeParameters, RopeSet};
 
 mod entity_set;
 pub use entity_set::{BodyKey, ColliderKey, EntitySet};

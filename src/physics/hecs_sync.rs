@@ -9,7 +9,8 @@ use thunderdome as td;
 pub struct HecsSyncOptions {
     pub hecs_to_physics: bool,
     pub physics_to_hecs: bool,
-    pub autodelete: bool,
+    pub auto_delete_physics: bool,
+    pub auto_delete_hecs: bool,
 }
 
 impl HecsSyncOptions {
@@ -18,7 +19,8 @@ impl HecsSyncOptions {
         Self {
             hecs_to_physics: true,
             physics_to_hecs: true,
-            autodelete: true,
+            auto_delete_physics: true,
+            auto_delete_hecs: true,
         }
     }
 
@@ -27,7 +29,8 @@ impl HecsSyncOptions {
         Self {
             hecs_to_physics: true,
             physics_to_hecs: false,
-            autodelete: true,
+            auto_delete_physics: true,
+            auto_delete_hecs: false,
         }
     }
 
@@ -36,7 +39,8 @@ impl HecsSyncOptions {
         Self {
             hecs_to_physics: false,
             physics_to_hecs: true,
-            autodelete: false,
+            auto_delete_physics: false,
+            auto_delete_hecs: true,
         }
     }
 
@@ -45,7 +49,8 @@ impl HecsSyncOptions {
         Self {
             hecs_to_physics: false,
             physics_to_hecs: false,
-            autodelete: false,
+            auto_delete_physics: false,
+            auto_delete_hecs: false,
         }
     }
 }
@@ -93,6 +98,18 @@ impl HecsSyncManager {
         self.collider_entity_map.insert_at(coll.0, (entity, opts));
     }
 
+    /// Get the hecs entity associated with a Body, if it exists.
+    #[inline]
+    pub fn get_body_entity(&self, body: BodyKey) -> Option<hecs::Entity> {
+        self.body_entity_map.get(body.0).map(|(e, _)| *e)
+    }
+
+    /// Get the hecs entity associated with a Collider, if it exists.
+    #[inline]
+    pub fn get_collider_entity(&self, coll: ColliderKey) -> Option<hecs::Entity> {
+        self.collider_entity_map.get(coll.0).map(|(e, _)| *e)
+    }
+
     /// Sync data from a hecs world to the physics world.
     /// Call before [`PhysicsWorld::tick`][PhysicsWorld::tick].
     pub fn sync_hecs_to_physics(
@@ -117,24 +134,39 @@ impl HecsSyncManager {
         self.body_entity_map.retain(|body_key, (entity, opts)| {
             // auto-delete bodies for entities that don't exist anymore,
             // using the surrounding `retain` to also delete them from this map
-            if opts.autodelete && !hecs_world.contains(*entity) {
+            if opts.auto_delete_physics && !hecs_world.contains(*entity) {
                 physics.entity_set.remove_body(BodyKey(body_key));
+                return false;
+            }
+            // auto-delete hecs entities for bodies that don't exist anymore
+            if !physics.entity_set.bodies.contains(body_key) {
+                if opts.auto_delete_hecs {
+                    hecs_world.despawn(*entity).ok();
+                }
+                // ..and even if we don't auto-delete, remove it from this map
                 return false;
             }
             if opts.hecs_to_physics {
                 // sync poses for bodies that do still exist
                 let Ok(pose) = hecs_world.query_one_mut::<&m::Pose>(*entity) else { return true };
-                let Some(body) = physics.entity_set.get_body_mut(BodyKey(body_key)) else { return true };
+                // the body's existence was checked in the autodelete step
+                let body = physics.entity_set.get_body_mut(BodyKey(body_key)).unwrap();
                 body.pose = *pose;
             }
             true
         });
         // same as above for colliders,
-        // except if colliders have a body, actually sync the body
+        // except if colliders have a body, sync the body's pose
         self.collider_entity_map.retain(|coll_key, (entity, opts)| {
             let coll_key = ColliderKey(coll_key);
-            if opts.autodelete && !hecs_world.contains(*entity) {
+            if opts.auto_delete_physics && !hecs_world.contains(*entity) {
                 physics.entity_set.remove_collider(coll_key);
+                return false;
+            }
+            if !physics.entity_set.colliders.contains(coll_key.0) {
+                if opts.auto_delete_hecs {
+                    hecs_world.despawn(*entity).ok();
+                }
                 return false;
             }
             if opts.hecs_to_physics {
@@ -144,8 +176,7 @@ impl HecsSyncManager {
                 if let Some(body) = physics.entity_set.get_collider_body_mut(coll_key) {
                     body.pose = *pose;
                 } else {
-                    let Some(coll) = physics
-                        .entity_set.get_collider_mut(coll_key) else { return true };
+                    let coll = physics.entity_set.get_collider_mut(coll_key).unwrap();
                     coll.pose = *pose;
                 }
             }
