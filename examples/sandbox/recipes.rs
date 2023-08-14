@@ -153,6 +153,7 @@ fn spawn_body(
     solid: Solid,
     physics: &mut sf::PhysicsWorld,
     world: &mut sf::hecs::World,
+    hecs_sync: &mut sf::HecsSyncManager,
 ) -> sf::BodyKey {
     let coll_setup = sf::CompoundColliderSetup::new(solid.colliders);
     let center_of_mass = coll_setup.center_of_mass();
@@ -161,24 +162,30 @@ fn spawn_body(
         .with_pose(solid.pose);
     let body_key = physics.entity_set.insert_body(body);
 
-    for (idx, mut coll) in solid.colliders.iter().cloned().enumerate() {
+    for mut coll in solid.colliders.iter().cloned() {
         coll.pose.translation -= center_of_mass;
-        physics.entity_set.attach_collider(body_key, coll);
+        let coll_key = physics.entity_set.attach_collider(body_key, coll);
 
-        // WIP visualization, TODO: mesh for every collider
-        if idx == 0 {
-            let mesh = sf::Mesh::from(coll)
-                .with_color(solid.color)
-                .with_offset(coll.pose);
-            world.spawn((solid.pose, body_key, mesh));
-        }
+        // visualization with a mesh entity synced from physics
+        let mesh = sf::Mesh::from(coll)
+            // undo the effect of the collider offset,
+            // since hecs_sync gets its global pose
+            .with_offset(sf::Pose::identity())
+            .with_color(solid.color);
+        let ent = world.spawn((solid.pose, coll_key, mesh));
+        hecs_sync.register_collider(coll_key, ent, sf::HecsSyncOptions::physics_to_hecs_only());
     }
 
     body_key
 }
 
 impl Recipe {
-    pub fn spawn(&self, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
+    pub fn spawn(
+        &self,
+        physics: &mut sf::PhysicsWorld,
+        world: &mut sf::hecs::World,
+        hecs_sync: &mut sf::HecsSyncManager,
+    ) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(physics, world),
             Recipe::Block(block) => {
@@ -204,7 +211,7 @@ impl Recipe {
                 if *is_static {
                     spawn_static(solid, physics, world);
                 } else {
-                    let body_key = spawn_body(solid, physics, world);
+                    let body_key = spawn_body(solid, physics, world, hecs_sync);
                     let body = physics.entity_set.get_body_mut(body_key).unwrap();
                     body.velocity.linear = start_velocity.into();
                 }
@@ -223,7 +230,7 @@ impl Recipe {
                 if *is_static {
                     spawn_static(solid, physics, world);
                 } else {
-                    spawn_body(solid, physics, world);
+                    spawn_body(solid, physics, world, hecs_sync);
                 }
             }
             Recipe::GenericBody { pose, colliders } => {
@@ -232,7 +239,7 @@ impl Recipe {
                     colliders,
                     color: random_color(),
                 };
-                spawn_body(solid, physics, world);
+                spawn_body(solid, physics, world, hecs_sync);
             }
             Recipe::Blockchain {
                 width,
@@ -274,6 +281,7 @@ impl Recipe {
                         },
                         physics,
                         world,
+                        hecs_sync,
                     );
                     let caps_length_half = caps_full_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
@@ -372,6 +380,20 @@ impl Recipe {
                     rope_end_2,
                     &mut physics.entity_set,
                 );
+                for particle in &rope.particles {
+                    // temporary visualisation with individual particle Meshes
+                    let mesh = sf::Mesh::from(sf::ConvexMeshShape::Circle {
+                        r: rope.params.thickness / 2.0,
+                        points: 8,
+                    })
+                    .with_color([0.729, 0.855, 0.333, 1.0]);
+                    let mesh_ent = world.spawn((sf::Pose::default(), mesh, *particle));
+                    hecs_sync.register_body(
+                        *particle,
+                        mesh_ent,
+                        sf::HecsSyncOptions::physics_to_hecs_only(),
+                    );
+                }
                 let first_particle = *rope.particles.first().expect("No particles in rope");
                 let last_particle = *rope.particles.iter().last().expect("No particles in rope");
                 match b1 {

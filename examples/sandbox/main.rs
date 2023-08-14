@@ -80,7 +80,7 @@ impl State {
                 sf::physics::TuningConstants::default(),
                 sf::CollisionMaskMatrix::default(),
             ),
-            hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::enable_all()),
+            hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
             player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::new(sf::CameraScalingStrategy::ConstantDisplayArea {
@@ -175,9 +175,14 @@ impl Scene {
         <Self as serde::Deserialize>::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, physics: &mut sf::PhysicsWorld, world: &mut hecs::World) {
+    pub fn instantiate(
+        &self,
+        physics: &mut sf::PhysicsWorld,
+        world: &mut hecs::World,
+        hecs_sync: &mut sf::HecsSyncManager,
+    ) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, world);
+            recipe.spawn(physics, world, hecs_sync);
         }
     }
 }
@@ -392,7 +397,8 @@ impl sf::GameState for State {
         }
         if reload {
             self.reset();
-            self.scene.instantiate(&mut self.physics, &mut self.world);
+            self.scene
+                .instantiate(&mut self.physics, &mut self.world, &mut self.hecs_sync);
         }
 
         self.last_egui_output = self.egui_platform.end_frame(Some(&game.window));
@@ -429,7 +435,7 @@ impl sf::GameState for State {
                     }
                     .into()],
                 }
-                .spawn(&mut self.physics, &mut self.world);
+                .spawn(&mut self.physics, &mut self.world, &mut self.hecs_sync);
             }
         }
 

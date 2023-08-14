@@ -13,11 +13,39 @@ pub struct HecsSyncOptions {
 }
 
 impl HecsSyncOptions {
-    pub fn enable_all() -> Self {
+    #[inline]
+    pub fn both_ways() -> Self {
         Self {
             hecs_to_physics: true,
             physics_to_hecs: true,
             autodelete: true,
+        }
+    }
+
+    #[inline]
+    pub fn hecs_to_physics_only() -> Self {
+        Self {
+            hecs_to_physics: true,
+            physics_to_hecs: false,
+            autodelete: true,
+        }
+    }
+
+    #[inline]
+    pub fn physics_to_hecs_only() -> Self {
+        Self {
+            hecs_to_physics: false,
+            physics_to_hecs: true,
+            autodelete: false,
+        }
+    }
+
+    #[inline]
+    pub fn do_not_sync() -> Self {
+        Self {
+            hecs_to_physics: false,
+            physics_to_hecs: false,
+            autodelete: false,
         }
     }
 }
@@ -29,8 +57,8 @@ impl HecsSyncOptions {
 #[derive(Default, Debug)]
 pub struct HecsSyncManager {
     /// If set, automatically uses these options to register all hecs entities
-    /// with synced components that haven't been registered manually.
-    /// None by default.
+    /// with [`BodyKey`][BodyKey] or [`ColliderKey`][ColliderKey] components
+    /// that haven't been registered manually. None by default.
     pub default_opts: Option<HecsSyncOptions>,
     body_entity_map: td::Arena<(hecs::Entity, HecsSyncOptions)>,
     collider_entity_map: td::Arena<(hecs::Entity, HecsSyncOptions)>,
@@ -62,7 +90,7 @@ impl HecsSyncManager {
         entity: hecs::Entity,
         opts: HecsSyncOptions,
     ) {
-        self.body_entity_map.insert_at(coll.0, (entity, opts));
+        self.collider_entity_map.insert_at(coll.0, (entity, opts));
     }
 
     /// Sync data from a hecs world to the physics world.
@@ -102,18 +130,24 @@ impl HecsSyncManager {
             true
         });
         // same as above for colliders,
-        // except sync only colliders that don't also have a body
+        // except if colliders have a body, actually sync the body
         self.collider_entity_map.retain(|coll_key, (entity, opts)| {
+            let coll_key = ColliderKey(coll_key);
             if opts.autodelete && !hecs_world.contains(*entity) {
-                physics.entity_set.remove_collider(ColliderKey(coll_key));
+                physics.entity_set.remove_collider(coll_key);
                 return false;
             }
             if opts.hecs_to_physics {
                 let Ok(pose) = hecs_world
-                    .query_one_mut::<hecs::Without<&m::Pose, &BodyKey>>(*entity) else { return true };
-                let Some(coll) = physics
-                    .entity_set.get_collider_mut(ColliderKey(coll_key)) else { return true };
-                coll.pose = *pose;
+                    .query_one_mut::<&m::Pose>(*entity) else { return true };
+
+                if let Some(body) = physics.entity_set.get_collider_body_mut(coll_key) {
+                    body.pose = *pose;
+                } else {
+                    let Some(coll) = physics
+                        .entity_set.get_collider_mut(coll_key) else { return true };
+                    coll.pose = *pose;
+                }
             }
             true
         });
@@ -130,7 +164,22 @@ impl HecsSyncManager {
             let Ok(pose) = hecs_world.query_one_mut::<&mut m::Pose>(*entity) else { continue };
             *pose = body.pose;
         }
-        // colliders without bodies do not move during physics
-        // so we don't need to sync them here
+        for (coll_key, (entity, opts)) in self.collider_entity_map.iter() {
+            if !opts.physics_to_hecs {
+                continue;
+            }
+            let coll_key = ColliderKey(coll_key);
+
+            let Ok(pose) = hecs_world
+                .query_one_mut::<&mut m::Pose>(*entity) else { continue };
+            // sync the global pose of the collider even if it's attached to a body
+            let Some(coll) = physics
+                .entity_set.get_collider(coll_key) else { continue };
+            if let Some(body) = physics.entity_set.get_collider_body(coll_key) {
+                *pose = body.pose * coll.pose;
+            } else {
+                *pose = coll.pose;
+            }
+        }
     }
 }

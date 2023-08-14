@@ -108,14 +108,6 @@ impl Rope {
         let collider_proto = Collider::new_circle(params.thickness / 2.0)
             .with_layer(ROPE_LAYER)
             .with_material(params.material);
-        // temporary visualisation with individual particle Meshes
-        // until I get something more bespoke for this
-        // (TODO: reimplement this in a way that works with hecs somehow)
-        let mesh_proto = Mesh::from(ConvexMeshShape::Circle {
-            r: params.thickness / 2.0,
-            points: 8,
-        })
-        .with_color([0.729, 0.855, 0.333, 1.0]);
 
         let mut next_pos: m::Vec2 = start;
         for _ in 0..count {
