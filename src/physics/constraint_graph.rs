@@ -3,26 +3,13 @@
 
 #[derive(Clone, Copy, Debug)]
 pub enum Edge {
-    Rope {
-        body_idx: usize,
-        rope_node_idx: usize,
-    },
-    Constraint {
-        body_idx: usize,
-        constr_idx: usize,
-    },
-    Contact {
-        body_idx: usize,
-        pair_idx: usize,
-    },
+    Rope { body_idx: usize, rope_slot: usize },
+    Constraint { body_idx: usize, constr_idx: usize },
+    Contact { body_idx: usize, pair_idx: usize },
     // marking possible contacts and constraints with static objects as well
     // so that we can get this knowledge into the island solver
-    StaticConstraint {
-        constr_idx: usize,
-    },
-    StaticContact {
-        pair_idx: usize,
-    },
+    StaticConstraint { constr_idx: usize },
+    StaticContact { pair_idx: usize },
 }
 
 #[derive(Clone, Copy, Debug)]

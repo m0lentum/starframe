@@ -1,19 +1,19 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    graph::{self, LayerViewMut},
-    graphics::{ConvexMeshShape, Mesh},
     math as m,
-    physics::{collision::ROPE_LAYER, Body, Collider, Mass, PhysicsMaterial},
+    physics::{
+        collision::ROPE_LAYER, Body, BodyKey, Collider, ColliderKey, EntitySet, PhysicsMaterial,
+    },
 };
 
-/// A rope built out of connected particles.
-///
-/// The representation of a rope in the graph is a loop that starts at a Rope node,
-/// goes through every particle Body in the rope in order.
-/// Every particle is connected back to the Rope node.
+use thunderdome as td;
+
+//
+
+/// Parameters for constructing a [`Rope`][self::Rope].
 #[derive(Clone, Copy, Debug)]
-pub struct Rope {
+pub struct RopeParameters {
     pub spacing: f64,
     pub thickness: f64,
     pub compliance: f64,
@@ -23,7 +23,7 @@ pub struct Rope {
     pub material: PhysicsMaterial,
     pub particle_mass: f64,
 }
-impl Default for Rope {
+impl Default for RopeParameters {
     fn default() -> Self {
         Self {
             spacing: 0.1,
@@ -42,239 +42,239 @@ impl Default for Rope {
     }
 }
 
-/// Information returned from the creation of a rope, useful for e.g. constraining the rope's ends.
+/// A rope built out of connected particles with circular colliders.
+#[derive(Clone, Default, Debug)]
+pub struct Rope {
+    pub params: RopeParameters,
+    pub particles: Vec<RopeParticle>,
+}
+
 #[derive(Clone, Copy, Debug)]
-pub struct RopeProperties {
-    pub particle_count: usize,
-    pub rope_node: graph::NodeKey<Rope>,
-    pub first_particle: graph::NodeKey<Body>,
-    pub last_particle: graph::NodeKey<Body>,
+pub struct RopeParticle {
+    pub body: BodyKey,
+    pub collider: ColliderKey,
 }
 
-//
-// constructors
-//
+impl Rope {
+    /// Spawn a rope in the shape of the line, adjusting spacing so that a particle lands on both
+    /// the start and end points.
+    pub fn spawn_line(
+        mut params: RopeParameters,
+        start: m::Vec2,
+        end: m::Vec2,
+        entity_set: &mut EntitySet,
+    ) -> Self {
+        let dist = end - start;
+        let dist_mag = dist.mag();
+        let segment_count = (dist_mag / params.spacing).round() as usize;
+        let particle_count = segment_count + 1;
+        params.spacing = dist_mag / segment_count as f64;
+        let dir = dist / dist_mag;
+        let step = params.spacing * dir;
 
-/// Spawn a rope in the shape of the line, adjusting spacing so that a particle lands on both
-/// the start and end points.
-#[allow(clippy::type_complexity)]
-pub fn spawn_line(
-    mut rope: Rope,
-    start: m::Vec2,
-    end: m::Vec2,
-    (mut l_body, l_pose, l_collider, mut l_rope, l_mesh): (
-        LayerViewMut<Body>,
-        LayerViewMut<m::Pose>,
-        LayerViewMut<Collider>,
-        LayerViewMut<Rope>,
-        LayerViewMut<Mesh>,
-    ),
-) -> RopeProperties {
-    let dist = end - start;
-    let dist_mag = dist.mag();
-    let segment_count = (dist_mag / rope.spacing).round() as usize;
-    let particle_count = segment_count + 1;
-    rope.spacing = dist_mag / segment_count as f64;
-    let dir = dist / dist_mag;
-    let step = rope.spacing * dir;
+        let mut particles = Vec::new();
+        Self::build_line(
+            &mut particles,
+            &params,
+            start,
+            step,
+            particle_count,
+            entity_set,
+        );
 
-    let mut rope_node = l_rope.insert(rope);
-    let [first_body, last_body] = build_line(
-        &mut rope_node,
-        start,
-        step,
-        particle_count,
-        (l_body.subview_mut(), l_pose, l_collider, l_mesh),
-    );
+        Rope { params, particles }
+    }
 
-    RopeProperties {
-        particle_count,
-        rope_node: rope_node.key(),
-        first_particle: first_body,
-        last_particle: last_body,
+    /// Add `count` particles to the end of an existing rope in a line.
+    pub fn extend_line(&mut self, dir: m::Unit<m::Vec2>, count: usize, entity_set: &mut EntitySet) {
+        let Some(&last_particle) = self
+            .particles
+            .iter()
+            .last()
+            .and_then(|p| entity_set.bodies.get(p.body.0)) else { return; };
+
+        let step = *dir * self.params.spacing;
+        let first_new_pos = last_particle.pose.translation + step;
+
+        Self::build_line(
+            &mut self.particles,
+            &self.params,
+            first_new_pos,
+            step,
+            count,
+            entity_set,
+        );
+    }
+
+    /// Spawn `count` particles in a line, pushing them to the given Vec.
+    fn build_line(
+        particles: &mut Vec<RopeParticle>,
+        params: &RopeParameters,
+        start: m::Vec2,
+        step: m::Vec2,
+        count: usize,
+        entity_set: &mut EntitySet,
+    ) {
+        let body_proto = Body::new_particle(params.particle_mass);
+        let collider_proto = Collider::new_circle(params.thickness / 2.0)
+            .with_layer(ROPE_LAYER)
+            .with_material(params.material);
+
+        let mut next_pos: m::Vec2 = start;
+        for _ in 0..count {
+            let body = Body {
+                pose: m::Pose::new(next_pos, Default::default()),
+                ..body_proto
+            };
+            let body_key = entity_set.insert_body(body);
+            let collider_key = entity_set.attach_collider(body_key, collider_proto);
+            particles.push(RopeParticle {
+                body: body_key,
+                collider: collider_key,
+            });
+
+            next_pos += step;
+        }
+    }
+
+    /// Split a rope into two after the given particle.
+    ///
+    /// Returns the newly created rope if the particle was part of the rope
+    /// and there were more particles after it, otherwise returns `None`.
+    pub fn cut_after(&mut self, particle: BodyKey) -> Option<Rope> {
+        let particle_idx = self
+            .particles
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.body == particle)
+            .map(|(i, _)| i)?;
+        if particle_idx == self.particles.len() - 1 {
+            self.particles.pop();
+            None
+        } else {
+            let cut_particles = self.particles.split_off(particle_idx + 1);
+            let cut_rope = Rope {
+                params: self.params,
+                particles: cut_particles,
+            };
+            Some(cut_rope)
+        }
     }
 }
 
-/// Add `count` particles to the end of an existing rope in a line.
-pub fn extend_line(
-    rope_node: &mut graph::NodeRefMut<Rope>,
-    dir: m::Unit<m::Vec2>,
-    count: usize,
-    (mut l_body, l_pose, l_collider, l_mesh): (
-        LayerViewMut<Body>,
-        LayerViewMut<m::Pose>,
-        LayerViewMut<Collider>,
-        LayerViewMut<Mesh>,
-    ),
-) -> RopeProperties {
-    let l_body_sub = l_body.subview();
-    let mut rope_iter = rope_node.get_all_neighbors(&l_body_sub).enumerate();
-    let first_particle = rope_iter.next().expect("Rope had no particles").1;
-    let (last_particle_idx, last_particle) = rope_iter.last().unwrap_or((0, first_particle));
+/// Key type to look up a rope stored in the physics world.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RopeKey(pub(super) td::Index);
 
-    let last_particle_pos = last_particle
-        .get_neighbor(&l_pose.subview())
-        .expect("Rope particle had no Pose")
-        .c
-        .translation;
-    let step = *dir * rope_node.c.spacing;
-    let first_new_pos = last_particle_pos + step;
-
-    let first_particle = first_particle.key();
-    drop(l_body_sub);
-
-    let [_, last_new] = build_line(
-        rope_node,
-        first_new_pos,
-        step,
-        count,
-        (l_body.subview_mut(), l_pose, l_collider, l_mesh),
-    );
-
-    RopeProperties {
-        particle_count: last_particle_idx + 1 + count,
-        rope_node: rope_node.key(),
-        first_particle,
-        last_particle: last_new,
-    }
+/// Manager struct holding ropes inside of a physics world.
+#[derive(Clone, Debug, Default)]
+pub struct RopeSet {
+    pub(super) ropes: td::Arena<Rope>,
 }
 
-/// Spawn `count` particles in a line, connect them, and return keys to the first and last one.
-fn build_line(
-    rope_node: &mut graph::NodeRefMut<Rope>,
-    start: m::Vec2,
-    step: m::Vec2,
-    count: usize,
-    (mut l_body, mut l_pose, mut l_collider, mut l_mesh): (
-        LayerViewMut<Body>,
-        LayerViewMut<m::Pose>,
-        LayerViewMut<Collider>,
-        LayerViewMut<Mesh>,
-    ),
-) -> [graph::NodeKey<Body>; 2] {
-    let body_proto = Body {
-        velocity: Default::default(),
-        mass: Mass::from(rope_node.c.particle_mass),
-        moment_of_inertia: Mass::Infinite,
-    };
-    let collider_proto = Collider::new_circle(rope_node.c.thickness / 2.0)
-        .with_layer(ROPE_LAYER)
-        .with_material(rope_node.c.material);
-    // temporary visualisation with individual particle Meshes
-    // until I get something more bespoke for this
-    let mesh_proto = Mesh::from(ConvexMeshShape::Circle {
-        r: rope_node.c.thickness / 2.0,
-        points: 8,
-    })
-    .with_color([0.729, 0.855, 0.333, 1.0]);
-
-    let mut first_body = l_body.insert(body_proto);
-    let mut first_pose = l_pose.insert(m::Pose::new(start, Default::default()));
-    let mut first_coll = l_collider.insert(collider_proto);
-    let mut first_mesh = l_mesh.insert(mesh_proto.clone());
-    first_body.connect(&mut first_pose);
-    first_body.connect(&mut first_coll);
-    first_pose.connect(&mut first_coll);
-    first_pose.connect(&mut first_mesh);
-    first_body.connect(rope_node);
-    let first_body = first_body.key();
-    let mut next_pos: m::Vec2 = start + step;
-    let mut prev_body: graph::NodeKey<Body> = first_body;
-    for _ in 1..count {
-        let mut body = l_body.insert(body_proto);
-        let mut pose = l_pose.insert(m::Pose::new(next_pos, Default::default()));
-        let mut coll = l_collider.insert(collider_proto);
-        let mut mesh = l_mesh.insert(mesh_proto.clone());
-        body.connect(&mut pose);
-        pose.connect(&mut coll);
-        body.connect(&mut coll);
-        pose.connect(&mut mesh);
-        body.connect(rope_node);
-
-        next_pos += step;
-        prev_body = body.key();
+impl RopeSet {
+    #[inline]
+    pub(super) fn new() -> Self {
+        Self::default()
     }
-    [first_body, prev_body]
-}
 
-/// Split a rope into two after the given particle.
-///
-/// Returns the [`Rope`][crate::physics::rope::Rope] nodes of the two rope parts
-/// if the particle is part of a rope and not its last particle,
-/// otherwise returns `None`.
-pub fn cut_after(
-    particle: graph::NodeKey<Body>,
-    (mut l_body, mut l_rope): (LayerViewMut<Body>, LayerViewMut<Rope>),
-) -> Option<[graph::NodeKey<Rope>; 2]> {
-    let l_rope_addr = l_rope.meta.address;
-    let l_body_addr = l_body.meta.address;
+    #[inline]
+    pub fn insert(&mut self, rope: Rope) -> RopeKey {
+        RopeKey(self.ropes.insert(rope))
+    }
 
-    let p_node = l_body.get(particle)?;
-    let l_rope_sub = l_rope.subview();
-    let rope_node = p_node.get_neighbor(&l_rope_sub)?;
-    let rope_copy = *rope_node.c;
-    let rope_key = rope_node.key();
-    drop(l_rope_sub);
+    /// Access a Rope in the physics world, if it still exists.
+    #[inline]
+    pub fn get(&self, key: RopeKey) -> Option<&Rope> {
+        self.ropes.get(key.0)
+    }
 
-    // traverse the list of edges to find the one pointing to this particle,
-    // transfer ones after that to new rope node
+    /// Mutably access a Rope in the physics world, if it still exists.
+    #[inline]
+    pub fn get_mut(&mut self, key: RopeKey) -> Option<&mut Rope> {
+        self.ropes.get_mut(key.0)
+    }
 
-    let edge_idx_to_transfer: Option<usize>;
+    /// Remove a Rope and all its particles from the physics world.
+    #[inline]
+    pub fn remove(&mut self, key: RopeKey, entity_set: &mut EntitySet) {
+        let Some(rope) = self.ropes.remove(key.0) else { return };
+        for particle in rope.particles {
+            entity_set.remove_body(particle.body);
+        }
+    }
 
-    let first_edge = l_rope.meta.edges[l_body_addr][rope_key.idx]
-        .as_mut()
-        .expect("Rope had no particles");
-    if first_edge.target == particle.idx {
-        edge_idx_to_transfer = first_edge.next_edge;
-        first_edge.next_edge = None;
-    } else {
-        let mut curr_edge_idx = first_edge.next_edge;
-        while let Some(curr) = curr_edge_idx {
-            let curr_edge = &mut l_rope.meta.secondary_edges[curr];
-            curr_edge_idx = curr_edge.next_edge;
-            if curr_edge.target == particle.idx {
-                curr_edge.next_edge = None;
-                break;
+    /// Remove all ropes. Does NOT remove the particles,
+    /// and should only be used during full clear of the physics world,
+    /// hence only pub(super)
+    #[inline]
+    pub(super) fn clear(&mut self) {
+        self.ropes.clear();
+    }
+
+    /// If individual particles have been removed,
+    /// take them out of the ropes they were part of
+    /// and cut the ropes into parts.
+    ///
+    /// TODO: consider a generic-constraint-based implementation
+    /// that would do this automatically
+    pub(super) fn remove_dead_particles(&mut self, entity_set: &mut EntitySet) {
+        let mut new_ropes: Vec<Rope> = Vec::new();
+        for (_, rope) in self.ropes.iter_mut() {
+            // tricky logic to mutate either the existing rope or a newly cut-off one.
+            // certainly not the cleanest way to do this
+            // but I want to redesign this whole thing anyway
+            let mut queued_rope: Option<Rope> = None;
+            'curr_rope: loop {
+                let editing_rope = queued_rope.as_mut().unwrap_or(rope);
+                let Some(removed_particle_idx) =
+                    editing_rope
+                        .particles
+                        .iter()
+                        .enumerate()
+                        .find(|(_, p)| !entity_set.bodies.contains(p.body.0))
+                        .map(|(i, _)| i) else { break 'curr_rope };
+                // take the particles after the removed one into a new rope,
+                // removing any consecutive dead particles,
+                // then repeat this process for the new rope
+                let cut_particles: Vec<RopeParticle> = editing_rope
+                    .particles
+                    .iter()
+                    .skip(removed_particle_idx + 1)
+                    .skip_while(|p| !entity_set.bodies.contains(p.body.0))
+                    .cloned()
+                    .collect();
+                editing_rope.particles.truncate(removed_particle_idx);
+                if cut_particles.is_empty() {
+                    break 'curr_rope;
+                }
+
+                if let Some(q) = queued_rope.take() {
+                    new_ropes.push(q);
+                }
+                queued_rope = Some(Rope {
+                    particles: cut_particles,
+                    params: rope.params,
+                });
+            }
+            if let Some(q) = queued_rope.take() {
+                new_ropes.push(q);
             }
         }
-        edge_idx_to_transfer = curr_edge_idx;
-    }
 
-    // this is all a little trickier than it strictly needs to be,
-    // could be done by deleting and recreating all edges using public graph apis,
-    // but moving existing edges around is a bit more efficient
-
-    match edge_idx_to_transfer {
-        Some(edge_idx_to_transfer) => {
-            let edge_to_transfer = l_rope.meta.secondary_edges[edge_idx_to_transfer];
-            let mut new_rope = l_rope.insert(rope_copy);
-            let new_rope_key = new_rope.key();
-            // remove old edge and use connect api
-            // so we don't have to extend the rope layer's edge vec manually here
-            l_body.meta.edges[l_rope_addr][edge_to_transfer.target] = None;
-            new_rope.connect(&mut l_body.get_mut_unchecked_by_item_idx(edge_to_transfer.target));
-            // transfer the rest of the edges from the old rope to the new
-            l_rope.meta.edges[l_body_addr][new_rope_key.idx] = Some(edge_to_transfer);
-            // mark the one edge that just became a primary edge as vacant
-            l_rope
-                .meta
-                .vacant_edge_slots
-                .push_back(edge_idx_to_transfer);
-            // transfer the edges from the particles toward the rope
-            // (taking for granted that the rope is the primary edge for them all;
-            // anything else would be a logic error in multiple places)
-            let mut curr_edge = edge_to_transfer;
-            while let Some(next) = curr_edge.next_edge {
-                let next_edge = l_rope.meta.secondary_edges[next];
-                l_body.meta.edges[l_rope_addr][next_edge.target]
-                    .as_mut()
-                    .unwrap()
-                    .target = new_rope_key.idx;
-                curr_edge = next_edge;
-            }
-
-            Some([rope_key, new_rope_key])
+        for new_rope in new_ropes {
+            self.insert(new_rope);
         }
-        None => None,
+
+        // delete ropes with no particles
+        let to_delete: Vec<td::Index> = self
+            .ropes
+            .iter()
+            .filter(|(_, rope)| rope.particles.is_empty())
+            .map(|(idx, _)| idx)
+            .collect();
+        for rope_idx in to_delete {
+            self.ropes.remove(rope_idx);
+        }
     }
 }

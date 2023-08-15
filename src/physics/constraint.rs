@@ -1,7 +1,6 @@
 //! Types of physical constraints.
 
-use super::Body;
-use crate::{graph, math as m};
+use crate::{math as m, physics::BodyKey};
 
 /// A constraint restricts the relative motion of two bodies,
 /// or the motion of a single body in the world.
@@ -12,10 +11,10 @@ use crate::{graph, math as m};
 #[derive(Clone, Copy, Debug)]
 pub struct Constraint {
     /// The body that owns this constraint.
-    pub owner: graph::NodeKey<Body>,
+    pub owner: BodyKey,
     /// The body this constraint is attached to.
     /// `None` represents ground.
-    pub target: Option<graph::NodeKey<Body>>,
+    pub target: Option<BodyKey>,
     /// Inverse of stiffness, or how much the constraint resists violation.
     pub compliance: f64,
     /// Damping coefficient for linear velocity.
@@ -61,8 +60,8 @@ pub enum ConstraintLimit {
 /// A builder that allows ergonomic construction of different constraints.
 #[derive(Clone, Copy, Debug)]
 pub struct ConstraintBuilder {
-    owner: graph::NodeKey<Body>,
-    target: Option<graph::NodeKey<Body>>,
+    owner: BodyKey,
+    target: Option<BodyKey>,
     offsets: [m::Vec2; 2],
     limit: ConstraintLimit,
     compliance: f64,
@@ -77,7 +76,7 @@ impl ConstraintBuilder {
     /// An owning body is required.
     /// If you don't connect the constraint to another body with
     /// `with_target`, it will be connected to ground, i.e. the world origin.
-    pub fn new(owner: graph::NodeKey<Body>) -> Self {
+    pub fn new(owner: BodyKey) -> Self {
         Self {
             owner,
             target: None,
@@ -91,7 +90,7 @@ impl ConstraintBuilder {
     }
 
     /// Attach the constraint to another body.
-    pub fn with_target(mut self, target: graph::NodeKey<Body>) -> Self {
+    pub fn with_target(mut self, target: BodyKey) -> Self {
         self.target = Some(target);
         self
     }

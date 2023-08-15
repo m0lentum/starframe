@@ -17,7 +17,7 @@ impl<'a> CompoundColliderSetup<'a> {
     pub fn center_of_mass(&self) -> m::Vec2 {
         self.colliders
             .iter()
-            .map(|c| c.shape.area() * c.offset.translation)
+            .map(|c| c.shape.area() * c.pose.translation)
             .sum::<m::Vec2>()
             / self.colliders.len() as f64
     }
@@ -30,7 +30,7 @@ impl<'a> CompoundColliderSetup<'a> {
         for coll in self.colliders {
             let area = coll.shape.area();
             total_area += area;
-            let offset_from_center = coll.offset.translation - center;
+            let offset_from_center = coll.pose.translation - center;
             let moment = coll.shape.second_moment_of_area();
             // https://en.wikipedia.org/wiki/Parallel_axis_theorem#Second_moment_of_area
             total_second_moment += moment + area * offset_from_center.mag_sq();

@@ -1,9 +1,6 @@
 pub mod animation;
 pub use animation::{animator, MeshAnimator};
 
-pub mod graph;
-pub use graph::{Graph, LayerView, LayerViewMut, NodeKey, NodeRef, NodeRefMut};
-
 pub mod game;
 pub use game::{Game, GameParams, GameState};
 
@@ -34,10 +31,12 @@ pub use physics::{
     },
     constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType},
     forcefield,
-    rope::{self, Rope, RopeProperties},
-    CastHit, ConstraintHandle, ContactInfo, Physics, Velocity,
+    hecs_sync::{HecsSyncManager, HecsSyncOptions},
+    BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope, RopeKey,
+    RopeParameters, RopeSet, Velocity,
 };
 
-// Re-exported wgpu and winit to guarantee versions match
+// re-exported libraries used in public APIs to guarantee versions match
+pub use hecs;
 pub use wgpu;
 pub use winit;

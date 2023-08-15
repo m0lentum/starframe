@@ -7,7 +7,7 @@ use super::{
 use crate::{math as m, physics::body};
 
 /// A component that allows a game object to collide with others
-/// or act as a trigger.
+/// or act as a sensor.
 ///
 /// TODOC: compound colliders
 #[derive(Clone, Copy, Debug)]
@@ -16,8 +16,10 @@ use crate::{math as m, physics::body};
 pub struct Collider {
     pub shape: ColliderShape,
     pub ty: ColliderType,
+    /// Pose of the collider relative to the body it's attached to,
+    /// or the world if it's not attached to a body.
     #[serde(with = "m::serde_pose")]
-    pub offset: m::Pose,
+    pub pose: m::Pose,
     /// Collision layer, see [`MaskMatrix`][super::MaskMatrix] for info.
     /// Defaults to 0.
     pub layer: usize,
@@ -30,7 +32,7 @@ impl Default for Collider {
                 circle_r: 1.0,
             },
             ty: ColliderType::default(),
-            offset: m::Pose::default(),
+            pose: m::Pose::default(),
             layer: 0,
         }
     }
@@ -119,6 +121,14 @@ impl Collider {
         ColliderPolygon::Triangle { outer_r }.into()
     }
 
+    /// Set the pose of the collider relative to the body it's attached to,
+    /// or relative to the world if it's not attached to a body.
+    #[inline]
+    pub fn with_pose(mut self, pose: m::Pose) -> Self {
+        self.pose = pose;
+        self
+    }
+
     /// Set the collider to be solid with the given surface material.
     #[inline]
     pub fn with_material(mut self, mat: PhysicsMaterial) -> Self {
@@ -126,10 +136,12 @@ impl Collider {
         self
     }
 
-    /// Turn the collider into a trigger.
+    /// Turn the collider into a sensor
+    /// (i.e. a collider that doesn't affect the movement of bodies,
+    /// only reports when they intersect it).
     #[inline]
-    pub fn trigger(mut self) -> Self {
-        self.ty = ColliderType::Trigger;
+    pub fn sensor(mut self) -> Self {
+        self.ty = ColliderType::Sensor;
         self
     }
 
@@ -145,8 +157,8 @@ impl Collider {
     }
 
     #[inline]
-    pub fn is_trigger(&self) -> bool {
-        matches!(self.ty, ColliderType::Trigger)
+    pub fn is_sensor(&self) -> bool {
+        matches!(self.ty, ColliderType::Sensor)
     }
 
     /// Get the info required to construct a body with this collider.
@@ -165,7 +177,7 @@ impl Collider {
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub enum ColliderType {
     Solid(PhysicsMaterial),
-    Trigger,
+    Sensor,
 }
 
 impl Default for ColliderType {
@@ -682,7 +694,7 @@ impl ColliderPolygon {
                 [m::Unit::unit_y(), -AXIS_30_DEG, -AXIS_150_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir))
-                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .max_by(|p0, p1| p0.total_cmp(p1))
                     .unwrap()
                     * outer_r
             }
@@ -690,7 +702,7 @@ impl ColliderPolygon {
                 [m::Unit::unit_x(), AXIS_60_DEG, AXIS_120_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir).abs())
-                    .max_by(|p0, p1| p0.partial_cmp(p1).unwrap())
+                    .max_by(|p0, p1| p0.total_cmp(p1))
                     .unwrap()
                     * outer_r
             }

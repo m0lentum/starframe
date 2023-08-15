@@ -1,17 +1,9 @@
 //! Utilities for visualizing internal structures like colliders.
 
-// largely copied from MeshRenderer since this uses the same shader.
-// think about abstraction if more stuff needs same or very similar wgpu structures
-
 use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
 
-use crate::{
-    graph::LayerView,
-    graphics::Camera,
-    math as m,
-    physics::{collision::AABB, Body, Collider},
-};
+use crate::{graphics::Camera, math as m, physics::collision::AABB};
 
 #[repr(C)]
 #[derive(Clone, Copy, AsBytes, FromBytes)]
@@ -158,7 +150,7 @@ impl DebugVisualizer {
     pub fn draw_bvh(
         &mut self,
         depth_to_draw: usize,
-        phys: &crate::Physics,
+        phys: &crate::PhysicsWorld,
         camera: &Camera,
         ctx: &mut super::RenderContext,
     ) {
@@ -212,10 +204,9 @@ impl DebugVisualizer {
 
     pub fn draw_islands(
         &mut self,
-        phys: &crate::Physics,
+        phys: &crate::PhysicsWorld,
         camera: &Camera,
         ctx: &mut super::RenderContext,
-        (l_pose, l_body, l_coll): (LayerView<m::Pose>, LayerView<Body>, LayerView<Collider>),
     ) {
         // update uniforms
 
@@ -228,26 +219,16 @@ impl DebugVisualizer {
         // draw boxes
 
         self.island_line_bufs.clear();
-        for island in phys.islands(&l_body) {
+        for island in phys.islands() {
             let color = [0.3, 0.5, 0.9, 1.0];
             let mut enclosing_aabb = AABB {
                 min: m::Vec2::new(std::f64::MAX, std::f64::MAX),
                 max: m::Vec2::new(std::f64::MIN, std::f64::MIN),
             };
             for body in island {
-                let pose = match body.get_neighbor(&l_pose) {
-                    Some(p) => p,
-                    // body was deleted
-                    None => break,
-                };
-                let pos = pose.c.translation;
-                let r = match body.get_neighbor(&l_coll) {
-                    Some(coll) => coll.c.shape.bounding_sphere_r(),
-                    None => 0.0,
-                };
-                let r = m::Vec2::new(r, r);
-                enclosing_aabb.min = enclosing_aabb.min.min_by_component(pos - r);
-                enclosing_aabb.max = enclosing_aabb.max.max_by_component(pos + r);
+                let pos = body.pose.translation;
+                enclosing_aabb.min = enclosing_aabb.min.min_by_component(pos);
+                enclosing_aabb.max = enclosing_aabb.max.max_by_component(pos);
             }
             let min = [enclosing_aabb.min.x as f32, enclosing_aabb.min.y as f32];
             let max = [enclosing_aabb.max.x as f32, enclosing_aabb.max.y as f32];
