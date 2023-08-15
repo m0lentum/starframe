@@ -397,6 +397,7 @@ impl PhysicsWorld {
         let _main_span = tracy_client::span!("physics tick");
 
         self.entity_set.remove_orphan_colliders();
+        self.rope_set.remove_dead_particles(&mut self.entity_set);
 
         // time scaling is done by adjusting both dt and actual substep count executed.
         // trying to keep dt as close to constant as possible to avoid any nasty inconsistencies
@@ -495,16 +496,16 @@ impl PhysicsWorld {
             while let Some(particle) = iter.next() {
                 if let Some(&next_particle) = iter.peek() {
                     self.constraint_graph.insert(
-                        particle.0.slot() as usize,
+                        particle.body.0.slot() as usize,
                         Edge::Rope {
-                            body_idx: next_particle.0.slot() as usize,
+                            body_idx: next_particle.body.0.slot() as usize,
                             rope_slot,
                         },
                     );
                     self.constraint_graph.insert(
-                        next_particle.0.slot() as usize,
+                        next_particle.body.0.slot() as usize,
                         Edge::Rope {
-                            body_idx: particle.0.slot() as usize,
+                            body_idx: particle.body.0.slot() as usize,
                             rope_slot,
                         },
                     );
@@ -808,7 +809,7 @@ impl PhysicsWorld {
                 let first_particle = rope.particles[0];
                 solver::RopeView {
                     params: rope.params,
-                    start: bufs.body_order[first_particle.0.slot() as usize],
+                    start: bufs.body_order[first_particle.body.0.slot() as usize],
                 }
             }));
 
@@ -829,8 +830,8 @@ impl PhysicsWorld {
             let mut iter = rope.particles.iter().peekable();
             while let Some(particle) = iter.next() {
                 if let Some(next_particle) = iter.peek() {
-                    let body_idx = bufs.body_order[particle.0.slot() as usize];
-                    let next_body_idx = bufs.body_order[next_particle.0.slot() as usize];
+                    let body_idx = bufs.body_order[particle.body.0.slot() as usize];
+                    let next_body_idx = bufs.body_order[next_particle.body.0.slot() as usize];
                     bufs.rope_next_particles[body_idx] = Some(next_body_idx);
                     bufs.rope_prev_particles[next_body_idx] = Some(body_idx);
                 }

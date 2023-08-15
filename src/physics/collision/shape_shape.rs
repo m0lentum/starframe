@@ -214,7 +214,6 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     // the second case is also probably a bug but can be on the user end
     // and probably shouldn't panic
     let Some(EdgeAndExtent(pen_edge, pen_edge_extent)) = pen_axis else {
-        eprintln!("There's a NaN in a pose somewhere");
         return ContactResult::Zero;
     };
 

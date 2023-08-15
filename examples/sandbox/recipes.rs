@@ -389,7 +389,7 @@ impl Recipe {
                     .with_color([0.729, 0.855, 0.333, 1.0]);
                     let mesh_ent = world.spawn((sf::Pose::default(), mesh, *particle));
                     hecs_sync.register_body(
-                        *particle,
+                        particle.body,
                         mesh_ent,
                         sf::HecsSyncOptions::physics_to_hecs_only(),
                     );
@@ -399,7 +399,7 @@ impl Recipe {
                 match b1 {
                     Ok(b1) => {
                         physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(first_particle)
+                            sf::ConstraintBuilder::new(first_particle.body)
                                 .with_target(b1)
                                 .with_target_origin(offset1.into())
                                 .build_attachment(),
@@ -407,7 +407,7 @@ impl Recipe {
                     }
                     Err(_) => {
                         physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(first_particle)
+                            sf::ConstraintBuilder::new(first_particle.body)
                                 .with_target_origin(rope_end_1)
                                 .build_attachment(),
                         );
@@ -416,7 +416,7 @@ impl Recipe {
                 match b2 {
                     Ok(b2) => {
                         physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(last_particle)
+                            sf::ConstraintBuilder::new(last_particle.body)
                                 .with_target(b2)
                                 .with_target_origin(offset2.into())
                                 .build_attachment(),
@@ -424,7 +424,7 @@ impl Recipe {
                     }
                     Err(_) => {
                         physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(last_particle)
+                            sf::ConstraintBuilder::new(last_particle.body)
                                 .with_target_origin(rope_end_2)
                                 .build_attachment(),
                         );
