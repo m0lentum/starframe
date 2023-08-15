@@ -15,9 +15,6 @@ about vines and fire.
 
 ![Current state of graphics and physics](demo.gif)
 
-- novel graph-based entity system inspired by [froggy](https://github.com/kvark/froggy)
-  - [related blog post](https://molentum.me/blog/starframe-architecture/)
-    (somewhat outdated; many details have changed since)
 - 2D rigid body and particle physics
   - high-fidelity solver based on [Extended Position-Based Dynamics][xpbd]
     - [related blog post](https://molentum.me/blog/starframe-constraints/)
@@ -26,18 +23,21 @@ about vines and fire.
   - raycasts and spherecasts
   - particle-based ropes with full coupling with rigid bodies
 - graphics using [wgpu]
-  - colored 2D meshes
-  - dynamic outlines with the Jump Flood algorithm
+  - colored 2D triangle meshes
+  - support for skinning and animation (WIP)
 
 ## Who this is for
 
-At least for now, this is intended just for my personal use. There are a lot of
-rough edges, missing features, and even more missing documentation. It's very
-far from something you can make an entire game with at the moment. That said,
-the physics is perfectly usable already, at least for the things I'm doing with
-it. If you want some really detailed 2D physics simulation and are adventurous
-enough to learn how to use my quirky entity system, there might be some fun to
-be had here.
+At least for now, this is intended just for my personal use.
+There are a lot of rough edges, missing features,
+and even more missing documentation. 
+It's very far from something you can make an entire game with at the moment. 
+That said, the physics is perfectly usable already,
+at least for the things I'm doing with it
+(though not always very easy to use).
+If you want some really detailed 2D physics simulation
+and are adventurous enough to deal with a lot of incomplete bits,
+there might be some fun to be had here.
 
 ## Blog
 
