@@ -128,6 +128,7 @@ impl State {
     fn reset(&mut self) {
         self.physics.clear();
         self.world.clear();
+        self.hecs_sync.clear();
     }
 }
 
