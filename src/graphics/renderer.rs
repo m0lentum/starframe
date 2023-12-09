@@ -1,7 +1,8 @@
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
+    pub window: winit::window::Window,
     pub device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub queue: wgpu::Queue,
     surface: wgpu::Surface,
     surface_config: wgpu::SurfaceConfiguration,
     swapchain_format: wgpu::TextureFormat,
@@ -31,12 +32,10 @@ struct Frame {
 impl Renderer {
     /// Create a Renderer.
     /// The [`Game`][crate::game::Game] API does this automatically.
-    pub(crate) async fn init(window: &winit::window::Window) -> Self {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            dx12_shader_compiler: wgpu::Dx12Compiler::Fxc,
-        });
-        let surface = unsafe { instance.create_surface(window) }.expect("Failed to create surface");
+    pub(crate) async fn init(window: winit::window::Window) -> Self {
+        let instance = wgpu::Instance::default();
+        let surface =
+            unsafe { instance.create_surface(&window) }.expect("Failed to create surface");
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -91,13 +90,16 @@ impl Renderer {
             Some("global depth buffer made on init"),
         );
 
+        let window_scale_factor = window.scale_factor();
+
         Renderer {
+            window,
             device,
             queue,
             surface,
             surface_config,
             swapchain_format,
-            window_scale_factor: window.scale_factor(),
+            window_scale_factor,
             window_depth_buffer,
             generation: 0,
             msaa_samples: MSAA_SAMPLES,
@@ -220,6 +222,7 @@ impl Renderer {
         };
 
         RenderContext {
+            window: &self.window,
             target,
             encoder: CommandEncoder(encoder),
             device: &self.device,
@@ -245,6 +248,7 @@ impl Renderer {
         let queue = &mut self.queue;
 
         RenderContext {
+            window: &self.window,
             target: RenderTarget {
                 view,
                 resolve_target: None,
@@ -279,6 +283,7 @@ pub struct RenderTarget<'a> {
 /// Not doing so would result in a memory leak, so
 /// `RenderContext` will panic on drop if you do this.
 pub struct RenderContext<'a> {
+    pub window: &'a winit::window::Window,
     pub target: RenderTarget<'a>,
     pub encoder: CommandEncoder,
     pub device: &'a wgpu::Device,
@@ -341,7 +346,7 @@ impl CommandEncoder {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(color),
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: target.depth.map(|depth| {
@@ -349,14 +354,16 @@ impl CommandEncoder {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(0),
-                        store: true,
+                        store: wgpu::StoreOp::Store,
                     }),
                 }
             }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
         });
         // drop the pass immediately, causing the clear instruction
         // to be written to the encoder
@@ -397,7 +404,7 @@ impl CommandEncoder {
                 resolve_target: target.resolve_target,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
-                    store: true,
+                    store: wgpu::StoreOp::Store,
                 },
             })],
             depth_stencil_attachment: if !use_depth {
@@ -409,14 +416,16 @@ impl CommandEncoder {
                         view: depth,
                         depth_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         }),
                         stencil_ops: Some(wgpu::Operations {
                             load: wgpu::LoadOp::Load,
-                            store: true,
+                            store: wgpu::StoreOp::Store,
                         }),
                     })
             },
+            occlusion_query_set: None,
+            timestamp_writes: None,
         })
     }
 }

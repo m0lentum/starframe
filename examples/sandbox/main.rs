@@ -5,8 +5,6 @@ static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
 
 use rand::{distributions as distr, distributions::Distribution};
 
-use egui_winit_platform as egui_wp;
-
 use starframe as sf;
 
 mod mousegrab;
@@ -27,7 +25,12 @@ fn main() {
         window,
         fps: 60,
         on_event: |state: &mut State, evt| {
-            state.egui_platform.handle_event(evt);
+            if let winit::event::Event::WindowEvent { event, .. } = evt {
+                let egui_resp = state.egui_state.on_window_event(&state.egui_context, event);
+                if egui_resp.consumed {
+                    // TODO: don't propagate the event
+                }
+            }
         },
     });
 }
@@ -57,8 +60,9 @@ pub struct State {
     outline_renderer: sf::OutlineRenderer,
     debug_visualizer: sf::DebugVisualizer,
     // egui stuff
-    egui_platform: egui_wp::Platform,
-    egui_pass: egui_wgpu_backend::RenderPass,
+    egui_context: egui::Context,
+    egui_state: egui_winit::State,
+    egui_renderer: egui_wgpu::renderer::Renderer,
     last_egui_output: egui::FullOutput,
     // UI states
     outline_interp: f32,
@@ -71,6 +75,8 @@ pub struct State {
 }
 impl State {
     fn init(renderer: &sf::Renderer) -> Self {
+        let egui_context = egui::Context::default();
+        let viewport_id = egui_context.viewport_id();
         State {
             scenes_available: read_available_scenes().expect("Failed to read scenes directory"),
             scene: Scene::default(),
@@ -102,17 +108,13 @@ impl State {
                 renderer,
             ),
             debug_visualizer: sf::DebugVisualizer::new(renderer),
-            egui_platform: egui_wp::Platform::new(egui_wp::PlatformDescriptor {
-                physical_width: renderer.window_size().width,
-                physical_height: renderer.window_size().height,
-                scale_factor: renderer.window_scale_factor(),
-                font_definitions: egui::FontDefinitions::default(),
-                style: egui::Style::default(),
-            }),
-            egui_pass: egui_wgpu_backend::RenderPass::new(
+            egui_context,
+            egui_state: egui_winit::State::new(viewport_id, &renderer.window, None, None),
+            egui_renderer: egui_wgpu::Renderer::new(
                 &renderer.device,
                 renderer.swapchain_format(),
-                1,
+                Some(renderer.window_depth_buffer.texture.format()),
+                renderer.msaa_samples(),
             ),
             last_egui_output: Default::default(),
             outline_interp: 0.0,
@@ -270,14 +272,14 @@ impl sf::GameState for State {
         // gui controls
         //
 
-        self.egui_platform.begin_frame();
-        let egui_ctx = self.egui_platform.context();
+        let egui_input = self.egui_state.take_egui_input(&game.renderer.window);
+        self.egui_context.begin_frame(egui_input);
 
         let mut exit = false;
         let mut reload = false;
         let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
-        egui::Window::new("Controls").show(&egui_ctx, |ui| {
+        egui::Window::new("Controls").show(&self.egui_context, |ui| {
             ui.heading("Load a scene");
             ui.horizontal_wrapped(|ui| {
                 for scene_path in &self.scenes_available {
@@ -402,7 +404,7 @@ impl sf::GameState for State {
                 .instantiate(&mut self.physics, &mut self.world, &mut self.hecs_sync);
         }
 
-        self.last_egui_output = self.egui_platform.end_frame(Some(&game.window));
+        self.last_egui_output = self.egui_context.end_frame();
 
         // mouse controls
 
@@ -477,8 +479,6 @@ impl sf::GameState for State {
     }
 
     fn draw(&mut self, renderer: &mut sf::Renderer, _dt: f32) {
-        let window_scale_factor = renderer.window_scale_factor();
-
         let mut ctx = renderer.draw_to_window();
         ctx.clear(sf::wgpu::Color {
             r: 0.00802,
@@ -509,29 +509,41 @@ impl sf::GameState for State {
 
         let mut ctx = renderer.draw_to_window();
 
-        let paint_jobs = self
-            .egui_platform
-            .context()
-            .tessellate(self.last_egui_output.shapes.clone());
-        let screen_desc = egui_wgpu_backend::ScreenDescriptor {
-            physical_width: ctx.target_size.0,
-            physical_height: ctx.target_size.1,
-            scale_factor: window_scale_factor as f32,
+        let paint_jobs = self.egui_context.tessellate(
+            self.last_egui_output.shapes.clone(),
+            self.egui_context.pixels_per_point(),
+        );
+        self.egui_state.handle_platform_output(
+            &ctx.window,
+            &self.egui_context,
+            self.last_egui_output.platform_output.clone(),
+        );
+
+        for (tex_id, img_delta) in &self.last_egui_output.textures_delta.set {
+            self.egui_renderer
+                .update_texture(&ctx.device, &ctx.queue, *tex_id, img_delta);
+        }
+
+        for tex_id in &self.last_egui_output.textures_delta.free {
+            self.egui_renderer.free_texture(&tex_id);
+        }
+
+        let screen_desc = egui_wgpu::renderer::ScreenDescriptor {
+            size_in_pixels: [ctx.target_size.0, ctx.target_size.1],
+            pixels_per_point: self.egui_context.pixels_per_point(),
         };
-        self.egui_pass
-            .add_textures(ctx.device, ctx.queue, &self.last_egui_output.textures_delta)
-            .expect("Failed to add egui textures");
-        self.egui_pass
-            .update_buffers(ctx.device, ctx.queue, &paint_jobs, &screen_desc);
-        self.egui_pass
-            .execute(
-                &mut ctx.encoder.0,
-                ctx.target.resolve_target.unwrap(),
-                &paint_jobs,
-                &screen_desc,
-                None,
-            )
-            .expect("failed to draw egui");
+        self.egui_renderer.update_buffers(
+            &ctx.device,
+            &ctx.queue,
+            &mut ctx.encoder.0,
+            &paint_jobs,
+            &screen_desc,
+        );
+
+        let mut pass = ctx.pass(Some("egui"));
+        self.egui_renderer
+            .render(&mut pass, &paint_jobs, &screen_desc);
+        drop(pass);
 
         ctx.submit();
 
