@@ -55,6 +55,8 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     // graphics
     camera: sf::Camera,
+    light: sf::DirectionalLight,
+    light_rotating: bool,
     camera_ctl: sf::MouseDragCameraController,
     mesh_renderer: sf::MeshRenderer,
     outline_renderer: sf::OutlineRenderer,
@@ -89,10 +91,13 @@ impl State {
             hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
             player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
-            camera: sf::Camera::new(sf::CameraScalingStrategy::ConstantDisplayArea {
-                width: 20.0,
-                height: 10.0,
-            }),
+            camera: sf::Camera::default(),
+            light: sf::DirectionalLight {
+                direct_color: [1.0, 0.949, 0.8],
+                ambient_color: [0.686, 0.875, 0.918],
+                direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
+            },
+            light_rotating: false,
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
                 reset_button: Some(sf::Key::R.into()),
@@ -183,9 +188,10 @@ impl Scene {
         physics: &mut sf::PhysicsWorld,
         world: &mut hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
+        renderer: &sf::Renderer,
     ) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, world, hecs_sync);
+            recipe.spawn(physics, world, hecs_sync, renderer);
         }
     }
 }
@@ -341,6 +347,20 @@ impl sf::GameState for State {
             }
 
             ui.separator();
+            ui.heading("Light");
+            ui.horizontal(|ui| {
+                ui.color_edit_button_rgb(&mut self.light.direct_color);
+                ui.label("Direct light color");
+            });
+            ui.horizontal(|ui| {
+                ui.color_edit_button_rgb(&mut self.light.ambient_color);
+                ui.label("Ambient light color");
+            });
+            ui.add(egui::Slider::new(&mut self.light.direction.x, -5.0..=5.0).text("Direction x"));
+            ui.add(egui::Slider::new(&mut self.light.direction.y, -5.0..=5.0).text("Direction y"));
+            ui.checkbox(&mut self.light_rotating, "Spin");
+
+            ui.separator();
             ui.heading("Other controls");
             ui.horizontal(|ui| {
                 match self.state {
@@ -363,10 +383,10 @@ impl sf::GameState for State {
             });
             ui.add(
                 egui::Slider::new(
-                    &mut self.camera.transform.scale,
-                    self.camera_ctl.min_zoom_out..=self.camera_ctl.max_zoom_out,
+                    &mut self.camera.zoom,
+                    self.camera_ctl.min_zoom..=self.camera_ctl.max_zoom,
                 )
-                .text("Camera zoom out"),
+                .text("Camera zoom"),
             );
             ui.add(
                 egui::Slider::new(&mut self.physics.consts.substeps, 1..=15)
@@ -400,8 +420,12 @@ impl sf::GameState for State {
         }
         if reload {
             self.reset();
-            self.scene
-                .instantiate(&mut self.physics, &mut self.world, &mut self.hecs_sync);
+            self.scene.instantiate(
+                &mut self.physics,
+                &mut self.world,
+                &mut self.hecs_sync,
+                &game.renderer,
+            );
         }
 
         self.last_egui_output = self.egui_context.end_frame();
@@ -438,7 +462,12 @@ impl sf::GameState for State {
                     }
                     .into()],
                 }
-                .spawn(&mut self.physics, &mut self.world, &mut self.hecs_sync);
+                .spawn(
+                    &mut self.physics,
+                    &mut self.world,
+                    &mut self.hecs_sync,
+                    &game.renderer,
+                );
             }
         }
 
@@ -478,7 +507,7 @@ impl sf::GameState for State {
         }
     }
 
-    fn draw(&mut self, renderer: &mut sf::Renderer, _dt: f32) {
+    fn draw(&mut self, renderer: &mut sf::Renderer, dt: f32) {
         let mut ctx = renderer.draw_to_window();
         ctx.clear(sf::wgpu::Color {
             r: 0.00802,
@@ -486,6 +515,11 @@ impl sf::GameState for State {
             b: 0.02732,
             a: 1.0,
         });
+
+        if matches!(self.state, StateEnum::Playing) {
+            sf::animator::step_time(dt * self.time_scale as f32, &mut self.world);
+            sf::animator::update_joints(&mut self.world);
+        }
 
         if self.bvh_vis_active {
             self.debug_visualizer.draw_bvh(
@@ -500,8 +534,12 @@ impl sf::GameState for State {
                 .draw_islands(&self.physics, &self.camera, &mut ctx);
         }
 
+        if self.light_rotating {
+            sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
+        }
+
         self.mesh_renderer
-            .draw(&self.camera, &mut ctx, &mut self.world);
+            .draw(&self.camera, self.light, &mut ctx, &mut self.world);
 
         ctx.submit();
 
@@ -514,18 +552,18 @@ impl sf::GameState for State {
             self.egui_context.pixels_per_point(),
         );
         self.egui_state.handle_platform_output(
-            &ctx.window,
+            ctx.window,
             &self.egui_context,
             self.last_egui_output.platform_output.clone(),
         );
 
         for (tex_id, img_delta) in &self.last_egui_output.textures_delta.set {
             self.egui_renderer
-                .update_texture(&ctx.device, &ctx.queue, *tex_id, img_delta);
+                .update_texture(ctx.device, ctx.queue, *tex_id, img_delta);
         }
 
         for tex_id in &self.last_egui_output.textures_delta.free {
-            self.egui_renderer.free_texture(&tex_id);
+            self.egui_renderer.free_texture(tex_id);
         }
 
         let screen_desc = egui_wgpu::renderer::ScreenDescriptor {
@@ -533,8 +571,8 @@ impl sf::GameState for State {
             pixels_per_point: self.egui_context.pixels_per_point(),
         };
         self.egui_renderer.update_buffers(
-            &ctx.device,
-            &ctx.queue,
+            ctx.device,
+            ctx.queue,
             &mut ctx.encoder.0,
             &paint_jobs,
             &screen_desc,

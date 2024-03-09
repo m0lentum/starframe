@@ -37,6 +37,12 @@ pub enum Recipe {
         block2: Block,
         offset2: [f64; 2],
     },
+    BackgroundTree {
+        #[serde(with = "sf::serde_pose")]
+        pose: sf::Pose,
+        depth: f32,
+        start_time: f32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -111,11 +117,7 @@ fn spawn_block(
     let pose = sf::Pose::from(block.pose);
     let coll = sf::Collider::new_rounded_rect(block.width, block.height, block.radius);
     let coll_key = physics.entity_set.insert_collider(coll);
-    let mesh = sf::Mesh::from(coll).with_color(if block.is_static {
-        [0.7; 4]
-    } else {
-        random_color()
-    });
+    let mesh = sf::Mesh::from(coll);
 
     let entity = world.spawn((pose, coll_key, mesh));
 
@@ -134,7 +136,7 @@ fn spawn_block(
 struct Solid<'a> {
     pose: sf::Pose,
     colliders: &'a [sf::Collider],
-    color: [f32; 4],
+    color: [f32; 3],
 }
 
 fn spawn_static(solid: Solid, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
@@ -143,8 +145,8 @@ fn spawn_static(solid: Solid, physics: &mut sf::PhysicsWorld, world: &mut sf::he
             .entity_set
             .insert_collider(coll.with_pose(solid.pose));
         let mesh = sf::Mesh::from(*coll)
-            .with_color(solid.color)
-            .with_offset(solid.pose * coll.pose);
+            .with_offset(solid.pose * coll.pose)
+            .with_tint(solid.color);
         world.spawn((coll_key, mesh));
     }
 }
@@ -171,7 +173,7 @@ fn spawn_body(
             // undo the effect of the collider offset,
             // since hecs_sync gets its global pose
             .with_offset(sf::Pose::identity())
-            .with_color(solid.color);
+            .with_tint(solid.color);
         let ent = world.spawn((solid.pose, coll_key, mesh));
         hecs_sync.register_collider(coll_key, ent, sf::HecsSyncOptions::physics_to_hecs_only());
     }
@@ -185,6 +187,7 @@ impl Recipe {
         physics: &mut sf::PhysicsWorld,
         world: &mut sf::hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
+        renderer: &sf::Renderer,
     ) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(physics, world),
@@ -385,8 +388,7 @@ impl Recipe {
                     let mesh = sf::Mesh::from(sf::ConvexMeshShape::Circle {
                         r: rope.params.thickness / 2.0,
                         points: 8,
-                    })
-                    .with_color([0.729, 0.855, 0.333, 1.0]);
+                    });
                     let mesh_ent = world.spawn((sf::Pose::default(), mesh, *particle));
                     hecs_sync.register_body(
                         particle.body,
@@ -432,16 +434,34 @@ impl Recipe {
                 }
                 physics.rope_set.insert(rope);
             }
+            Recipe::BackgroundTree {
+                pose,
+                depth,
+                start_time,
+            } => {
+                let (doc, bufs, images) =
+                    gltf::import_slice(include_bytes!("assets/test_tree.glb"))
+                        .expect("Error loading gltf");
+                let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
+                let mesh = sf::Mesh::from_gltf(&doc, &bufs, &images, renderer)
+                    .with_offset(*pose)
+                    .with_depth(*depth);
+                let skin = sf::gltf_import::load_skin(&doc, &bufs).expect("no skin");
+                let mut anim =
+                    sf::gltf_import::load_animations(&doc, &bufs).expect("no animations");
+                anim.activate_animation("sway").expect("no animation");
+                anim.set_time(*start_time);
+                world.spawn((mesh, skin, anim));
+            }
         }
     }
 }
 
-fn random_color() -> [f32; 4] {
+fn random_color() -> [f32; 3] {
     let mut rng = rand::thread_rng();
     [
-        distr::Uniform::from(0.4..1.0).sample(&mut rng),
-        distr::Uniform::from(0.4..1.0).sample(&mut rng),
-        distr::Uniform::from(0.4..1.0).sample(&mut rng),
-        1.0,
+        distr::Uniform::from(0.6..1.0).sample(&mut rng),
+        distr::Uniform::from(0.6..1.0).sample(&mut rng),
+        distr::Uniform::from(0.6..1.0).sample(&mut rng),
     ]
 }

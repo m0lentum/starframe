@@ -16,7 +16,7 @@ impl PlayerState {
     }
 }
 #[derive(Clone, Copy, Debug)]
-pub(self) enum Facing {
+enum Facing {
     Right,
     Left,
 }
@@ -52,7 +52,7 @@ impl PlayerRecipe {
             .with_position(self.position)
             .with_rotation(sf::Angle::Deg(90.0))
             .build();
-        let mesh = sf::Mesh::from(coll).with_color([0.2, 0.8, 0.6, 1.0]);
+        let mesh = sf::Mesh::from(coll);
         let state = PlayerState::new();
         world.spawn((body_key, coll_key, pose, mesh, state));
     }

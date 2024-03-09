@@ -7,7 +7,7 @@ pub use depth_buffer::DepthBuffer;
 pub mod util;
 
 pub mod camera;
-pub use camera::{Camera, CameraScalingStrategy, MouseDragCameraController};
+pub use camera::{Camera, MouseDragCameraController};
 
 pub(super) mod mesh;
 pub use mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin};
@@ -17,3 +17,5 @@ pub use outlines::{OutlineParams, OutlineRenderer, OutlineShape};
 
 mod debug;
 pub use debug::DebugVisualizer;
+
+pub mod texture;

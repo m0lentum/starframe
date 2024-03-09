@@ -4,11 +4,31 @@
 
 use crate::{
     animation::{self as anim, gltf_animation as g_anim},
-    graphics::mesh::skin,
+    graphics::{mesh::skin, texture::TextureData},
     math::uv,
 };
 
+use itertools::izip;
+
 // TODO: add proper errors instead of using expect and unimplemented
+
+/// Load a mesh, skin, and animations from a glTF document given as a byte slice.
+///
+/// If you load your glTF using something else (such as [`assets_manager`](https://docs.rs/assets_manager)),
+/// use [`Mesh::from_gltf`][super::Mesh::from_gltf],
+/// [`load_skin`][self::load_skin], and [`load_animations`][self::load_animations] separately.
+pub fn load_animated_mesh(
+    bytes: &[u8],
+    rend: &crate::Renderer,
+) -> Result<(super::Mesh, skin::Skin, anim::MeshAnimator), gltf::Error> {
+    let (doc, bufs, images) = gltf::import_slice(bytes)?;
+    let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
+    let mesh = super::Mesh::from_gltf(&doc, &bufs, &images, rend);
+    let skin = load_skin(&doc, &bufs).expect("no skin in gltf");
+    let anim = load_animations(&doc, &bufs).expect("no skin in gltf");
+
+    Ok((mesh, skin, anim))
+}
 
 /// Load the vertices of a mesh from a glTF document.
 pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::MeshPrimitive> {
@@ -25,33 +45,38 @@ pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::Me
             let positions = reader
                 .read_positions()
                 .expect("glTF mesh must have vertices");
-            let colors = reader
-                .read_colors(0)
-                .expect("only glTF meshes with vertex colors are supported")
-                .into_rgba_f32();
-            let joints = reader.read_joints(0);
-            let weights = reader.read_weights(0);
 
-            let vertices: Vec<super::Vertex> = match (joints, weights) {
-                (Some(joints), Some(weights)) => {
-                    itertools::izip!(positions, colors, joints.into_u16(), weights.into_f32())
-                        .map(|(pos, col, joints, weights)| super::Vertex {
-                            position: pos.into(),
-                            color: col.into(),
-                            joints,
-                            weights: weights.into(),
-                        })
-                        .collect()
+            let mut vertices: Vec<super::Vertex> = positions
+                .into_iter()
+                .map(|p| super::Vertex {
+                    position: p.into(),
+                    ..Default::default()
+                })
+                .collect();
+
+            // UVs
+
+            if let Some(tex_coords) = reader.read_tex_coords(0) {
+                for (vert, uv) in izip!(&mut vertices, tex_coords.into_f32()) {
+                    vert.tex_coords = uv.into();
                 }
-                _ => itertools::izip!(positions, colors)
-                    .map(|(pos, col)| super::Vertex {
-                        position: pos.into(),
-                        color: col.into(),
-                        joints: [0; 4],
-                        weights: [0.0; 4].into(),
-                    })
-                    .collect(),
-            };
+            }
+
+            // joints
+
+            if let Some(joints) = reader.read_joints(0) {
+                for (vert, joints) in izip!(&mut vertices, joints.into_u16()) {
+                    vert.joints = joints;
+                }
+            }
+
+            // weights
+
+            if let Some(weights) = reader.read_weights(0) {
+                for (vert, weights) in izip!(&mut vertices, weights.into_f32()) {
+                    vert.weights = weights.into();
+                }
+            }
 
             let indices: Vec<u16> = reader
                 .read_indices()
@@ -63,6 +88,85 @@ pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::Me
             super::MeshPrimitive { vertices, indices }
         })
         .collect()
+}
+
+pub struct TextureResult<'a> {
+    pub diffuse: TextureData<'a>,
+    pub normal: TextureData<'a>,
+}
+
+pub fn load_textures<'a>(
+    doc: &'a gltf::Document,
+    images: &'a [gltf::image::Data],
+) -> Vec<TextureResult<'a>> {
+    let mut textures = Vec::new();
+
+    for material in doc.materials() {
+        let mr = material.pbr_metallic_roughness();
+        // TODO: support materials without normal maps
+        if let (Some(tex_info), Some(normal_info)) =
+            (mr.base_color_texture(), material.normal_texture())
+        {
+            let tex = tex_info.texture();
+            let image = &images[tex.source().index()];
+
+            let diffuse_tex = TextureData {
+                label: tex.name().map(String::from),
+                pixels: &image.pixels,
+                format: texture_format_to_wgpu(image.format, true),
+                dimensions: (image.width, image.height),
+            };
+
+            let norm_tex = normal_info.texture();
+            let norm_image = &images[norm_tex.source().index()];
+            let normal_tex = TextureData {
+                label: norm_tex.name().map(String::from),
+                pixels: &norm_image.pixels,
+                format: texture_format_to_wgpu(norm_image.format, false),
+                dimensions: (norm_image.width, norm_image.height),
+            };
+
+            textures.push(TextureResult {
+                diffuse: diffuse_tex,
+                normal: normal_tex,
+            });
+        }
+    }
+
+    textures
+}
+
+/// Convert a gltf texture format to the wgpu equivalent.
+///
+/// Gltf doesn't tell you if the textures are SRGB or linear as far as I can tell,
+/// so we assume SRGB for diffuse textures and linear for normal maps.
+fn texture_format_to_wgpu(format: gltf::image::Format, is_srgb: bool) -> wgpu::TextureFormat {
+    use gltf::image::Format as GF;
+    use wgpu::TextureFormat as WF;
+    match format {
+        GF::R8 => WF::R8Unorm,
+        GF::R8G8 => WF::Rg8Unorm,
+        GF::R8G8B8 => unimplemented!("RGB textures without alpha are not supported"),
+        GF::R8G8B8A8 => {
+            if is_srgb {
+                WF::Rgba8UnormSrgb
+            } else {
+                WF::Rgba8Unorm
+            }
+        }
+        GF::B8G8R8 => unimplemented!("RGB textures without alpha are not supported"),
+        GF::B8G8R8A8 => {
+            if is_srgb {
+                WF::Bgra8UnormSrgb
+            } else {
+                WF::Bgra8Unorm
+            }
+        }
+        GF::R16 => WF::R16Unorm,
+        GF::R16G16 => WF::Rg16Unorm,
+        GF::R16G16B16 => unimplemented!("RGB textures without alpha are not supported"),
+        GF::R16G16B16A16 => WF::Rgba16Unorm,
+    }
 }
 
 /// Load a skin from a glTF document.

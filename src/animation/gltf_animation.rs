@@ -156,8 +156,10 @@ impl Channel {
 
                 let t_normalized = (t - self.keyframe_ts[prev_idx])
                     / (self.keyframe_ts[next_idx] - self.keyframe_ts[prev_idx]);
-                use uv::interp::Slerp;
-                v_prev.slerp(v_next, t_normalized)
+                // nlerp instead of slerp,
+                // see http://number-none.com/product/Understanding%20Slerp,%20Then%20Not%20Using%20It/
+                use uv::interp::Lerp;
+                v_prev.lerp(v_next, t_normalized).normalized()
             }
             InterpolationMode::CubicSpline => {
                 // cubic spline interpolation comes with two tangents per value,

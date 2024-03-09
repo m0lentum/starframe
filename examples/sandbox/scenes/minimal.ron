@@ -13,5 +13,15 @@
         Block ((
             width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
         )),
+        // ..but add in a tree or a few to test graphics
+        BackgroundTree (
+            pose: ( position: (0, -1) ), depth: -1.0, start_time: 0,
+        ),
+        BackgroundTree (
+            pose: ( position: (7, -1.5) ), depth: -4.0, start_time: 2,
+        ),
+        BackgroundTree (
+            pose: ( position: (-7, -2) ), depth: -9.0, start_time: 4,
+        ),
     ]
 )

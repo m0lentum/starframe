@@ -8,7 +8,7 @@ use zerocopy::{AsBytes, FromBytes};
 //
 
 /// Type for sending 3x3 matrices to the GPU with appropriate padding.
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuMat3(pub [[f32; 4]; 3]);
 
@@ -24,7 +24,7 @@ impl From<uv::DMat3> for GpuMat3 {
 }
 
 /// Type for sending 4x4 matrices to the GPU.
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuMat4(pub [[f32; 4]; 4]);
 
@@ -41,7 +41,7 @@ impl From<uv::Mat4> for GpuMat4 {
 }
 
 /// Type for putting 2D vectors in vertex buffers.
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuVec2(pub [f32; 2]);
 
@@ -58,7 +58,7 @@ impl From<[f32; 2]> for GpuVec2 {
 }
 
 /// Type for putting 2D vectors in uniform buffers.
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuVec2Padded(pub [f32; 4]);
 
@@ -75,7 +75,7 @@ impl From<[f32; 2]> for GpuVec2Padded {
 }
 
 /// Type for putting 3D vectors in vertex buffers.
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuVec3(pub [f32; 3]);
 
@@ -104,7 +104,7 @@ impl From<[f32; 3]> for GpuVec3 {
 }
 
 /// Type for sending 4D vectors (like colors) to the GPU.
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuVec4(pub [f32; 4]);
 
@@ -152,6 +152,7 @@ impl From<[f32; 4]> for GpuVec4 {
 /// when it can't fit its contents.
 ///
 /// Useful for batched drawing of things whose number varies over time.
+#[derive(Debug)]
 pub struct DynamicBuffer {
     buf: Option<wgpu::Buffer>,
     len: usize,

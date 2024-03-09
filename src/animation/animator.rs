@@ -35,6 +35,18 @@ impl MeshAnimator {
         }
         Ok(())
     }
+
+    /// Iterate over the names of loaded animations.
+    #[inline]
+    pub fn list_animation_names(&self) -> impl Iterator<Item = &str> {
+        self.animations.iter().filter_map(|a| a.name.as_deref())
+    }
+
+    /// Jump the animation timer to the given time.
+    #[inline]
+    pub fn set_time(&mut self, t: f32) {
+        self.anim_time = t;
+    }
 }
 
 //

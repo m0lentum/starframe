@@ -3,6 +3,8 @@
     nixpkgs.url = "github:NixOS/nixpkgs/release-23.11";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
+    wgsl-analyzer.url = "github:wgsl-analyzer/wgsl-analyzer";
+    wgsl-analyzer.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, ... }@inputs:
@@ -16,6 +18,8 @@
         rust = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" ];
         };
+
+        wgsl-analyzer = inputs.wgsl-analyzer.packages.${system}.default;
       in
       {
         devShells.default =
@@ -25,6 +29,7 @@
                 pkgs.niv
                 # rust and profiling
                 rust
+                wgsl-analyzer
                 pkgs.cargo-flamegraph
                 pkgs.lld
                 pkgs.llvmPackages.bintools

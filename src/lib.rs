@@ -16,8 +16,9 @@ pub mod graphics;
 #[cfg(feature = "gltf")]
 pub use graphics::mesh::gltf_import;
 pub use graphics::{
-    camera::{Camera, CameraScalingStrategy, MouseDragCameraController},
-    mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin},
+    camera::{Camera, MouseDragCameraController},
+    mesh::{ConvexMeshShape, DirectionalLight, Mesh, MeshRenderer, Skin},
+    texture::Texture,
     DebugVisualizer, OutlineParams, OutlineRenderer, OutlineShape, RenderContext, Renderer,
 };
 
