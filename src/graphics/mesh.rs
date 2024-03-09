@@ -11,6 +11,7 @@ use crate::{
     math::{self as m, uv},
     physics as phys,
 };
+use itertools::Itertools;
 use std::{borrow::Cow, mem::size_of};
 use zerocopy::{AsBytes, FromBytes};
 
@@ -211,12 +212,27 @@ impl Mesh {
             }
         }
 
+        use itertools::MinMaxResult as MM;
+        let width = match vertices.iter().map(|v| v.x).minmax() {
+            MM::MinMax(l, u) => u - l,
+            // malformed mesh, this shouldn't happen.
+            // just set it to something other than zero
+            _ => 1.,
+        };
+        let height = match vertices.iter().map(|v| v.y).minmax() {
+            MM::MinMax(l, u) => u - l,
+            _ => 1.,
+        };
+
         let vertices: Vec<Vertex> = vertices
             .iter()
             .map(|&vert| Vertex {
                 position: vert.into(),
-                // TODO: generate UVs by scaling position to [0, 1]
-                tex_coords: gx::util::GpuVec2([0.0, 0.0]),
+                tex_coords: m::Vec2::new(
+                    (vert.x + width / 2.) / width,
+                    -(vert.y + height / 2.) / height,
+                )
+                .into(),
                 joints: [0; 4],
                 weights: [0.0; 4].into(),
             })
