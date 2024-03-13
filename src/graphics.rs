@@ -1,5 +1,5 @@
 mod manager;
-pub use manager::GraphicsManager;
+pub use manager::{GraphicsManager, MeshKey};
 
 pub mod renderer;
 pub use renderer::{RenderContext, Renderer};

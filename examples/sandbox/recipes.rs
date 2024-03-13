@@ -439,19 +439,7 @@ impl Recipe {
                 depth,
                 start_time,
             } => {
-                let (doc, bufs, images) =
-                    gltf::import_slice(include_bytes!("assets/test_tree.glb"))
-                        .expect("Error loading gltf");
-                let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
-                let mesh = sf::Mesh::from_gltf(&doc, &bufs, &images, renderer)
-                    .with_offset(*pose)
-                    .with_depth(*depth);
-                // let skin = sf::gltf_import::load_skin(&doc, &bufs).expect("no skin");
-                // let mut anim =
-                //     sf::gltf_import::load_animations(&doc, &bufs).expect("no animations");
-                // anim.activate_animation("sway").expect("no animation");
-                // anim.set_time(*start_time);
-                // world.spawn((mesh, skin, anim));
+                //
             }
         }
     }

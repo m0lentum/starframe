@@ -8,69 +8,10 @@ use crate::{
 
 use itertools::izip;
 
-/// Load the vertices of a mesh from a glTF document.
-///
-/// Obsolete, remember to delete once meshes have been refactored not to use this
-pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<mesh::MeshPrimitive> {
-    // helper for constructing gltf readers
-    let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
-
-    let mesh = doc.meshes().next().expect("No meshes in gltf document");
-    mesh.primitives()
-        .map(|prim| {
-            let reader = prim.reader(read_buf);
-
-            let positions = reader
-                .read_positions()
-                .expect("glTF mesh must have vertices");
-
-            let mut vertices: Vec<mesh::Vertex> = positions
-                .into_iter()
-                .map(|p| mesh::Vertex {
-                    position: p.into(),
-                    ..Default::default()
-                })
-                .collect();
-
-            // UVs
-
-            if let Some(tex_coords) = reader.read_tex_coords(0) {
-                for (vert, uv) in izip!(&mut vertices, tex_coords.into_f32()) {
-                    vert.tex_coords = uv.into();
-                }
-            }
-
-            // joints
-
-            if let Some(joints) = reader.read_joints(0) {
-                for (vert, joints) in izip!(&mut vertices, joints.into_u16()) {
-                    vert.joints = joints;
-                }
-            }
-
-            // weights
-
-            if let Some(weights) = reader.read_weights(0) {
-                for (vert, weights) in izip!(&mut vertices, weights.into_f32()) {
-                    vert.weights = weights.into();
-                }
-            }
-
-            let indices: Vec<u16> = reader
-                .read_indices()
-                .expect("only glTF meshes with indices are supported")
-                .into_u32()
-                .map(|i| u16::try_from(i).expect("too many indices to fit into u16"))
-                .collect();
-
-            mesh::MeshPrimitive { vertices, indices }
-        })
-        .collect()
-}
-
 pub fn load_meshes<'doc>(
     doc: &'doc gltf::Document,
     buffers: &'doc [&[u8]],
+    name_to_id: impl 'doc + Fn(&str) -> String,
 ) -> impl 'doc + Iterator<Item = mesh::Mesh> {
     // helper for constructing gltf readers
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
@@ -87,25 +28,13 @@ pub fn load_meshes<'doc>(
                     .into_iter()
                     .map(|p| mesh::Vertex {
                         position: p.into(),
-                        ..Default::default()
+                        tex_coords: [0., 0.].into(),
                     })
                     .collect();
 
                 if let Some(tex_coords) = reader.read_tex_coords(0) {
                     for (vert, uv) in izip!(&mut vertices, tex_coords.into_f32()) {
                         vert.tex_coords = uv.into();
-                    }
-                }
-
-                if let Some(joints) = reader.read_joints(0) {
-                    for (vert, joints) in izip!(&mut vertices, joints.into_u16()) {
-                        vert.joints = joints;
-                    }
-                }
-
-                if let Some(weights) = reader.read_weights(0) {
-                    for (vert, weights) in izip!(&mut vertices, weights.into_f32()) {
-                        vert.weights = weights.into();
                     }
                 }
 
@@ -120,12 +49,33 @@ pub fn load_meshes<'doc>(
                         .collect()
                 };
 
-                Some(mesh::MeshPrimitive { vertices, indices })
+                let joints = reader.read_joints(0).and_then(|joints| {
+                    reader.read_weights(0).map(|weights| {
+                        izip!(joints.into_u16(), weights.into_f32())
+                            .map(|(j, w)| mesh::VertexJoints {
+                                joints: j,
+                                weights: w.into(),
+                            })
+                            .collect()
+                    })
+                });
+
+                Some(mesh::MeshPrimitive {
+                    vertices,
+                    indices,
+                    joints,
+                })
             })
             .collect();
 
+        assert!(
+            primitives.iter().all(|prim| prim.joints.is_some())
+                || primitives.iter().all(|prim| prim.joints.is_none()),
+            "Mixing unskinned and skinned mesh primitives is not supported"
+        );
+
         mesh::Mesh {
-            label: mesh.name().map(String::from),
+            id: mesh.name().map(&name_to_id),
             primitives,
             ..Default::default()
         }

@@ -77,8 +77,6 @@ pub struct Game {
     pub input: crate::Input,
     /// A renderer that can draw to the game's window.
     pub renderer: crate::graphics::Renderer,
-    /// An interface for loading and displaying visuals.
-    pub graphics: crate::GraphicsManager,
     /// Fixed delta-time between frames.
     pub dt_fixed: f64,
     /// Duration of a frame in nanoseconds.
@@ -140,7 +138,6 @@ impl Game {
         let mut game = Game {
             input: crate::Input::new(renderer.window_size().into()),
             renderer,
-            graphics: crate::GraphicsManager::default(),
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
             dt_fixed: 1.0 / fps as f64,
         };

@@ -20,7 +20,7 @@ use zerocopy::{AsBytes, FromBytes};
 /// and imported from glTF documents (with the `gltf` crate feature enabled).
 #[derive(Debug)]
 pub struct Mesh {
-    pub label: Option<String>,
+    pub id: Option<String>,
     pub offset: m::Pose,
     pub depth: f32,
     pub has_outline: bool,
@@ -39,12 +39,14 @@ pub struct MeshTextures {
     bind_group: Option<wgpu::BindGroup>,
 }
 
-/// A single primitive as defined by the glTF spec.
-/// A single mesh can have more than one.
+/// A segment of a mesh rendered with one material.
+/// A mesh can have more than one.
 #[derive(Debug, Clone)]
 pub struct MeshPrimitive {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
+    /// Joints only exist if the mesh has a skin
+    pub joints: Option<Vec<VertexJoints>>,
 }
 
 #[derive(Debug)]
@@ -60,17 +62,24 @@ pub(crate) struct GpuMeshResources {
 
 #[derive(Debug)]
 struct GpuMeshPrimitive {
-    pub vert_buf: wgpu::Buffer,
-    pub idx_buf: wgpu::Buffer,
-    pub idx_count: u32,
+    vertex_buf: wgpu::Buffer,
+    index_buf: wgpu::Buffer,
+    idx_count: u32,
+    joints_buf: Option<wgpu::Buffer>,
 }
 
-/// The GPU representation of a mesh vertex.
+/// Position and texture coordinates of a vertex in a mesh.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 pub struct Vertex {
     pub position: gx::util::GpuVec3,
     pub tex_coords: gx::util::GpuVec2,
+}
+
+/// Joints and weights of a vertex in a skinned mesh.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
+pub struct VertexJoints {
     pub joints: [u16; 4],
     pub weights: gx::util::GpuVec4,
 }
@@ -82,7 +91,7 @@ pub struct Vertex {
 impl Default for Mesh {
     fn default() -> Self {
         Self {
-            label: None,
+            id: None,
             offset: m::Pose::default(),
             depth: 0.0,
             has_outline: true,
@@ -113,32 +122,6 @@ pub enum ConvexMeshShape {
 }
 
 impl Mesh {
-    #[cfg(feature = "gltf")]
-    #[inline]
-    pub fn from_gltf(
-        doc: &gltf::Document,
-        buffers: &[&[u8]],
-        images: &[gltf::image::Data],
-        rend: &crate::Renderer,
-    ) -> Self {
-        let textures = super::manager::gltf_import::load_textures(doc, images)
-            .into_iter()
-            .next();
-        Self {
-            label: doc
-                .meshes()
-                .next()
-                .and_then(|mesh| mesh.name().map(String::from)),
-            primitives: super::manager::gltf_import::load_primitives(doc, buffers),
-            textures: textures.map(|t| MeshTextures {
-                diffuse: t.diffuse.upload(rend),
-                normal: t.normal.upload(rend),
-                bind_group: None,
-            }),
-            ..Self::default()
-        }
-    }
-
     pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
         let mut vertices: Vec<m::Vec2> = Vec::new();
 
@@ -232,8 +215,6 @@ impl Mesh {
                     -(vert.y + height / 2.) / height,
                 )
                 .into(),
-                joints: [0; 4],
-                weights: [0.0; 4].into(),
             })
             .collect();
 
@@ -242,7 +223,11 @@ impl Mesh {
             .collect();
 
         Self {
-            primitives: vec![MeshPrimitive { vertices, indices }],
+            primitives: vec![MeshPrimitive {
+                vertices,
+                indices,
+                joints: None,
+            }],
             ..Self::default()
         }
     }
@@ -264,7 +249,7 @@ impl Mesh {
     /// Add a debug label to the mesh.
     #[inline]
     pub fn with_label(mut self, label: String) -> Self {
-        self.label = Some(label);
+        self.id = Some(label);
         self
     }
 
@@ -289,20 +274,28 @@ impl Mesh {
             .iter()
             .map(|prim| {
                 use wgpu::util::DeviceExt;
-                let vert_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.label.as_deref(),
+                let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: self.id.as_deref(),
                     contents: prim.vertices.as_bytes(),
                     usage: wgpu::BufferUsages::VERTEX,
                 });
-                let idx_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.label.as_deref(),
+                let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: self.id.as_deref(),
                     contents: prim.indices.as_bytes(),
                     usage: wgpu::BufferUsages::INDEX,
                 });
+                let joints_buf = prim.joints.as_ref().map(|joints| {
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: self.id.as_deref(),
+                        contents: joints.as_bytes(),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    })
+                });
                 GpuMeshPrimitive {
-                    vert_buf,
-                    idx_buf,
+                    vertex_buf,
+                    index_buf,
                     idx_count: prim.indices.len() as u32,
+                    joints_buf,
                 }
             })
             .collect();
@@ -334,8 +327,6 @@ impl From<ConvexMeshShape> for Mesh {
                     .map(|vert| Vertex {
                         position: vert.into(),
                         tex_coords: flip_y((vert + m::Vec2::new(r, r)) / diameter).into(),
-                        joints: [0; 4],
-                        weights: [0.0; 4].into(),
                     })
                     .collect()
             }
@@ -352,8 +343,6 @@ impl From<ConvexMeshShape> for Mesh {
                 .map(|vert| Vertex {
                     position: vert.into(),
                     tex_coords: flip_y(m::Vec2::new((vert.x + hw) / w, (vert.y + hh) / h)).into(),
-                    joints: [0; 4],
-                    weights: [0.0; 4].into(),
                 })
                 .collect()
             }
@@ -379,8 +368,6 @@ impl From<ConvexMeshShape> for Mesh {
                             (vert.y + r) / (2. * r),
                         ))
                         .into(),
-                        joints: [0; 4],
-                        weights: [0.0; 4].into(),
                     })
                     .collect()
             }
@@ -391,7 +378,11 @@ impl From<ConvexMeshShape> for Mesh {
             .collect();
 
         Self {
-            primitives: vec![MeshPrimitive { vertices, indices }],
+            primitives: vec![MeshPrimitive {
+                vertices,
+                indices,
+                joints: None,
+            }],
             ..Self::default()
         }
     }
@@ -466,7 +457,8 @@ struct Instance {
 }
 
 pub struct MeshRenderer {
-    pipeline: wgpu::RenderPipeline,
+    skinned_pipeline: wgpu::RenderPipeline,
+    unskinned_pipeline: wgpu::RenderPipeline,
     joints_bind_group: wgpu::BindGroup,
     joints_bind_group_layout: wgpu::BindGroupLayout,
     texture_bind_group_layout: wgpu::BindGroupLayout,
@@ -484,8 +476,16 @@ pub struct MeshRenderer {
 
     default_textures: MeshTextures,
 }
+
 impl MeshRenderer {
     pub fn new(rend: &gx::Renderer) -> Self {
+        /// Different pipelines for skinned and unskinned meshes;
+        /// this enum helps create them concisely
+        enum PipelineVariant {
+            Skinned,
+            Unskinned,
+        }
+
         // shaders
 
         let shader = rend
@@ -658,8 +658,9 @@ impl MeshRenderer {
 
         // vertex and instance layouts
 
-        let vertex_buffers = [
-            wgpu::VertexBufferLayout {
+        let vertex_buffers = |variant: PipelineVariant| {
+            let mut bufs = Vec::new();
+            bufs.push(wgpu::VertexBufferLayout {
                 array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &[
@@ -675,21 +676,31 @@ impl MeshRenderer {
                         offset: 4 * 3,
                         shader_location: 1,
                     },
-                    // joints
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Uint16x4,
-                        offset: 4 * 3 + 4 * 2,
-                        shader_location: 2,
-                    },
-                    // weights
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x4,
-                        offset: 4 * 3 + 4 * 2 + 2 * 4,
-                        shader_location: 3,
-                    },
                 ],
-            },
-            wgpu::VertexBufferLayout {
+            });
+
+            if matches!(variant, PipelineVariant::Skinned) {
+                bufs.push(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<VertexJoints>() as wgpu::BufferAddress,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        // joints
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Uint16x4,
+                            offset: 4 * 3 + 4 * 2,
+                            shader_location: 2,
+                        },
+                        // weights
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 4 * 3 + 4 * 2 + 2 * 4,
+                            shader_location: 3,
+                        },
+                    ],
+                });
+            }
+
+            bufs.push(wgpu::VertexBufferLayout {
                 array_stride: size_of::<Instance>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Instance,
                 attributes: &[
@@ -724,8 +735,10 @@ impl MeshRenderer {
                         shader_location: 9,
                     },
                 ],
-            },
-        ];
+            });
+
+            bufs
+        };
 
         //
         // pipeline
@@ -743,31 +756,35 @@ impl MeshRenderer {
                 ],
                 push_constant_ranges: &[],
             });
-        let pipeline = rend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mesh"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: "vs_main",
-                    buffers: &vertex_buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(rend.swapchain_format().into())],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(gx::DepthBuffer::default_depth_stencil_state()),
-                multisample: rend.multisample_state(),
-                multiview: None,
-            });
+        let pipeline = |variant: PipelineVariant| {
+            rend.device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some("mesh"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: match variant {
+                            PipelineVariant::Skinned => "vs_skinned",
+                            PipelineVariant::Unskinned => "vs_unskinned",
+                        },
+                        buffers: &vertex_buffers(variant),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: "fs_main",
+                        targets: &[Some(rend.swapchain_format().into())],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: None,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(gx::DepthBuffer::default_depth_stencil_state()),
+                    multisample: rend.multisample_state(),
+                    multiview: None,
+                })
+        };
 
         // default textures to bind if a mesh's texture is None.
         // just a single white pixel and normal straight at the viewer
@@ -795,7 +812,8 @@ impl MeshRenderer {
         );
 
         Self {
-            pipeline,
+            skinned_pipeline: pipeline(PipelineVariant::Skinned),
+            unskinned_pipeline: pipeline(PipelineVariant::Unskinned),
             joints_bind_group,
             joints_bind_group_layout,
             texture_bind_group_layout,
@@ -812,6 +830,7 @@ impl MeshRenderer {
     /// Draw all the meshes in the world.
     pub fn draw(
         &mut self,
+        manager: &mut gx::GraphicsManager,
         camera: &gx::Camera,
         light: DirectionalLight,
         ctx: &mut gx::RenderContext,
@@ -819,20 +838,31 @@ impl MeshRenderer {
     ) {
         type Query<'a> = (&'a mut Mesh, Option<&'a Skin>, Option<&'a m::Pose>);
 
-        ctx.queue
-            .write_buffer(&self.light_buf, 0, LightUniforms::from(light).as_bytes());
+        let mut meshes_in_world = world
+            .query_mut::<(&gx::MeshKey, Option<&m::Pose>)>()
+            .into_iter()
+            .map(|(_, components)| components)
+            .collect_vec();
+        // split into skinned and unskinned meshes
+        let split_idx = itertools::partition(&mut meshes_in_world, |(&key, _)| {
+            manager
+                .get_mesh(key)
+                .primitives
+                .iter()
+                .any(|prim| prim.joints.is_some())
+        });
+        let (skinned_meshes, unskinned_meshes) = meshes_in_world.split_at_mut(split_idx);
+        // group by mesh key for instanced rendering
+        skinned_meshes.sort_by_key(|(&key, _)| key);
+        unskinned_meshes.sort_by_key(|(&key, _)| key);
+
+        // TODO: collect skins from skinned_meshes
 
         // collect all joint matrices in the world,
         // we'll shove them all in the storage buffer in one go.
         // make sure the iteration order is the same as when rendering
         // so that each mesh gets the correct offset into the array
-        let mut joint_matrices: Vec<gx::util::GpuMat4> = world
-            .query_mut::<Query>()
-            .into_iter()
-            .filter_map(|(_, (_, skin, _))| skin)
-            .flat_map(|skin| skin.joints.iter())
-            .map(|joint| gx::util::GpuMat4::from(joint.joint_matrix))
-            .collect();
+        let mut joint_matrices: Vec<gx::util::GpuMat4> = Vec::new();
 
         // empty bindings not allowed by vulkan,
         // put in one dummy matrix to pass validation
@@ -858,25 +888,26 @@ impl MeshRenderer {
             });
         }
 
-        ctx.queue
-            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
-
         // render the meshes
 
         let view_proj = camera.view_proj_matrix(ctx.target_size);
         ctx.queue
             .write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
+        ctx.queue
+            .write_buffer(&self.light_buf, 0, LightUniforms::from(light).as_bytes());
+        ctx.queue
+            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
 
         let mut pass = ctx.encoder.pass(&ctx.target, Some("skinned meshes"));
-        pass.set_pipeline(&self.pipeline);
 
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
         pass.set_bind_group(1, &self.light_bind_group, &[]);
         pass.set_bind_group(2, &self.joints_bind_group, &[]);
 
-        // joint buffer is shared between all meshes; mesh's offset into it
-        let mut joint_offset = 0_u32;
-        for (_, (mesh, skin, pose)) in world.query_mut::<Query>() {
+        pass.set_pipeline(&self.unskinned_pipeline);
+
+        for (&key, pose) in unskinned_meshes {
+            let mesh = manager.get_mesh_mut(key);
             // mesh uniforms
             // initialize the per-mesh GPU resources on first render
             if mesh.gpu_resources.is_none() {
@@ -903,7 +934,7 @@ impl MeshRenderer {
             // build the model matrix and push it into the instance buffer
             let model = {
                 let mesh_pose = match pose {
-                    Some(entity_pose) => *entity_pose * mesh.offset,
+                    Some(&entity_pose) => entity_pose * mesh.offset,
                     None => mesh.offset,
                 };
                 let pose_3d = uv::Isometry3::new(
@@ -920,7 +951,7 @@ impl MeshRenderer {
                 pose_3d.into_homogeneous_matrix()
             };
             let instance = Instance {
-                joint_offset,
+                joint_offset: 0,
                 model_col0: model.cols[0].xyz().into(),
                 model_col1: model.cols[1].xyz().into(),
                 model_col2: model.cols[2].xyz().into(),
@@ -940,13 +971,17 @@ impl MeshRenderer {
             pass.set_bind_group(3, texture_bind_group, &[]);
 
             for prim in &gpu_res.primitives {
-                pass.set_vertex_buffer(0, prim.vert_buf.slice(..));
-                pass.set_index_buffer(prim.idx_buf.slice(..), wgpu::IndexFormat::Uint16);
+                pass.set_vertex_buffer(0, prim.vertex_buf.slice(..));
+                if let Some(joints_buf) = &prim.joints_buf {
+                    pass.set_pipeline(&self.skinned_pipeline);
+                    pass.set_vertex_buffer(1, joints_buf.slice(..));
+                } else {
+                    // TODO: sort by skinned or unskinned,
+                    // instance meshes with more than one instance in the world
+                    pass.set_pipeline(&self.unskinned_pipeline);
+                }
+                pass.set_index_buffer(prim.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..prim.idx_count, 0, 0..1);
-            }
-
-            if let Some(skin) = skin {
-                joint_offset += skin.joints.len() as u32;
             }
         }
     }

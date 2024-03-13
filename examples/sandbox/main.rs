@@ -54,6 +54,7 @@ pub struct State {
     player: player::PlayerController,
     mouse_grabber: MouseGrabber,
     // graphics
+    graphics: sf::GraphicsManager,
     camera: sf::Camera,
     light: sf::DirectionalLight,
     light_rotating: bool,
@@ -77,10 +78,10 @@ pub struct State {
 }
 impl State {
     fn init(game: &mut sf::Game) -> Self {
-        game.graphics
-            .load_gltf(
-                &std::fs::read("examples/sandbox/assets/library.glb").expect("File not found"),
-            )
+        let mut graphics = sf::GraphicsManager::new();
+
+        graphics
+            .load_gltf("examples/sandbox/assets/library.glb")
             .expect("Failed to load shared assets");
 
         let egui_context = egui::Context::default();
@@ -97,6 +98,7 @@ impl State {
             hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
             player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
+            graphics,
             camera: sf::Camera::default(),
             light: sf::DirectionalLight {
                 direct_color: [1.0, 0.949, 0.8],
@@ -544,8 +546,13 @@ impl sf::GameState for State {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
         }
 
-        self.mesh_renderer
-            .draw(&self.camera, self.light, &mut ctx, &mut self.world);
+        self.mesh_renderer.draw(
+            &self.graphics,
+            &self.camera,
+            self.light,
+            &mut ctx,
+            &mut self.world,
+        );
 
         ctx.submit();
 
