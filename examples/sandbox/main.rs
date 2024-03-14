@@ -78,10 +78,10 @@ pub struct State {
 }
 impl State {
     fn init(game: &mut sf::Game) -> Self {
-        let mut graphics = sf::GraphicsManager::new();
+        let mut graphics = sf::GraphicsManager::new(&game.renderer);
 
         graphics
-            .load_gltf("examples/sandbox/assets/library.glb")
+            .load_gltf(&game.renderer, "examples/sandbox/assets/library.glb")
             .expect("Failed to load shared assets");
 
         let egui_context = egui::Context::default();
@@ -547,7 +547,7 @@ impl sf::GameState for State {
         }
 
         self.mesh_renderer.draw(
-            &self.graphics,
+            &mut self.graphics,
             &self.camera,
             self.light,
             &mut ctx,

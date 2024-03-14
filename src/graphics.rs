@@ -21,4 +21,5 @@ pub use outlines::{OutlineParams, OutlineRenderer, OutlineShape};
 mod debug;
 pub use debug::DebugVisualizer;
 
-pub mod texture;
+pub mod material;
+pub use material::Texture;

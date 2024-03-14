@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use thunderdome as td;
 
-use super::{Mesh, Skin};
+use super::{
+    material::{Material, MaterialDefaults},
+    Mesh, Renderer, Skin,
+};
 
 #[cfg(feature = "gltf")]
 pub(crate) mod gltf_import;
@@ -10,12 +13,13 @@ pub(crate) mod gltf_import;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MeshKey(td::Index);
 
-#[derive(Default)]
 pub struct GraphicsManager {
     meshes: td::Arena<Mesh>,
     mesh_id_map: HashMap<String, MeshKey>,
+    materials: td::Arena<Material>,
+    mat_defaults: MaterialDefaults,
     skins: td::Arena<Skin>,
-    // TODO: materials, animations
+    // TODO: animations
 }
 
 /// Error when loading assets from a glTF document.
@@ -33,14 +37,24 @@ pub enum LoadError {
 impl GraphicsManager {
     /// Create a new graphics manager.
     #[inline]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(rend: &Renderer) -> Self {
+        Self {
+            meshes: td::Arena::new(),
+            mesh_id_map: HashMap::new(),
+            materials: td::Arena::new(),
+            mat_defaults: MaterialDefaults::new(rend),
+            skins: td::Arena::new(),
+        }
     }
 
     /// Load all graphics assets (meshes, skins, materials, animations)
     /// in a glTF document.
     #[cfg(feature = "gltf")]
-    pub fn load_gltf(&mut self, path: impl AsRef<std::path::Path>) -> Result<(), LoadError> {
+    pub fn load_gltf(
+        &mut self,
+        rend: &Renderer,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<(), LoadError> {
         let path = path.as_ref();
         let file_bytes = std::fs::read(path)?;
 
@@ -54,8 +68,14 @@ impl GraphicsManager {
         let (doc, bufs, images) = gltf::import_slice(file_bytes)?;
         let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
 
-        for mesh in gltf_import::load_meshes(&doc, &bufs, name_to_id) {
+        for mut mesh in gltf_import::load_meshes(&doc, &bufs, name_to_id) {
+            mesh.upload(&rend.device);
             self.insert_mesh(mesh);
+        }
+
+        for mat_params in gltf_import::load_materials(&doc, &images) {
+            self.materials
+                .insert(Material::new(rend, &self.mat_defaults, mat_params));
         }
 
         for skin in gltf_import::load_skins(&doc, &bufs) {
@@ -89,16 +109,10 @@ impl GraphicsManager {
     /// Get a mesh by its [`MeshKey`].
     ///
     /// Currently panics if the mesh is not in the collection anymore
-    /// (although there's no API to remove things from the so this should not happen).
+    /// (although there's no API to remove things yet so this should not happen).
     /// TODO: return a default mesh instead
     #[inline]
     pub fn get_mesh(&self, key: MeshKey) -> &Mesh {
         self.meshes.get(key.0).expect("Mesh not found")
-    }
-
-    /// Mutably get a mesh by its [`MeshKey`].
-    #[inline]
-    pub fn get_mesh_mut(&mut self, key: MeshKey) -> &mut Mesh {
-        self.meshes.get_mut(key.0).expect("Mesh not found")
     }
 }

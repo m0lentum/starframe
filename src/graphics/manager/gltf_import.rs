@@ -2,7 +2,11 @@
 
 use crate::{
     animation::{self as anim, gltf_animation as g_anim},
-    graphics::{mesh, mesh::skin, texture::TextureData},
+    graphics::{
+        material::{MaterialParams, TextureData},
+        mesh,
+        mesh::skin,
+    },
     math::uv,
 };
 
@@ -82,50 +86,42 @@ pub fn load_meshes<'doc>(
     })
 }
 
-pub struct TextureResult<'a> {
-    pub diffuse: TextureData<'a>,
-    pub normal: TextureData<'a>,
-}
-
-pub fn load_textures<'a>(
-    doc: &'a gltf::Document,
-    images: &'a [gltf::image::Data],
-) -> Vec<TextureResult<'a>> {
-    let mut textures = Vec::new();
-
-    for material in doc.materials() {
+pub fn load_materials<'doc>(
+    doc: &'doc gltf::Document,
+    images: &'doc [gltf::image::Data],
+) -> impl 'doc + Iterator<Item = MaterialParams<'doc>> {
+    doc.materials().map(move |material| {
         let mr = material.pbr_metallic_roughness();
-        // TODO: support materials without normal maps
-        if let (Some(tex_info), Some(normal_info)) =
-            (mr.base_color_texture(), material.normal_texture())
-        {
+
+        let base_color = Some(mr.base_color_factor());
+        let diffuse_tex = mr.base_color_texture().map(|tex_info| {
             let tex = tex_info.texture();
             let image = &images[tex.source().index()];
-
-            let diffuse_tex = TextureData {
+            TextureData {
                 label: tex.name().map(String::from),
                 pixels: &image.pixels,
                 format: texture_format_to_wgpu(image.format, true),
                 dimensions: (image.width, image.height),
-            };
+            }
+        });
 
-            let norm_tex = normal_info.texture();
-            let norm_image = &images[norm_tex.source().index()];
-            let normal_tex = TextureData {
-                label: norm_tex.name().map(String::from),
-                pixels: &norm_image.pixels,
-                format: texture_format_to_wgpu(norm_image.format, false),
-                dimensions: (norm_image.width, norm_image.height),
-            };
+        let normal_tex = material.normal_texture().map(|normal_info| {
+            let tex = normal_info.texture();
+            let image = &images[tex.source().index()];
+            TextureData {
+                label: tex.name().map(String::from),
+                pixels: &image.pixels,
+                format: texture_format_to_wgpu(image.format, false),
+                dimensions: (image.width, image.height),
+            }
+        });
 
-            textures.push(TextureResult {
-                diffuse: diffuse_tex,
-                normal: normal_tex,
-            });
+        MaterialParams {
+            base_color,
+            diffuse_tex,
+            normal_tex,
         }
-    }
-
-    textures
+    })
 }
 
 /// Convert a gltf texture format to the wgpu equivalent.

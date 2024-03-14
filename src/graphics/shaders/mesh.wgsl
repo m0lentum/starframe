@@ -16,13 +16,18 @@ var<uniform> light: LightUniforms;
 @group(2) @binding(0)
 var<storage> joint_mats: array<mat4x4<f32>>;
 
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+}
 @group(3) @binding(0)
-var t_diffuse: texture_2d<f32>;
+var<uniform> material: MaterialUniforms;
 @group(3) @binding(1)
-var s_diffuse: sampler;
+var t_diffuse: texture_2d<f32>;
 @group(3) @binding(2)
-var t_normal: texture_2d<f32>;
+var s_diffuse: sampler;
 @group(3) @binding(3)
+var t_normal: texture_2d<f32>;
+@group(3) @binding(4)
 var s_normal: sampler;
 
 struct VertexOutput {
@@ -57,7 +62,6 @@ fn vs_skinned(
     @location(6) model_col1: vec3<f32>,
     @location(7) model_col2: vec3<f32>,
     @location(8) model_col3: vec3<f32>,
-    @location(9) tint: vec3<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
@@ -133,7 +137,6 @@ fn vs_unskinned(
     @location(6) model_col1: vec3<f32>,
     @location(7) model_col2: vec3<f32>,
     @location(8) model_col3: vec3<f32>,
-    @location(9) tint: vec3<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
@@ -193,7 +196,7 @@ fn fs_main(
     let ambient_strength = 0.1 + 0.1 * max(-normal_dot_light, 0.);
     let ambient_light = light.ambient_color * ambient_strength;
 
-    let full_color = in.tint * (ambient_light + diffuse_light) * base_color.xyz;
+    let full_color = material.base_color * (ambient_light + diffuse_light) * base_color.xyz;
 
     return vec4<f32>(full_color, base_color.a);
 }
