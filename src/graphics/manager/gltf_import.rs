@@ -1,42 +1,20 @@
 //! Utilities for loading meshes, skins and animations from glTF documents.
-//!
-//! TODOC: how to construct a skinned and animated mesh
 
 use crate::{
     animation::{self as anim, gltf_animation as g_anim},
-    graphics::{mesh::skin, texture::TextureData},
+    graphics::{mesh, mesh::skin, texture::TextureData},
     math::uv,
 };
 
 use itertools::izip;
 
-// TODO: add proper errors instead of using expect and unimplemented
-
-/// Load a mesh, skin, and animations from a glTF document given as a byte slice.
-///
-/// If you load your glTF using something else (such as [`assets_manager`](https://docs.rs/assets_manager)),
-/// use [`Mesh::from_gltf`][super::Mesh::from_gltf],
-/// [`load_skin`][self::load_skin], and [`load_animations`][self::load_animations] separately.
-pub fn load_animated_mesh(
-    bytes: &[u8],
-    rend: &crate::Renderer,
-) -> Result<(super::Mesh, skin::Skin, anim::MeshAnimator), gltf::Error> {
-    let (doc, bufs, images) = gltf::import_slice(bytes)?;
-    let bufs: Vec<&[u8]> = bufs.iter().map(|data| data.0.as_slice()).collect();
-    let mesh = super::Mesh::from_gltf(&doc, &bufs, &images, rend);
-    let skin = load_skin(&doc, &bufs).expect("no skin in gltf");
-    let anim = load_animations(&doc, &bufs).expect("no skin in gltf");
-
-    Ok((mesh, skin, anim))
-}
-
 /// Load the vertices of a mesh from a glTF document.
-pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::MeshPrimitive> {
+///
+/// Obsolete, remember to delete once meshes have been refactored not to use this
+pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<mesh::MeshPrimitive> {
     // helper for constructing gltf readers
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
-    // TODO: support multiple meshes in one document,
-    // also probably don't panic if format isn't supported
     let mesh = doc.meshes().next().expect("No meshes in gltf document");
     mesh.primitives()
         .map(|prim| {
@@ -46,9 +24,9 @@ pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::Me
                 .read_positions()
                 .expect("glTF mesh must have vertices");
 
-            let mut vertices: Vec<super::Vertex> = positions
+            let mut vertices: Vec<mesh::Vertex> = positions
                 .into_iter()
-                .map(|p| super::Vertex {
+                .map(|p| mesh::Vertex {
                     position: p.into(),
                     ..Default::default()
                 })
@@ -85,9 +63,73 @@ pub fn load_primitives(doc: &gltf::Document, buffers: &[&[u8]]) -> Vec<super::Me
                 .map(|i| u16::try_from(i).expect("too many indices to fit into u16"))
                 .collect();
 
-            super::MeshPrimitive { vertices, indices }
+            mesh::MeshPrimitive { vertices, indices }
         })
         .collect()
+}
+
+pub fn load_meshes<'doc>(
+    doc: &'doc gltf::Document,
+    buffers: &'doc [&[u8]],
+) -> impl 'doc + Iterator<Item = mesh::Mesh> {
+    // helper for constructing gltf readers
+    let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
+
+    doc.meshes().map(move |mesh| {
+        let primitives: Vec<mesh::MeshPrimitive> = mesh
+            .primitives()
+            .filter_map(|prim| {
+                let reader = prim.reader(read_buf);
+
+                let positions = reader.read_positions()?;
+
+                let mut vertices: Vec<mesh::Vertex> = positions
+                    .into_iter()
+                    .map(|p| mesh::Vertex {
+                        position: p.into(),
+                        ..Default::default()
+                    })
+                    .collect();
+
+                if let Some(tex_coords) = reader.read_tex_coords(0) {
+                    for (vert, uv) in izip!(&mut vertices, tex_coords.into_f32()) {
+                        vert.tex_coords = uv.into();
+                    }
+                }
+
+                if let Some(joints) = reader.read_joints(0) {
+                    for (vert, joints) in izip!(&mut vertices, joints.into_u16()) {
+                        vert.joints = joints;
+                    }
+                }
+
+                if let Some(weights) = reader.read_weights(0) {
+                    for (vert, weights) in izip!(&mut vertices, weights.into_f32()) {
+                        vert.weights = weights.into();
+                    }
+                }
+
+                let indices: Vec<u16> = if let Some(idx_read) = reader.read_indices() {
+                    idx_read
+                        .into_u32()
+                        .filter_map(|i| u16::try_from(i).ok())
+                        .collect()
+                } else {
+                    (0..vertices.len())
+                        .filter_map(|i| u16::try_from(i).ok())
+                        .collect()
+                };
+
+                Some(mesh::MeshPrimitive { vertices, indices })
+            })
+            .collect();
+
+        mesh::Mesh {
+            label: mesh.name().map(String::from),
+            primitives,
+            ..Default::default()
+        }
+    })
 }
 
 pub struct TextureResult<'a> {
@@ -163,85 +205,87 @@ fn texture_format_to_wgpu(format: gltf::image::Format, is_srgb: bool) -> wgpu::T
     }
 }
 
-/// Load a skin from a glTF document.
-///
-/// Returns None if there are no skins in the document.
-/// Otherwise, returns the first one.
-/// TODO: allow multiple skins per document
-pub fn load_skin(doc: &gltf::Document, buffers: &[&[u8]]) -> Option<skin::Skin> {
+/// Load skins from a glTF document.
+pub fn load_skins<'doc>(
+    doc: &'doc gltf::Document,
+    buffers: &'doc [&[u8]],
+) -> impl 'doc + Iterator<Item = skin::Skin> {
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
-    let gltf_skin = doc.skins().next()?;
-    let mut skin = skin::Skin {
-        root_transform: uv::Mat4::identity(),
-        joints: Vec::new(),
-    };
+    doc.skins().map(move |gltf_skin| {
+        let mut skin = skin::Skin {
+            root_transform: uv::Mat4::identity(),
+            joints: Vec::new(),
+        };
 
-    // inverse bind matrices
-    let reader = gltf_skin.reader(read_buf);
-    if let Some(invs) = reader.read_inverse_bind_matrices() {
-        skin.joints = itertools::zip(gltf_skin.joints(), invs)
-            .map(|(joint, inv_bind)| {
-                skin::Joint {
+        // inverse bind matrices
+        let reader = gltf_skin.reader(read_buf);
+        if let Some(invs) = reader.read_inverse_bind_matrices() {
+            skin.joints = itertools::zip(gltf_skin.joints(), invs)
+                .map(|(joint, inv_bind)| {
+                    skin::Joint {
+                        name: joint.name().map(String::from),
+                        // parents will be computed once we have all joints
+                        parent_idx: None,
+                        inv_bind_matrix: inv_bind.into(),
+                        local_pose: skin::TransformDecomp::from_parts(
+                            joint.transform().decomposed(),
+                        ),
+                        joint_matrix: Default::default(),
+                    }
+                })
+                .collect();
+        } else {
+            // inverse bind matrices are not provided, meaning they are premultiplied into vertices
+            skin.joints = gltf_skin
+                .joints()
+                .map(|joint| skin::Joint {
                     name: joint.name().map(String::from),
-                    // parents will be computed once we have all joints
                     parent_idx: None,
-                    inv_bind_matrix: inv_bind.into(),
+                    inv_bind_matrix: uv::Mat4::identity(),
                     local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
                     joint_matrix: Default::default(),
+                })
+                .collect();
+        }
+
+        // joint parents
+
+        for (parent_idx, joint) in gltf_skin.joints().enumerate() {
+            for child in joint.children() {
+                let child_gltf_id = child.index();
+                if let Some((child_joint_idx, _)) = gltf_skin
+                    .joints()
+                    .enumerate()
+                    .find(|(_, joint)| joint.index() == child_gltf_id)
+                {
+                    skin.joints[child_joint_idx].parent_idx = Some(parent_idx);
                 }
-            })
-            .collect();
-    } else {
-        // inverse bind matrices are not provided, meaning they are premultiplied into vertices
-        skin.joints = gltf_skin
-            .joints()
-            .map(|joint| skin::Joint {
-                name: joint.name().map(String::from),
-                parent_idx: None,
-                inv_bind_matrix: uv::Mat4::identity(),
-                local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
-                joint_matrix: Default::default(),
-            })
-            .collect();
-    }
-
-    // joint parents
-
-    for (parent_idx, joint) in gltf_skin.joints().enumerate() {
-        for child in joint.children() {
-            let child_gltf_id = child.index();
-            if let Some((child_joint_idx, _)) = gltf_skin
-                .joints()
-                .enumerate()
-                .find(|(_, joint)| joint.index() == child_gltf_id)
-            {
-                skin.joints[child_joint_idx].parent_idx = Some(parent_idx);
             }
         }
-    }
 
-    // root transform of the skin:
-    // we need to traverse the node hierarchy to find any nodes above the root joint.
-    // this is because the inverse bind matrices in glTF are relative to the scene root,
-    // and we want them relative to the skin root
-    if let Some(mut curr_search_node) = gltf_skin.joints().next() {
-        loop {
-            let parent = doc.nodes().find(|node| {
-                node.children()
-                    .any(|child| child.index() == curr_search_node.index())
-            });
-            if let Some(parent) = parent {
-                skin.root_transform =
-                    skin.root_transform * uv::Mat4::from(parent.transform().matrix());
-                curr_search_node = parent;
-            } else {
-                break;
+        // root transform of the skin:
+        // we need to traverse the node hierarchy to find any nodes above the root joint.
+        // this is because the inverse bind matrices in glTF are relative to the scene root,
+        // and we want them relative to the skin root
+        if let Some(mut curr_search_node) = gltf_skin.joints().next() {
+            loop {
+                let parent = doc.nodes().find(|node| {
+                    node.children()
+                        .any(|child| child.index() == curr_search_node.index())
+                });
+                if let Some(parent) = parent {
+                    skin.root_transform =
+                        skin.root_transform * uv::Mat4::from(parent.transform().matrix());
+                    curr_search_node = parent;
+                } else {
+                    break;
+                }
             }
         }
-    }
 
-    Some(skin)
+        skin
+    })
 }
 
 /// Load all animations associated with a skin in a glTF document.
@@ -338,5 +382,6 @@ pub fn load_animations(doc: &gltf::Document, buffers: &[&[u8]]) -> Option<anim::
         ));
     }
 
+    // TODO: how do we associate animations with their meshes when there are many in a doc?
     Some(anim::MeshAnimator::new(animations))
 }

@@ -1,3 +1,6 @@
+mod manager;
+pub use manager::GraphicsManager;
+
 pub mod renderer;
 pub use renderer::{RenderContext, Renderer};
 

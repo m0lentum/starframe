@@ -76,7 +76,13 @@ pub struct State {
     time_scale: f64,
 }
 impl State {
-    fn init(renderer: &sf::Renderer) -> Self {
+    fn init(game: &mut sf::Game) -> Self {
+        game.graphics
+            .load_gltf(
+                &std::fs::read("examples/sandbox/assets/library.glb").expect("File not found"),
+            )
+            .expect("Failed to load shared assets");
+
         let egui_context = egui::Context::default();
         let viewport_id = egui_context.viewport_id();
         State {
@@ -103,23 +109,23 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer: sf::MeshRenderer::new(renderer),
+            mesh_renderer: sf::MeshRenderer::new(&game.renderer),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
                     thickness: 10,
                     color: [0.0, 0.0, 0.0, 1.0],
                     shape: sf::OutlineShape::octagon(),
                 },
-                renderer,
+                &game.renderer,
             ),
-            debug_visualizer: sf::DebugVisualizer::new(renderer),
+            debug_visualizer: sf::DebugVisualizer::new(&game.renderer),
             egui_context,
-            egui_state: egui_winit::State::new(viewport_id, &renderer.window, None, None),
+            egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
             egui_renderer: egui_wgpu::Renderer::new(
-                &renderer.device,
-                renderer.swapchain_format(),
-                Some(renderer.window_depth_buffer.texture.format()),
-                renderer.msaa_samples(),
+                &game.renderer.device,
+                game.renderer.swapchain_format(),
+                Some(game.renderer.window_depth_buffer.texture.format()),
+                game.renderer.msaa_samples(),
             ),
             last_egui_output: Default::default(),
             outline_interp: 0.0,
@@ -267,8 +273,8 @@ fn read_scene(path: &std::path::Path) -> Option<Scene> {
 //
 
 impl sf::GameState for State {
-    fn init(renderer: &sf::Renderer) -> Self {
-        Self::init(renderer)
+    fn init(game: &mut sf::Game) -> Self {
+        Self::init(game)
     }
 
     fn tick(&mut self, game: &sf::Game) -> Option<()> {

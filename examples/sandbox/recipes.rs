@@ -446,12 +446,12 @@ impl Recipe {
                 let mesh = sf::Mesh::from_gltf(&doc, &bufs, &images, renderer)
                     .with_offset(*pose)
                     .with_depth(*depth);
-                let skin = sf::gltf_import::load_skin(&doc, &bufs).expect("no skin");
-                let mut anim =
-                    sf::gltf_import::load_animations(&doc, &bufs).expect("no animations");
-                anim.activate_animation("sway").expect("no animation");
-                anim.set_time(*start_time);
-                world.spawn((mesh, skin, anim));
+                // let skin = sf::gltf_import::load_skin(&doc, &bufs).expect("no skin");
+                // let mut anim =
+                //     sf::gltf_import::load_animations(&doc, &bufs).expect("no animations");
+                // anim.activate_animation("sway").expect("no animation");
+                // anim.set_time(*start_time);
+                // world.spawn((mesh, skin, anim));
             }
         }
     }

@@ -1,9 +1,6 @@
 pub(crate) mod skin;
 pub use skin::Skin;
 
-#[cfg(feature = "gltf")]
-pub mod gltf_import;
-
 //
 
 use crate::{
@@ -28,10 +25,10 @@ pub struct Mesh {
     pub depth: f32,
     pub has_outline: bool,
     pub tint: [f32; 3],
-    primitives: Vec<MeshPrimitive>,
+    pub(crate) primitives: Vec<MeshPrimitive>,
     // resources are uploaded to the GPU on first draw
-    gpu_resources: Option<GpuMeshResources>,
-    textures: Option<MeshTextures>,
+    pub(crate) gpu_resources: Option<GpuMeshResources>,
+    pub(crate) textures: Option<MeshTextures>,
 }
 
 #[derive(Debug)]
@@ -51,7 +48,7 @@ pub struct MeshPrimitive {
 }
 
 #[derive(Debug)]
-struct GpuMeshResources {
+pub(crate) struct GpuMeshResources {
     primitives: Vec<GpuMeshPrimitive>,
     // instance buffer containing joint offsets and model matrices,
     // allowing the same mesh to be rendered multiple times
@@ -124,13 +121,15 @@ impl Mesh {
         images: &[gltf::image::Data],
         rend: &crate::Renderer,
     ) -> Self {
-        let textures = gltf_import::load_textures(doc, images).into_iter().next();
+        let textures = super::manager::gltf_import::load_textures(doc, images)
+            .into_iter()
+            .next();
         Self {
             label: doc
                 .meshes()
                 .next()
                 .and_then(|mesh| mesh.name().map(String::from)),
-            primitives: gltf_import::load_primitives(doc, buffers),
+            primitives: super::manager::gltf_import::load_primitives(doc, buffers),
             textures: textures.map(|t| MeshTextures {
                 diffuse: t.diffuse.upload(rend),
                 normal: t.normal.upload(rend),

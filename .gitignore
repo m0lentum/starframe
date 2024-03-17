@@ -1,5 +1,13 @@
+# build files
 /target
 **/*.rs.bk
 Cargo.lock
+# profiling artifacts
 flamegraph.svg
 perf.*
+# asset source file backups
+*.blend1
+# .gltf and .bin files are only used for debugging purposes
+# and therefore excluded from version control
+*.gltf
+*.bin

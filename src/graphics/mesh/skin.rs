@@ -1,8 +1,6 @@
 use crate::math::uv;
 
 /// A hierarchy of joints used for deforming and animating meshes.
-///
-/// TODOC: how to connect this to a Mesh in the graph
 #[derive(Debug, Clone)]
 pub struct Skin {
     pub root_transform: uv::Mat4,

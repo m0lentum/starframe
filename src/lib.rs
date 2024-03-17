@@ -13,13 +13,12 @@ pub use math::serde_pose;
 pub use math::{uv, Angle, Pose, PoseBuilder, Rotor2, Transform, Unit, Vec2};
 
 pub mod graphics;
-#[cfg(feature = "gltf")]
-pub use graphics::mesh::gltf_import;
 pub use graphics::{
     camera::{Camera, MouseDragCameraController},
     mesh::{ConvexMeshShape, DirectionalLight, Mesh, MeshRenderer, Skin},
     texture::Texture,
-    DebugVisualizer, OutlineParams, OutlineRenderer, OutlineShape, RenderContext, Renderer,
+    DebugVisualizer, GraphicsManager, OutlineParams, OutlineRenderer, OutlineShape, RenderContext,
+    Renderer,
 };
 
 pub mod physics;
