@@ -154,18 +154,12 @@ fn texture_format_to_wgpu(format: gltf::image::Format, is_srgb: bool) -> wgpu::T
                 WF::Rgba8Unorm
             }
         }
-        GF::B8G8R8 => unimplemented!("RGB textures without alpha are not supported"),
-        GF::B8G8R8A8 => {
-            if is_srgb {
-                WF::Bgra8UnormSrgb
-            } else {
-                WF::Bgra8Unorm
-            }
-        }
         GF::R16 => WF::R16Unorm,
         GF::R16G16 => WF::Rg16Unorm,
         GF::R16G16B16 => unimplemented!("RGB textures without alpha are not supported"),
         GF::R16G16B16A16 => WF::Rgba16Unorm,
+        GF::R32G32B32FLOAT => unimplemented!("RGB textures without alpha are not supported"),
+        GF::R32G32B32A32FLOAT => WF::Rgba32Float,
     }
 }
 
