@@ -1,22 +1,18 @@
 //! Utilities for loading meshes, skins and animations from glTF documents.
 
-use super::MaterialId;
 use crate::{
     animation::{self as anim, gltf_animation as g_anim},
     graphics::{
         material::{MaterialParams, TextureData},
         mesh::skin,
-        mesh::{self, MeshPrimitive},
+        mesh::{self, MeshData},
     },
     math::uv,
 };
 
 use itertools::izip;
 
-pub fn load_mesh_primitive<'doc>(
-    buffers: &'doc [&[u8]],
-    prim: gltf::Primitive<'doc>,
-) -> MeshPrimitive {
+pub fn load_mesh_data<'doc>(buffers: &'doc [&[u8]], prim: gltf::Primitive<'doc>) -> MeshData {
     // helper for constructing gltf readers
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
@@ -62,12 +58,10 @@ pub fn load_mesh_primitive<'doc>(
         })
     });
 
-    MeshPrimitive {
+    MeshData {
         vertices,
         indices,
         joints,
-        // this will be filled in by the manager method calling this
-        material: MaterialId::default(),
     }
 }
 

@@ -3,7 +3,7 @@ use thunderdome as td;
 
 use super::{
     material::{Material, MaterialDefaults},
-    mesh::{Mesh, MeshData},
+    mesh::{Mesh, MeshParams},
     Renderer, Skin,
 };
 use crate::math::uv;
@@ -15,13 +15,6 @@ mod gltf_import;
 pub(crate) enum AssetId {
     Unresolved(String),
     Resolved(td::Index),
-}
-
-#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum AssetIdWithDefault {
-    #[default]
-    Default,
-    Loaded(AssetId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -36,21 +29,14 @@ where
     }
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MaterialId(AssetIdWithDefault);
-
-impl From<td::Index> for MaterialId {
-    fn from(value: td::Index) -> Self {
-        Self(AssetIdWithDefault::Loaded(AssetId::Resolved(value)))
-    }
-}
-
 pub struct GraphicsManager {
     meshes: td::Arena<Mesh>,
     /// map from mesh names to mesh ids
     mesh_name_map: HashMap<String, td::Index>,
     /// map from mesh ids to skin ids
     mesh_skin_map: td::Arena<td::Index>,
+    /// map from mesh ids to material ids
+    mesh_material_map: td::Arena<td::Index>,
     skins: td::Arena<Skin>,
     materials: td::Arena<Material>,
     mat_defaults: MaterialDefaults,
@@ -77,6 +63,7 @@ impl GraphicsManager {
             meshes: td::Arena::new(),
             mesh_name_map: HashMap::new(),
             mesh_skin_map: td::Arena::new(),
+            mesh_material_map: td::Arena::new(),
             skins: td::Arena::new(),
             materials: td::Arena::new(),
             mat_defaults: MaterialDefaults::new(rend),
@@ -131,7 +118,7 @@ impl GraphicsManager {
 
                     ctx.node_transforms_world[node.index()] = node_transform;
                     if let (Some(mesh), Some(skin)) = (node.mesh(), node.skin()) {
-                        ctx.mesh_skin_map[&mesh.index()] = skin.index();
+                        ctx.mesh_skin_map.insert(mesh.index(), skin.index());
                     }
 
                     for child in node.children() {
@@ -166,60 +153,55 @@ impl GraphicsManager {
 
         // materials
 
-        let loaded_materials: Vec<MaterialId> = doc
+        let loaded_materials: Vec<td::Index> = doc
             .materials()
             .map(|gltf_mat| {
                 let mat_params = gltf_import::load_material(&images, gltf_mat);
                 let mat = Material::new(rend, &self.mat_defaults, mat_params);
-                let id = self.materials.insert(mat);
-                MaterialId::from(id)
+                self.materials.insert(mat)
             })
             .collect();
 
         // meshes
 
         for gltf_mesh in doc.meshes() {
-            let primitives: Vec<_> = gltf_mesh
-                .primitives()
-                .map(|gltf_prim| {
-                    let mut prim = gltf_import::load_mesh_primitive(&bufs, gltf_prim);
-                    if let Some(mat_idx) = gltf_prim.material().index() {
-                        prim.material = loaded_materials[mat_idx];
-                    }
-                    prim
-                })
-                .collect();
+            for gltf_prim in gltf_mesh.primitives() {
+                let mesh_data = gltf_import::load_mesh_data(&bufs, gltf_prim.clone());
 
-            // this assert is ugly, would be nice to express
-            // the skinned/unskinned distinction at the mesh type level,
-            // but it's a bit tricky to do that ergonomically.
-            // TODO: maybe only support one primitive per mesh?
-            // or make different primitives different meshes on the staframe side,
-            // since they're rendered as if they're separate meshes anyway?
-            assert!(
-                primitives.iter().all(|prim| prim.joints.is_some())
-                    || primitives.iter().all(|prim| prim.joints.is_none()),
-                "Mixing unskinned and skinned mesh primitives is not supported"
-            );
+                let mesh = MeshParams {
+                    label: gltf_mesh.name(),
+                    data: mesh_data,
+                    ..Default::default()
+                }
+                .upload(&rend.device);
 
-            let mesh = MeshData {
-                label: gltf_mesh.name(),
-                primitives: &primitives,
-                ..Default::default()
-            }
-            .upload(&rend.device);
-
-            let mesh_id = self.meshes.insert(mesh);
-            if let Some(name) = gltf_mesh.name() {
-                self.mesh_name_map.insert(name_to_id(name), mesh_id);
-            }
-            if let Some(&skin_idx) = mesh_skin_map.get(&gltf_mesh.index()) {
-                self.mesh_skin_map
-                    .insert_at(mesh_id, loaded_skins[skin_idx]);
+                let mesh_id = self.meshes.insert(mesh);
+                if let Some(name) = gltf_mesh.name() {
+                    self.mesh_name_map.insert(name_to_id(name), mesh_id);
+                }
+                if let Some(mat_idx) = gltf_prim.material().index() {
+                    self.mesh_material_map
+                        .insert_at(mesh_id, loaded_materials[mat_idx]);
+                }
+                if let Some(&skin_idx) = mesh_skin_map.get(&gltf_mesh.index()) {
+                    self.mesh_skin_map
+                        .insert_at(mesh_id, loaded_skins[skin_idx]);
+                }
             }
         }
 
         Ok(())
+    }
+
+    pub(crate) fn resolve_mesh_id(&self, id: &mut MeshId) {
+        match &id.0 {
+            AssetId::Resolved(_) => {}
+            AssetId::Unresolved(name) => {
+                if let Some(idx) = self.mesh_name_map.get(name) {
+                    id.0 = AssetId::Resolved(*idx);
+                }
+            }
+        }
     }
 
     /// Add a mesh to the set of drawable assets.
@@ -228,11 +210,33 @@ impl GraphicsManager {
     /// by inserting it into a [`hecs`] world.
     /// If `name` is given, the mesh can also be accessed by
     /// creating a [`MeshId`] with the same string.
+    ///
+    /// Note: this does not automatically associate a skin or material with the mesh.
     pub fn insert_mesh(&mut self, mesh: Mesh, name: Option<String>) -> MeshId {
         let key = self.meshes.insert(mesh);
         if let Some(id) = name {
             self.mesh_name_map.insert(id, key);
         }
         MeshId(AssetId::Resolved(key))
+    }
+
+    pub fn get_mesh(&self, id: &MeshId) -> Option<&Mesh> {
+        match &id.0 {
+            AssetId::Resolved(idx) => self.meshes.get(*idx),
+            AssetId::Unresolved(name) => self
+                .mesh_name_map
+                .get(name)
+                .and_then(|idx| self.meshes.get(*idx)),
+        }
+    }
+
+    pub fn get_mesh_mut(&mut self, id: &MeshId) -> Option<&mut Mesh> {
+        match &id.0 {
+            AssetId::Resolved(idx) => self.meshes.get_mut(*idx),
+            AssetId::Unresolved(name) => self
+                .mesh_name_map
+                .get(name)
+                .and_then(|idx| self.meshes.get_mut(*idx)),
+        }
     }
 }

@@ -212,3 +212,21 @@ pub fn unit_left_normal(u: Unit<Vec2>) -> Unit<Vec2> {
 pub fn unit_right_normal(u: Unit<Vec2>) -> Unit<Vec2> {
     Unit::new_unchecked(right_normal(*u))
 }
+
+// pose utils
+
+/// Convert a 2D 64-bit pose to a 3D 32-bit pose suitable for rendering.
+/// Used internally in MeshRenderer.
+///
+/// TODO: It would probably be nicer if poses were already 3D
+/// and the user only ever dealt with 32-bit floats.
+/// Then this conversion wouldn't be needed.
+pub fn pose_to_3d(p: &Pose) -> uv::Isometry3 {
+    uv::Isometry3::new(
+        uv::Vec3::new(p.translation.x as f32, p.translation.y as f32, 0.),
+        uv::Rotor3::new(
+            p.rotation.s as f32,
+            uv::Bivec3::new(p.rotation.bv.xy as f32, 0., 0.),
+        ),
+    )
+}

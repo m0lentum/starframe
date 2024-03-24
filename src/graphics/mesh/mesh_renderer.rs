@@ -1,7 +1,8 @@
 use crate::{
     graphics::{
+        manager::MeshId,
         util::{GpuMat4, GpuVec3},
-        Camera, DepthBuffer, GraphicsManager, MeshKey, RenderContext, Renderer,
+        Camera, DepthBuffer, GraphicsManager, Mesh, RenderContext, Renderer,
     },
     math::{self as m, uv},
 };
@@ -370,26 +371,30 @@ impl MeshRenderer {
         ctx: &mut RenderContext,
         world: &mut hecs::World,
     ) {
-        let mut meshes_in_world = world
-            .query_mut::<(&MeshKey, Option<&m::Pose>)>()
+        // resolve string ids for efficient access
+        for (_, (id,)) in world.query_mut::<(&mut MeshId,)>() {
+            manager.resolve_mesh_id(id);
+        }
+
+        let mut meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
+            .query_mut::<(&MeshId, Option<&m::Pose>)>()
             .into_iter()
-            .map(|(_, (&k, p))| (k, p))
+            .map(|(_, values)| values)
             .collect_vec();
+
         // split into skinned and unskinned meshes
-        let split_idx = itertools::partition(&mut meshes_in_world, |(key, _)| {
+        let split_idx = itertools::partition(&mut meshes_in_world, |(id, _)| {
             manager
-                .get_mesh(*key)
-                .gpu_resources
-                .primitives
-                .iter()
-                .any(|prim| prim.joints_buf.is_some())
+                .get_mesh(id)
+                .and_then(|mesh| mesh.gpu_data.joints_buf.as_ref())
+                .is_some()
         });
         let (skinned_meshes, unskinned_meshes) = meshes_in_world.split_at_mut(split_idx);
-        // group by mesh key for instanced rendering
-        skinned_meshes.sort_by_key(|(key, _)| key);
-        unskinned_meshes.sort_by_key(|(key, _)| key);
+        // group by mesh id for instanced rendering
+        skinned_meshes.sort_by_key(|(id, _)| *id);
+        unskinned_meshes.sort_by_key(|(id, _)| *id);
 
-        // TODO: collect skins from skinned_meshes
+        // TODO: collect skins
 
         // collect all joint matrices in the world,
         // we'll shove them all in the storage buffer in one go.
@@ -421,7 +426,9 @@ impl MeshRenderer {
             });
         }
 
-        // render the meshes
+        //
+        // upload uniforms
+        //
 
         let view_proj = camera.view_proj_matrix(ctx.target_size);
         ctx.queue
@@ -431,58 +438,125 @@ impl MeshRenderer {
         ctx.queue
             .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
 
-        let mut pass = ctx.encoder.pass(&ctx.target, Some("skinned meshes"));
+        //
+        // upload instance data
+        //
+
+        let mut curr_idx = 0;
+        let mut instances: Vec<Instance> = Vec::new();
+        while curr_idx < unskinned_meshes.len() {
+            let (id, _) = unskinned_meshes[curr_idx];
+            let Some(mesh) = manager.get_mesh_mut(id) else {
+                continue;
+            };
+
+            while unskinned_meshes[curr_idx].0 == id {
+                let (_, pose) = unskinned_meshes[curr_idx];
+
+                // build the model matrix and push it into the instance buffer
+                let model = {
+                    let mesh_pose = match pose {
+                        Some(&entity_pose) => entity_pose * mesh.offset,
+                        None => mesh.offset,
+                    };
+                    let pose_3d = m::pose_to_3d(&mesh_pose);
+                    pose_3d.into_homogeneous_matrix()
+                };
+                instances.push(Instance {
+                    joint_offset: 0,
+                    model_col0: model.cols[0].xyz().into(),
+                    model_col1: model.cols[1].xyz().into(),
+                    model_col2: model.cols[2].xyz().into(),
+                    model_col3: model.cols[3].xyz().into(),
+                });
+
+                curr_idx += 1;
+            }
+
+            mesh.gpu_data.instance_buf.write(ctx, &instances);
+            mesh.gpu_data.instance_count = instances.len() as u32;
+            instances.clear();
+        }
+
+        // same for skinned meshes, with the addition of finding the right joint offset
+        curr_idx = 0;
+        while curr_idx < skinned_meshes.len() {
+            let (id, _) = skinned_meshes[curr_idx];
+            let Some(mesh) = manager.get_mesh_mut(id) else {
+                continue;
+            };
+
+            while skinned_meshes[curr_idx].0 == id {
+                let (_, pose) = skinned_meshes[curr_idx];
+
+                // build the model matrix and push it into the instance buffer
+                let model = {
+                    let mesh_pose = match pose {
+                        Some(&entity_pose) => entity_pose * mesh.offset,
+                        None => mesh.offset,
+                    };
+                    let pose_3d = m::pose_to_3d(&mesh_pose);
+                    pose_3d.into_homogeneous_matrix()
+                };
+                instances.push(Instance {
+                    joint_offset: 0, // TODO
+                    model_col0: model.cols[0].xyz().into(),
+                    model_col1: model.cols[1].xyz().into(),
+                    model_col2: model.cols[2].xyz().into(),
+                    model_col3: model.cols[3].xyz().into(),
+                });
+
+                curr_idx += 1;
+            }
+
+            mesh.gpu_data.instance_buf.write(ctx, &instances);
+            mesh.gpu_data.instance_count = instances.len() as u32;
+            instances.clear();
+        }
+
+        //
+        // render
+        //
+
+        let mut pass = ctx.encoder.pass(&ctx.target, Some("mesh"));
 
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
         pass.set_bind_group(1, &self.light_bind_group, &[]);
         pass.set_bind_group(2, &self.joints_bind_group, &[]);
 
-        pass.set_pipeline(&self.unskinned_pipeline);
-
-        for (key, pose) in unskinned_meshes {
-            let mesh = manager.get_mesh(*key);
-
-            // build the model matrix and push it into the instance buffer
-            let model = {
-                let mesh_pose = match pose {
-                    Some(&entity_pose) => entity_pose * mesh.offset,
-                    None => mesh.offset,
-                };
-                let pose_3d = uv::Isometry3::new(
-                    uv::Vec3::new(
-                        mesh_pose.translation.x as f32,
-                        mesh_pose.translation.y as f32,
-                        mesh.depth,
-                    ),
-                    uv::Rotor3::new(
-                        mesh_pose.rotation.s as f32,
-                        uv::Bivec3::new(mesh_pose.rotation.bv.xy as f32, 0., 0.),
-                    ),
-                );
-                pose_3d.into_homogeneous_matrix()
-            };
-            let instance = Instance {
-                joint_offset: 0,
-                model_col0: model.cols[0].xyz().into(),
-                model_col1: model.cols[1].xyz().into(),
-                model_col2: model.cols[2].xyz().into(),
-                model_col3: model.cols[3].xyz().into(),
-            };
-            mesh.gpu_resources
-                .instance_buf
-                .write_split_borrow(ctx.device, ctx.queue, &[instance]);
-            pass.set_vertex_buffer(1, mesh.gpu_resources.instance_buf.slice());
-
-            // render
+        fn draw_mesh<'pass>(pass: &mut wgpu::RenderPass<'pass>, mesh: &'pass Mesh) {
+            pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
+            pass.set_vertex_buffer(1, mesh.gpu_data.instance_buf.slice());
+            pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
 
             // stencil for outline rendering
             pass.set_stencil_reference(if mesh.has_outline { 1 } else { 0 });
 
-            for prim in &mesh.gpu_resources.primitives {
-                pass.set_vertex_buffer(0, prim.vertex_buf.slice(..));
-                pass.set_index_buffer(prim.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..prim.idx_count, 0, 0..1);
-            }
+            pass.draw_indexed(
+                0..mesh.gpu_data.idx_count,
+                0,
+                0..mesh.gpu_data.instance_count,
+            );
+        }
+
+        pass.set_pipeline(&self.unskinned_pipeline);
+
+        for mesh in unskinned_meshes
+            .iter()
+            .filter_map(|(id, _)| manager.get_mesh(id))
+        {
+            // TODO: bind material
+
+            draw_mesh(&mut pass, mesh);
+        }
+
+        pass.set_pipeline(&self.skinned_pipeline);
+
+        for mesh in skinned_meshes
+            .iter()
+            .filter_map(|(id, _)| manager.get_mesh(id))
+        {
+            draw_mesh(&mut pass, mesh)
         }
     }
 }

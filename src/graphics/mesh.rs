@@ -22,7 +22,7 @@ use zerocopy::{AsBytes, FromBytes};
 /// Not to be used directly, instead should be converted
 /// into a GPU-side [`Mesh`] with [`upload`][Self::upload].
 #[derive(Debug, Clone)]
-pub struct MeshData<'a> {
+pub struct MeshParams<'a> {
     /// GPU debug label, shown in e.g. Renderdoc.
     pub label: Option<&'a str>,
     /// Offset from the Pose of the entity this mesh is attached to,
@@ -34,67 +34,59 @@ pub struct MeshData<'a> {
     /// [`OutlineRenderer`][crate::OutlineRenderer].
     pub has_outline: bool,
     /// Actual vertex data of the mesh.
-    pub primitives: &'a [MeshPrimitive],
+    pub data: MeshData,
 }
 
-impl<'a> Default for MeshData<'a> {
+impl<'a> Default for MeshParams<'a> {
     fn default() -> Self {
         Self {
             label: None,
             offset: m::Pose::default(),
             depth: 0.0,
             has_outline: true,
-            primitives: &[],
+            data: MeshData::default(),
         }
     }
 }
 
-impl<'a> MeshData<'a> {
+impl<'a> MeshParams<'a> {
     pub fn upload(self, device: &wgpu::Device) -> Mesh {
-        let primitives = self
-            .primitives
-            .iter()
-            .map(|prim| {
-                use wgpu::util::DeviceExt;
-                let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.label.as_deref(),
-                    contents: prim.vertices.as_bytes(),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.label.as_deref(),
-                    contents: prim.indices.as_bytes(),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                let joints_buf = prim.joints.as_ref().map(|joints| {
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: self.label.as_deref(),
-                        contents: joints.as_bytes(),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
-                });
-                GpuMeshPrimitive {
-                    vertex_buf,
-                    index_buf,
-                    idx_count: prim.indices.len() as u32,
-                    joints_buf,
-                }
+        use wgpu::util::DeviceExt;
+        let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: self.label,
+            contents: self.data.vertices.as_bytes(),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: self.label,
+            contents: self.data.indices.as_bytes(),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let joints_buf = self.data.joints.as_ref().map(|joints| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: self.label,
+                contents: joints.as_bytes(),
+                usage: wgpu::BufferUsages::VERTEX,
             })
-            .collect();
+        });
 
         let instance_buf =
             gx::util::DynamicBuffer::new(Some("mesh instance"), wgpu::BufferUsages::VERTEX);
 
-        let gpu_resources = GpuMeshResources {
-            primitives,
+        let gpu_data = GpuMeshData {
+            vertex_buf,
+            index_buf,
+            idx_count: self.data.indices.len() as u32,
+            joints_buf,
             instance_buf,
+            instance_count: 0,
         };
 
         Mesh {
             offset: self.offset,
             depth: self.depth,
             has_outline: self.has_outline,
-            gpu_resources,
+            gpu_data,
         }
     }
 }
@@ -107,37 +99,28 @@ pub struct Mesh {
     pub offset: m::Pose,
     pub depth: f32,
     pub has_outline: bool,
-    gpu_resources: GpuMeshResources,
+    gpu_data: GpuMeshData,
 }
 
-/// A segment of a mesh rendered with one material.
-/// A mesh can have more than one.
-#[derive(Debug, Clone)]
-pub struct MeshPrimitive {
+/// CPU-side data of a mesh, possibly with joints and weights for a skin.
+#[derive(Debug, Clone, Default)]
+pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
-    /// Joints only exist if the mesh has a skin
     pub joints: Option<Vec<VertexJoints>>,
-    pub material: gx::MaterialId,
 }
 
 #[derive(Debug)]
-pub(crate) struct GpuMeshResources {
-    primitives: Vec<GpuMeshPrimitive>,
-    // instance buffer containing joint offsets and model matrices,
-    // allowing the same mesh to be rendered multiple times
-    // with potentially different animation states.
-    // currently only one instance is supported,
-    // but this should change soon after some rearchitecting
-    instance_buf: gx::util::DynamicBuffer,
-}
-
-#[derive(Debug)]
-struct GpuMeshPrimitive {
+pub(crate) struct GpuMeshData {
     vertex_buf: wgpu::Buffer,
     index_buf: wgpu::Buffer,
     idx_count: u32,
     joints_buf: Option<wgpu::Buffer>,
+    // instance buffer containing joint offsets and model matrices,
+    // allowing the same mesh to be rendered multiple times
+    // with potentially different animation states
+    instance_buf: gx::util::DynamicBuffer,
+    instance_count: u32,
 }
 
 /// Position and texture coordinates of a vertex in a mesh.
@@ -178,7 +161,7 @@ pub enum ConvexMeshShape {
     },
 }
 
-impl MeshPrimitive {
+impl MeshData {
     pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
         let mut vertices: Vec<m::Vec2> = Vec::new();
 
@@ -279,16 +262,15 @@ impl MeshPrimitive {
             .flat_map(|idx| [0, idx, idx + 1])
             .collect();
 
-        MeshPrimitive {
+        MeshData {
             vertices,
             indices,
             joints: None,
-            material: gx::MaterialId::default(),
         }
     }
 }
 
-impl From<ConvexMeshShape> for MeshPrimitive {
+impl From<ConvexMeshShape> for MeshData {
     fn from(shape: ConvexMeshShape) -> Self {
         // helper for generating uv coordinates which start at the top left
         let flip_y = |v: m::Vec2| m::Vec2::new(v.x, -v.y);
@@ -355,16 +337,15 @@ impl From<ConvexMeshShape> for MeshPrimitive {
             .flat_map(|idx| [0, idx, idx + 1])
             .collect();
 
-        MeshPrimitive {
+        MeshData {
             vertices,
             indices,
             joints: None,
-            material: gx::MaterialId::default(),
         }
     }
 }
 
-impl From<phys::Collider> for MeshPrimitive {
+impl From<phys::Collider> for MeshData {
     fn from(coll: phys::Collider) -> Self {
         Self::from_collider_shape(&coll.shape, 0.1)
     }
