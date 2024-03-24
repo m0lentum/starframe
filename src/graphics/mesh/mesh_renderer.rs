@@ -9,6 +9,7 @@ use crate::{
 
 use itertools::Itertools;
 use std::{borrow::Cow, mem::size_of};
+use thunderdome as td;
 use zerocopy::{AsBytes, FromBytes};
 
 #[repr(C)]
@@ -394,13 +395,15 @@ impl MeshRenderer {
         skinned_meshes.sort_by_key(|(id, _)| *id);
         unskinned_meshes.sort_by_key(|(id, _)| *id);
 
-        // TODO: collect skins
-
         // collect all joint matrices in the world,
         // we'll shove them all in the storage buffer in one go.
-        // make sure the iteration order is the same as when rendering
-        // so that each mesh gets the correct offset into the array
+        // also gather offsets so that meshes can then access the right joints
         let mut joint_matrices: Vec<GpuMat4> = Vec::new();
+        let mut skin_offset_map: td::Arena<u32> = td::Arena::new();
+        for (id, skin) in manager.skins.iter() {
+            skin_offset_map.insert_at(id, joint_matrices.len() as u32);
+            joint_matrices.extend(skin.joints.iter().map(|j| GpuMat4::from(j.joint_matrix)));
+        }
 
         // empty bindings not allowed by vulkan,
         // put in one dummy matrix to pass validation
@@ -482,6 +485,13 @@ impl MeshRenderer {
         curr_idx = 0;
         while curr_idx < skinned_meshes.len() {
             let (id, _) = skinned_meshes[curr_idx];
+
+            let Some(&joint_offset) = manager
+                .get_mesh_skin_index(id)
+                .and_then(|skin_id| skin_offset_map.get(skin_id))
+            else {
+                continue;
+            };
             let Some(mesh) = manager.get_mesh_mut(id) else {
                 continue;
             };
@@ -499,7 +509,7 @@ impl MeshRenderer {
                     pose_3d.into_homogeneous_matrix()
                 };
                 instances.push(Instance {
-                    joint_offset: 0, // TODO
+                    joint_offset,
                     model_col0: model.cols[0].xyz().into(),
                     model_col1: model.cols[1].xyz().into(),
                     model_col2: model.cols[2].xyz().into(),

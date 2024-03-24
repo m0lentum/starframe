@@ -1,5 +1,7 @@
 use crate::math::uv;
 
+use itertools::izip;
+
 /// A hierarchy of joints used for deforming and animating meshes.
 #[derive(Debug, Clone)]
 pub struct Skin {
@@ -18,6 +20,33 @@ pub struct Joint {
     pub local_pose: TransformDecomp,
     /// the final joint transform for use in rendering, also updated by animations
     pub joint_matrix: uv::Mat4,
+}
+
+impl Skin {
+    /// Update the joint matrices in this skin
+    /// based on values of the joints' local poses.
+    pub fn evaluate_joint_matrices(&mut self) {
+        // worldspace poses of each joint
+        let mut global_poses = vec![uv::Mat4::identity(); self.joints.len()];
+        // joints are given in breadth-first order, so we don't need recursion here,
+        // the order automatically makes it so parents are evaluated first
+        for joint_idx in 0..self.joints.len() {
+            global_poses[joint_idx] = self.joints[joint_idx].local_pose.as_matrix();
+            if let Some(parent_idx) = self.joints[joint_idx].parent_idx {
+                // assert to make sure the aforementioned order holds,
+                // this should always be correct at least with Blender
+                assert!(
+                    parent_idx < joint_idx,
+                    "Joints must be given in breadth-first order"
+                );
+                global_poses[joint_idx] = global_poses[parent_idx] * global_poses[joint_idx];
+            }
+        }
+
+        for (joint, global_pose) in izip!(&mut self.joints, global_poses) {
+            joint.joint_matrix = self.root_transform * global_pose * joint.inv_bind_matrix;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

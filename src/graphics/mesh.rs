@@ -37,6 +37,14 @@ pub struct MeshParams<'a> {
     pub data: MeshData,
 }
 
+/// CPU-side data of a mesh, possibly with joints and weights for a skin.
+#[derive(Debug, Clone, Default)]
+pub struct MeshData {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u16>,
+    pub joints: Option<Vec<VertexJoints>>,
+}
+
 impl<'a> Default for MeshParams<'a> {
     fn default() -> Self {
         Self {
@@ -100,14 +108,6 @@ pub struct Mesh {
     pub depth: f32,
     pub has_outline: bool,
     gpu_data: GpuMeshData,
-}
-
-/// CPU-side data of a mesh, possibly with joints and weights for a skin.
-#[derive(Debug, Clone, Default)]
-pub struct MeshData {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u16>,
-    pub joints: Option<Vec<VertexJoints>>,
 }
 
 #[derive(Debug)]

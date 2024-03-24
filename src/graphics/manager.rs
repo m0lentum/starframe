@@ -37,7 +37,8 @@ pub struct GraphicsManager {
     mesh_skin_map: td::Arena<td::Index>,
     /// map from mesh ids to material ids
     mesh_material_map: td::Arena<td::Index>,
-    skins: td::Arena<Skin>,
+    /// skins need to be iterated over and addressed by index in the mesh renderer
+    pub(crate) skins: td::Arena<Skin>,
     materials: td::Arena<Material>,
     mat_defaults: MaterialDefaults,
     // TODO: animations
@@ -146,7 +147,9 @@ impl GraphicsManager {
                     return td::Index::DANGLING;
                 };
                 let root_transform = node_transforms_world[root_joint.index()];
-                let loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
+                let mut loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
+                // evaluate the initial joint matrices in case this skin is used without animation
+                loaded_skin.evaluate_joint_matrices();
                 self.skins.insert(loaded_skin)
             })
             .collect();
@@ -251,12 +254,13 @@ impl GraphicsManager {
         .unwrap_or(&self.mat_defaults.default_material)
     }
 
-    pub fn get_mesh_skin(&self, id: &MeshId) -> Option<&Skin> {
+    /// Get the arena index pointing to a mesh's skin,
+    /// for use in the mesh renderer.
+    pub(crate) fn get_mesh_skin_index(&self, id: &MeshId) -> Option<td::Index> {
         match &id.0 {
             AssetId::Resolved(idx) => Some(idx),
             AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
-        .and_then(|mesh_idx| self.mesh_skin_map.get(*mesh_idx))
-        .and_then(|skin_idx| self.skins.get(*skin_idx))
+        .and_then(|mesh_idx| self.mesh_skin_map.get(*mesh_idx).copied())
     }
 }
