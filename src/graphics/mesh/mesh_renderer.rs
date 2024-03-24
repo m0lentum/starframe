@@ -2,7 +2,7 @@ use crate::{
     graphics::{
         manager::MeshId,
         util::{GpuMat4, GpuVec3},
-        Camera, DepthBuffer, GraphicsManager, Mesh, RenderContext, Renderer,
+        Camera, DepthBuffer, GraphicsManager, RenderContext, Renderer,
     },
     math::{self as m, uv},
 };
@@ -524,7 +524,18 @@ impl MeshRenderer {
         pass.set_bind_group(1, &self.light_bind_group, &[]);
         pass.set_bind_group(2, &self.joints_bind_group, &[]);
 
-        fn draw_mesh<'pass>(pass: &mut wgpu::RenderPass<'pass>, mesh: &'pass Mesh) {
+        fn draw_mesh<'pass>(
+            pass: &mut wgpu::RenderPass<'pass>,
+            manager: &'pass GraphicsManager,
+            mesh_id: &MeshId,
+        ) {
+            let Some(mesh) = manager.get_mesh(mesh_id) else {
+                return;
+            };
+
+            let material = manager.get_mesh_material(mesh_id);
+            pass.set_bind_group(3, &material.bind_group, &[]);
+
             pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
             pass.set_vertex_buffer(1, mesh.gpu_data.instance_buf.slice());
             pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
@@ -541,22 +552,14 @@ impl MeshRenderer {
 
         pass.set_pipeline(&self.unskinned_pipeline);
 
-        for mesh in unskinned_meshes
-            .iter()
-            .filter_map(|(id, _)| manager.get_mesh(id))
-        {
-            // TODO: bind material
-
-            draw_mesh(&mut pass, mesh);
+        for (id, _) in unskinned_meshes {
+            draw_mesh(&mut pass, manager, id);
         }
 
         pass.set_pipeline(&self.skinned_pipeline);
 
-        for mesh in skinned_meshes
-            .iter()
-            .filter_map(|(id, _)| manager.get_mesh(id))
-        {
-            draw_mesh(&mut pass, mesh)
+        for (id, _) in skinned_meshes {
+            draw_mesh(&mut pass, manager, id);
         }
     }
 }

@@ -157,7 +157,12 @@ impl GraphicsManager {
             .materials()
             .map(|gltf_mat| {
                 let mat_params = gltf_import::load_material(&images, gltf_mat);
-                let mat = Material::new(rend, &self.mat_defaults, mat_params);
+                let mat = Material::new(
+                    rend,
+                    &self.mat_defaults.bind_group_layout,
+                    &self.mat_defaults.blank_texture,
+                    mat_params,
+                );
                 self.materials.insert(mat)
             })
             .collect();
@@ -222,21 +227,36 @@ impl GraphicsManager {
 
     pub fn get_mesh(&self, id: &MeshId) -> Option<&Mesh> {
         match &id.0 {
-            AssetId::Resolved(idx) => self.meshes.get(*idx),
-            AssetId::Unresolved(name) => self
-                .mesh_name_map
-                .get(name)
-                .and_then(|idx| self.meshes.get(*idx)),
+            AssetId::Resolved(idx) => Some(idx),
+            AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
+        .and_then(|mesh_idx| self.meshes.get(*mesh_idx))
     }
 
     pub fn get_mesh_mut(&mut self, id: &MeshId) -> Option<&mut Mesh> {
         match &id.0 {
-            AssetId::Resolved(idx) => self.meshes.get_mut(*idx),
-            AssetId::Unresolved(name) => self
-                .mesh_name_map
-                .get(name)
-                .and_then(|idx| self.meshes.get_mut(*idx)),
+            AssetId::Resolved(idx) => Some(idx),
+            AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
+        .and_then(|mesh_idx| self.meshes.get_mut(*mesh_idx))
+    }
+
+    pub fn get_mesh_material(&self, id: &MeshId) -> &Material {
+        match &id.0 {
+            AssetId::Resolved(idx) => Some(idx),
+            AssetId::Unresolved(name) => self.mesh_name_map.get(name),
+        }
+        .and_then(|mesh_idx| self.mesh_material_map.get(*mesh_idx))
+        .and_then(|mat_idx| self.materials.get(*mat_idx))
+        .unwrap_or(&self.mat_defaults.default_material)
+    }
+
+    pub fn get_mesh_skin(&self, id: &MeshId) -> Option<&Skin> {
+        match &id.0 {
+            AssetId::Resolved(idx) => Some(idx),
+            AssetId::Unresolved(name) => self.mesh_name_map.get(name),
+        }
+        .and_then(|mesh_idx| self.mesh_skin_map.get(*mesh_idx))
+        .and_then(|skin_idx| self.skins.get(*skin_idx))
     }
 }
