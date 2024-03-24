@@ -22,9 +22,7 @@ use zerocopy::{AsBytes, FromBytes};
 /// Not to be used directly, instead should be converted
 /// into a GPU-side [`Mesh`] with [`upload`][Self::upload].
 #[derive(Debug, Clone)]
-pub struct MeshParams<'a> {
-    /// GPU debug label, shown in e.g. Renderdoc.
-    pub label: Option<&'a str>,
+pub struct MeshParams {
     /// Offset from the Pose of the entity this mesh is attached to,
     /// or the world origin if it doesn't have a Pose.
     pub offset: m::Pose,
@@ -45,10 +43,9 @@ pub struct MeshData {
     pub joints: Option<Vec<VertexJoints>>,
 }
 
-impl<'a> Default for MeshParams<'a> {
+impl Default for MeshParams {
     fn default() -> Self {
         Self {
-            label: None,
             offset: m::Pose::default(),
             depth: 0.0,
             has_outline: true,
@@ -57,22 +54,22 @@ impl<'a> Default for MeshParams<'a> {
     }
 }
 
-impl<'a> MeshParams<'a> {
-    pub fn upload(self, device: &wgpu::Device) -> Mesh {
+impl MeshParams {
+    pub fn upload(self, device: &wgpu::Device, label: Option<&str>) -> Mesh {
         use wgpu::util::DeviceExt;
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: self.label,
+            label,
             contents: self.data.vertices.as_bytes(),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: self.label,
+            label,
             contents: self.data.indices.as_bytes(),
             usage: wgpu::BufferUsages::INDEX,
         });
         let joints_buf = self.data.joints.as_ref().map(|joints| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: self.label,
+                label,
                 contents: joints.as_bytes(),
                 usage: wgpu::BufferUsages::VERTEX,
             })

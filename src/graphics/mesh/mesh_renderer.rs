@@ -88,7 +88,7 @@ pub struct MeshRenderer {
 }
 
 impl MeshRenderer {
-    pub fn new(rend: &Renderer) -> Self {
+    pub fn new(rend: &Renderer, manager: &GraphicsManager) -> Self {
         /// Different pipelines for skinned and unskinned meshes;
         /// this enum helps create them concisely
         enum PipelineVariant {
@@ -224,6 +224,9 @@ impl MeshRenderer {
 
         let vertex_buffers = |variant: PipelineVariant| {
             let mut bufs = Vec::new();
+
+            // vertex buffer
+
             bufs.push(wgpu::VertexBufferLayout {
                 array_stride: size_of::<super::Vertex>() as wgpu::BufferAddress,
                 step_mode: wgpu::VertexStepMode::Vertex,
@@ -243,6 +246,50 @@ impl MeshRenderer {
                 ],
             });
 
+            // instance buffer
+
+            bufs.push(wgpu::VertexBufferLayout {
+                array_stride: size_of::<Instance>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &[
+                    // joint offset
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Uint32,
+                        offset: 0,
+                        shader_location: 2,
+                    },
+                    // model matrix column 0
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 4,
+                        shader_location: 3,
+                    },
+                    // model matrix column 1
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 4 + 4 * 3,
+                        shader_location: 4,
+                    },
+                    // model matrix column 2
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 4 + 4 * 3 * 2,
+                        shader_location: 5,
+                    },
+                    // model matrix column 3
+                    wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 4 + 4 * 3 * 3,
+                        shader_location: 6,
+                    },
+                ],
+            });
+
+            // joints buffer
+            // comes after the instance buffer
+            // because we want the instance buffer to have the same binding index
+            // in both skinned and unskinned pipelines
+
             if matches!(variant, PipelineVariant::Skinned) {
                 bufs.push(wgpu::VertexBufferLayout {
                     array_stride: size_of::<super::VertexJoints>() as wgpu::BufferAddress,
@@ -251,55 +298,18 @@ impl MeshRenderer {
                         // joints
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Uint16x4,
-                            offset: 4 * 3 + 4 * 2,
-                            shader_location: 2,
+                            offset: 0,
+                            shader_location: 7,
                         },
                         // weights
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
-                            offset: 4 * 3 + 4 * 2 + 2 * 4,
-                            shader_location: 3,
+                            offset: 2 * 4,
+                            shader_location: 8,
                         },
                     ],
                 });
             }
-
-            bufs.push(wgpu::VertexBufferLayout {
-                array_stride: size_of::<Instance>() as wgpu::BufferAddress,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Uint32,
-                        offset: 0,
-                        shader_location: 4,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4,
-                        shader_location: 5,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3,
-                        shader_location: 6,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 2,
-                        shader_location: 7,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 3,
-                        shader_location: 8,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 4,
-                        shader_location: 9,
-                    },
-                ],
-            });
 
             bufs
         };
@@ -316,6 +326,7 @@ impl MeshRenderer {
                     &camera_bind_group_layout,
                     &light_bind_group_layout,
                     &joints_bind_group_layout,
+                    &manager.material_res.bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -453,7 +464,8 @@ impl MeshRenderer {
                 continue;
             };
 
-            while unskinned_meshes[curr_idx].0 == id {
+            // meshes were sorted by id earlier; collect all instances of the same mesh
+            while curr_idx < unskinned_meshes.len() && unskinned_meshes[curr_idx].0 == id {
                 let (_, pose) = unskinned_meshes[curr_idx];
 
                 // build the model matrix and push it into the instance buffer
@@ -496,7 +508,7 @@ impl MeshRenderer {
                 continue;
             };
 
-            while skinned_meshes[curr_idx].0 == id {
+            while curr_idx < skinned_meshes.len() && skinned_meshes[curr_idx].0 == id {
                 let (_, pose) = skinned_meshes[curr_idx];
 
                 // build the model matrix and push it into the instance buffer
@@ -548,6 +560,9 @@ impl MeshRenderer {
 
             pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
             pass.set_vertex_buffer(1, mesh.gpu_data.instance_buf.slice());
+            if let Some(joints_buf) = &mesh.gpu_data.joints_buf {
+                pass.set_vertex_buffer(2, joints_buf.slice(..))
+            }
             pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
 
             // stencil for outline rendering

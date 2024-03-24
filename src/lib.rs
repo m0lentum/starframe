@@ -16,8 +16,8 @@ pub mod graphics;
 pub use graphics::{
     camera::{Camera, MouseDragCameraController},
     mesh::{ConvexMeshShape, DirectionalLight, Mesh, MeshData, MeshParams, MeshRenderer, Skin},
-    DebugVisualizer, GraphicsManager, OutlineParams, OutlineRenderer, OutlineShape, RenderContext,
-    Renderer,
+    DebugVisualizer, GraphicsManager, MeshId, OutlineParams, OutlineRenderer, OutlineShape,
+    RenderContext, Renderer,
 };
 
 pub mod physics;

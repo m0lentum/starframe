@@ -109,17 +109,26 @@ impl Default for Block {
     }
 }
 
+// TODO: these huge argument lists are awful,
+// consolidate more of this stuff into one place that's easy to share
 fn spawn_block(
-    block: Block,
+    renderer: &sf::Renderer,
+    graphics: &mut sf::GraphicsManager,
     physics: &mut sf::PhysicsWorld,
     world: &mut sf::hecs::World,
+    block: Block,
 ) -> sf::hecs::Entity {
     let pose = sf::Pose::from(block.pose);
     let coll = sf::Collider::new_rounded_rect(block.width, block.height, block.radius);
     let coll_key = physics.entity_set.insert_collider(coll);
-    let mesh = sf::Mesh::from(coll);
+    let mesh = sf::MeshParams {
+        data: sf::MeshData::from(coll),
+        ..Default::default()
+    }
+    .upload(&renderer.device, None);
+    let mesh_id = graphics.insert_mesh(mesh, None);
 
-    let entity = world.spawn((pose, coll_key, mesh));
+    let entity = world.spawn((pose, coll_key, mesh_id));
 
     if !block.is_static {
         let body = sf::Body::new_dynamic(coll.info(), 0.5);
@@ -139,23 +148,36 @@ struct Solid<'a> {
     color: [f32; 3],
 }
 
-fn spawn_static(solid: Solid, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
+fn spawn_static(
+    renderer: &sf::Renderer,
+    graphics: &mut sf::GraphicsManager,
+    physics: &mut sf::PhysicsWorld,
+    world: &mut sf::hecs::World,
+    solid: Solid,
+) {
     for coll in solid.colliders {
         let coll_key = physics
             .entity_set
             .insert_collider(coll.with_pose(solid.pose));
-        let mesh = sf::Mesh::from(*coll)
-            .with_offset(solid.pose * coll.pose)
-            .with_tint(solid.color);
-        world.spawn((coll_key, mesh));
+        let mesh = sf::MeshParams {
+            data: sf::MeshData::from(*coll),
+            offset: solid.pose * coll.pose,
+            ..Default::default()
+        }
+        .upload(&renderer.device, None);
+        // TODO: attach material with the color
+        let mesh_id = graphics.insert_mesh(mesh, None);
+        world.spawn((coll_key, mesh_id));
     }
 }
 
 fn spawn_body(
-    solid: Solid,
+    renderer: &sf::Renderer,
+    graphics: &mut sf::GraphicsManager,
     physics: &mut sf::PhysicsWorld,
     world: &mut sf::hecs::World,
     hecs_sync: &mut sf::HecsSyncManager,
+    solid: Solid,
 ) -> sf::BodyKey {
     let coll_setup = sf::CompoundColliderSetup::new(solid.colliders);
     let center_of_mass = coll_setup.center_of_mass();
@@ -169,12 +191,13 @@ fn spawn_body(
         let coll_key = physics.entity_set.attach_collider(body_key, coll);
 
         // visualization with a mesh entity synced from physics
-        let mesh = sf::Mesh::from(coll)
-            // undo the effect of the collider offset,
-            // since hecs_sync gets its global pose
-            .with_offset(sf::Pose::identity())
-            .with_tint(solid.color);
-        let ent = world.spawn((solid.pose, coll_key, mesh));
+        let mesh = sf::MeshParams {
+            data: sf::MeshData::from(coll),
+            ..Default::default()
+        }
+        .upload(&renderer.device, None);
+        let mesh_id = graphics.insert_mesh(mesh, None);
+        let ent = world.spawn((solid.pose, coll_key, mesh_id));
         hecs_sync.register_collider(coll_key, ent, sf::HecsSyncOptions::physics_to_hecs_only());
     }
 
@@ -188,11 +211,12 @@ impl Recipe {
         world: &mut sf::hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
         renderer: &sf::Renderer,
+        graphics: &mut sf::GraphicsManager,
     ) {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(physics, world),
             Recipe::Block(block) => {
-                spawn_block(*block, physics, world);
+                spawn_block(renderer, graphics, physics, world, *block);
             }
             Recipe::Ball(Ball {
                 radius,
@@ -212,9 +236,9 @@ impl Recipe {
                     color: random_color(),
                 };
                 if *is_static {
-                    spawn_static(solid, physics, world);
+                    spawn_static(renderer, graphics, physics, world, solid);
                 } else {
-                    let body_key = spawn_body(solid, physics, world, hecs_sync);
+                    let body_key = spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
                     let body = physics.entity_set.get_body_mut(body_key).unwrap();
                     body.velocity.linear = start_velocity.into();
                 }
@@ -231,9 +255,9 @@ impl Recipe {
                     color: random_color(),
                 };
                 if *is_static {
-                    spawn_static(solid, physics, world);
+                    spawn_static(renderer, graphics, physics, world, solid);
                 } else {
-                    spawn_body(solid, physics, world, hecs_sync);
+                    spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
                 }
             }
             Recipe::GenericBody { pose, colliders } => {
@@ -242,7 +266,7 @@ impl Recipe {
                     colliders,
                     color: random_color(),
                 };
-                spawn_body(solid, physics, world, hecs_sync);
+                spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
             }
             Recipe::Blockchain {
                 width,
@@ -271,6 +295,11 @@ impl Recipe {
 
                     let caps_full_length = dist_norm - spacing;
                     let capsule = spawn_body(
+                        renderer,
+                        graphics,
+                        physics,
+                        world,
+                        hecs_sync,
                         Solid {
                             pose: sf::PoseBuilder::new()
                                 .with_position(center)
@@ -282,9 +311,6 @@ impl Recipe {
                             )],
                             color: random_color(),
                         },
-                        physics,
-                        world,
-                        hecs_sync,
                     );
                     let caps_length_half = caps_full_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
@@ -332,6 +358,10 @@ impl Recipe {
                 let position: sf::Vec2 = position.into();
                 let offset = sf::Vec2::new(begin_length / 2.0, 0.0);
                 let b1 = spawn_block(
+                    renderer,
+                    graphics,
+                    physics,
+                    world,
                     Block {
                         width: 1.0,
                         height: 1.0,
@@ -339,11 +369,13 @@ impl Recipe {
                         pose: sf::PoseBuilder::new().with_position(position + offset),
                         is_static: false,
                     },
-                    physics,
-                    world,
                 );
                 let b1 = *world.query_one_mut::<&sf::BodyKey>(b1).unwrap();
                 let b2 = spawn_block(
+                    renderer,
+                    graphics,
+                    physics,
+                    world,
                     Block {
                         width: 1.0,
                         height: 1.0,
@@ -351,8 +383,6 @@ impl Recipe {
                         pose: sf::PoseBuilder::new().with_position(position - offset),
                         is_static: false,
                     },
-                    physics,
-                    world,
                 );
                 let b2 = *world.query_one_mut::<&sf::BodyKey>(b2).unwrap();
                 physics.constraint_set.insert(
@@ -369,9 +399,9 @@ impl Recipe {
                 block2,
                 offset2,
             } => {
-                let b1 = spawn_block(*block1, physics, world);
+                let b1 = spawn_block(renderer, graphics, physics, world, *block1);
                 let b1 = world.query_one_mut::<&sf::BodyKey>(b1).copied();
-                let b2 = spawn_block(*block2, physics, world);
+                let b2 = spawn_block(renderer, graphics, physics, world, *block2);
                 let b2 = world.query_one_mut::<&sf::BodyKey>(b2).copied();
                 let rope_end_1 = block1.pose.build() * sf::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * sf::Vec2::from(offset2);
@@ -383,13 +413,18 @@ impl Recipe {
                     rope_end_2,
                     &mut physics.entity_set,
                 );
-                for particle in &rope.particles {
-                    // temporary visualisation with individual particle Meshes
-                    let mesh = sf::Mesh::from(sf::ConvexMeshShape::Circle {
+                // temporary visualisation with individual particle Meshes
+                let mesh = sf::MeshParams {
+                    data: sf::MeshData::from(sf::ConvexMeshShape::Circle {
                         r: rope.params.thickness / 2.0,
                         points: 8,
-                    });
-                    let mesh_ent = world.spawn((sf::Pose::default(), mesh, *particle));
+                    }),
+                    ..Default::default()
+                }
+                .upload(&renderer.device, None);
+                let mesh_id = graphics.insert_mesh(mesh, None);
+                for particle in &rope.particles {
+                    let mesh_ent = world.spawn((sf::Pose::default(), mesh_id.clone(), *particle));
                     hecs_sync.register_body(
                         particle.body,
                         mesh_ent,
@@ -439,7 +474,8 @@ impl Recipe {
                 depth,
                 start_time,
             } => {
-                //
+                // TODO: depth, animation
+                world.spawn((*pose, sf::MeshId::from("library.tree_mesh")));
             }
         }
     }

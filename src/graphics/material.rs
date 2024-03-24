@@ -6,16 +6,17 @@ use zerocopy::{AsBytes, FromBytes};
 use crate::Renderer;
 
 /// Singleton collection of shared resources stored in `GraphicsManager`.
-pub(super) struct MaterialDefaults {
+pub(crate) struct MaterialResources {
     /// Bind group layout shared by all materials.
     pub bind_group_layout: wgpu::BindGroupLayout,
-    /// Placeholder texture to bind when the material doesn't have a texture.
+    /// White texture to bind when the material doesn't have a texture.
     pub blank_texture: Texture,
-    /// Material that is used if a mesh has no assigned material.
-    pub default_material: Material,
+    /// Normal map facing directly in the normal direction,
+    /// to bind when the material doesn't have a normal map.
+    pub blank_normal: Texture,
 }
 
-impl MaterialDefaults {
+impl MaterialResources {
     pub(super) fn new(rend: &Renderer) -> Self {
         let bind_group_layout =
             rend.device
@@ -80,21 +81,18 @@ impl MaterialDefaults {
         }
         .upload(rend);
 
-        let default_material = Material::new(
-            rend,
-            &bind_group_layout,
-            &blank_texture,
-            MaterialParams {
-                base_color: Some([1.; 4]),
-                diffuse_tex: None,
-                normal_tex: None,
-            },
-        );
+        let blank_normal = TextureData {
+            label: Some("blank normal".to_string()),
+            pixels: &[127, 127, 255, 0],
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            dimensions: (1, 1),
+        }
+        .upload(rend);
 
         Self {
             bind_group_layout,
             blank_texture,
-            default_material,
+            blank_normal,
         }
     }
 }
@@ -117,15 +115,14 @@ pub struct Material {
 impl Material {
     pub(super) fn new(
         rend: &Renderer,
-        bind_group_layout: &wgpu::BindGroupLayout,
-        blank_texture: &Texture,
+        defaults: &MaterialResources,
         params: MaterialParams,
     ) -> Self {
         let diffuse_tex = params.diffuse_tex.map(|t| t.upload(rend));
         let normal_tex = params.normal_tex.map(|t| t.upload(rend));
 
-        let diffuse = diffuse_tex.as_ref().unwrap_or(blank_texture);
-        let normal = normal_tex.as_ref().unwrap_or(blank_texture);
+        let diffuse = diffuse_tex.as_ref().unwrap_or(&defaults.blank_texture);
+        let normal = normal_tex.as_ref().unwrap_or(&defaults.blank_normal);
 
         let uniform_buf = rend
             .device
@@ -140,7 +137,7 @@ impl Material {
 
         let bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: bind_group_layout,
+            layout: &defaults.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,

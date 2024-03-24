@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use thunderdome as td;
 
 use super::{
-    material::{Material, MaterialDefaults},
+    material::{Material, MaterialParams, MaterialResources},
     mesh::{Mesh, MeshParams},
     Renderer, Skin,
 };
@@ -40,7 +40,8 @@ pub struct GraphicsManager {
     /// skins need to be iterated over and addressed by index in the mesh renderer
     pub(crate) skins: td::Arena<Skin>,
     materials: td::Arena<Material>,
-    mat_defaults: MaterialDefaults,
+    pub(crate) material_res: MaterialResources,
+    default_material: Material,
     // TODO: animations
 }
 
@@ -60,6 +61,17 @@ impl GraphicsManager {
     /// Create a new graphics manager.
     #[inline]
     pub fn new(rend: &Renderer) -> Self {
+        let material_res = MaterialResources::new(rend);
+        let default_material = Material::new(
+            rend,
+            &material_res,
+            MaterialParams {
+                base_color: Some([1.; 4]),
+                diffuse_tex: None,
+                normal_tex: None,
+            },
+        );
+
         Self {
             meshes: td::Arena::new(),
             mesh_name_map: HashMap::new(),
@@ -67,7 +79,8 @@ impl GraphicsManager {
             mesh_material_map: td::Arena::new(),
             skins: td::Arena::new(),
             materials: td::Arena::new(),
-            mat_defaults: MaterialDefaults::new(rend),
+            material_res,
+            default_material,
         }
     }
 
@@ -160,12 +173,7 @@ impl GraphicsManager {
             .materials()
             .map(|gltf_mat| {
                 let mat_params = gltf_import::load_material(&images, gltf_mat);
-                let mat = Material::new(
-                    rend,
-                    &self.mat_defaults.bind_group_layout,
-                    &self.mat_defaults.blank_texture,
-                    mat_params,
-                );
+                let mat = Material::new(rend, &self.material_res, mat_params);
                 self.materials.insert(mat)
             })
             .collect();
@@ -177,11 +185,10 @@ impl GraphicsManager {
                 let mesh_data = gltf_import::load_mesh_data(&bufs, gltf_prim.clone());
 
                 let mesh = MeshParams {
-                    label: gltf_mesh.name(),
                     data: mesh_data,
                     ..Default::default()
                 }
-                .upload(&rend.device);
+                .upload(&rend.device, gltf_mesh.name());
 
                 let mesh_id = self.meshes.insert(mesh);
                 if let Some(name) = gltf_mesh.name() {
@@ -220,10 +227,10 @@ impl GraphicsManager {
     /// creating a [`MeshId`] with the same string.
     ///
     /// Note: this does not automatically associate a skin or material with the mesh.
-    pub fn insert_mesh(&mut self, mesh: Mesh, name: Option<String>) -> MeshId {
+    pub fn insert_mesh(&mut self, mesh: Mesh, name: Option<&str>) -> MeshId {
         let key = self.meshes.insert(mesh);
         if let Some(id) = name {
-            self.mesh_name_map.insert(id, key);
+            self.mesh_name_map.insert(id.to_string(), key);
         }
         MeshId(AssetId::Resolved(key))
     }
@@ -251,7 +258,7 @@ impl GraphicsManager {
         }
         .and_then(|mesh_idx| self.mesh_material_map.get(*mesh_idx))
         .and_then(|mat_idx| self.materials.get(*mat_idx))
-        .unwrap_or(&self.mat_defaults.default_material)
+        .unwrap_or(&self.default_material)
     }
 
     /// Get the arena index pointing to a mesh's skin,

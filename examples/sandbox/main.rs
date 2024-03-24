@@ -51,7 +51,6 @@ pub struct State {
     physics: sf::PhysicsWorld,
     hecs_sync: sf::HecsSyncManager,
     // gameplay
-    player: player::PlayerController,
     mouse_grabber: MouseGrabber,
     // graphics
     graphics: sf::GraphicsManager,
@@ -84,6 +83,10 @@ impl State {
             .load_gltf(&game.renderer, "examples/sandbox/assets/library.glb")
             .expect("Failed to load shared assets");
 
+        player::controller::upload_meshes(&game.renderer, &mut graphics);
+
+        let mesh_renderer = sf::MeshRenderer::new(&game.renderer, &graphics);
+
         let egui_context = egui::Context::default();
         let viewport_id = egui_context.viewport_id();
         State {
@@ -96,7 +99,6 @@ impl State {
                 sf::CollisionMaskMatrix::default(),
             ),
             hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
-            player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
             graphics,
             camera: sf::Camera::default(),
@@ -111,7 +113,7 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer: sf::MeshRenderer::new(&game.renderer),
+            mesh_renderer,
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
                     thickness: 10,
@@ -197,9 +199,10 @@ impl Scene {
         world: &mut hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
         renderer: &sf::Renderer,
+        graphics: &mut sf::GraphicsManager,
     ) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, world, hecs_sync, renderer);
+            recipe.spawn(physics, world, hecs_sync, renderer, graphics);
         }
     }
 }
@@ -433,6 +436,7 @@ impl sf::GameState for State {
                 &mut self.world,
                 &mut self.hecs_sync,
                 &game.renderer,
+                &mut self.graphics,
             );
         }
 
@@ -475,6 +479,7 @@ impl sf::GameState for State {
                     &mut self.world,
                     &mut self.hecs_sync,
                     &game.renderer,
+                    &mut self.graphics,
                 );
             }
         }
@@ -496,8 +501,7 @@ impl sf::GameState for State {
                     .tick(game.dt_fixed, Some(self.time_scale), &grav);
                 self.hecs_sync
                     .sync_physics_to_hecs(&self.physics, &mut self.world);
-                self.player
-                    .tick(&game.input, &mut self.physics, &mut self.world);
+                player::controller::tick(&game.input, &mut self.physics, &mut self.world);
 
                 Some(())
             }
