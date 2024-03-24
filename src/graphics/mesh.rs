@@ -18,18 +18,96 @@ use zerocopy::{AsBytes, FromBytes};
 // types
 //
 
-/// A triangle mesh for rendering. Can be animated with a skin
-/// and imported from glTF documents (with the `gltf` crate feature enabled).
-#[derive(Debug)]
+/// CPU-side data of a triangle mesh for rendering.
+/// Not to be used directly, instead should be converted
+/// into a GPU-side [`Mesh`] with [`upload`][Self::upload].
+#[derive(Debug, Clone)]
+pub struct MeshData<'a> {
+    /// GPU debug label, shown in e.g. Renderdoc.
+    pub label: Option<&'a str>,
+    /// Offset from the Pose of the entity this mesh is attached to,
+    /// or the world origin if it doesn't have a Pose.
+    pub offset: m::Pose,
+    /// Depth of the mesh in 3D space.
+    pub depth: f32,
+    /// Whether or not to draw an outline for the mesh when using
+    /// [`OutlineRenderer`][crate::OutlineRenderer].
+    pub has_outline: bool,
+    /// Actual vertex data of the mesh.
+    pub primitives: &'a [MeshPrimitive],
+}
+
+impl<'a> Default for MeshData<'a> {
+    fn default() -> Self {
+        Self {
+            label: None,
+            offset: m::Pose::default(),
+            depth: 0.0,
+            has_outline: true,
+            primitives: &[],
+        }
+    }
+}
+
+impl<'a> MeshData<'a> {
+    pub fn upload(self, device: &wgpu::Device) -> Mesh {
+        let primitives = self
+            .primitives
+            .iter()
+            .map(|prim| {
+                use wgpu::util::DeviceExt;
+                let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: self.label.as_deref(),
+                    contents: prim.vertices.as_bytes(),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: self.label.as_deref(),
+                    contents: prim.indices.as_bytes(),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+                let joints_buf = prim.joints.as_ref().map(|joints| {
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: self.label.as_deref(),
+                        contents: joints.as_bytes(),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    })
+                });
+                GpuMeshPrimitive {
+                    vertex_buf,
+                    index_buf,
+                    idx_count: prim.indices.len() as u32,
+                    joints_buf,
+                }
+            })
+            .collect();
+
+        let instance_buf =
+            gx::util::DynamicBuffer::new(Some("mesh instance"), wgpu::BufferUsages::VERTEX);
+
+        let gpu_resources = GpuMeshResources {
+            primitives,
+            instance_buf,
+        };
+
+        Mesh {
+            offset: self.offset,
+            depth: self.depth,
+            has_outline: self.has_outline,
+            gpu_resources,
+        }
+    }
+}
+
+/// Triangle mesh uploaded to the GPU and ready to be rendered.
+///
+/// Public fields can be mutated and will have an effect on the next render.
+/// Vertex data only exists on the GPU at this point and is immutable.
 pub struct Mesh {
-    pub id: Option<String>,
     pub offset: m::Pose,
     pub depth: f32,
     pub has_outline: bool,
-    pub tint: [f32; 3],
-    pub(crate) primitives: Vec<MeshPrimitive>,
-    // resources are uploaded to the GPU on first draw
-    pub(crate) gpu_resources: Option<GpuMeshResources>,
+    gpu_resources: GpuMeshResources,
 }
 
 /// A segment of a mesh rendered with one material.
@@ -40,6 +118,7 @@ pub struct MeshPrimitive {
     pub indices: Vec<u16>,
     /// Joints only exist if the mesh has a skin
     pub joints: Option<Vec<VertexJoints>>,
+    pub material: gx::MaterialId,
 }
 
 #[derive(Debug)]
@@ -81,20 +160,6 @@ pub struct VertexJoints {
 // constructors
 //
 
-impl Default for Mesh {
-    fn default() -> Self {
-        Self {
-            id: None,
-            offset: m::Pose::default(),
-            depth: 0.0,
-            has_outline: true,
-            tint: [1.; 3],
-            primitives: Vec::new(),
-            gpu_resources: None,
-        }
-    }
-}
-
 /// Shape that can be used to generate [`Mesh`][self::Mesh]es.
 #[derive(Clone, Copy, Debug)]
 pub enum ConvexMeshShape {
@@ -113,7 +178,7 @@ pub enum ConvexMeshShape {
     },
 }
 
-impl Mesh {
+impl MeshPrimitive {
     pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
         let mut vertices: Vec<m::Vec2> = Vec::new();
 
@@ -214,95 +279,16 @@ impl Mesh {
             .flat_map(|idx| [0, idx, idx + 1])
             .collect();
 
-        Self {
-            primitives: vec![MeshPrimitive {
-                vertices,
-                indices,
-                joints: None,
-            }],
-            ..Self::default()
+        MeshPrimitive {
+            vertices,
+            indices,
+            joints: None,
+            material: gx::MaterialId::default(),
         }
-    }
-
-    /// Set the offset of the mesh from the pose it's attached to.
-    #[inline]
-    pub fn with_offset(mut self, offset: m::Pose) -> Self {
-        self.offset = offset;
-        self
-    }
-
-    /// Set the base depth of the mesh in the z direction.
-    #[inline]
-    pub fn with_depth(mut self, depth: f32) -> Self {
-        self.depth = depth;
-        self
-    }
-
-    /// Add a debug label to the mesh.
-    #[inline]
-    pub fn with_label(mut self, label: String) -> Self {
-        self.id = Some(label);
-        self
-    }
-
-    /// Opt out of drawing an outline for this mesh when
-    /// [`OutlineRenderer`][super::OutlineRenderer] is run.
-    #[inline]
-    pub fn without_outline(mut self) -> Self {
-        self.has_outline = false;
-        self
-    }
-
-    /// Add a color tint to this mesh.
-    pub fn with_tint(mut self, color: [f32; 3]) -> Self {
-        self.tint = color;
-        self
-    }
-
-    /// Create the needed buffers and push the mesh data to the GPU.
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        let primitives = self
-            .primitives
-            .iter()
-            .map(|prim| {
-                use wgpu::util::DeviceExt;
-                let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.id.as_deref(),
-                    contents: prim.vertices.as_bytes(),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.id.as_deref(),
-                    contents: prim.indices.as_bytes(),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                let joints_buf = prim.joints.as_ref().map(|joints| {
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: self.id.as_deref(),
-                        contents: joints.as_bytes(),
-                        usage: wgpu::BufferUsages::VERTEX,
-                    })
-                });
-                GpuMeshPrimitive {
-                    vertex_buf,
-                    index_buf,
-                    idx_count: prim.indices.len() as u32,
-                    joints_buf,
-                }
-            })
-            .collect();
-
-        let instance_buf =
-            gx::util::DynamicBuffer::new(Some("mesh instance"), wgpu::BufferUsages::VERTEX);
-
-        self.gpu_resources = Some(GpuMeshResources {
-            primitives,
-            instance_buf,
-        });
     }
 }
 
-impl From<ConvexMeshShape> for Mesh {
+impl From<ConvexMeshShape> for MeshPrimitive {
     fn from(shape: ConvexMeshShape) -> Self {
         // helper for generating uv coordinates which start at the top left
         let flip_y = |v: m::Vec2| m::Vec2::new(v.x, -v.y);
@@ -369,19 +355,17 @@ impl From<ConvexMeshShape> for Mesh {
             .flat_map(|idx| [0, idx, idx + 1])
             .collect();
 
-        Self {
-            primitives: vec![MeshPrimitive {
-                vertices,
-                indices,
-                joints: None,
-            }],
-            ..Self::default()
+        MeshPrimitive {
+            vertices,
+            indices,
+            joints: None,
+            material: gx::MaterialId::default(),
         }
     }
 }
 
-impl From<phys::Collider> for Mesh {
+impl From<phys::Collider> for MeshPrimitive {
     fn from(coll: phys::Collider) -> Self {
-        Self::from_collider_shape(&coll.shape, 0.1).with_offset(coll.pose)
+        Self::from_collider_shape(&coll.shape, 0.1)
     }
 }

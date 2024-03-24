@@ -65,7 +65,6 @@ struct Instance {
     model_col1: GpuVec3,
     model_col2: GpuVec3,
     model_col3: GpuVec3,
-    tint: GpuVec3,
 }
 
 pub struct MeshRenderer {
@@ -374,20 +373,21 @@ impl MeshRenderer {
         let mut meshes_in_world = world
             .query_mut::<(&MeshKey, Option<&m::Pose>)>()
             .into_iter()
-            .map(|(_, components)| components)
+            .map(|(_, (&k, p))| (k, p))
             .collect_vec();
         // split into skinned and unskinned meshes
-        let split_idx = itertools::partition(&mut meshes_in_world, |(&key, _)| {
+        let split_idx = itertools::partition(&mut meshes_in_world, |(key, _)| {
             manager
-                .get_mesh(key)
+                .get_mesh(*key)
+                .gpu_resources
                 .primitives
                 .iter()
-                .any(|prim| prim.joints.is_some())
+                .any(|prim| prim.joints_buf.is_some())
         });
         let (skinned_meshes, unskinned_meshes) = meshes_in_world.split_at_mut(split_idx);
         // group by mesh key for instanced rendering
-        skinned_meshes.sort_by_key(|(&key, _)| key);
-        unskinned_meshes.sort_by_key(|(&key, _)| key);
+        skinned_meshes.sort_by_key(|(key, _)| key);
+        unskinned_meshes.sort_by_key(|(key, _)| key);
 
         // TODO: collect skins from skinned_meshes
 
@@ -439,11 +439,8 @@ impl MeshRenderer {
 
         pass.set_pipeline(&self.unskinned_pipeline);
 
-        for (&key, pose) in unskinned_meshes {
-            let mesh = manager.get_mesh(key);
-            // resources were created on load.
-            // TODO: refactor to not need the Option at all
-            let gpu_res = mesh.gpu_resources.as_mut().unwrap();
+        for (key, pose) in unskinned_meshes {
+            let mesh = manager.get_mesh(*key);
 
             // build the model matrix and push it into the instance buffer
             let model = {
@@ -470,19 +467,18 @@ impl MeshRenderer {
                 model_col1: model.cols[1].xyz().into(),
                 model_col2: model.cols[2].xyz().into(),
                 model_col3: model.cols[3].xyz().into(),
-                tint: mesh.tint.into(),
             };
-            gpu_res
+            mesh.gpu_resources
                 .instance_buf
                 .write_split_borrow(ctx.device, ctx.queue, &[instance]);
-            pass.set_vertex_buffer(1, gpu_res.instance_buf.slice());
+            pass.set_vertex_buffer(1, mesh.gpu_resources.instance_buf.slice());
 
             // render
 
             // stencil for outline rendering
             pass.set_stencil_reference(if mesh.has_outline { 1 } else { 0 });
 
-            for prim in &gpu_res.primitives {
+            for prim in &mesh.gpu_resources.primitives {
                 pass.set_vertex_buffer(0, prim.vertex_buf.slice(..));
                 pass.set_index_buffer(prim.index_buf.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..prim.idx_count, 0, 0..1);
