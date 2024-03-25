@@ -2,14 +2,19 @@ use std::collections::HashMap;
 use thunderdome as td;
 
 use super::{
+    animation::gltf_animation::GltfAnimation,
     material::{Material, MaterialParams, MaterialResources},
-    mesh::{Mesh, MeshParams},
+    mesh::{skin::JointSet, Mesh, MeshParams},
     Renderer, Skin,
 };
 use crate::math::uv;
 
 #[cfg(feature = "gltf")]
 mod gltf_import;
+
+//
+// id types
+//
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AssetId {
@@ -29,6 +34,36 @@ where
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AnimationId(AssetId);
+
+impl<S> From<S> for AnimationId
+where
+    String: From<S>,
+{
+    fn from(value: S) -> Self {
+        Self(AssetId::Unresolved(String::from(value)))
+    }
+}
+
+// animation state here for now for sketching, maybe move this into the animation module
+
+// TODONEXTTIME: maybe instead of duplicating the joint set,
+// duplicate the skin;
+// then we can have the mesh renderer pull all joint matrices from the skin
+// with no knowledge of animations.
+// how does this affect anim_target_map,
+// since now the same animation can be applied to multiple skins?
+pub struct AnimationState {
+    /// a copy of the joint set being animated,
+    /// in order to allow multiple animations of the same mesh to coexist
+    joints: JointSet,
+}
+
+//
+// manager itself
+//
+
 pub struct GraphicsManager {
     meshes: td::Arena<Mesh>,
     /// map from mesh names to mesh ids
@@ -37,12 +72,20 @@ pub struct GraphicsManager {
     mesh_skin_map: td::Arena<td::Index>,
     /// map from mesh ids to material ids
     mesh_material_map: td::Arena<td::Index>,
-    /// skins need to be iterated over and addressed by index in the mesh renderer
+
+    /// skins need to be iterated over and addressed by index in the mesh renderer,
+    /// hence pub(crate)
     pub(crate) skins: td::Arena<Skin>,
+    animations: td::Arena<GltfAnimation>,
+    /// map from animation names to animation ids
+    anim_name_map: HashMap<String, td::Index>,
+    /// map from animations to target skins
+    anim_target_map: td::Arena<td::Index>,
+    anim_states: td::Arena<AnimationState>,
+
     materials: td::Arena<Material>,
     pub(crate) material_res: MaterialResources,
     default_material: Material,
-    // TODO: animations
 }
 
 /// Error when loading assets from a glTF document.
@@ -77,7 +120,13 @@ impl GraphicsManager {
             mesh_name_map: HashMap::new(),
             mesh_skin_map: td::Arena::new(),
             mesh_material_map: td::Arena::new(),
+
             skins: td::Arena::new(),
+            animations: td::Arena::new(),
+            anim_name_map: HashMap::new(),
+            anim_target_map: td::Arena::new(),
+            anim_states: td::Arena::new(),
+
             materials: td::Arena::new(),
             material_res,
             default_material,
@@ -166,6 +215,32 @@ impl GraphicsManager {
                 self.skins.insert(loaded_skin)
             })
             .collect();
+
+        // animations
+
+        for gltf_anim in doc.animations() {
+            // find the skin containing the node associated with the first channel.
+            // we'll assume all animation channels target nodes in the same skin
+            let first_channel_target = gltf_anim.channels().next().map(|chan| chan.target().node());
+            let Some(assoc_skin) = first_channel_target.and_then(|target| {
+                doc.skins().find(|gltf_skin| {
+                    gltf_skin
+                        .joints()
+                        .any(|joint| joint.index() == target.index())
+                })
+            }) else {
+                continue;
+            };
+
+            let anim = gltf_import::load_animation(&bufs, assoc_skin, gltf_anim);
+            let anim_id = self.animations.insert(anim);
+
+            self.anim_target_map
+                .insert_at(anim_id, loaded_skins[assoc_skin.index()]);
+            if let Some(name) = gltf_anim.name() {
+                self.anim_name_map.insert(name_to_id(name), anim_id);
+            }
+        }
 
         // materials
 

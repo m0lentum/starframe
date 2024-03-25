@@ -413,7 +413,11 @@ impl MeshRenderer {
         let mut skin_offset_map: td::Arena<u32> = td::Arena::new();
         for (id, skin) in manager.skins.iter() {
             skin_offset_map.insert_at(id, joint_matrices.len() as u32);
-            joint_matrices.extend(skin.joints.iter().map(|j| GpuMat4::from(j.joint_matrix)));
+            joint_matrices.extend(
+                skin.evaluate_joint_matrices()
+                    .into_iter()
+                    .map(GpuMat4::from),
+            );
         }
 
         // empty bindings not allowed by vulkan,

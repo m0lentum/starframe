@@ -79,7 +79,7 @@ pub fn update_joints(world: &mut hecs::World) {
             let active_anim = &anim.animations[anim_idx];
             for channel in &active_anim.channels {
                 let Target::Joint { id, property } = channel.target;
-                let joint = &mut skin.joints[id];
+                let joint = &mut skin.joint_set[id];
                 match property {
                     AnimatedProperty::Translation => {
                         joint.local_pose.pos = channel.sample_vec3(anim.anim_time);
@@ -97,8 +97,8 @@ pub fn update_joints(world: &mut hecs::World) {
         // recompute joint matrices
 
         global_poses.clear();
-        global_poses.extend(std::iter::repeat(None).take(skin.joints.len()));
-        for joint_idx in 0..skin.joints.len() {
+        global_poses.extend(std::iter::repeat(None).take(skin.joint_set.len()));
+        for joint_idx in 0..skin.joint_set.len() {
             // traverse recursively until an already computed global parent transform is found
             fn populate_parents(
                 joint_idx: usize,
@@ -119,11 +119,11 @@ pub fn update_joints(world: &mut hecs::World) {
                     global_poses[joint_idx] = Some(joints[joint_idx].local_pose.as_matrix());
                 }
             }
-            populate_parents(joint_idx, &skin.joints, &mut global_poses);
+            populate_parents(joint_idx, &skin.joint_set, &mut global_poses);
             let joint_pose = global_poses[joint_idx].unwrap();
 
-            skin.joints[joint_idx].joint_matrix =
-                skin.root_transform * joint_pose * skin.joints[joint_idx].inv_bind_matrix;
+            skin.joint_set[joint_idx].joint_matrix =
+                skin.root_transform * joint_pose * skin.joint_set[joint_idx].inv_bind_matrix;
         }
     }
 }

@@ -1,8 +1,8 @@
 //! Utilities for loading meshes, skins and animations from glTF documents.
 
 use crate::{
-    animation::{self as anim, gltf_animation as g_anim},
     graphics::{
+        animation::gltf_animation as g_anim,
         material::{MaterialParams, TextureData},
         mesh::skin,
         mesh::{self, MeshData},
@@ -139,39 +139,17 @@ pub fn load_skin<'doc>(
 ) -> skin::Skin {
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
-    let mut skin = skin::Skin {
-        root_transform,
-        joints: Vec::new(),
-    };
-
-    // inverse bind matrices
-    let reader = gltf_skin.reader(read_buf);
-    if let Some(invs) = reader.read_inverse_bind_matrices() {
-        skin.joints = itertools::zip(gltf_skin.joints(), invs)
-            .map(|(joint, inv_bind)| {
-                skin::Joint {
-                    name: joint.name().map(String::from),
-                    // parents will be computed once we have all joints
-                    parent_idx: None,
-                    inv_bind_matrix: inv_bind.into(),
-                    local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
-                    joint_matrix: Default::default(),
-                }
-            })
-            .collect();
-    } else {
-        // inverse bind matrices are not provided, meaning they are premultiplied into vertices
-        skin.joints = gltf_skin
-            .joints()
-            .map(|joint| skin::Joint {
-                name: joint.name().map(String::from),
-                parent_idx: None,
-                inv_bind_matrix: uv::Mat4::identity(),
-                local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
-                joint_matrix: Default::default(),
-            })
-            .collect();
-    }
+    let mut joints: Vec<skin::Joint> = gltf_skin
+        .joints()
+        .map(|joint| skin::Joint {
+            name: joint.name().map(String::from),
+            // parents will be computed once we have all joints
+            parent_idx: None,
+            local_pose: skin::TransformDecomp::from_parts(joint.transform().decomposed()),
+            // this will also be evaluated later
+            global_pose: uv::Mat4::identity(),
+        })
+        .collect();
 
     // joint parents
 
@@ -183,108 +161,116 @@ pub fn load_skin<'doc>(
                 .enumerate()
                 .find(|(_, joint)| joint.index() == child_gltf_id)
             {
-                skin.joints[child_joint_idx].parent_idx = Some(parent_idx);
+                joints[child_joint_idx].parent_idx = Some(parent_idx);
             }
         }
     }
 
-    skin
+    // inverse bind matrices
+
+    let reader = gltf_skin.reader(read_buf);
+    let inv_bind_matrices = if let Some(invs) = reader.read_inverse_bind_matrices() {
+        invs.map(uv::Mat4::from).collect()
+    } else {
+        // inverse bind matrices are not provided, meaning they are premultiplied into vertices
+        // (rare case that we can trivially support by making the inverse bind matrices identity,
+        // which isn't as efficient as it could be but not worth putting extra effort into)
+        vec![uv::Mat4::identity(); joints.len()]
+    };
+
+    skin::Skin {
+        root_transform,
+        joint_set: skin::JointSet { joints },
+        inv_bind_matrices: Vec::new(),
+    }
 }
 
-/// Load all animations associated with a skin in a glTF document.
-///
-/// This assumes the skin is the first one in the document
-/// (usually there is only one skin).
-/// TODO: handle cases with multiple skins per doc
-pub fn load_animations(doc: &gltf::Document, buffers: &[&[u8]]) -> Option<anim::MeshAnimator> {
+pub fn load_animation<'doc>(
+    buffers: &'doc [&[u8]],
+    // animations are assumed to be associated with a single skin
+    assoc_skin: gltf::Skin<'doc>,
+    gltf_anim: gltf::Animation<'doc>,
+) -> g_anim::GltfAnimation {
     let read_buf = |b: gltf::Buffer| Some(&buffers[b.index()][..b.length()]);
 
-    let gltf_skin = doc.skins().next()?;
+    let channels = gltf_anim
+        .channels()
+        .filter_map(|gltf_chan| {
+            use gltf::animation::util::ReadOutputs as Out;
+            use gltf::animation::Interpolation as Interp;
+            use gltf::animation::Property as Prop;
 
-    let mut animations = Vec::new();
+            let target = gltf_chan.target();
+            let target_joint = match assoc_skin
+                .joints()
+                .enumerate()
+                .find(|(_, joint)| joint.index() == target.node().index())
+            {
+                Some((joint_idx, _)) => joint_idx,
+                None => {
+                    eprintln!(
+                        "Ignored an animation channel that did not target a joint of the same skin"
+                    );
+                    return None;
+                }
+            };
+            let sampler = gltf_chan.sampler();
+            let chan_reader = gltf_chan.reader(read_buf);
+            let inputs = chan_reader.read_inputs()?.collect();
+            let mut outputs: Vec<f32> = Vec::new();
+            match chan_reader.read_outputs()? {
+                Out::Translations(t) => {
+                    outputs.extend(t.flat_map(|t| t.into_iter()));
+                }
+                Out::Rotations(r) => {
+                    outputs.extend(r.into_f32().flat_map(|r| r.into_iter()));
+                }
+                Out::Scales(s) => {
+                    outputs.extend(s.flat_map(|s| s.into_iter()));
+                }
+                Out::MorphTargetWeights(_) => {
+                    eprintln!("Morph target animations not supported");
+                    return None;
+                }
+            }
 
-    for gltf_anim in doc.animations() {
-        let channels = gltf_anim
-            .channels()
-            .filter_map(|gltf_chan| {
-                use gltf::animation::util::ReadOutputs as Out;
-                use gltf::animation::Interpolation as Interp;
-                use gltf::animation::Property as Prop;
-
-                let target = gltf_chan.target();
-                let target_joint = match gltf_skin
-                    .joints()
-                    .enumerate()
-                    .find(|(_, joint)| joint.index() == target.node().index())
-                {
-                    Some((joint_idx, _)) => joint_idx,
-                    // TODO: morph targets will add another wrinkle to this
-                    None => return None,
-                };
-                let sampler = gltf_chan.sampler();
-                let chan_reader = gltf_chan.reader(read_buf);
-                let inputs = chan_reader.read_inputs()?.collect();
-                let mut outputs: Vec<f32> = Vec::new();
-                match chan_reader.read_outputs()? {
-                    Out::Translations(t) => {
-                        outputs.extend(t.flat_map(|t| t.into_iter()));
-                    }
-                    Out::Rotations(r) => {
-                        outputs.extend(r.into_f32().flat_map(|r| r.into_iter()));
-                    }
-                    Out::Scales(s) => {
-                        outputs.extend(s.flat_map(|s| s.into_iter()));
-                    }
-                    Out::MorphTargetWeights(_) => {
+            Some(g_anim::Channel {
+                target: match target.property() {
+                    Prop::Translation => g_anim::Target::Joint {
+                        id: target_joint,
+                        property: g_anim::AnimatedProperty::Translation,
+                    },
+                    Prop::Rotation => g_anim::Target::Joint {
+                        id: target_joint,
+                        property: g_anim::AnimatedProperty::Rotation,
+                    },
+                    Prop::Scale => g_anim::Target::Joint {
+                        id: target_joint,
+                        property: g_anim::AnimatedProperty::Scale,
+                    },
+                    Prop::MorphTargetWeights => {
                         eprintln!("Morph target animations not supported");
                         return None;
                     }
-                }
-
-                Some(g_anim::Channel {
-                    target: match target.property() {
-                        Prop::Translation => g_anim::Target::Joint {
-                            id: target_joint,
-                            property: g_anim::AnimatedProperty::Translation,
-                        },
-                        Prop::Rotation => g_anim::Target::Joint {
-                            id: target_joint,
-                            property: g_anim::AnimatedProperty::Rotation,
-                        },
-                        Prop::Scale => g_anim::Target::Joint {
-                            id: target_joint,
-                            property: g_anim::AnimatedProperty::Scale,
-                        },
-                        Prop::MorphTargetWeights => {
-                            eprintln!("Morph target animations not supported");
-                            return None;
-                        }
-                    },
-                    ty: match target.property() {
-                        Prop::Translation | Prop::Scale => g_anim::ChannelType::Vector3,
-                        Prop::Rotation => g_anim::ChannelType::Rotor3,
-                        Prop::MorphTargetWeights => {
-                            eprintln!("Morph target animations not supported");
-                            return None;
-                        }
-                    },
-                    interpolation: match sampler.interpolation() {
-                        Interp::Linear => g_anim::InterpolationMode::Linear,
-                        Interp::Step => g_anim::InterpolationMode::Step,
-                        Interp::CubicSpline => g_anim::InterpolationMode::CubicSpline,
-                    },
-                    keyframe_ts: inputs,
-                    data: outputs,
-                })
+                },
+                ty: match target.property() {
+                    Prop::Translation | Prop::Scale => g_anim::ChannelType::Vector3,
+                    Prop::Rotation => g_anim::ChannelType::Rotor3,
+                    Prop::MorphTargetWeights => {
+                        eprintln!("Morph target animations not supported");
+                        return None;
+                    }
+                },
+                interpolation: match sampler.interpolation() {
+                    Interp::Linear => g_anim::InterpolationMode::Linear,
+                    Interp::Step => g_anim::InterpolationMode::Step,
+                    Interp::CubicSpline => g_anim::InterpolationMode::CubicSpline,
+                },
+                keyframe_ts: inputs,
+                data: outputs,
             })
-            .collect();
+        })
+        .collect();
 
-        animations.push(g_anim::GltfAnimation::new(
-            gltf_anim.name().map(String::from),
-            channels,
-        ));
-    }
-
-    // TODO: how do we associate animations with their meshes when there are many in a doc?
-    Some(anim::MeshAnimator::new(animations))
+    g_anim::GltfAnimation::new(channels)
 }

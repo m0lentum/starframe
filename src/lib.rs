@@ -1,6 +1,3 @@
-pub mod animation;
-pub use animation::{animator, MeshAnimator};
-
 pub mod game;
 pub use game::{Game, GameParams, GameState};
 

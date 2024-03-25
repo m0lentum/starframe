@@ -1,3 +1,5 @@
+mod animation;
+
 mod manager;
 pub use manager::{GraphicsManager, MeshId};
 
