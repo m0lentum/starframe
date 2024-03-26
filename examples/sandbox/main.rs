@@ -85,9 +85,6 @@ impl State {
 
         player::controller::upload_meshes(&game.renderer, &mut graphics);
 
-        // TODO: clear the graphics manager and do this on scene load instead
-        graphics.play_animation(sf::Animator::new(sf::AnimationId::from("library.sway")));
-
         let mesh_renderer = sf::MeshRenderer::new(&game.renderer, &graphics);
 
         let egui_context = egui::Context::default();
@@ -504,7 +501,12 @@ impl sf::GameState for State {
                     .tick(game.dt_fixed, Some(self.time_scale), &grav);
                 self.hecs_sync
                     .sync_physics_to_hecs(&self.physics, &mut self.world);
-                player::controller::tick(&game.input, &mut self.physics, &mut self.world);
+                player::controller::tick(
+                    &game.input,
+                    &mut self.physics,
+                    &self.graphics,
+                    &mut self.world,
+                );
 
                 Some(())
             }

@@ -3,6 +3,7 @@
 //! This file has gotten quite large and unwieldy over time.
 //! TODO: streamline this and bring in the Tiled editor integration from Flamegrower
 
+use itertools::Itertools;
 use starframe as sf;
 
 use rand::{distributions as distr, distributions::Distribution};
@@ -40,8 +41,15 @@ pub enum Recipe {
     BackgroundTree {
         #[serde(with = "sf::serde_pose")]
         pose: sf::Pose,
-        depth: f32,
         start_time: f32,
+    },
+    BackgroundForest {
+        mesh_count: usize,
+        anim_count: usize,
+        left: f32,
+        right: f32,
+        top: f32,
+        bottom: f32,
     },
 }
 
@@ -214,7 +222,7 @@ impl Recipe {
         graphics: &mut sf::GraphicsManager,
     ) {
         match self {
-            Recipe::Player(p_rec) => p_rec.spawn(physics, world),
+            Recipe::Player(p_rec) => p_rec.spawn(physics, graphics, world),
             Recipe::Block(block) => {
                 spawn_block(renderer, graphics, physics, world, *block);
             }
@@ -424,7 +432,7 @@ impl Recipe {
                 .upload(&renderer.device, None);
                 let mesh_id = graphics.insert_mesh(mesh, None);
                 for particle in &rope.particles {
-                    let mesh_ent = world.spawn((sf::Pose::default(), mesh_id.clone(), *particle));
+                    let mesh_ent = world.spawn((sf::Pose::default(), mesh_id, *particle));
                     hecs_sync.register_body(
                         particle.body,
                         mesh_ent,
@@ -469,13 +477,52 @@ impl Recipe {
                 }
                 physics.rope_set.insert(rope);
             }
-            Recipe::BackgroundTree {
-                pose,
-                depth,
-                start_time,
+            Recipe::BackgroundTree { pose, start_time } => {
+                let mesh_id = graphics.get_mesh_id("library.tree_mesh").unwrap();
+                let mesh_id = graphics.new_animation_target(mesh_id);
+                let mut anim =
+                    sf::Animator::new(graphics.get_animation_id("library.sway").unwrap())
+                        .with_target(mesh_id);
+                anim.t = *start_time;
+                graphics.insert_animator(anim);
+                world.spawn((*pose, mesh_id));
+            }
+            Recipe::BackgroundForest {
+                mesh_count,
+                anim_count,
+                left,
+                right,
+                top,
+                bottom,
             } => {
-                // TODO: depth, individual animation
-                world.spawn((*pose, sf::MeshId::from("library.tree_mesh")));
+                // spawn a ton of trees with a few shared animation states
+                let anim_id = graphics.get_animation_id("library.sway").unwrap();
+                let mesh_id = graphics.get_mesh_id("library.tree_mesh").unwrap();
+
+                let targets: Vec<sf::MeshId> = std::iter::once(mesh_id)
+                    .chain(std::iter::repeat_with(|| {
+                        graphics.new_animation_target(mesh_id)
+                    }))
+                    .take(*anim_count)
+                    .collect_vec();
+
+                let time_increment = 4. / targets.len() as f32;
+                for (i, target) in targets.iter().enumerate() {
+                    let mut animator = sf::Animator::new(anim_id).with_target(*target);
+                    animator.t = time_increment * i as f32;
+                    graphics.insert_animator(animator);
+                }
+
+                let mut rng = rand::thread_rng();
+                for mesh_idx in 0..*mesh_count {
+                    let pose = sf::PoseBuilder::new()
+                        .with_position([
+                            distr::Uniform::from(*left..*right).sample(&mut rng) as f64,
+                            distr::Uniform::from(*bottom..*top).sample(&mut rng) as f64,
+                        ])
+                        .build();
+                    world.spawn((pose, targets[mesh_idx % targets.len()]));
+                }
             }
         }
     }

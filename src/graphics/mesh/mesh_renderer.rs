@@ -383,11 +383,6 @@ impl MeshRenderer {
         ctx: &mut RenderContext,
         world: &mut hecs::World,
     ) {
-        // resolve string ids for efficient access
-        for (_, (id,)) in world.query_mut::<(&mut MeshId,)>() {
-            manager.resolve_mesh_id(id);
-        }
-
         let mut meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
             .query_mut::<(&MeshId, Option<&m::Pose>)>()
             .into_iter()
@@ -469,7 +464,8 @@ impl MeshRenderer {
             };
 
             // meshes were sorted by id earlier; collect all instances of the same mesh
-            while curr_idx < unskinned_meshes.len() && unskinned_meshes[curr_idx].0 == id {
+            while curr_idx < unskinned_meshes.len() && unskinned_meshes[curr_idx].0.mesh == id.mesh
+            {
                 let (_, pose) = unskinned_meshes[curr_idx];
 
                 // build the model matrix and push it into the instance buffer
@@ -502,19 +498,16 @@ impl MeshRenderer {
         while curr_idx < skinned_meshes.len() {
             let (id, _) = skinned_meshes[curr_idx];
 
-            let Some(&joint_offset) = id
-                .skin
-                .resolved()
-                .and_then(|skin_id| skin_offset_map.get(skin_id.0))
-            else {
-                continue;
-            };
             let Some(mesh) = manager.get_mesh_mut(id) else {
                 continue;
             };
 
-            while curr_idx < skinned_meshes.len() && skinned_meshes[curr_idx].0 == id {
-                let (_, pose) = skinned_meshes[curr_idx];
+            while curr_idx < skinned_meshes.len() && skinned_meshes[curr_idx].0.mesh == id.mesh {
+                let (id, pose) = skinned_meshes[curr_idx];
+                let Some(&joint_offset) = id.skin.and_then(|skin_id| skin_offset_map.get(skin_id))
+                else {
+                    continue;
+                };
 
                 // build the model matrix and push it into the instance buffer
                 let model = {

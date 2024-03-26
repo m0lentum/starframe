@@ -1,6 +1,6 @@
 use super::gltf_animation::{AnimatedProperty, GltfAnimation, Target};
 use crate::graphics::{
-    manager::{AnimationId, SkinId},
+    manager::{AnimationId, MeshId},
     mesh::skin::Skin,
 };
 
@@ -8,7 +8,7 @@ use crate::graphics::{
 pub struct Animator {
     pub t: f32,
     pub(crate) animation: AnimationId,
-    pub(crate) target_override: Option<SkinId>,
+    pub(crate) target: Option<MeshId>,
 }
 
 impl Animator {
@@ -16,8 +16,18 @@ impl Animator {
         Self {
             t: 0.,
             animation,
-            target_override: None,
+            target: None,
         }
+    }
+
+    /// Set the target of this animation to a different mesh instance from the default.
+    ///
+    /// Not needed if there is only one animation state associated with a mesh,
+    /// as the animation will be targeted to that state by default. Use with
+    /// [`GraphicsManager::new_animation_target`][crate::GraphicsManager::new_animation_target].
+    pub fn with_target(mut self, mesh_id: MeshId) -> Self {
+        self.target = Some(mesh_id);
+        self
     }
 
     /// Step this animator forward `dt` seconds.

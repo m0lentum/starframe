@@ -40,7 +40,12 @@ pub struct PlayerRecipe {
 }
 
 impl PlayerRecipe {
-    pub fn spawn(&self, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
+    pub fn spawn(
+        &self,
+        physics: &mut sf::PhysicsWorld,
+        graphics: &sf::GraphicsManager,
+        world: &mut sf::hecs::World,
+    ) {
         let body = sf::Body::new_particle(1.0);
         let body_key = physics.entity_set.insert_body(body);
         let coll = player_collider();
@@ -50,7 +55,13 @@ impl PlayerRecipe {
             .with_rotation(sf::Angle::Deg(90.0))
             .build();
         let state = PlayerState::new();
-        world.spawn((body_key, coll_key, pose, sf::MeshId::from("player"), state));
+        world.spawn((
+            body_key,
+            coll_key,
+            pose,
+            graphics.get_mesh_id("player").unwrap(),
+            state,
+        ));
     }
 }
 
@@ -83,7 +94,12 @@ pub mod controller {
         graphics.insert_mesh(bullet_mesh, Some("bullet"));
     }
 
-    pub fn tick(input: &sf::Input, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
+    pub fn tick(
+        input: &sf::Input,
+        physics: &mut sf::PhysicsWorld,
+        graphics: &sf::GraphicsManager,
+        world: &mut sf::hecs::World,
+    ) {
         let move_axis = input.axis(sf::AxisQuery {
             pos_btn: sf::Key::Right.into(),
             neg_btn: sf::Key::Left.into(),
@@ -159,7 +175,12 @@ pub mod controller {
 
                 bullet_to_spawn = Some((
                     player_entity,
-                    (b_pose, sf::MeshId::from("bullet"), b_body_key, b_coll_key),
+                    (
+                        b_pose,
+                        graphics.get_mesh_id("bullet").unwrap(),
+                        b_body_key,
+                        b_coll_key,
+                    ),
                 ));
             }
         }

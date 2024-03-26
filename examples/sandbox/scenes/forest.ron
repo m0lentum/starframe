@@ -1,0 +1,17 @@
+(
+    recipes: [
+        BackgroundTree (
+            pose: ( position: (0, 10) ), start_time: 0,
+        ),
+        BackgroundTree (
+            pose: ( position: (7, 11) ), start_time: 2,
+        ),
+        BackgroundTree (
+            pose: ( position: (-7, 12) ), start_time: 4,
+        ),
+        BackgroundForest (
+            mesh_count: 100, anim_count: 10,
+	    left: -30, right: 30, top: 20, bottom: -20,
+        ),
+    ]
+)
