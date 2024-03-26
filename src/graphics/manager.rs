@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use thunderdome as td;
 
 use super::{
-    animation::gltf_animation::GltfAnimation,
+    animation::{animator::Animator, gltf_animation::GltfAnimation},
     material::{Material, MaterialParams, MaterialResources},
-    mesh::{skin::JointSet, Mesh, MeshParams},
+    mesh::{Mesh, MeshParams},
     Renderer, Skin,
 };
 use crate::math::uv;
@@ -23,19 +23,68 @@ pub(crate) enum AssetId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct MeshId(AssetId);
+pub struct MeshId {
+    mesh: AssetId,
+    // mesh id also refers to a skin if it has one,
+    // because there can be multiple instances of a skin with different animations
+    // for one instance of a mesh
+    pub(crate) skin: MeshSkinId,
+}
 
 impl<S> From<S> for MeshId
 where
     String: From<S>,
 {
     fn from(value: S) -> Self {
-        Self(AssetId::Unresolved(String::from(value)))
+        Self {
+            mesh: AssetId::Unresolved(String::from(value)),
+            skin: MeshSkinId::Unresolved,
+        }
+    }
+}
+
+impl MeshId {
+    /// Create a new animation target for this mesh.
+    /// This allows multiple different animation states for instances of one mesh.
+    ///
+    /// This does nothing if the mesh has no associated skin.
+    pub fn detach_animation_target(mut self) -> Self {
+        self.skin = MeshSkinId::DuplicatePending;
+        self
+    }
+}
+
+/// Skin ids for internal use only,
+/// users don't see them directly
+/// and instead operate on meshes and animations
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SkinId(pub(crate) td::Index);
+
+/// Mesh ids contain the possibility of duplicating a skin
+/// to allow for differing animation states
+/// between instances of the same mesh.
+/// Duplication is performed when ids are resolved.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum MeshSkinId {
+    Unresolved,
+    Nonexistent,
+    DuplicatePending,
+    Resolved(SkinId),
+}
+impl MeshSkinId {
+    pub fn resolved(&self) -> Option<SkinId> {
+        match self {
+            Self::Resolved(id) => Some(*id),
+            _ => None,
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AnimationId(AssetId);
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AnimatorId(td::Index);
 
 impl<S> From<S> for AnimationId
 where
@@ -44,20 +93,6 @@ where
     fn from(value: S) -> Self {
         Self(AssetId::Unresolved(String::from(value)))
     }
-}
-
-// animation state here for now for sketching, maybe move this into the animation module
-
-// TODONEXTTIME: maybe instead of duplicating the joint set,
-// duplicate the skin;
-// then we can have the mesh renderer pull all joint matrices from the skin
-// with no knowledge of animations.
-// how does this affect anim_target_map,
-// since now the same animation can be applied to multiple skins?
-pub struct AnimationState {
-    /// a copy of the joint set being animated,
-    /// in order to allow multiple animations of the same mesh to coexist
-    joints: JointSet,
 }
 
 //
@@ -81,7 +116,7 @@ pub struct GraphicsManager {
     anim_name_map: HashMap<String, td::Index>,
     /// map from animations to target skins
     anim_target_map: td::Arena<td::Index>,
-    anim_states: td::Arena<AnimationState>,
+    animators: td::Arena<Animator>,
 
     materials: td::Arena<Material>,
     pub(crate) material_res: MaterialResources,
@@ -125,7 +160,7 @@ impl GraphicsManager {
             animations: td::Arena::new(),
             anim_name_map: HashMap::new(),
             anim_target_map: td::Arena::new(),
-            anim_states: td::Arena::new(),
+            animators: td::Arena::new(),
 
             materials: td::Arena::new(),
             material_res,
@@ -209,7 +244,7 @@ impl GraphicsManager {
                     return td::Index::DANGLING;
                 };
                 let root_transform = node_transforms_world[root_joint.index()];
-                let mut loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
+                let loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
                 // evaluate the initial joint matrices in case this skin is used without animation
                 loaded_skin.evaluate_joint_matrices();
                 self.skins.insert(loaded_skin)
@@ -232,7 +267,7 @@ impl GraphicsManager {
                 continue;
             };
 
-            let anim = gltf_import::load_animation(&bufs, assoc_skin, gltf_anim);
+            let anim = gltf_import::load_animation(&bufs, assoc_skin.clone(), gltf_anim.clone());
             let anim_id = self.animations.insert(anim);
 
             self.anim_target_map
@@ -283,15 +318,61 @@ impl GraphicsManager {
         Ok(())
     }
 
-    pub(crate) fn resolve_mesh_id(&self, id: &mut MeshId) {
+    pub(crate) fn resolve_mesh_id(&mut self, id: &mut MeshId) {
+        // find an arena index corresponding to the name
+        let mesh_id = match &id.mesh {
+            AssetId::Resolved(id) => id,
+            AssetId::Unresolved(name) => {
+                if let Some(idx) = self.mesh_name_map.get(name) {
+                    id.mesh = AssetId::Resolved(*idx);
+                    idx
+                } else {
+                    eprintln!("Unresolved mesh id: {name}");
+                    return;
+                }
+            }
+        };
+
+        // resolve skin id to either the mesh's default
+        // or a new duplicated one
+        match &id.skin {
+            MeshSkinId::Unresolved => {
+                // associate with the mesh's default skin
+                id.skin = match self.mesh_skin_map.get(*mesh_id) {
+                    Some(skin_id) => MeshSkinId::Resolved(SkinId(*skin_id)),
+                    None => MeshSkinId::Nonexistent,
+                };
+            }
+            MeshSkinId::DuplicatePending => {
+                // user has opted to duplicate this skin, create a new one
+                if let Some(original_skin) = self
+                    .mesh_skin_map
+                    .get(*mesh_id)
+                    .and_then(|skin_id| self.skins.get(*skin_id))
+                {
+                    let new_id = self.skins.insert(original_skin.clone());
+                    id.skin = MeshSkinId::Resolved(SkinId(new_id));
+                } else {
+                    id.skin = MeshSkinId::Nonexistent;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// This one takes a split borrow instead of `self`
+    /// because we need to call it from within another `self` method
+    fn resolve_animation_id(name_map: &HashMap<String, td::Index>, id: &mut AnimationId) {
         match &id.0 {
             AssetId::Resolved(_) => {}
             AssetId::Unresolved(name) => {
-                if let Some(idx) = self.mesh_name_map.get(name) {
+                if let Some(idx) = name_map.get(name) {
                     id.0 = AssetId::Resolved(*idx);
+                } else {
+                    eprintln!("Unresolved animation id: {name}");
                 }
             }
-        }
+        };
     }
 
     /// Add a mesh to the set of drawable assets.
@@ -307,11 +388,14 @@ impl GraphicsManager {
         if let Some(id) = name {
             self.mesh_name_map.insert(id.to_string(), key);
         }
-        MeshId(AssetId::Resolved(key))
+        MeshId {
+            mesh: AssetId::Resolved(key),
+            skin: MeshSkinId::Nonexistent,
+        }
     }
 
     pub fn get_mesh(&self, id: &MeshId) -> Option<&Mesh> {
-        match &id.0 {
+        match &id.mesh {
             AssetId::Resolved(idx) => Some(idx),
             AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
@@ -319,7 +403,7 @@ impl GraphicsManager {
     }
 
     pub fn get_mesh_mut(&mut self, id: &MeshId) -> Option<&mut Mesh> {
-        match &id.0 {
+        match &id.mesh {
             AssetId::Resolved(idx) => Some(idx),
             AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
@@ -327,7 +411,7 @@ impl GraphicsManager {
     }
 
     pub fn get_mesh_material(&self, id: &MeshId) -> &Material {
-        match &id.0 {
+        match &id.mesh {
             AssetId::Resolved(idx) => Some(idx),
             AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
@@ -339,10 +423,43 @@ impl GraphicsManager {
     /// Get the arena index pointing to a mesh's skin,
     /// for use in the mesh renderer.
     pub(crate) fn get_mesh_skin_index(&self, id: &MeshId) -> Option<td::Index> {
-        match &id.0 {
+        match &id.mesh {
             AssetId::Resolved(idx) => Some(idx),
             AssetId::Unresolved(name) => self.mesh_name_map.get(name),
         }
         .and_then(|mesh_idx| self.mesh_skin_map.get(*mesh_idx).copied())
+    }
+
+    /// Begin playing an animation.
+    ///
+    /// Returns an id that can be used to modify the playback state later.
+    pub fn play_animation(&mut self, anim: Animator) -> AnimatorId {
+        AnimatorId(self.animators.insert(anim))
+    }
+
+    pub fn update_animations(&mut self, dt: f32) {
+        for (_, animator) in self.animators.iter_mut() {
+            Self::resolve_animation_id(&self.anim_name_map, &mut animator.animation);
+            let AssetId::Resolved(anim_id) = animator.animation.0 else {
+                continue;
+            };
+            let Some(animation) = self.animations.get(anim_id) else {
+                continue;
+            };
+            animator.step_time(dt, animation);
+
+            let target_skin_id = if let Some(t_override) = &animator.target_override {
+                t_override.0
+            } else if let Some(target) = self.anim_target_map.get(anim_id) {
+                *target
+            } else {
+                continue;
+            };
+            let Some(target_skin) = self.skins.get_mut(target_skin_id) else {
+                continue;
+            };
+            animator.update_skin(animation, target_skin);
+            target_skin.update_global_poses();
+        }
     }
 }

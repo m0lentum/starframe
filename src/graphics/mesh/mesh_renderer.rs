@@ -502,9 +502,10 @@ impl MeshRenderer {
         while curr_idx < skinned_meshes.len() {
             let (id, _) = skinned_meshes[curr_idx];
 
-            let Some(&joint_offset) = manager
-                .get_mesh_skin_index(id)
-                .and_then(|skin_id| skin_offset_map.get(skin_id))
+            let Some(&joint_offset) = id
+                .skin
+                .resolved()
+                .and_then(|skin_id| skin_offset_map.get(skin_id.0))
             else {
                 continue;
             };

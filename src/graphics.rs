@@ -1,7 +1,8 @@
 mod animation;
+pub use animation::animator::Animator;
 
 mod manager;
-pub use manager::{GraphicsManager, MeshId};
+pub use manager::{AnimationId, GraphicsManager, MeshId};
 
 pub mod renderer;
 pub use renderer::{RenderContext, Renderer};

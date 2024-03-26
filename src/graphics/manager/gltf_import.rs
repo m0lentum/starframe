@@ -11,6 +11,7 @@ use crate::{
 };
 
 use itertools::izip;
+use std::rc::Rc;
 
 pub fn load_mesh_data<'doc>(buffers: &'doc [&[u8]], prim: gltf::Primitive<'doc>) -> MeshData {
     // helper for constructing gltf readers
@@ -181,7 +182,7 @@ pub fn load_skin<'doc>(
     skin::Skin {
         root_transform,
         joint_set: skin::JointSet { joints },
-        inv_bind_matrices: Vec::new(),
+        inv_bind_matrices: Rc::from(inv_bind_matrices),
     }
 }
 

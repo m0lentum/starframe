@@ -474,7 +474,7 @@ impl Recipe {
                 depth,
                 start_time,
             } => {
-                // TODO: depth, animation
+                // TODO: depth, individual animation
                 world.spawn((*pose, sf::MeshId::from("library.tree_mesh")));
             }
         }

@@ -85,6 +85,9 @@ impl State {
 
         player::controller::upload_meshes(&game.renderer, &mut graphics);
 
+        // TODO: clear the graphics manager and do this on scene load instead
+        graphics.play_animation(sf::Animator::new(sf::AnimationId::from("library.sway")));
+
         let mesh_renderer = sf::MeshRenderer::new(&game.renderer, &graphics);
 
         let egui_context = egui::Context::default();
@@ -529,8 +532,7 @@ impl sf::GameState for State {
         });
 
         if matches!(self.state, StateEnum::Playing) {
-            sf::animator::step_time(dt * self.time_scale as f32, &mut self.world);
-            sf::animator::update_joints(&mut self.world);
+            self.graphics.update_animations(dt);
         }
 
         if self.bvh_vis_active {

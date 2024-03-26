@@ -1,13 +1,15 @@
 use crate::math::uv;
 
 use itertools::izip;
+use std::rc::Rc;
 
 /// A hierarchy of joints used for deforming and animating meshes.
 #[derive(Debug, Clone)]
 pub struct Skin {
     pub(crate) root_transform: uv::Mat4,
     pub(crate) joint_set: JointSet,
-    pub(crate) inv_bind_matrices: Vec<uv::Mat4>,
+    /// inverse bind matrices shared between clones of the skin
+    pub(crate) inv_bind_matrices: Rc<[uv::Mat4]>,
 }
 
 impl Skin {
