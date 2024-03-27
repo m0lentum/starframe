@@ -78,12 +78,7 @@ pub struct State {
 impl State {
     fn init(game: &mut sf::Game) -> Self {
         let mut graphics = sf::GraphicsManager::new(&game.renderer);
-
-        graphics
-            .load_gltf(&game.renderer, "examples/sandbox/assets/library.glb")
-            .expect("Failed to load shared assets");
-
-        player::controller::upload_meshes(&game.renderer, &mut graphics);
+        load_common_assets(&game.renderer, &mut graphics);
 
         let mesh_renderer = sf::MeshRenderer::new(&game.renderer, &graphics);
 
@@ -144,9 +139,23 @@ impl State {
 
     fn reset(&mut self) {
         self.physics.clear();
+        self.graphics.clear();
         self.world.clear();
         self.hecs_sync.clear();
     }
+}
+
+/// Load assets referenced by name elsewhere.
+///
+/// Currently, this must be called after [`State::reset`] before loading a level.
+/// It would be nice to have a form of garbage collection for `GraphicsManager`
+/// that doesn't remove these, but that's not a top priority right now
+fn load_common_assets(renderer: &sf::Renderer, graphics: &mut sf::GraphicsManager) {
+    graphics
+        .load_gltf(renderer, "examples/sandbox/assets/library.glb")
+        .expect("Failed to load shared assets");
+
+    player::controller::upload_meshes(renderer, graphics);
 }
 
 //
@@ -431,6 +440,7 @@ impl sf::GameState for State {
         }
         if reload {
             self.reset();
+            load_common_assets(&game.renderer, &mut self.graphics);
             self.scene.instantiate(
                 &mut self.physics,
                 &mut self.world,

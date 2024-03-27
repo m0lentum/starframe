@@ -55,6 +55,7 @@ impl PlayerRecipe {
             .with_rotation(sf::Angle::Deg(90.0))
             .build();
         let state = PlayerState::new();
+
         world.spawn((
             body_key,
             coll_key,

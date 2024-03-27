@@ -260,6 +260,26 @@ impl GraphicsManager {
         Ok(())
     }
 
+    /// Remove all loaded assets and state.
+    ///
+    /// This is a crude solution; ideally we'd like to load
+    /// a common set of assets on game start that never gets unloaded
+    /// and then only remove level-specific state on level change.
+    /// Better garbage collection is being thought about
+    /// and will be implemented later.
+    pub fn clear(&mut self) {
+        self.meshes.clear();
+        self.mesh_name_map.clear();
+        self.mesh_skin_map.clear();
+        self.mesh_material_map.clear();
+        self.skins.clear();
+        self.animations.clear();
+        self.anim_name_map.clear();
+        self.anim_target_map.clear();
+        self.animators.clear();
+        self.materials.clear();
+    }
+
     /// Add a mesh to the set of drawable assets.
     ///
     /// Returns a pre-resolved [`MeshId`] that can be used to render the mesh
