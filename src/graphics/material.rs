@@ -97,7 +97,7 @@ impl MaterialResources {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MaterialParams<'a> {
     pub base_color: Option<[f32; 4]>,
     pub diffuse_tex: Option<TextureData<'a>>,

@@ -145,6 +145,16 @@ impl State {
     }
 }
 
+/// Set of colors to pick from for randomly spawned objects
+const PALETTE_COLORS: [[f32; 4]; 6] = [
+    [0.910, 0.582, 0.582, 1.],
+    [0.813, 0.910, 0.546, 1.],
+    [0.904, 0.910, 0.546, 1.],
+    [0.696, 0.940, 0.936, 1.],
+    [0.836, 0.721, 0.890, 1.],
+    [0.890, 0.721, 0.851, 1.],
+];
+
 /// Load assets referenced by name elsewhere.
 ///
 /// Currently, this must be called after [`State::reset`] before loading a level.
@@ -156,6 +166,21 @@ fn load_common_assets(renderer: &sf::Renderer, graphics: &mut sf::GraphicsManage
         .expect("Failed to load shared assets");
 
     player::controller::upload_meshes(renderer, graphics);
+
+    for (i, col) in PALETTE_COLORS.into_iter().enumerate() {
+        graphics.create_material(
+            renderer,
+            sf::MaterialParams {
+                base_color: Some(col),
+                ..Default::default()
+            },
+            // TODO: naming these with strings is kind of dumb
+            // when we could just store the ids,
+            // but I can't be bothered to refactor this right now
+            // when there's a much bigger refactoring coming up
+            Some(&format!("palette{i}")),
+        );
+    }
 }
 
 //

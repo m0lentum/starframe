@@ -6,7 +6,7 @@
 use itertools::Itertools;
 use starframe as sf;
 
-use rand::{distributions as distr, distributions::Distribution};
+use rand::{distributions as distr, distributions::Distribution, Rng};
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub enum Recipe {
@@ -153,7 +153,7 @@ fn spawn_block(
 struct Solid<'a> {
     pose: sf::Pose,
     colliders: &'a [sf::Collider],
-    color: [f32; 3],
+    material: Option<String>,
 }
 
 fn spawn_static(
@@ -173,8 +173,14 @@ fn spawn_static(
             ..Default::default()
         }
         .upload(&renderer.device, None);
-        // TODO: attach material with the color
         let mesh_id = graphics.insert_mesh(mesh, None);
+        if let Some(mat_id) = solid
+            .material
+            .as_ref()
+            .and_then(|mat| graphics.get_material_id(mat))
+        {
+            graphics.set_mesh_material(mesh_id, mat_id);
+        }
         world.spawn((coll_key, mesh_id));
     }
 }
@@ -205,6 +211,13 @@ fn spawn_body(
         }
         .upload(&renderer.device, None);
         let mesh_id = graphics.insert_mesh(mesh, None);
+        if let Some(mat_id) = solid
+            .material
+            .as_ref()
+            .and_then(|mat| graphics.get_material_id(mat))
+        {
+            graphics.set_mesh_material(mesh_id, mat_id);
+        }
         let ent = world.spawn((solid.pose, coll_key, mesh_id));
         hecs_sync.register_collider(coll_key, ent, sf::HecsSyncOptions::physics_to_hecs_only());
     }
@@ -221,6 +234,13 @@ impl Recipe {
         renderer: &sf::Renderer,
         graphics: &mut sf::GraphicsManager,
     ) {
+        let mut rng = rand::thread_rng();
+        let mut random_palette = || {
+            Some(format!(
+                "palette{}",
+                rng.gen_range(0..super::PALETTE_COLORS.len())
+            ))
+        };
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(physics, graphics, world),
             Recipe::Block(block) => {
@@ -241,7 +261,7 @@ impl Recipe {
                 let solid = Solid {
                     pose,
                     colliders: &mut [coll],
-                    color: random_color(),
+                    material: random_palette(),
                 };
                 if *is_static {
                     spawn_static(renderer, graphics, physics, world, solid);
@@ -260,7 +280,7 @@ impl Recipe {
                 let solid = Solid {
                     pose: (*pose).into(),
                     colliders: &mut [sf::Collider::new_capsule(*length, *radius)],
-                    color: random_color(),
+                    material: random_palette(),
                 };
                 if *is_static {
                     spawn_static(renderer, graphics, physics, world, solid);
@@ -272,7 +292,7 @@ impl Recipe {
                 let solid = Solid {
                     pose: *pose,
                     colliders,
-                    color: random_color(),
+                    material: random_palette(),
                 };
                 spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
             }
@@ -317,7 +337,7 @@ impl Recipe {
                                 caps_full_length - width,
                                 radius,
                             )],
-                            color: random_color(),
+                            material: random_palette(),
                         },
                     );
                     let caps_length_half = caps_full_length / 2.0;
@@ -513,7 +533,6 @@ impl Recipe {
                     graphics.insert_animator(animator);
                 }
 
-                let mut rng = rand::thread_rng();
                 for mesh_idx in 0..*mesh_count {
                     let pose = sf::PoseBuilder::new()
                         .with_position([
@@ -526,13 +545,4 @@ impl Recipe {
             }
         }
     }
-}
-
-fn random_color() -> [f32; 3] {
-    let mut rng = rand::thread_rng();
-    [
-        distr::Uniform::from(0.6..1.0).sample(&mut rng),
-        distr::Uniform::from(0.6..1.0).sample(&mut rng),
-        distr::Uniform::from(0.6..1.0).sample(&mut rng),
-    ]
 }

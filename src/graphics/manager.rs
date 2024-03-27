@@ -32,6 +32,9 @@ pub struct MeshId {
 pub(crate) struct SkinId(pub(crate) td::Index);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MaterialId(td::Index);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AnimationId(td::Index);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,6 +64,7 @@ pub struct GraphicsManager {
     animators: td::Arena<Animator>,
 
     materials: td::Arena<Material>,
+    material_name_map: HashMap<String, td::Index>,
     pub(crate) material_res: MaterialResources,
     default_material: Material,
 }
@@ -105,6 +109,7 @@ impl GraphicsManager {
             animators: td::Arena::new(),
 
             materials: td::Arena::new(),
+            material_name_map: HashMap::new(),
             material_res,
             default_material,
         }
@@ -278,6 +283,7 @@ impl GraphicsManager {
         self.anim_target_map.clear();
         self.animators.clear();
         self.materials.clear();
+        self.material_name_map.clear();
     }
 
     /// Add a mesh to the set of drawable assets.
@@ -339,6 +345,31 @@ impl GraphicsManager {
     }
 
     #[inline]
+    pub fn create_material(
+        &mut self,
+        rend: &Renderer,
+        params: MaterialParams<'_>,
+        name: Option<&str>,
+    ) -> MaterialId {
+        let mat = Material::new(rend, &self.material_res, params);
+        let id = self.materials.insert(mat);
+        if let Some(name) = name {
+            self.material_name_map.insert(name.to_string(), id);
+        }
+        MaterialId(id)
+    }
+
+    #[inline]
+    pub fn get_material_id(&self, name: &str) -> Option<MaterialId> {
+        self.material_name_map.get(name).copied().map(MaterialId)
+    }
+
+    #[inline]
+    pub fn set_mesh_material(&mut self, mesh: MeshId, mat: MaterialId) {
+        self.mesh_material_map.insert_at(mesh.mesh, mat.0);
+    }
+
+    #[inline]
     pub fn get_animation_id(&self, name: &str) -> Option<AnimationId> {
         self.anim_name_map.get(name).copied().map(AnimationId)
     }
@@ -346,6 +377,7 @@ impl GraphicsManager {
     /// Add an Animator that controls the playback of a single animation at a time.
     ///
     /// Returns an id that can be used to modify the playback state later.
+    #[inline]
     pub fn insert_animator(&mut self, anim: Animator) -> AnimatorId {
         AnimatorId(self.animators.insert(anim))
     }
