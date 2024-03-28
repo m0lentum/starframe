@@ -26,8 +26,6 @@ pub struct MeshParams {
     /// Offset from the Pose of the entity this mesh is attached to,
     /// or the world origin if it doesn't have a Pose.
     pub offset: m::Pose,
-    /// Depth of the mesh in 3D space.
-    pub depth: f32,
     /// Whether or not to draw an outline for the mesh when using
     /// [`OutlineRenderer`][crate::OutlineRenderer].
     pub has_outline: bool,
@@ -47,7 +45,6 @@ impl Default for MeshParams {
     fn default() -> Self {
         Self {
             offset: m::Pose::default(),
-            depth: 0.0,
             has_outline: true,
             data: MeshData::default(),
         }
@@ -89,7 +86,6 @@ impl MeshParams {
 
         Mesh {
             offset: self.offset,
-            depth: self.depth,
             has_outline: self.has_outline,
             gpu_data,
         }
@@ -102,7 +98,6 @@ impl MeshParams {
 /// Vertex data only exists on the GPU at this point and is immutable.
 pub struct Mesh {
     pub offset: m::Pose,
-    pub depth: f32,
     pub has_outline: bool,
     gpu_data: GpuMeshData,
 }
