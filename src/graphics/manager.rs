@@ -16,6 +16,7 @@ mod gltf_import;
 // id types
 //
 
+/// Identifier for a [`Mesh`] stored in a [`GraphicsManager`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MeshId {
     pub(crate) mesh: td::Index,
@@ -31,12 +32,19 @@ pub struct MeshId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct SkinId(pub(crate) td::Index);
 
+/// Identifier for a [`Material`] stored in a [`GraphicsManager`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MaterialId(td::Index);
 
+/// Identifier for an animation stored in a [`GraphicsManager`].
+///
+/// Note: Animations can't currently be authored by hand,
+/// so the only way to obtain one is to load the animation from a glTF file
+/// and look it up by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AnimationId(td::Index);
 
+/// Identifier for an [`Animator`] stored in a [`GraphicsManager`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AnimatorId(td::Index);
 
@@ -44,6 +52,42 @@ pub struct AnimatorId(td::Index);
 // manager itself
 //
 
+/// Structure holding graphics assets and animation states.
+///
+/// # Rendering meshes
+///
+/// The [`MeshRenderer`][crate::MeshRenderer] draws all instances of [`MeshId`]
+/// found in a [`hecs::World`].
+/// If an entity has both a [`MeshId`] and a [`Pose`][crate::math::Pose],
+/// it is rendered at the location defined by the pose.
+///
+/// # Loading assets
+///
+/// The preferred way to store hand-authored assets is the glTF format,
+/// loaded with [`load_gltf`][Self::load_gltf].
+/// When generating assets in code, you can insert them into the manager
+/// with methods starting with `insert_`.
+/// Not all features are available this way;
+/// notably, skins and animations cannot currently be created outside of glTF.
+///
+/// # Animating meshes
+///
+/// Animations are played by inserting [`Animator`]s into the [`GraphicsManager`]
+/// with [`insert_animator`][Self::insert_animator].
+/// Animations can currently only be created by loading them from glTF documents,
+/// and their names follow the scheme described in [`load_gltf`][Self::load_gltf].
+///
+/// ## Multiple animations for one mesh
+///
+/// Each animation is associated with a skin,
+/// which in turn is associated with a mesh.
+/// By default, the skin is shared between all instances of the mesh in the world,
+/// and thus they all share the same animation state.
+/// You can duplicate the skin, creating an additional animation target
+/// separate from the original,
+/// with [`new_animation_target`][Self::new_animation_target],
+/// which returns a new mesh id that can be set as an animator's target
+/// with [`Animator::with_target`].
 pub struct GraphicsManager {
     meshes: td::Arena<Mesh>,
     /// map from mesh names to mesh ids
@@ -115,8 +159,29 @@ impl GraphicsManager {
         }
     }
 
-    /// Load all graphics assets (meshes, skins, materials, animations)
-    /// in a glTF document.
+    /// Load all graphics assets (meshes, skins, materials, animations) in a glTF document.
+    ///
+    /// # Naming scheme
+    ///
+    /// Each named asset in the document is named `{file_stem}.{name}`,
+    /// where `file_stem` is the name of the document without the `.gltf`/`.glb` extension.
+    /// Meshes, animations, and materials can then be looked up with
+    /// [`get_mesh_id`][Self::get_mesh_id],
+    /// [`get_animation_id`][Self::get_animation_id],
+    /// and [`get_material_id`][Self::get_material_id] respectively.
+    /// For instance, if a document named `library.glb`
+    /// contains a mesh called `cool_mesh`,
+    /// `graphics_manager.get_mesh_id("library.cool_mesh")`
+    /// will return an id pointing to that mesh.
+    ///
+    /// # Limitations
+    ///
+    /// The supported subset of glTF's features is fairly large but not complete.
+    /// Current notable limitations include:
+    /// - meshes can only have one material
+    /// - materials only support base color, diffuse textures, and normal maps
+    /// - animations can only target one skin at a time
+    ///   and cannot target nodes that aren't part of a skin
     #[cfg(feature = "gltf")]
     pub fn load_gltf(
         &mut self,
@@ -288,7 +353,7 @@ impl GraphicsManager {
 
     /// Add a mesh to the set of drawable assets.
     ///
-    /// Returns a pre-resolved [`MeshId`] that can be used to render the mesh
+    /// Returns a [`MeshId`] that can be used to render the mesh
     /// by inserting it into a [`hecs`] world.
     /// If `name` is given, the mesh can also be accessed by
     /// looking it up later with [`get_mesh_id`][Self::get_mesh_id].
@@ -306,6 +371,9 @@ impl GraphicsManager {
         }
     }
 
+    /// Look up a mesh id by its name.
+    ///
+    /// See [`load_gltf`][Self::load_gltf] for naming of assets loaded from glTF.
     #[inline]
     pub fn get_mesh_id(&self, name: &str) -> Option<MeshId> {
         self.mesh_name_map.get(name).map(|&mesh| MeshId {
@@ -314,6 +382,11 @@ impl GraphicsManager {
         })
     }
 
+    /// Create a new animation target for the given mesh.
+    /// See [`GraphicsManager`][Self] for details.
+    ///
+    /// Returns a new [`MeshId`] containing the new animation target information.
+    /// This is a different id, so make sure it's the one you store in the `hecs` world!
     pub fn new_animation_target(&mut self, mesh_id: MeshId) -> MeshId {
         if let Some(skin) = mesh_id.skin.and_then(|skin_id| self.skins.get(skin_id)) {
             let new_skin = self.skins.insert(skin.clone());
@@ -326,16 +399,22 @@ impl GraphicsManager {
         }
     }
 
+    /// Access a mesh stored in the manager, if it still exists.
     #[inline]
     pub fn get_mesh(&self, id: &MeshId) -> Option<&Mesh> {
         self.meshes.get(id.mesh)
     }
 
+    /// Mutably access a mesh stored in the manager, if it still exists.
     #[inline]
     pub fn get_mesh_mut(&mut self, id: &MeshId) -> Option<&mut Mesh> {
         self.meshes.get_mut(id.mesh)
     }
 
+    /// Get the material associated with a mesh.
+    ///
+    /// If no material has been explicitly associated,
+    /// the default material is returned.
     #[inline]
     pub fn get_mesh_material(&self, id: &MeshId) -> &Material {
         self.mesh_material_map
@@ -344,6 +423,9 @@ impl GraphicsManager {
             .unwrap_or(&self.default_material)
     }
 
+    /// Create a new material.
+    ///
+    /// To associate the material with a mesh, see [`set_mesh_material`][Self::set_mesh_material].
     #[inline]
     pub fn create_material(
         &mut self,
@@ -359,16 +441,23 @@ impl GraphicsManager {
         MaterialId(id)
     }
 
+    /// Look up a material id by its name.
+    ///
+    /// See [`load_gltf`][Self::load_gltf] for naming of assets loaded from glTF.
     #[inline]
     pub fn get_material_id(&self, name: &str) -> Option<MaterialId> {
         self.material_name_map.get(name).copied().map(MaterialId)
     }
 
+    /// Set a mesh to be drawn with the specified material.
     #[inline]
     pub fn set_mesh_material(&mut self, mesh: MeshId, mat: MaterialId) {
         self.mesh_material_map.insert_at(mesh.mesh, mat.0);
     }
 
+    /// Look up an animation id by its name.
+    ///
+    /// See [`load_gltf`][Self::load_gltf] for naming of assets loaded from glTF.
     #[inline]
     pub fn get_animation_id(&self, name: &str) -> Option<AnimationId> {
         self.anim_name_map.get(name).copied().map(AnimationId)
@@ -382,6 +471,8 @@ impl GraphicsManager {
         AnimatorId(self.animators.insert(anim))
     }
 
+    /// Step all animations forward by `dt` seconds.
+    /// Typically should be called once a frame.
     pub fn update_animations(&mut self, dt: f32) {
         for (_, animator) in self.animators.iter_mut() {
             let anim_id = animator.animation.0;
