@@ -2,20 +2,15 @@ use super::interpolation as interp;
 use crate::math::uv;
 
 /// Interpolated animation for floating point properties.
-///
-/// Target is an optional per-channel identifier type
-/// for routing animation channels to the things they animate.
 #[derive(Debug, Clone)]
 pub struct GltfAnimation {
-    pub name: Option<String>,
     pub duration: f32,
     pub channels: Vec<Channel>,
 }
 
 impl GltfAnimation {
-    pub fn new(name: Option<String>, channels: Vec<Channel>) -> Self {
+    pub fn new(channels: Vec<Channel>) -> Self {
         Self {
-            name,
             duration: channels
                 .iter()
                 .map(|c| c.duration())

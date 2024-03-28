@@ -51,9 +51,9 @@ pub struct State {
     physics: sf::PhysicsWorld,
     hecs_sync: sf::HecsSyncManager,
     // gameplay
-    player: player::PlayerController,
     mouse_grabber: MouseGrabber,
     // graphics
+    graphics: sf::GraphicsManager,
     camera: sf::Camera,
     light: sf::DirectionalLight,
     light_rotating: bool,
@@ -76,7 +76,12 @@ pub struct State {
     time_scale: f64,
 }
 impl State {
-    fn init(renderer: &sf::Renderer) -> Self {
+    fn init(game: &mut sf::Game) -> Self {
+        let mut graphics = sf::GraphicsManager::new(&game.renderer);
+        load_common_assets(&game.renderer, &mut graphics);
+
+        let mesh_renderer = sf::MeshRenderer::new(&game.renderer, &graphics);
+
         let egui_context = egui::Context::default();
         let viewport_id = egui_context.viewport_id();
         State {
@@ -89,8 +94,8 @@ impl State {
                 sf::CollisionMaskMatrix::default(),
             ),
             hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
-            player: player::PlayerController::new(),
             mouse_grabber: MouseGrabber::new(),
+            graphics,
             camera: sf::Camera::default(),
             light: sf::DirectionalLight {
                 direct_color: [1.0, 0.949, 0.8],
@@ -103,23 +108,23 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer: sf::MeshRenderer::new(renderer),
+            mesh_renderer,
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
                     thickness: 10,
                     color: [0.0, 0.0, 0.0, 1.0],
                     shape: sf::OutlineShape::octagon(),
                 },
-                renderer,
+                &game.renderer,
             ),
-            debug_visualizer: sf::DebugVisualizer::new(renderer),
+            debug_visualizer: sf::DebugVisualizer::new(&game.renderer),
             egui_context,
-            egui_state: egui_winit::State::new(viewport_id, &renderer.window, None, None),
+            egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
             egui_renderer: egui_wgpu::Renderer::new(
-                &renderer.device,
-                renderer.swapchain_format(),
-                Some(renderer.window_depth_buffer.texture.format()),
-                renderer.msaa_samples(),
+                &game.renderer.device,
+                game.renderer.swapchain_format(),
+                Some(game.renderer.window_depth_buffer.texture.format()),
+                game.renderer.msaa_samples(),
             ),
             last_egui_output: Default::default(),
             outline_interp: 0.0,
@@ -134,8 +139,47 @@ impl State {
 
     fn reset(&mut self) {
         self.physics.clear();
+        self.graphics.clear();
         self.world.clear();
         self.hecs_sync.clear();
+    }
+}
+
+/// Set of colors to pick from for randomly spawned objects
+const PALETTE_COLORS: [[f32; 4]; 6] = [
+    [0.910, 0.582, 0.582, 1.],
+    [0.813, 0.910, 0.546, 1.],
+    [0.904, 0.910, 0.546, 1.],
+    [0.696, 0.940, 0.936, 1.],
+    [0.836, 0.721, 0.890, 1.],
+    [0.890, 0.721, 0.851, 1.],
+];
+
+/// Load assets referenced by name elsewhere.
+///
+/// Currently, this must be called after [`State::reset`] before loading a level.
+/// It would be nice to have a form of garbage collection for `GraphicsManager`
+/// that doesn't remove these, but that's not a top priority right now
+fn load_common_assets(renderer: &sf::Renderer, graphics: &mut sf::GraphicsManager) {
+    graphics
+        .load_gltf(renderer, "examples/sandbox/assets/library.glb")
+        .expect("Failed to load shared assets");
+
+    player::controller::upload_meshes(renderer, graphics);
+
+    for (i, col) in PALETTE_COLORS.into_iter().enumerate() {
+        graphics.create_material(
+            renderer,
+            sf::MaterialParams {
+                base_color: Some(col),
+                ..Default::default()
+            },
+            // TODO: naming these with strings is kind of dumb
+            // when we could just store the ids,
+            // but I can't be bothered to refactor this right now
+            // when there's a much bigger refactoring coming up
+            Some(&format!("palette{i}")),
+        );
     }
 }
 
@@ -189,9 +233,10 @@ impl Scene {
         world: &mut hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
         renderer: &sf::Renderer,
+        graphics: &mut sf::GraphicsManager,
     ) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, world, hecs_sync, renderer);
+            recipe.spawn(physics, world, hecs_sync, renderer, graphics);
         }
     }
 }
@@ -267,8 +312,8 @@ fn read_scene(path: &std::path::Path) -> Option<Scene> {
 //
 
 impl sf::GameState for State {
-    fn init(renderer: &sf::Renderer) -> Self {
-        Self::init(renderer)
+    fn init(game: &mut sf::Game) -> Self {
+        Self::init(game)
     }
 
     fn tick(&mut self, game: &sf::Game) -> Option<()> {
@@ -420,11 +465,13 @@ impl sf::GameState for State {
         }
         if reload {
             self.reset();
+            load_common_assets(&game.renderer, &mut self.graphics);
             self.scene.instantiate(
                 &mut self.physics,
                 &mut self.world,
                 &mut self.hecs_sync,
                 &game.renderer,
+                &mut self.graphics,
             );
         }
 
@@ -467,6 +514,7 @@ impl sf::GameState for State {
                     &mut self.world,
                     &mut self.hecs_sync,
                     &game.renderer,
+                    &mut self.graphics,
                 );
             }
         }
@@ -488,8 +536,12 @@ impl sf::GameState for State {
                     .tick(game.dt_fixed, Some(self.time_scale), &grav);
                 self.hecs_sync
                     .sync_physics_to_hecs(&self.physics, &mut self.world);
-                self.player
-                    .tick(&game.input, &mut self.physics, &mut self.world);
+                player::controller::tick(
+                    &game.input,
+                    &mut self.physics,
+                    &self.graphics,
+                    &mut self.world,
+                );
 
                 Some(())
             }
@@ -517,8 +569,7 @@ impl sf::GameState for State {
         });
 
         if matches!(self.state, StateEnum::Playing) {
-            sf::animator::step_time(dt * self.time_scale as f32, &mut self.world);
-            sf::animator::update_joints(&mut self.world);
+            self.graphics.update_animations(dt);
         }
 
         if self.bvh_vis_active {
@@ -538,8 +589,13 @@ impl sf::GameState for State {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
         }
 
-        self.mesh_renderer
-            .draw(&self.camera, self.light, &mut ctx, &mut self.world);
+        self.mesh_renderer.draw(
+            &mut self.graphics,
+            &self.camera,
+            self.light,
+            &mut ctx,
+            &mut self.world,
+        );
 
         ctx.submit();
 

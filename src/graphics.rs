@@ -1,3 +1,9 @@
+mod animation;
+pub use animation::animator::Animator;
+
+mod manager;
+pub use manager::{AnimationId, GraphicsManager, MeshId};
+
 pub mod renderer;
 pub use renderer::{RenderContext, Renderer};
 
@@ -18,4 +24,5 @@ pub use outlines::{OutlineParams, OutlineRenderer, OutlineShape};
 mod debug;
 pub use debug::DebugVisualizer;
 
-pub mod texture;
+pub mod material;
+pub use material::Texture;

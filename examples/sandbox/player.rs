@@ -1,6 +1,10 @@
 use starframe as sf;
 
 const MAX_SIMULTANEOUS_BULLETS: usize = 5;
+const R: f64 = 0.1;
+const LENGTH: f64 = 0.2;
+const BASE_MOVE_SPEED: f64 = 4.;
+const MAX_ACCELERATION: f64 = 8.;
 
 #[derive(Clone, Debug)]
 pub struct PlayerState {
@@ -36,44 +40,65 @@ pub struct PlayerRecipe {
 }
 
 impl PlayerRecipe {
-    pub fn spawn(&self, physics: &mut sf::PhysicsWorld, world: &mut sf::hecs::World) {
-        const R: f64 = 0.1;
-        const LENGTH: f64 = 0.2;
-
+    pub fn spawn(
+        &self,
+        physics: &mut sf::PhysicsWorld,
+        graphics: &sf::GraphicsManager,
+        world: &mut sf::hecs::World,
+    ) {
         let body = sf::Body::new_particle(1.0);
         let body_key = physics.entity_set.insert_body(body);
-        let coll = sf::Collider::new_capsule(LENGTH, R).with_material(sf::PhysicsMaterial {
-            static_friction_coef: None,
-            dynamic_friction_coef: None,
-            restitution_coef: 0.0,
-        });
+        let coll = player_collider();
         let coll_key = physics.entity_set.attach_collider(body_key, coll);
         let pose = sf::PoseBuilder::new()
             .with_position(self.position)
             .with_rotation(sf::Angle::Deg(90.0))
             .build();
-        let mesh = sf::Mesh::from(coll);
         let state = PlayerState::new();
-        world.spawn((body_key, coll_key, pose, mesh, state));
+
+        world.spawn((
+            body_key,
+            coll_key,
+            pose,
+            graphics.get_mesh_id("player").unwrap(),
+            state,
+        ));
     }
 }
 
-pub struct PlayerController {
-    base_move_speed: f64,
-    max_acceleration: f64,
+fn player_collider() -> sf::Collider {
+    sf::Collider::new_capsule(LENGTH, R).with_material(sf::PhysicsMaterial {
+        static_friction_coef: None,
+        dynamic_friction_coef: None,
+        restitution_coef: 0.0,
+    })
 }
-impl PlayerController {
-    pub fn new() -> Self {
-        PlayerController {
-            base_move_speed: 4.0,
-            max_acceleration: 8.0,
+
+pub mod controller {
+    use super::*;
+
+    pub fn upload_meshes(renderer: &sf::Renderer, graphics: &mut sf::GraphicsManager) {
+        // TODO: unify the mesh upload API and the graphics manager insert API
+        let player_mesh = sf::MeshParams {
+            data: sf::MeshData::from(player_collider()),
+            ..Default::default()
         }
+        .upload(&renderer.device, Some("player"));
+        graphics.insert_mesh(player_mesh, Some("player"));
+
+        let bullet_mesh = sf::MeshParams {
+            data: sf::MeshData::from(sf::ConvexMeshShape::Circle { r: R, points: 5 }),
+            has_outline: false,
+            ..Default::default()
+        }
+        .upload(&renderer.device, Some("bullet"));
+        graphics.insert_mesh(bullet_mesh, Some("bullet"));
     }
 
     pub fn tick(
-        &mut self,
         input: &sf::Input,
         physics: &mut sf::PhysicsWorld,
+        graphics: &sf::GraphicsManager,
         world: &mut sf::hecs::World,
     ) {
         let move_axis = input.axis(sf::AxisQuery {
@@ -104,11 +129,11 @@ impl PlayerController {
                 state.facing = facing;
             }
 
-            let move_speed = self.base_move_speed;
+            let move_speed = BASE_MOVE_SPEED;
 
             let target_hvel = target_hdir * move_speed;
             let accel_needed = target_hvel - body.velocity.linear.x;
-            let accel = accel_needed.min(self.max_acceleration);
+            let accel = accel_needed.min(MAX_ACCELERATION);
             body.velocity.linear.x += accel;
 
             // jump
@@ -139,8 +164,6 @@ impl PlayerController {
                 let b_pose = sf::PoseBuilder::new()
                     .with_position(player_pos + state.facing.orient_vec(sf::Vec2::new(0.2, 0.0)))
                     .build();
-                let b_mesh = sf::Mesh::from(sf::ConvexMeshShape::Circle { r: R, points: 5 })
-                    .without_outline();
                 let b_coll = sf::Collider::new_circle(R);
                 let b_body = sf::Body::new_dynamic_const_mass(b_coll.info(), 1.0).with_velocity(
                     sf::Velocity {
@@ -151,7 +174,15 @@ impl PlayerController {
                 let b_body_key = physics.entity_set.insert_body(b_body);
                 let b_coll_key = physics.entity_set.attach_collider(b_body_key, b_coll);
 
-                bullet_to_spawn = Some((player_entity, (b_pose, b_mesh, b_body_key, b_coll_key)));
+                bullet_to_spawn = Some((
+                    player_entity,
+                    (
+                        b_pose,
+                        graphics.get_mesh_id("bullet").unwrap(),
+                        b_body_key,
+                        b_coll_key,
+                    ),
+                ));
             }
         }
 

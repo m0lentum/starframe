@@ -1,79 +1,137 @@
 pub(crate) mod skin;
 pub use skin::Skin;
 
-#[cfg(feature = "gltf")]
-pub mod gltf_import;
+mod mesh_renderer;
+pub use mesh_renderer::{DirectionalLight, MeshRenderer};
 
 //
 
 use crate::{
     graphics as gx,
-    math::{self as m, uv},
+    math::{self as m},
     physics as phys,
 };
 use itertools::Itertools;
-use std::{borrow::Cow, mem::size_of};
 use zerocopy::{AsBytes, FromBytes};
 
 //
 // types
 //
 
-/// A triangle mesh for rendering. Can be animated with a skin
-/// and imported from glTF documents (with the `gltf` crate feature enabled).
-#[derive(Debug)]
+/// CPU-side data of a triangle mesh for rendering.
+/// Not to be used directly, instead should be converted
+/// into a GPU-side [`Mesh`] with [`upload`][Self::upload].
+#[derive(Debug, Clone)]
+pub struct MeshParams {
+    /// Offset from the Pose of the entity this mesh is attached to,
+    /// or the world origin if it doesn't have a Pose.
+    pub offset: m::Pose,
+    /// Depth of the mesh in 3D space.
+    pub depth: f32,
+    /// Whether or not to draw an outline for the mesh when using
+    /// [`OutlineRenderer`][crate::OutlineRenderer].
+    pub has_outline: bool,
+    /// Actual vertex data of the mesh.
+    pub data: MeshData,
+}
+
+/// CPU-side data of a mesh, possibly with joints and weights for a skin.
+#[derive(Debug, Clone, Default)]
+pub struct MeshData {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u16>,
+    pub joints: Option<Vec<VertexJoints>>,
+}
+
+impl Default for MeshParams {
+    fn default() -> Self {
+        Self {
+            offset: m::Pose::default(),
+            depth: 0.0,
+            has_outline: true,
+            data: MeshData::default(),
+        }
+    }
+}
+
+impl MeshParams {
+    pub fn upload(self, device: &wgpu::Device, label: Option<&str>) -> Mesh {
+        use wgpu::util::DeviceExt;
+        let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label,
+            contents: self.data.vertices.as_bytes(),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label,
+            contents: self.data.indices.as_bytes(),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let joints_buf = self.data.joints.as_ref().map(|joints| {
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label,
+                contents: joints.as_bytes(),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        });
+
+        let instance_buf =
+            gx::util::DynamicBuffer::new(Some("mesh instance"), wgpu::BufferUsages::VERTEX);
+
+        let gpu_data = GpuMeshData {
+            vertex_buf,
+            index_buf,
+            idx_count: self.data.indices.len() as u32,
+            joints_buf,
+            instance_buf,
+            instance_count: 0,
+        };
+
+        Mesh {
+            offset: self.offset,
+            depth: self.depth,
+            has_outline: self.has_outline,
+            gpu_data,
+        }
+    }
+}
+
+/// Triangle mesh uploaded to the GPU and ready to be rendered.
+///
+/// Public fields can be mutated and will have an effect on the next render.
+/// Vertex data only exists on the GPU at this point and is immutable.
 pub struct Mesh {
-    pub label: Option<String>,
     pub offset: m::Pose,
     pub depth: f32,
     pub has_outline: bool,
-    pub tint: [f32; 3],
-    primitives: Vec<MeshPrimitive>,
-    // resources are uploaded to the GPU on first draw
-    gpu_resources: Option<GpuMeshResources>,
-    textures: Option<MeshTextures>,
+    gpu_data: GpuMeshData,
 }
 
 #[derive(Debug)]
-pub struct MeshTextures {
-    diffuse: super::texture::Texture,
-    normal: super::texture::Texture,
-    // bind group created lazily on render
-    bind_group: Option<wgpu::BindGroup>,
-}
-
-/// A single primitive as defined by the glTF spec.
-/// A single mesh can have more than one.
-#[derive(Debug, Clone)]
-pub struct MeshPrimitive {
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u16>,
-}
-
-#[derive(Debug)]
-struct GpuMeshResources {
-    primitives: Vec<GpuMeshPrimitive>,
+pub(crate) struct GpuMeshData {
+    vertex_buf: wgpu::Buffer,
+    index_buf: wgpu::Buffer,
+    idx_count: u32,
+    joints_buf: Option<wgpu::Buffer>,
     // instance buffer containing joint offsets and model matrices,
     // allowing the same mesh to be rendered multiple times
-    // with potentially different animation states.
-    // currently only one instance is supported,
-    // but this should change soon after some rearchitecting
+    // with potentially different animation states
     instance_buf: gx::util::DynamicBuffer,
+    instance_count: u32,
 }
 
-#[derive(Debug)]
-struct GpuMeshPrimitive {
-    pub vert_buf: wgpu::Buffer,
-    pub idx_buf: wgpu::Buffer,
-    pub idx_count: u32,
-}
-
-/// The GPU representation of a mesh vertex.
+/// Position and texture coordinates of a vertex in a mesh.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 pub struct Vertex {
     pub position: gx::util::GpuVec3,
     pub tex_coords: gx::util::GpuVec2,
+}
+
+/// Joints and weights of a vertex in a skinned mesh.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
+pub struct VertexJoints {
     pub joints: [u16; 4],
     pub weights: gx::util::GpuVec4,
 }
@@ -81,21 +139,6 @@ pub struct Vertex {
 //
 // constructors
 //
-
-impl Default for Mesh {
-    fn default() -> Self {
-        Self {
-            label: None,
-            offset: m::Pose::default(),
-            depth: 0.0,
-            has_outline: true,
-            tint: [1.; 3],
-            primitives: Vec::new(),
-            gpu_resources: None,
-            textures: None,
-        }
-    }
-}
 
 /// Shape that can be used to generate [`Mesh`][self::Mesh]es.
 #[derive(Clone, Copy, Debug)]
@@ -115,31 +158,7 @@ pub enum ConvexMeshShape {
     },
 }
 
-impl Mesh {
-    #[cfg(feature = "gltf")]
-    #[inline]
-    pub fn from_gltf(
-        doc: &gltf::Document,
-        buffers: &[&[u8]],
-        images: &[gltf::image::Data],
-        rend: &crate::Renderer,
-    ) -> Self {
-        let textures = gltf_import::load_textures(doc, images).into_iter().next();
-        Self {
-            label: doc
-                .meshes()
-                .next()
-                .and_then(|mesh| mesh.name().map(String::from)),
-            primitives: gltf_import::load_primitives(doc, buffers),
-            textures: textures.map(|t| MeshTextures {
-                diffuse: t.diffuse.upload(rend),
-                normal: t.normal.upload(rend),
-                bind_group: None,
-            }),
-            ..Self::default()
-        }
-    }
-
+impl MeshData {
     pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
         let mut vertices: Vec<m::Vec2> = Vec::new();
 
@@ -233,8 +252,6 @@ impl Mesh {
                     -(vert.y + height / 2.) / height,
                 )
                 .into(),
-                joints: [0; 4],
-                weights: [0.0; 4].into(),
             })
             .collect();
 
@@ -242,83 +259,15 @@ impl Mesh {
             .flat_map(|idx| [0, idx, idx + 1])
             .collect();
 
-        Self {
-            primitives: vec![MeshPrimitive { vertices, indices }],
-            ..Self::default()
+        MeshData {
+            vertices,
+            indices,
+            joints: None,
         }
-    }
-
-    /// Set the offset of the mesh from the pose it's attached to.
-    #[inline]
-    pub fn with_offset(mut self, offset: m::Pose) -> Self {
-        self.offset = offset;
-        self
-    }
-
-    /// Set the base depth of the mesh in the z direction.
-    #[inline]
-    pub fn with_depth(mut self, depth: f32) -> Self {
-        self.depth = depth;
-        self
-    }
-
-    /// Add a debug label to the mesh.
-    #[inline]
-    pub fn with_label(mut self, label: String) -> Self {
-        self.label = Some(label);
-        self
-    }
-
-    /// Opt out of drawing an outline for this mesh when
-    /// [`OutlineRenderer`][super::OutlineRenderer] is run.
-    #[inline]
-    pub fn without_outline(mut self) -> Self {
-        self.has_outline = false;
-        self
-    }
-
-    /// Add a color tint to this mesh.
-    pub fn with_tint(mut self, color: [f32; 3]) -> Self {
-        self.tint = color;
-        self
-    }
-
-    /// Create the needed buffers and push the mesh data to the GPU.
-    pub fn upload(&mut self, device: &wgpu::Device) {
-        let primitives = self
-            .primitives
-            .iter()
-            .map(|prim| {
-                use wgpu::util::DeviceExt;
-                let vert_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.label.as_deref(),
-                    contents: prim.vertices.as_bytes(),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
-                let idx_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: self.label.as_deref(),
-                    contents: prim.indices.as_bytes(),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
-                GpuMeshPrimitive {
-                    vert_buf,
-                    idx_buf,
-                    idx_count: prim.indices.len() as u32,
-                }
-            })
-            .collect();
-
-        let instance_buf =
-            gx::util::DynamicBuffer::new(Some("skinned mesh instance"), wgpu::BufferUsages::VERTEX);
-
-        self.gpu_resources = Some(GpuMeshResources {
-            primitives,
-            instance_buf,
-        });
     }
 }
 
-impl From<ConvexMeshShape> for Mesh {
+impl From<ConvexMeshShape> for MeshData {
     fn from(shape: ConvexMeshShape) -> Self {
         // helper for generating uv coordinates which start at the top left
         let flip_y = |v: m::Vec2| m::Vec2::new(v.x, -v.y);
@@ -335,8 +284,6 @@ impl From<ConvexMeshShape> for Mesh {
                     .map(|vert| Vertex {
                         position: vert.into(),
                         tex_coords: flip_y((vert + m::Vec2::new(r, r)) / diameter).into(),
-                        joints: [0; 4],
-                        weights: [0.0; 4].into(),
                     })
                     .collect()
             }
@@ -353,8 +300,6 @@ impl From<ConvexMeshShape> for Mesh {
                 .map(|vert| Vertex {
                     position: vert.into(),
                     tex_coords: flip_y(m::Vec2::new((vert.x + hw) / w, (vert.y + hh) / h)).into(),
-                    joints: [0; 4],
-                    weights: [0.0; 4].into(),
                 })
                 .collect()
             }
@@ -380,8 +325,6 @@ impl From<ConvexMeshShape> for Mesh {
                             (vert.y + r) / (2. * r),
                         ))
                         .into(),
-                        joints: [0; 4],
-                        weights: [0.0; 4].into(),
                     })
                     .collect()
             }
@@ -391,593 +334,16 @@ impl From<ConvexMeshShape> for Mesh {
             .flat_map(|idx| [0, idx, idx + 1])
             .collect();
 
-        Self {
-            primitives: vec![MeshPrimitive { vertices, indices }],
-            ..Self::default()
+        MeshData {
+            vertices,
+            indices,
+            joints: None,
         }
     }
 }
 
-impl From<phys::Collider> for Mesh {
+impl From<phys::Collider> for MeshData {
     fn from(coll: phys::Collider) -> Self {
-        Self::from_collider_shape(&coll.shape, 0.1).with_offset(coll.pose)
-    }
-}
-
-//
-// renderer
-//
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct CameraUniforms {
-    view_proj: gx::util::GpuMat4,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct DirectionalLight {
-    pub direct_color: [f32; 3],
-    pub ambient_color: [f32; 3],
-    pub direction: uv::Vec3,
-}
-
-impl Default for DirectionalLight {
-    fn default() -> Self {
-        Self {
-            direct_color: [1.0, 1.0, 1.0],
-            ambient_color: [1.0, 1.0, 1.0],
-            direction: uv::Vec3::new(0.0, 0.0, 1.0),
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct LightUniforms {
-    direct_color: [f32; 3],
-    _pad0: u32,
-    ambient_color: [f32; 3],
-    _pad1: u32,
-    direction: [f32; 3],
-    _pad2: u32,
-}
-
-impl From<DirectionalLight> for LightUniforms {
-    fn from(l: DirectionalLight) -> Self {
-        Self {
-            direct_color: l.direct_color,
-            _pad0: 0,
-            ambient_color: l.ambient_color,
-            _pad1: 0,
-            direction: l.direction.normalized().into(),
-            _pad2: 0,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct Instance {
-    joint_offset: u32,
-    model_col0: gx::util::GpuVec3,
-    model_col1: gx::util::GpuVec3,
-    model_col2: gx::util::GpuVec3,
-    model_col3: gx::util::GpuVec3,
-    tint: gx::util::GpuVec3,
-}
-
-pub struct MeshRenderer {
-    pipeline: wgpu::RenderPipeline,
-    joints_bind_group: wgpu::BindGroup,
-    joints_bind_group_layout: wgpu::BindGroupLayout,
-    texture_bind_group_layout: wgpu::BindGroupLayout,
-
-    camera_buf: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    light_buf: wgpu::Buffer,
-    light_bind_group: wgpu::BindGroup,
-
-    // joint storage which grows if needed.
-    // not using util::DynamicBuffer because we also need to update a bind group
-    // whenever this is reallocated
-    joint_storage: wgpu::Buffer,
-    joint_capacity: usize,
-
-    default_textures: MeshTextures,
-}
-impl MeshRenderer {
-    pub fn new(rend: &gx::Renderer) -> Self {
-        // shaders
-
-        let shader = rend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "./shaders/mesh.wgsl"
-                ))),
-            });
-
-        //
-        // bind groups & buffers
-        //
-
-        // camera
-
-        let camera_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<CameraUniforms>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("mesh camera"),
-            mapped_at_creation: false,
-        });
-
-        let camera_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[
-                        // mesh uniforms
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
-                                    size_of::<CameraUniforms>() as _,
-                                ),
-                            },
-                            count: None,
-                        },
-                    ],
-                    label: Some("skinned mesh camera"),
-                });
-
-        let camera_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("skinned mesh camera"),
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buf.as_entire_binding(),
-            }],
-        });
-
-        // light
-
-        let light_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<LightUniforms>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("mesh lights"),
-            mapped_at_creation: false,
-        });
-
-        let light_bind_group_layout = rend.device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<LightUniforms>() as _),
-                    },
-                    count: None,
-                }],
-                label: Some("mesh lights"),
-            },
-        );
-
-        let light_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh lights"),
-            layout: &light_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_buf.as_entire_binding(),
-            }],
-        });
-
-        // joints
-
-        let joint_storage = rend.device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<gx::util::GpuMat4>() as _,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            label: Some("mesh joints"),
-            mapped_at_creation: false,
-        });
-
-        let joints_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[
-                        // storage buffer for joint matrices
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
-                                    size_of::<gx::util::GpuMat4>() as _,
-                                ),
-                            },
-                            count: None,
-                        },
-                    ],
-                    label: Some("skinned mesh joints"),
-                });
-        let joints_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &joints_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: joint_storage.as_entire_binding(),
-            }],
-            label: Some("mesh joints"),
-        });
-
-        // layout for textures (each mesh gets its own bind group)
-
-        let texture_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("skinned mesh texture"),
-                    entries: &[
-                        // texture and sampler for diffuse
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                        // same for normal map
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 3,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
-
-        // vertex and instance layouts
-
-        let vertex_buffers = [
-            wgpu::VertexBufferLayout {
-                array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &[
-                    // position
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    },
-                    // texture coordinates
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x2,
-                        offset: 4 * 3,
-                        shader_location: 1,
-                    },
-                    // joints
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Uint16x4,
-                        offset: 4 * 3 + 4 * 2,
-                        shader_location: 2,
-                    },
-                    // weights
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x4,
-                        offset: 4 * 3 + 4 * 2 + 2 * 4,
-                        shader_location: 3,
-                    },
-                ],
-            },
-            wgpu::VertexBufferLayout {
-                array_stride: size_of::<Instance>() as wgpu::BufferAddress,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &[
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Uint32,
-                        offset: 0,
-                        shader_location: 4,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4,
-                        shader_location: 5,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3,
-                        shader_location: 6,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 2,
-                        shader_location: 7,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 3,
-                        shader_location: 8,
-                    },
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 4,
-                        shader_location: 9,
-                    },
-                ],
-            },
-        ];
-
-        //
-        // pipeline
-        //
-
-        let pipeline_layout = rend
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("mesh"),
-                bind_group_layouts: &[
-                    &camera_bind_group_layout,
-                    &light_bind_group_layout,
-                    &joints_bind_group_layout,
-                    &texture_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
-        let pipeline = rend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("mesh"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: "vs_main",
-                    buffers: &vertex_buffers,
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(rend.swapchain_format().into())],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(gx::DepthBuffer::default_depth_stencil_state()),
-                multisample: rend.multisample_state(),
-                multiview: None,
-            });
-
-        // default textures to bind if a mesh's texture is None.
-        // just a single white pixel and normal straight at the viewer
-        let mut default_textures = MeshTextures {
-            diffuse: super::texture::TextureData {
-                label: Some("default diffuse".to_string()),
-                pixels: &[255, 255, 255, 255],
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                dimensions: (1, 1),
-            }
-            .upload(rend),
-            normal: super::texture::TextureData {
-                label: Some("default normals".to_string()),
-                pixels: &[127, 127, 255, 1],
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                dimensions: (1, 1),
-            }
-            .upload(rend),
-            bind_group: None,
-        };
-        Self::create_texture_bind_group(
-            &rend.device,
-            &texture_bind_group_layout,
-            &mut default_textures,
-        );
-
-        Self {
-            pipeline,
-            joints_bind_group,
-            joints_bind_group_layout,
-            texture_bind_group_layout,
-            camera_buf,
-            camera_bind_group,
-            light_buf,
-            light_bind_group,
-            joint_storage,
-            joint_capacity: 0,
-            default_textures,
-        }
-    }
-
-    /// Draw all the meshes in the world.
-    pub fn draw(
-        &mut self,
-        camera: &gx::Camera,
-        light: DirectionalLight,
-        ctx: &mut gx::RenderContext,
-        world: &mut hecs::World,
-    ) {
-        type Query<'a> = (&'a mut Mesh, Option<&'a Skin>, Option<&'a m::Pose>);
-
-        ctx.queue
-            .write_buffer(&self.light_buf, 0, LightUniforms::from(light).as_bytes());
-
-        // collect all joint matrices in the world,
-        // we'll shove them all in the storage buffer in one go.
-        // make sure the iteration order is the same as when rendering
-        // so that each mesh gets the correct offset into the array
-        let mut joint_matrices: Vec<gx::util::GpuMat4> = world
-            .query_mut::<Query>()
-            .into_iter()
-            .filter_map(|(_, (_, skin, _))| skin)
-            .flat_map(|skin| skin.joints.iter())
-            .map(|joint| gx::util::GpuMat4::from(joint.joint_matrix))
-            .collect();
-
-        // empty bindings not allowed by vulkan,
-        // put in one dummy matrix to pass validation
-        if joint_matrices.is_empty() {
-            joint_matrices.push(uv::Mat4::identity().into());
-        }
-
-        // resize joint buffer if needed
-        if joint_matrices.len() > self.joint_capacity {
-            self.joint_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("skinned mesh joints"),
-                size: (size_of::<gx::util::GpuMat4>() * joint_matrices.len()) as _,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.joints_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &self.joints_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.joint_storage.as_entire_binding(),
-                }],
-                label: Some("skinned mesh joints"),
-            });
-        }
-
-        ctx.queue
-            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
-
-        // render the meshes
-
-        let view_proj = camera.view_proj_matrix(ctx.target_size);
-        ctx.queue
-            .write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
-
-        let mut pass = ctx.encoder.pass(&ctx.target, Some("skinned meshes"));
-        pass.set_pipeline(&self.pipeline);
-
-        pass.set_bind_group(0, &self.camera_bind_group, &[]);
-        pass.set_bind_group(1, &self.light_bind_group, &[]);
-        pass.set_bind_group(2, &self.joints_bind_group, &[]);
-
-        // joint buffer is shared between all meshes; mesh's offset into it
-        let mut joint_offset = 0_u32;
-        for (_, (mesh, skin, pose)) in world.query_mut::<Query>() {
-            // mesh uniforms
-            // initialize the per-mesh GPU resources on first render
-            if mesh.gpu_resources.is_none() {
-                mesh.upload(ctx.device);
-            }
-            // now mesh.gpu_resources has been created for sure
-            let gpu_res = mesh.gpu_resources.as_mut().unwrap();
-
-            // create a bind group for the texture if it doesn't have one yet
-            let texture_bind_group = if let Some(ref mut textures) = mesh.textures {
-                if textures.bind_group.is_none() {
-                    Self::create_texture_bind_group(
-                        ctx.device,
-                        &self.texture_bind_group_layout,
-                        textures,
-                    );
-                }
-                textures.bind_group.as_ref().unwrap()
-            } else {
-                // default textures' bind group is created on renderer init
-                self.default_textures.bind_group.as_ref().unwrap()
-            };
-
-            // build the model matrix and push it into the instance buffer
-            let model = {
-                let mesh_pose = match pose {
-                    Some(entity_pose) => *entity_pose * mesh.offset,
-                    None => mesh.offset,
-                };
-                let pose_3d = uv::Isometry3::new(
-                    uv::Vec3::new(
-                        mesh_pose.translation.x as f32,
-                        mesh_pose.translation.y as f32,
-                        mesh.depth,
-                    ),
-                    uv::Rotor3::new(
-                        mesh_pose.rotation.s as f32,
-                        uv::Bivec3::new(mesh_pose.rotation.bv.xy as f32, 0., 0.),
-                    ),
-                );
-                pose_3d.into_homogeneous_matrix()
-            };
-            let instance = Instance {
-                joint_offset,
-                model_col0: model.cols[0].xyz().into(),
-                model_col1: model.cols[1].xyz().into(),
-                model_col2: model.cols[2].xyz().into(),
-                model_col3: model.cols[3].xyz().into(),
-                tint: mesh.tint.into(),
-            };
-            gpu_res
-                .instance_buf
-                .write_split_borrow(ctx.device, ctx.queue, &[instance]);
-            pass.set_vertex_buffer(1, gpu_res.instance_buf.slice());
-
-            // render
-
-            // stencil for outline rendering
-            pass.set_stencil_reference(if mesh.has_outline { 1 } else { 0 });
-
-            pass.set_bind_group(3, texture_bind_group, &[]);
-
-            for prim in &gpu_res.primitives {
-                pass.set_vertex_buffer(0, prim.vert_buf.slice(..));
-                pass.set_index_buffer(prim.idx_buf.slice(..), wgpu::IndexFormat::Uint16);
-                pass.draw_indexed(0..prim.idx_count, 0, 0..1);
-            }
-
-            if let Some(skin) = skin {
-                joint_offset += skin.joints.len() as u32;
-            }
-        }
-    }
-
-    fn create_texture_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        tex: &mut MeshTextures,
-    ) {
-        tex.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tex.diffuse.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&tex.diffuse.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&tex.normal.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&tex.normal.sampler),
-                },
-            ],
-        }));
+        Self::from_collider_shape(&coll.shape, 0.1)
     }
 }

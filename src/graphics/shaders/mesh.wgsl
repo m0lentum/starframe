@@ -16,13 +16,18 @@ var<uniform> light: LightUniforms;
 @group(2) @binding(0)
 var<storage> joint_mats: array<mat4x4<f32>>;
 
+struct MaterialUniforms {
+    base_color: vec4<f32>,
+}
 @group(3) @binding(0)
-var t_diffuse: texture_2d<f32>;
+var<uniform> material: MaterialUniforms;
 @group(3) @binding(1)
-var s_diffuse: sampler;
+var t_diffuse: texture_2d<f32>;
 @group(3) @binding(2)
-var t_normal: texture_2d<f32>;
+var s_diffuse: sampler;
 @group(3) @binding(3)
+var t_normal: texture_2d<f32>;
+@group(3) @binding(4)
 var s_normal: sampler;
 
 struct VertexOutput {
@@ -30,7 +35,6 @@ struct VertexOutput {
     @location(0) tex_coords: vec2<f32>,
     @location(1) normal: vec3<f32>,
     @location(2) tangent: vec3<f32>,
-    @location(3) tint: vec3<f32>,
 };
 
 // counteract the scaling effect of a transformation
@@ -43,20 +47,21 @@ fn mat3_inv_scale_sq(m: mat3x3<f32>) -> vec3<f32> {
     );
 }
 
+// vertex shader with skinning, joints and weights in a separate vertex buffer
 @vertex
-fn vs_main(
+fn vs_skinned(
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
-    // u16 not supported in wgsl, so bit-twiddle from two u32s
-    @location(2) joints: vec2<u32>,
-    @location(3) weights: vec4<f32>,
-    // instance variables: position in the joint buffer, tint, model matrix
-    @location(4) joint_offset: u32,
-    @location(5) model_col0: vec3<f32>,
-    @location(6) model_col1: vec3<f32>,
-    @location(7) model_col2: vec3<f32>,
-    @location(8) model_col3: vec3<f32>,
-    @location(9) tint: vec3<f32>,
+    // instance variables: position in the joint buffer, model matrix
+    @location(2) joint_offset: u32,
+    @location(3) model_col0: vec3<f32>,
+    @location(4) model_col1: vec3<f32>,
+    @location(5) model_col2: vec3<f32>,
+    @location(6) model_col3: vec3<f32>,
+    // additional vertex data for skinning in a separate buffer
+    // (u16 not supported in wgsl, so bit-twiddle joint indices from two u32s)
+    @location(7) joints: vec2<u32>,
+    @location(8) weights: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
@@ -98,7 +103,7 @@ fn vs_main(
             tan_skinned += weight_scaled * (joint_mat_3 * tangent);
         }
     }
-    // if there weren't any joints, fallback to original values
+    // if no joints had any weight, fallback to original values
     if !has_joints {
         pos = position;
         norm_skinned = normal;
@@ -116,7 +121,44 @@ fn vs_main(
     out.normal = normalize(norm_skinned);
     out.tangent = normalize(tan_skinned);
     out.tex_coords = tex_coords;
-    out.tint = tint;
+
+    return out;
+}
+
+// vertex shader without skinning
+@vertex
+fn vs_unskinned(
+    @location(0) position: vec3<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    // instance variables: position in the joint buffer, model matrix
+    @location(2) joint_offset: u32,
+    @location(3) model_col0: vec3<f32>,
+    @location(4) model_col1: vec3<f32>,
+    @location(5) model_col2: vec3<f32>,
+    @location(6) model_col3: vec3<f32>,
+) -> VertexOutput {
+    var out: VertexOutput;
+
+    let model = mat4x4<f32>(
+        vec4<f32>(model_col0, 0.),
+        vec4<f32>(model_col1, 0.),
+        vec4<f32>(model_col2, 0.),
+        vec4<f32>(model_col3, 1.),
+    );
+
+    let normal = vec3<f32>(0., 0., -1.);
+    let tangent = vec3<f32>(1., 0., 0.);
+
+    let pos_model = model * vec4<f32>(position, 1.);
+    let model_3 = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
+    let inv_scaling = mat3_inv_scale_sq(model_3);
+    let norm_transformed = inv_scaling * (model_3 * normal);
+    let tan_transformed = inv_scaling * (model_3 * tangent);
+
+    out.clip_position = camera.view_proj * pos_model;
+    out.normal = normalize(norm_transformed);
+    out.tangent = normalize(tan_transformed);
+    out.tex_coords = tex_coords;
 
     return out;
 }
@@ -125,10 +167,10 @@ fn vs_main(
 fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4<f32> {
-    let base_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let tex_base_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
     // alpha clipping, no blending
     // because we want parts of the same mesh to be able to overlap
-    if base_color.a < 0.5 {
+    if tex_base_color.a < 0.5 {
 	discard;
     }
 
@@ -152,7 +194,7 @@ fn fs_main(
     let ambient_strength = 0.1 + 0.1 * max(-normal_dot_light, 0.);
     let ambient_light = light.ambient_color * ambient_strength;
 
-    let full_color = in.tint * (ambient_light + diffuse_light) * base_color.xyz;
+    let full_color = material.base_color * vec4<f32>(ambient_light + diffuse_light, 1.) * tex_base_color;
 
-    return vec4<f32>(full_color, base_color.a);
+    return full_color;
 }

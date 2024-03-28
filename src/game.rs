@@ -42,7 +42,7 @@ pub trait GameState: Sized + 'static {
     /// This is called immediately after the game loop is started.
     /// It is done this way due to async functions involved in the creation of the renderer,
     /// which is easiest to handle within a single encompassing async function (especially in wasm).
-    fn init(renderer: &Renderer) -> Self;
+    fn init(game: &mut Game) -> Self;
     /// Advance the game forward by a timestep of `Game::dt_fixed` seconds. Return None to exit the game.
     fn tick(&mut self, game: &Game) -> Option<()>;
     /// Render the game onto the screen. `dt` is the time in seconds since last draw.
@@ -77,8 +77,10 @@ pub struct Game {
     pub input: crate::Input,
     /// A renderer that can draw to the game's window.
     pub renderer: crate::graphics::Renderer,
-    nanos_per_frame: u128,
+    /// Fixed delta-time between frames.
     pub dt_fixed: f64,
+    /// Duration of a frame in nanoseconds.
+    nanos_per_frame: u128,
 }
 impl Game {
     pub fn run<State: GameState>(params: GameParams<State>) {
@@ -139,7 +141,7 @@ impl Game {
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
             dt_fixed: 1.0 / fps as f64,
         };
-        let mut state = State::init(&game.renderer);
+        let mut state = State::init(&mut game);
 
         //
         // loop
