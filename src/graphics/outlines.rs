@@ -171,7 +171,9 @@ struct DrawUniforms {
 
 impl OutlineRenderer {
     pub fn new(params: OutlineParams, rend: &super::Renderer) -> Self {
-        let gbuf_bind_group_layout = GBuffer::bind_group_layout(rend);
+        let device = crate::Renderer::device();
+
+        let gbuf_bind_group_layout = GBuffer::bind_group_layout();
 
         let gbufs = [
             GBuffer::new(rend, &gbuf_bind_group_layout),
@@ -186,57 +188,51 @@ impl OutlineRenderer {
 
         // shaders
 
-        let mesh_init_shader = rend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("jump flood mesh init"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "shaders/outlines/init.wgsl"
-                ))),
-            });
+        let mesh_init_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("jump flood mesh init"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                "shaders/outlines/init.wgsl"
+            ))),
+        });
 
         // bind group
 
-        let stencil_bind_group_layout = Self::create_stencil_bind_group_layout(rend);
+        let stencil_bind_group_layout = Self::create_stencil_bind_group_layout();
         let stencil_bind_group = Self::create_stencil_bind_group(rend, &stencil_bind_group_layout);
 
         // pipeline
 
-        let init_pipeline_layout =
-            rend.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("jump flood init"),
-                    bind_group_layouts: &[&stencil_bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-        let init_pipeline = rend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("jump flood init"),
-                layout: Some(&init_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &mesh_init_shader,
-                    entry_point: "vs_main",
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &mesh_init_shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(GBUF_FORMAT.into())],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                // can't use a stencil test here because we need to sample the stencil buffer
-                // in multiple places for antialiasing
-                depth_stencil: None,
-                // drawing to a non-multisampled internal texture
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+        let init_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("jump flood init"),
+            bind_group_layouts: &[&stencil_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let init_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("jump flood init"),
+            layout: Some(&init_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &mesh_init_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &mesh_init_shader,
+                entry_point: "fs_main",
+                targets: &[Some(GBUF_FORMAT.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            // can't use a stencil test here because we need to sample the stencil buffer
+            // in multiple places for antialiasing
+            depth_stencil: None,
+            // drawing to a non-multisampled internal texture
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
         let init_step = InitStep {
             pipeline: init_pipeline,
             stencil_bind_group_layout,
@@ -249,19 +245,17 @@ impl OutlineRenderer {
 
         // shaders
 
-        let jfa_shader = rend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("jump flood"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "shaders/outlines/jump_flood.wgsl"
-                ))),
-            });
+        let jfa_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("jump flood"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                "shaders/outlines/jump_flood.wgsl"
+            ))),
+        });
 
         // bind group & buffers
 
         let jfa_uniform_buf_size = std::mem::size_of::<DistanceUniforms>() as wgpu::BufferAddress;
-        let jfa_uniform_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
+        let jfa_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: jfa_uniform_buf_size,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             label: Some("jump flood"),
@@ -269,24 +263,22 @@ impl OutlineRenderer {
         });
 
         let unif_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
-                                DistanceUniforms,
-                            >()
-                                as _),
-                        },
-                        count: None,
-                    }],
-                    label: Some("jump flood uniforms"),
-                });
-        let unif_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<DistanceUniforms>() as _,
+                        ),
+                    },
+                    count: None,
+                }],
+                label: Some("jump flood uniforms"),
+            });
+        let unif_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &unif_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -297,38 +289,34 @@ impl OutlineRenderer {
 
         // pipeline
 
-        let jfa_pipeline_layout =
-            rend.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("jump flood"),
-                    bind_group_layouts: &[&unif_bind_group_layout, &gbuf_bind_group_layout],
-                    push_constant_ranges: &[],
-                });
-        let jfa_pipeline = rend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("jump flood"),
-                layout: Some(&jfa_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &jfa_shader,
-                    entry_point: "vs_main",
-                    buffers: &[],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &jfa_shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(GBUF_FORMAT.into())],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-            });
+        let jfa_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("jump flood"),
+            bind_group_layouts: &[&unif_bind_group_layout, &gbuf_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+        let jfa_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("jump flood"),
+            layout: Some(&jfa_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &jfa_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &jfa_shader,
+                entry_point: "fs_main",
+                targets: &[Some(GBUF_FORMAT.into())],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
         let dist_step = DistanceStep {
             pipeline: jfa_pipeline,
             uniform_bind_group: unif_bind_group,
@@ -341,19 +329,17 @@ impl OutlineRenderer {
 
         // shaders
 
-        let draw_shader = rend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("outline draw"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "shaders/outlines/draw_outline.wgsl"
-                ))),
-            });
+        let draw_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("outline draw"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                "shaders/outlines/draw_outline.wgsl"
+            ))),
+        });
 
         // bind group & buffers
 
         let draw_uniform_buf_size = std::mem::size_of::<DrawUniforms>() as wgpu::BufferAddress;
-        let draw_uniform_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
+        let draw_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: draw_uniform_buf_size,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             label: Some("outline draw"),
@@ -361,23 +347,22 @@ impl OutlineRenderer {
         });
 
         let unif_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                std::mem::size_of::<DrawUniforms>() as _,
-                            ),
-                        },
-                        count: None,
-                    }],
-                    label: Some("outline draw uniforms"),
-                });
-        let unif_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            std::mem::size_of::<DrawUniforms>() as _,
+                        ),
+                    },
+                    count: None,
+                }],
+                label: Some("outline draw uniforms"),
+            });
+        let unif_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &unif_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -388,19 +373,17 @@ impl OutlineRenderer {
 
         // pipeline
 
-        let draw_pipeline_layout =
-            rend.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("outline draw"),
-                    bind_group_layouts: &[
-                        &unif_bind_group_layout,
-                        // current frame's result
-                        &gbuf_bind_group_layout,
-                        // last frame's result for temporal smoothing
-                        &gbuf_bind_group_layout,
-                    ],
-                    push_constant_ranges: &[],
-                });
+        let draw_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("outline draw"),
+            bind_group_layouts: &[
+                &unif_bind_group_layout,
+                // current frame's result
+                &gbuf_bind_group_layout,
+                // last frame's result for temporal smoothing
+                &gbuf_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
         let draw_stencil_test = wgpu::StencilFaceState {
             // only draw on pixels that didn't have the stencil activated
             compare: wgpu::CompareFunction::Equal,
@@ -408,46 +391,44 @@ impl OutlineRenderer {
             depth_fail_op: wgpu::StencilOperation::Keep,
             pass_op: wgpu::StencilOperation::Keep,
         };
-        let draw_pipeline = rend
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("outline draw"),
-                layout: Some(&draw_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &draw_shader,
-                    entry_point: "vs_main",
-                    buffers: &[],
+        let draw_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("outline draw"),
+            layout: Some(&draw_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &draw_shader,
+                entry_point: "vs_main",
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &draw_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: rend.swapchain_format(),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: super::depth_buffer::DEPTH_FORMAT,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState {
+                    front: draw_stencil_test,
+                    back: draw_stencil_test,
+                    read_mask: 0xff,
+                    write_mask: 0xff,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: &draw_shader,
-                    entry_point: "fs_main",
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: rend.swapchain_format(),
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: super::depth_buffer::DEPTH_FORMAT,
-                    depth_write_enabled: false,
-                    depth_compare: wgpu::CompareFunction::Always,
-                    stencil: wgpu::StencilState {
-                        front: draw_stencil_test,
-                        back: draw_stencil_test,
-                        read_mask: 0xff,
-                        write_mask: 0xff,
-                    },
-                    bias: wgpu::DepthBiasState::default(),
-                }),
-                multisample: rend.multisample_state(),
-                multiview: None,
-            });
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: rend.multisample_state(),
+            multiview: None,
+        });
         let draw_step = DrawStep {
             pipeline: draw_pipeline,
             uniform_bind_group: unif_bind_group,
@@ -469,28 +450,29 @@ impl OutlineRenderer {
         }
     }
 
-    fn create_stencil_bind_group_layout(rend: &super::Renderer) -> wgpu::BindGroupLayout {
-        rend.device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("outline init stencil buffer"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
-                    },
-                    count: None,
-                }],
-            })
+    fn create_stencil_bind_group_layout() -> wgpu::BindGroupLayout {
+        let device = crate::Renderer::device();
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("outline init stencil buffer"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Uint,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: true,
+                },
+                count: None,
+            }],
+        })
     }
 
     fn create_stencil_bind_group(
         rend: &super::Renderer,
         bind_group_layout: &wgpu::BindGroupLayout,
     ) -> wgpu::BindGroup {
-        rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let device = crate::Renderer::device();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("outline stencil texture binding"),
             layout: bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -624,7 +606,8 @@ struct GBuffer {
 
 impl GBuffer {
     fn new(rend: &super::Renderer, gbuf_bind_group_layout: &wgpu::BindGroupLayout) -> Self {
-        let texture = rend.device.create_texture(&wgpu::TextureDescriptor {
+        let device = crate::Renderer::device();
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("outline gbuffer texture"),
             size: wgpu::Extent3d {
                 width: rend.window_size().width,
@@ -640,7 +623,7 @@ impl GBuffer {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("outline gbuffer bind group"),
             layout: gbuf_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -652,20 +635,20 @@ impl GBuffer {
         Self { view, bind_group }
     }
 
-    fn bind_group_layout(rend: &super::Renderer) -> wgpu::BindGroupLayout {
-        rend.device
-            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                }],
-                label: Some("outline gbuffer binding"),
-            })
+    fn bind_group_layout() -> wgpu::BindGroupLayout {
+        let device = crate::Renderer::device();
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+            label: Some("outline gbuffer binding"),
+        })
     }
 }

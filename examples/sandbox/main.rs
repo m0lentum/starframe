@@ -13,7 +13,7 @@ mod player;
 mod recipes;
 use recipes::Recipe;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window = winit::window::WindowBuilder::new()
         .with_title("starframe test")
         .with_inner_size(winit::dpi::LogicalSize {
@@ -32,7 +32,9 @@ fn main() {
                 }
             }
         },
-    });
+    })?;
+
+    Ok(())
 }
 
 //
@@ -53,7 +55,6 @@ pub struct State {
     // gameplay
     mouse_grabber: MouseGrabber,
     // graphics
-    graphics: sf::GraphicsManager,
     camera: sf::Camera,
     light: sf::DirectionalLight,
     light_rotating: bool,
@@ -77,10 +78,7 @@ pub struct State {
 }
 impl State {
     fn init(game: &mut sf::Game) -> Self {
-        let mut graphics = sf::GraphicsManager::new(&game.renderer);
-        load_common_assets(&game.renderer, &mut graphics);
-
-        let mesh_renderer = sf::MeshRenderer::new(&game.renderer, &graphics);
+        load_common_assets(game);
 
         let egui_context = egui::Context::default();
         let viewport_id = egui_context.viewport_id();
@@ -95,7 +93,6 @@ impl State {
             ),
             hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
             mouse_grabber: MouseGrabber::new(),
-            graphics,
             camera: sf::Camera::default(),
             light: sf::DirectionalLight {
                 direct_color: [1.0, 0.949, 0.8],
@@ -108,7 +105,7 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer,
+            mesh_renderer: sf::MeshRenderer::new(game),
             outline_renderer: sf::OutlineRenderer::new(
                 sf::OutlineParams {
                     thickness: 10,
@@ -121,7 +118,7 @@ impl State {
             egui_context,
             egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
             egui_renderer: egui_wgpu::Renderer::new(
-                &game.renderer.device,
+                sf::Renderer::device(),
                 game.renderer.swapchain_format(),
                 Some(game.renderer.window_depth_buffer.texture.format()),
                 game.renderer.msaa_samples(),
@@ -137,9 +134,9 @@ impl State {
         }
     }
 
-    fn reset(&mut self) {
+    fn reset(&mut self, game: &mut sf::Game) {
         self.physics.clear();
-        self.graphics.clear();
+        game.graphics.clear();
         self.world.clear();
         self.hecs_sync.clear();
     }
@@ -160,16 +157,15 @@ const PALETTE_COLORS: [[f32; 4]; 6] = [
 /// Currently, this must be called after [`State::reset`] before loading a level.
 /// It would be nice to have a form of garbage collection for `GraphicsManager`
 /// that doesn't remove these, but that's not a top priority right now
-fn load_common_assets(renderer: &sf::Renderer, graphics: &mut sf::GraphicsManager) {
-    graphics
-        .load_gltf(renderer, "examples/sandbox/assets/library.glb")
+fn load_common_assets(game: &mut sf::Game) {
+    game.graphics
+        .load_gltf("examples/sandbox/assets/library.glb")
         .expect("Failed to load shared assets");
 
-    player::controller::upload_meshes(renderer, graphics);
+    player::controller::upload_meshes(&mut game.graphics);
 
     for (i, col) in PALETTE_COLORS.into_iter().enumerate() {
-        graphics.create_material(
-            renderer,
+        game.graphics.create_material(
             sf::MaterialParams {
                 base_color: Some(col),
                 ..Default::default()
@@ -232,11 +228,10 @@ impl Scene {
         physics: &mut sf::PhysicsWorld,
         world: &mut hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
-        renderer: &sf::Renderer,
         graphics: &mut sf::GraphicsManager,
     ) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, world, hecs_sync, renderer, graphics);
+            recipe.spawn(physics, world, hecs_sync, graphics);
         }
     }
 }
@@ -316,7 +311,7 @@ impl sf::GameState for State {
         Self::init(game)
     }
 
-    fn tick(&mut self, game: &sf::Game) -> Option<()> {
+    fn tick(&mut self, game: &mut sf::Game) -> Option<()> {
         let mut rng = rand::thread_rng();
 
         //
@@ -464,14 +459,13 @@ impl sf::GameState for State {
             return None;
         }
         if reload {
-            self.reset();
-            load_common_assets(&game.renderer, &mut self.graphics);
+            self.reset(game);
+            load_common_assets(game);
             self.scene.instantiate(
                 &mut self.physics,
                 &mut self.world,
                 &mut self.hecs_sync,
-                &game.renderer,
-                &mut self.graphics,
+                &mut game.graphics,
             );
         }
 
@@ -513,8 +507,7 @@ impl sf::GameState for State {
                     &mut self.physics,
                     &mut self.world,
                     &mut self.hecs_sync,
-                    &game.renderer,
-                    &mut self.graphics,
+                    &mut game.graphics,
                 );
             }
         }
@@ -539,7 +532,7 @@ impl sf::GameState for State {
                 player::controller::tick(
                     &game.input,
                     &mut self.physics,
-                    &self.graphics,
+                    &game.graphics,
                     &mut self.world,
                 );
 
@@ -559,8 +552,8 @@ impl sf::GameState for State {
         }
     }
 
-    fn draw(&mut self, renderer: &mut sf::Renderer, dt: f32) {
-        let mut ctx = renderer.draw_to_window();
+    fn draw(&mut self, game: &mut sf::Game, dt: f32) {
+        let mut ctx = game.renderer.draw_to_window();
         ctx.clear(sf::wgpu::Color {
             r: 0.00802,
             g: 0.0137,
@@ -569,7 +562,7 @@ impl sf::GameState for State {
         });
 
         if matches!(self.state, StateEnum::Playing) {
-            self.graphics.update_animations(dt);
+            game.graphics.update_animations(dt);
         }
 
         if self.bvh_vis_active {
@@ -590,7 +583,7 @@ impl sf::GameState for State {
         }
 
         self.mesh_renderer.draw(
-            &mut self.graphics,
+            &mut game.graphics,
             &self.camera,
             self.light,
             &mut ctx,
@@ -599,9 +592,9 @@ impl sf::GameState for State {
 
         ctx.submit();
 
-        self.outline_renderer.draw(renderer);
+        self.outline_renderer.draw(&mut game.renderer);
 
-        let mut ctx = renderer.draw_to_window();
+        let mut ctx = game.renderer.draw_to_window();
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),
@@ -640,7 +633,5 @@ impl sf::GameState for State {
         drop(pass);
 
         ctx.submit();
-
-        renderer.present_frame();
     }
 }

@@ -1,8 +1,16 @@
+use std::sync::OnceLock;
+
+// there is only ever one wgpu context,
+// and since the device and queue are frequently needed to create resources,
+// we store those globally here
+// so that the user doesn't have to ferry them around constantly
+
+static DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
+static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
+
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
     pub window: winit::window::Window,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
     surface: wgpu::Surface,
     surface_config: wgpu::SurfaceConfiguration,
     swapchain_format: wgpu::TextureFormat,
@@ -29,13 +37,25 @@ struct Frame {
     msaa_view: wgpu::TextureView,
 }
 
+/// An error that occurred during renderer initialization.
+#[derive(thiserror::Error, Debug)]
+pub enum RendererInitError {
+    #[error("Failed to create surface")]
+    CreateSurfaceError(#[from] wgpu::CreateSurfaceError),
+    #[error("Adapter request failed")]
+    RequestAdapterError,
+    #[error("Device request failed")]
+    RequestDeviceError(#[from] wgpu::RequestDeviceError),
+    #[error("Another Renderer already existed")]
+    AlreadyInitialized,
+}
+
 impl Renderer {
     /// Create a Renderer.
     /// The [`Game`][crate::game::Game] API does this automatically.
-    pub(crate) async fn init(window: winit::window::Window) -> Self {
+    pub(crate) async fn init(window: winit::window::Window) -> Result<Self, RendererInitError> {
         let instance = wgpu::Instance::default();
-        let surface =
-            unsafe { instance.create_surface(&window) }.expect("Failed to create surface");
+        let surface = unsafe { instance.create_surface(&window) }?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -44,7 +64,7 @@ impl Renderer {
                 compatible_surface: Some(&surface),
             })
             .await
-            .expect("Renderer init failed: failed to create adapter");
+            .ok_or(RendererInitError::RequestAdapterError)?;
 
         let (device, queue) = adapter
             .request_device(
@@ -55,8 +75,7 @@ impl Renderer {
                 },
                 None,
             )
-            .await
-            .expect("Failed to create wgpu device");
+            .await?;
 
         let window_size = window.inner_size();
 
@@ -92,10 +111,15 @@ impl Renderer {
 
         let window_scale_factor = window.scale_factor();
 
-        Renderer {
+        DEVICE
+            .set(device)
+            .map_err(|_| RendererInitError::AlreadyInitialized)?;
+        QUEUE
+            .set(queue)
+            .map_err(|_| RendererInitError::AlreadyInitialized)?;
+
+        Ok(Renderer {
             window,
-            device,
-            queue,
             surface,
             surface_config,
             swapchain_format,
@@ -105,7 +129,7 @@ impl Renderer {
             msaa_samples: MSAA_SAMPLES,
             msaa_texture,
             active_frame: None,
-        }
+        })
     }
 
     fn create_msaa_texture(
@@ -130,23 +154,38 @@ impl Renderer {
         })
     }
 
+    /// Get a reference to the the global device instance.
+    /// # Panics
+    /// This function panics if the renderer hasn't been initialized yet,
+    /// i.e. if [`Game::run`][crate::Game::run] hasn't been called yet.
+    #[inline]
+    pub fn device<'a>() -> &'a wgpu::Device {
+        DEVICE.get().expect("Renderer has not been initialized yet")
+    }
+
+    /// Get a reference to the the global queue instance.
+    /// # Panics
+    /// This function panics if the renderer hasn't been initialized yet,
+    /// i.e. if [`Game::run`][crate::Game::run] hasn't been called yet.
+    #[inline]
+    pub fn queue<'a>() -> &'a wgpu::Queue {
+        QUEUE.get().expect("Renderer has not been initialized yet")
+    }
+
     /// Change the size of the frame `draw_to_window` draws into.
     /// This is called automatically by the gameloop when the window size changes.
     pub(crate) fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size == self.window_size() {
             return;
         }
+        let device = Self::device();
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
-        self.surface.configure(&self.device, &self.surface_config);
-        self.msaa_texture = Self::create_msaa_texture(
-            &self.device,
-            self.swapchain_format,
-            self.msaa_samples,
-            new_size,
-        );
+        self.surface.configure(device, &self.surface_config);
+        self.msaa_texture =
+            Self::create_msaa_texture(device, self.swapchain_format, self.msaa_samples, new_size);
         self.window_depth_buffer = super::DepthBuffer::new(
-            &self.device,
+            device,
             new_size.into(),
             self.msaa_samples,
             Some("global depth buffer made on resize"),
@@ -207,11 +246,13 @@ impl Renderer {
                 msaa_view,
             });
         }
-        let encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+
+        let device = Self::device();
+        let queue = Self::queue();
+
+        let encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         let target_size = self.window_size().into();
-        let queue = &mut self.queue;
 
         // active frame was just set so unwrap is safe
         let active_frame = self.active_frame.as_ref().unwrap();
@@ -225,7 +266,7 @@ impl Renderer {
             window: &self.window,
             target,
             encoder: CommandEncoder(encoder),
-            device: &self.device,
+            device,
             queue,
             target_size,
             submit_check: SubmitCheck::new(),
@@ -242,10 +283,11 @@ impl Renderer {
         depth_target: Option<&'v wgpu::TextureView>,
         target_size: (u32, u32),
     ) -> RenderContext<'s> {
-        let encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        let queue = &mut self.queue;
+        let device = Self::device();
+        let queue = Self::queue();
+
+        let encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         RenderContext {
             window: &self.window,
@@ -255,7 +297,7 @@ impl Renderer {
                 depth: depth_target,
             },
             encoder: CommandEncoder(encoder),
-            device: &self.device,
+            device,
             queue,
             target_size,
             submit_check: SubmitCheck::new(),
@@ -263,8 +305,8 @@ impl Renderer {
     }
 
     /// Display everything drawn to the window since the last `present_frame` call.
-    /// Must be called at the end of every frame.
-    pub fn present_frame(&mut self) {
+    /// Called automatically at the end of the frame by [`Game`][crate::Game].
+    pub(crate) fn present_frame(&mut self) {
         if let Some(frame) = self.active_frame.take() {
             frame.surface.present();
         }
@@ -287,7 +329,7 @@ pub struct RenderContext<'a> {
     pub target: RenderTarget<'a>,
     pub encoder: CommandEncoder,
     pub device: &'a wgpu::Device,
-    pub queue: &'a mut wgpu::Queue,
+    pub queue: &'a wgpu::Queue,
     pub target_size: (u32, u32),
     // this is just used to warn if a context was dropped without submitting
     submit_check: SubmitCheck,

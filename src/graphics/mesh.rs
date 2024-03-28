@@ -52,7 +52,8 @@ impl Default for MeshParams {
 }
 
 impl MeshParams {
-    pub fn upload(self, device: &wgpu::Device, label: Option<&str>) -> Mesh {
+    pub fn upload(self, label: Option<&str>) -> Mesh {
+        let device = crate::Renderer::device();
         use wgpu::util::DeviceExt;
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label,

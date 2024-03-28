@@ -8,7 +8,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::graphics::Renderer;
+use crate::graphics::renderer::RendererInitError;
 
 // time snapping technique from Tyler Glaiel's blog post
 // https://medium.com/@tglaiel/how-to-make-your-game-run-at-60fps-24c61210fe75
@@ -44,9 +44,9 @@ pub trait GameState: Sized + 'static {
     /// which is easiest to handle within a single encompassing async function (especially in wasm).
     fn init(game: &mut Game) -> Self;
     /// Advance the game forward by a timestep of `Game::dt_fixed` seconds. Return None to exit the game.
-    fn tick(&mut self, game: &Game) -> Option<()>;
+    fn tick(&mut self, game: &mut Game) -> Option<()>;
     /// Render the game onto the screen. `dt` is the time in seconds since last draw.
-    fn draw(&mut self, renderer: &mut crate::graphics::Renderer, dt: f32);
+    fn draw(&mut self, game: &mut Game, dt: f32);
 }
 
 pub struct GameParams<State: GameState> {
@@ -73,22 +73,32 @@ impl<State: GameState> Default for GameParams<State> {
 /// A Game manages the global resources a game needs like a window and a graphics renderer
 /// and handles timing of the game loop.
 pub struct Game {
-    /// A global input cache that is automatically updated once per tick.
+    /// Current state of input devices.
     pub input: crate::Input,
-    /// A renderer that can draw to the game's window.
-    pub renderer: crate::graphics::Renderer,
+    /// A manager that handles the rendering context and GPU resources.
+    pub renderer: crate::Renderer,
+    /// Interface for loading and rendering graphics assets.
+    pub graphics: crate::GraphicsManager,
     /// Fixed delta-time between frames.
     pub dt_fixed: f64,
     /// Duration of a frame in nanoseconds.
     nanos_per_frame: u128,
 }
+
+/// An error that occurred during in the initialization
+/// of a game window and renderer.
+#[derive(Debug, thiserror::Error)]
+pub enum GameInitError {
+    #[error("Failed to create a window")]
+    WindowOSError(#[from] winit::error::OsError),
+    #[error("Failed to initialize wgpu renderer")]
+    RendererInitError(#[from] RendererInitError),
+}
+
 impl Game {
-    pub fn run<State: GameState>(params: GameParams<State>) {
+    pub fn run<State: GameState>(params: GameParams<State>) -> Result<(), GameInitError> {
         let events: EventLoop<()> = EventLoop::new();
-        let window = params
-            .window
-            .build(&events)
-            .expect("Failed to create window");
+        let window = params.window.build(&events)?;
         #[cfg(not(target_arch = "wasm32"))]
         {
             futures::executor::block_on(Self::run_async(
@@ -96,7 +106,7 @@ impl Game {
                 params.on_event,
                 events,
                 window,
-            ));
+            ))?;
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -117,8 +127,9 @@ impl Game {
                 params.on_event,
                 events,
                 window,
-            ));
+            ))?;
         }
+        Ok(())
     }
 
     async fn run_async<State: GameState>(
@@ -126,17 +137,18 @@ impl Game {
         on_event: fn(&mut State, &Event<()>),
         events: EventLoop<()>,
         window: Window,
-    ) {
+    ) -> Result<(), RendererInitError> {
         let _tracy_client = tracy_client::Client::start();
 
         //
         // init
         //
 
-        let renderer = Renderer::init(window).await;
+        let renderer = crate::Renderer::init(window).await?;
 
         let mut game = Game {
             input: crate::Input::new(renderer.window_size().into()),
+            graphics: crate::GraphicsManager::new(),
             renderer,
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
             dt_fixed: 1.0 / fps as f64,
@@ -189,7 +201,7 @@ impl Game {
                         while acc >= game.nanos_per_frame {
                             let _frame = tracy_client::non_continuous_frame!("tick");
 
-                            if state.tick(&game).is_none() {
+                            if state.tick(&mut game).is_none() {
                                 *control_flow = ControlFlow::Exit;
                                 return;
                             }
@@ -200,7 +212,9 @@ impl Game {
                         {
                             let _draw_span = tracy_client::span!("draw");
 
-                            state.draw(&mut game.renderer, game.dt_fixed as f32);
+                            let dt = game.dt_fixed as f32;
+                            state.draw(&mut game, dt);
+                            game.renderer.present_frame();
                         }
 
                         tracy_client::frame_mark();

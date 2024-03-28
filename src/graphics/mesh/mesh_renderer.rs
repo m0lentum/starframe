@@ -2,7 +2,7 @@ use crate::{
     graphics::{
         manager::MeshId,
         util::{GpuMat4, GpuVec3},
-        Camera, DepthBuffer, GraphicsManager, RenderContext, Renderer,
+        Camera, DepthBuffer, GraphicsManager, RenderContext,
     },
     math::{self as m, uv},
 };
@@ -88,7 +88,9 @@ pub struct MeshRenderer {
 }
 
 impl MeshRenderer {
-    pub fn new(rend: &Renderer, manager: &GraphicsManager) -> Self {
+    pub fn new(game: &crate::Game) -> Self {
+        let device = crate::Renderer::device();
+
         /// Different pipelines for skinned and unskinned meshes;
         /// this enum helps create them concisely
         enum PipelineVariant {
@@ -98,14 +100,10 @@ impl MeshRenderer {
 
         // shaders
 
-        let shader = rend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mesh"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                    "../shaders/mesh.wgsl"
-                ))),
-            });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("mesh"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/mesh.wgsl"))),
+        });
 
         //
         // bind groups & buffers
@@ -113,7 +111,7 @@ impl MeshRenderer {
 
         // camera
 
-        let camera_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
+        let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: size_of::<CameraUniforms>() as _,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             label: Some("mesh camera"),
@@ -121,27 +119,26 @@ impl MeshRenderer {
         });
 
         let camera_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[
-                        // mesh uniforms
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
-                                    size_of::<CameraUniforms>() as _,
-                                ),
-                            },
-                            count: None,
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    // mesh uniforms
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(
+                                size_of::<CameraUniforms>() as _
+                            ),
                         },
-                    ],
-                    label: Some("skinned mesh camera"),
-                });
+                        count: None,
+                    },
+                ],
+                label: Some("skinned mesh camera"),
+            });
 
-        let camera_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("skinned mesh camera"),
             layout: &camera_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -152,15 +149,15 @@ impl MeshRenderer {
 
         // light
 
-        let light_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
+        let light_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: size_of::<LightUniforms>() as _,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             label: Some("mesh lights"),
             mapped_at_creation: false,
         });
 
-        let light_bind_group_layout = rend.device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
+        let light_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -172,10 +169,9 @@ impl MeshRenderer {
                     count: None,
                 }],
                 label: Some("mesh lights"),
-            },
-        );
+            });
 
-        let light_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh lights"),
             layout: &light_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
@@ -186,7 +182,7 @@ impl MeshRenderer {
 
         // joints
 
-        let joint_storage = rend.device.create_buffer(&wgpu::BufferDescriptor {
+        let joint_storage = device.create_buffer(&wgpu::BufferDescriptor {
             size: size_of::<GpuMat4>() as _,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             label: Some("mesh joints"),
@@ -194,24 +190,23 @@ impl MeshRenderer {
         });
 
         let joints_bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[
-                        // storage buffer for joint matrices
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::VERTEX,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(size_of::<GpuMat4>() as _),
-                            },
-                            count: None,
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[
+                    // storage buffer for joint matrices
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: wgpu::BufferSize::new(size_of::<GpuMat4>() as _),
                         },
-                    ],
-                    label: Some("skinned mesh joints"),
-                });
-        let joints_bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        count: None,
+                    },
+                ],
+                label: Some("skinned mesh joints"),
+            });
+        let joints_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &joints_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -318,46 +313,43 @@ impl MeshRenderer {
         // pipeline
         //
 
-        let pipeline_layout = rend
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("mesh"),
-                bind_group_layouts: &[
-                    &camera_bind_group_layout,
-                    &light_bind_group_layout,
-                    &joints_bind_group_layout,
-                    &manager.material_res.bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("mesh"),
+            bind_group_layouts: &[
+                &camera_bind_group_layout,
+                &light_bind_group_layout,
+                &joints_bind_group_layout,
+                &game.graphics.material_res.bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
         let pipeline = |variant: PipelineVariant| {
-            rend.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("mesh"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: match variant {
-                            PipelineVariant::Skinned => "vs_skinned",
-                            PipelineVariant::Unskinned => "vs_unskinned",
-                        },
-                        buffers: &vertex_buffers(variant),
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: match variant {
+                        PipelineVariant::Skinned => "vs_skinned",
+                        PipelineVariant::Unskinned => "vs_unskinned",
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(rend.swapchain_format().into())],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(DepthBuffer::default_depth_stencil_state()),
-                    multisample: rend.multisample_state(),
-                    multiview: None,
-                })
+                    buffers: &vertex_buffers(variant),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(game.renderer.swapchain_format().into())],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(DepthBuffer::default_depth_stencil_state()),
+                multisample: game.renderer.multisample_state(),
+                multiview: None,
+            })
         };
 
         Self {

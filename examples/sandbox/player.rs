@@ -77,13 +77,13 @@ fn player_collider() -> sf::Collider {
 pub mod controller {
     use super::*;
 
-    pub fn upload_meshes(renderer: &sf::Renderer, graphics: &mut sf::GraphicsManager) {
+    pub fn upload_meshes(graphics: &mut sf::GraphicsManager) {
         // TODO: unify the mesh upload API and the graphics manager insert API
         let player_mesh = sf::MeshParams {
             data: sf::MeshData::from(player_collider()),
             ..Default::default()
         }
-        .upload(&renderer.device, Some("player"));
+        .upload(Some("player"));
         graphics.insert_mesh(player_mesh, Some("player"));
 
         let bullet_mesh = sf::MeshParams {
@@ -91,7 +91,7 @@ pub mod controller {
             has_outline: false,
             ..Default::default()
         }
-        .upload(&renderer.device, Some("bullet"));
+        .upload(Some("bullet"));
         graphics.insert_mesh(bullet_mesh, Some("bullet"));
     }
 

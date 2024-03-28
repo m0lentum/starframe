@@ -29,40 +29,37 @@ pub struct DebugVisualizer {
 
 impl DebugVisualizer {
     pub fn new(rend: &super::Renderer) -> Self {
-        let shader = rend
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("debug"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/debug.wgsl"))),
-            });
+        let device = crate::Renderer::device();
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("debug"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shaders/debug.wgsl"))),
+        });
 
         let uniform_buf_size = std::mem::size_of::<GlobalUniforms>() as wgpu::BufferAddress;
-        let uniform_buf = rend.device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
             size: uniform_buf_size,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             label: Some("debug uniforms"),
             mapped_at_creation: false,
         });
 
-        let bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0, // view matrix
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
-                                GlobalUniforms,
-                            >()
-                                as _),
-                        },
-                        count: None,
-                    }],
-                    label: Some("debug"),
-                });
-        let bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0, // view matrix
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(
+                        std::mem::size_of::<GlobalUniforms>() as _
+                    ),
+                },
+                count: None,
+            }],
+            label: Some("debug"),
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -90,49 +87,46 @@ impl DebugVisualizer {
             ],
         }];
 
-        let pipeline_layout = rend
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("debug"),
-                bind_group_layouts: &[&bind_group_layout],
-                push_constant_ranges: &[],
-            });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("debug"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
         let pipeline = |topology| {
-            rend.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("debug line"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: "vs_main",
-                        buffers: &vertex_buffers,
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: "fs_main",
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: rend.swapchain_format(),
-                            blend: Some(wgpu::BlendState {
-                                color: wgpu::BlendComponent {
-                                    operation: wgpu::BlendOperation::Add,
-                                    src_factor: wgpu::BlendFactor::SrcAlpha,
-                                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                                },
-                                alpha: wgpu::BlendComponent::REPLACE,
-                            }),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: rend.multisample_state(),
-                    multiview: None,
-                })
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("debug line"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &vertex_buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: rend.swapchain_format(),
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                operation: wgpu::BlendOperation::Add,
+                                src_factor: wgpu::BlendFactor::SrcAlpha,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            },
+                            alpha: wgpu::BlendComponent::REPLACE,
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: rend.multisample_state(),
+                multiview: None,
+            })
         };
         let line_pipeline = pipeline(wgpu::PrimitiveTopology::LineList);
         // filled meshes currently not used, just add this back if you need it

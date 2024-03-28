@@ -3,8 +3,6 @@ use std::mem::size_of;
 use wgpu::util::DeviceExt;
 use zerocopy::{AsBytes, FromBytes};
 
-use crate::Renderer;
-
 /// Singleton collection of shared resources stored in `GraphicsManager`.
 pub(crate) struct MaterialResources {
     /// Bind group layout shared by all materials.
@@ -17,61 +15,58 @@ pub(crate) struct MaterialResources {
 }
 
 impl MaterialResources {
-    pub(super) fn new(rend: &Renderer) -> Self {
-        let bind_group_layout =
-            rend.device
-                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("material"),
-                    entries: &[
-                        // parameter uniforms
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Buffer {
-                                ty: wgpu::BufferBindingType::Uniform,
-                                has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(
-                                    size_of::<MaterialUniforms>() as _,
-                                ),
-                            },
-                            count: None,
-                        },
-                        // texture and sampler for diffuse
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 2,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                        // same for normal map
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 3,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 4,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
+    pub(super) fn new() -> Self {
+        let device = crate::Renderer::device();
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("material"),
+            entries: &[
+                // parameter uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<MaterialUniforms>() as _),
+                    },
+                    count: None,
+                },
+                // texture and sampler for diffuse
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // same for normal map
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
 
         let blank_texture = TextureData {
             label: Some("blank".to_string()),
@@ -79,7 +74,7 @@ impl MaterialResources {
             format: wgpu::TextureFormat::Rgba8Unorm,
             dimensions: (1, 1),
         }
-        .upload(rend);
+        .upload();
 
         let blank_normal = TextureData {
             label: Some("blank normal".to_string()),
@@ -87,7 +82,7 @@ impl MaterialResources {
             format: wgpu::TextureFormat::Rgba8Unorm,
             dimensions: (1, 1),
         }
-        .upload(rend);
+        .upload();
 
         Self {
             bind_group_layout,
@@ -113,29 +108,25 @@ pub struct Material {
 }
 
 impl Material {
-    pub(super) fn new(
-        rend: &Renderer,
-        defaults: &MaterialResources,
-        params: MaterialParams,
-    ) -> Self {
-        let diffuse_tex = params.diffuse_tex.map(|t| t.upload(rend));
-        let normal_tex = params.normal_tex.map(|t| t.upload(rend));
+    pub(super) fn new(defaults: &MaterialResources, params: MaterialParams) -> Self {
+        let device = crate::Renderer::device();
+
+        let diffuse_tex = params.diffuse_tex.map(|t| t.upload());
+        let normal_tex = params.normal_tex.map(|t| t.upload());
 
         let diffuse = diffuse_tex.as_ref().unwrap_or(&defaults.blank_texture);
         let normal = normal_tex.as_ref().unwrap_or(&defaults.blank_normal);
 
-        let uniform_buf = rend
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("material uniforms"),
-                contents: MaterialUniforms {
-                    base_color: params.base_color.unwrap_or([1.; 4]),
-                }
-                .as_bytes(),
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("material uniforms"),
+            contents: MaterialUniforms {
+                base_color: params.base_color.unwrap_or([1.; 4]),
+            }
+            .as_bytes(),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
 
-        let bind_group = rend.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &defaults.bind_group_layout,
             entries: &[
@@ -194,15 +185,17 @@ pub struct TextureData<'a> {
 }
 
 impl<'a> TextureData<'a> {
-    pub fn upload(self, rend: &crate::Renderer) -> Texture {
+    pub fn upload(self) -> Texture {
+        let device = crate::Renderer::device();
+        let queue = crate::Renderer::queue();
         let label = self.label.as_deref();
         let size = wgpu::Extent3d {
             width: self.dimensions.0,
             height: self.dimensions.1,
             depth_or_array_layers: 1,
         };
-        let texture = rend.device.create_texture_with_data(
-            &rend.queue,
+        let texture = device.create_texture_with_data(
+            queue,
             &wgpu::TextureDescriptor {
                 label,
                 size,
@@ -219,7 +212,7 @@ impl<'a> TextureData<'a> {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // TODO: get the sampler from gltf
-        let sampler = rend.device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,

@@ -120,7 +120,6 @@ impl Default for Block {
 // TODO: these huge argument lists are awful,
 // consolidate more of this stuff into one place that's easy to share
 fn spawn_block(
-    renderer: &sf::Renderer,
     graphics: &mut sf::GraphicsManager,
     physics: &mut sf::PhysicsWorld,
     world: &mut sf::hecs::World,
@@ -133,7 +132,7 @@ fn spawn_block(
         data: sf::MeshData::from(coll),
         ..Default::default()
     }
-    .upload(&renderer.device, None);
+    .upload(None);
     let mesh_id = graphics.insert_mesh(mesh, None);
 
     let entity = world.spawn((pose, coll_key, mesh_id));
@@ -157,7 +156,6 @@ struct Solid<'a> {
 }
 
 fn spawn_static(
-    renderer: &sf::Renderer,
     graphics: &mut sf::GraphicsManager,
     physics: &mut sf::PhysicsWorld,
     world: &mut sf::hecs::World,
@@ -172,7 +170,7 @@ fn spawn_static(
             offset: solid.pose * coll.pose,
             ..Default::default()
         }
-        .upload(&renderer.device, None);
+        .upload(None);
         let mesh_id = graphics.insert_mesh(mesh, None);
         if let Some(mat_id) = solid
             .material
@@ -186,7 +184,6 @@ fn spawn_static(
 }
 
 fn spawn_body(
-    renderer: &sf::Renderer,
     graphics: &mut sf::GraphicsManager,
     physics: &mut sf::PhysicsWorld,
     world: &mut sf::hecs::World,
@@ -209,7 +206,7 @@ fn spawn_body(
             data: sf::MeshData::from(coll),
             ..Default::default()
         }
-        .upload(&renderer.device, None);
+        .upload(None);
         let mesh_id = graphics.insert_mesh(mesh, None);
         if let Some(mat_id) = solid
             .material
@@ -231,7 +228,6 @@ impl Recipe {
         physics: &mut sf::PhysicsWorld,
         world: &mut sf::hecs::World,
         hecs_sync: &mut sf::HecsSyncManager,
-        renderer: &sf::Renderer,
         graphics: &mut sf::GraphicsManager,
     ) {
         let mut rng = rand::thread_rng();
@@ -244,7 +240,7 @@ impl Recipe {
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(physics, graphics, world),
             Recipe::Block(block) => {
-                spawn_block(renderer, graphics, physics, world, *block);
+                spawn_block(graphics, physics, world, *block);
             }
             Recipe::Ball(Ball {
                 radius,
@@ -264,9 +260,9 @@ impl Recipe {
                     material: random_palette(),
                 };
                 if *is_static {
-                    spawn_static(renderer, graphics, physics, world, solid);
+                    spawn_static(graphics, physics, world, solid);
                 } else {
-                    let body_key = spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
+                    let body_key = spawn_body(graphics, physics, world, hecs_sync, solid);
                     let body = physics.entity_set.get_body_mut(body_key).unwrap();
                     body.velocity.linear = start_velocity.into();
                 }
@@ -283,9 +279,9 @@ impl Recipe {
                     material: random_palette(),
                 };
                 if *is_static {
-                    spawn_static(renderer, graphics, physics, world, solid);
+                    spawn_static(graphics, physics, world, solid);
                 } else {
-                    spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
+                    spawn_body(graphics, physics, world, hecs_sync, solid);
                 }
             }
             Recipe::GenericBody { pose, colliders } => {
@@ -294,7 +290,7 @@ impl Recipe {
                     colliders,
                     material: random_palette(),
                 };
-                spawn_body(renderer, graphics, physics, world, hecs_sync, solid);
+                spawn_body(graphics, physics, world, hecs_sync, solid);
             }
             Recipe::Blockchain {
                 width,
@@ -323,7 +319,6 @@ impl Recipe {
 
                     let caps_full_length = dist_norm - spacing;
                     let capsule = spawn_body(
-                        renderer,
                         graphics,
                         physics,
                         world,
@@ -386,7 +381,6 @@ impl Recipe {
                 let position: sf::Vec2 = position.into();
                 let offset = sf::Vec2::new(begin_length / 2.0, 0.0);
                 let b1 = spawn_block(
-                    renderer,
                     graphics,
                     physics,
                     world,
@@ -400,7 +394,6 @@ impl Recipe {
                 );
                 let b1 = *world.query_one_mut::<&sf::BodyKey>(b1).unwrap();
                 let b2 = spawn_block(
-                    renderer,
                     graphics,
                     physics,
                     world,
@@ -427,9 +420,9 @@ impl Recipe {
                 block2,
                 offset2,
             } => {
-                let b1 = spawn_block(renderer, graphics, physics, world, *block1);
+                let b1 = spawn_block(graphics, physics, world, *block1);
                 let b1 = world.query_one_mut::<&sf::BodyKey>(b1).copied();
-                let b2 = spawn_block(renderer, graphics, physics, world, *block2);
+                let b2 = spawn_block(graphics, physics, world, *block2);
                 let b2 = world.query_one_mut::<&sf::BodyKey>(b2).copied();
                 let rope_end_1 = block1.pose.build() * sf::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * sf::Vec2::from(offset2);
@@ -449,7 +442,7 @@ impl Recipe {
                     }),
                     ..Default::default()
                 }
-                .upload(&renderer.device, None);
+                .upload(None);
                 let mesh_id = graphics.insert_mesh(mesh, None);
                 for particle in &rope.particles {
                     let mesh_ent = world.spawn((sf::Pose::default(), mesh_id, *particle));

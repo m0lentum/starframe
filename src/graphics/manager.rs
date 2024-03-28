@@ -5,7 +5,7 @@ use super::{
     animation::{animator::Animator, gltf_animation::GltfAnimation},
     material::{Material, MaterialParams, MaterialResources},
     mesh::{Mesh, MeshParams},
-    Renderer, Skin,
+    Skin,
 };
 use crate::math::uv;
 
@@ -128,10 +128,9 @@ pub enum LoadError {
 impl GraphicsManager {
     /// Create a new graphics manager.
     #[inline]
-    pub fn new(rend: &Renderer) -> Self {
-        let material_res = MaterialResources::new(rend);
+    pub(crate) fn new() -> Self {
+        let material_res = MaterialResources::new();
         let default_material = Material::new(
-            rend,
             &material_res,
             MaterialParams {
                 base_color: Some([1.; 4]),
@@ -183,11 +182,7 @@ impl GraphicsManager {
     /// - animations can only target one skin at a time
     ///   and cannot target nodes that aren't part of a skin
     #[cfg(feature = "gltf")]
-    pub fn load_gltf(
-        &mut self,
-        rend: &Renderer,
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<(), LoadError> {
+    pub fn load_gltf(&mut self, path: impl AsRef<std::path::Path>) -> Result<(), LoadError> {
         let path = path.as_ref();
         let file_bytes = std::fs::read(path)?;
 
@@ -295,7 +290,7 @@ impl GraphicsManager {
             .materials()
             .map(|gltf_mat| {
                 let mat_params = gltf_import::load_material(&images, gltf_mat);
-                let mat = Material::new(rend, &self.material_res, mat_params);
+                let mat = Material::new(&self.material_res, mat_params);
                 self.materials.insert(mat)
             })
             .collect();
@@ -310,7 +305,7 @@ impl GraphicsManager {
                     data: mesh_data,
                     ..Default::default()
                 }
-                .upload(&rend.device, gltf_mesh.name());
+                .upload(gltf_mesh.name());
 
                 let mesh_id = self.meshes.insert(mesh);
                 if let Some(name) = gltf_mesh.name() {
@@ -429,11 +424,10 @@ impl GraphicsManager {
     #[inline]
     pub fn create_material(
         &mut self,
-        rend: &Renderer,
         params: MaterialParams<'_>,
         name: Option<&str>,
     ) -> MaterialId {
-        let mat = Material::new(rend, &self.material_res, params);
+        let mat = Material::new(&self.material_res, params);
         let id = self.materials.insert(mat);
         if let Some(name) = name {
             self.material_name_map.insert(name.to_string(), id);
