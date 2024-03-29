@@ -8,7 +8,10 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use crate::graphics::renderer::RendererInitError;
+use crate::{
+    graphics::renderer::RendererInitError,
+    physics::{hecs_sync::HecsSyncManager, ForceField, PhysicsWorld},
+};
 
 // time snapping technique from Tyler Glaiel's blog post
 // https://medium.com/@tglaiel/how-to-make-your-game-run-at-60fps-24c61210fe75
@@ -79,6 +82,12 @@ pub struct Game {
     pub renderer: crate::Renderer,
     /// Interface for loading and rendering graphics assets.
     pub graphics: crate::GraphicsManager,
+    /// Main ECS world of the game.
+    pub world: hecs::World,
+    /// Main physics world of the game.
+    pub physics: PhysicsWorld,
+    /// Handler for interactions between the ECS world and the physics world.
+    pub hecs_sync: HecsSyncManager,
     /// Fixed delta-time between frames.
     pub dt_fixed: f64,
     /// Duration of a frame in nanoseconds.
@@ -150,6 +159,12 @@ impl Game {
             input: crate::Input::new(renderer.window_size().into()),
             graphics: crate::GraphicsManager::new(),
             renderer,
+            world: hecs::World::new(),
+            physics: PhysicsWorld::new(
+                crate::physics::TuningConstants::default(),
+                crate::CollisionMaskMatrix::default(),
+            ),
+            hecs_sync: HecsSyncManager::new_autosync(crate::HecsSyncOptions::both_ways()),
             nanos_per_frame: 1_000_000_000 / u128::from(fps),
             dt_fixed: 1.0 / fps as f64,
         };
@@ -252,5 +267,26 @@ impl Game {
                 _ => (),
             }
         });
+    }
+
+    /// Step the game's physics world forward in time by a frame.
+    ///
+    /// Convenience method that calls [`HecsSyncManager::sync_hecs_to_physics`],
+    /// [`PhysicsWorld::tick`], and [`HecsSyncManager::sync_physics_to_hecs`].
+    pub fn physics_tick(&mut self, ff: &impl ForceField, time_scale: Option<f64>) {
+        self.hecs_sync
+            .sync_hecs_to_physics(&mut self.physics, &mut self.world);
+        self.physics.tick(self.dt_fixed, time_scale, ff);
+        self.hecs_sync
+            .sync_physics_to_hecs(&self.physics, &mut self.world);
+    }
+
+    /// Clear all state stored in the game struct,
+    /// namely `self.graphics`, `self.world`, `self.physics` and `self.hecs_sync`.
+    pub fn clear_state(&mut self) {
+        self.graphics.clear();
+        self.world.clear();
+        self.physics.clear();
+        self.hecs_sync.clear();
     }
 }

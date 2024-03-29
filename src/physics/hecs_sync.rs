@@ -146,8 +146,12 @@ impl HecsSyncManager {
             }
             if opts.hecs_to_physics {
                 // sync poses for bodies that do still exist
-                let Ok(pose) = hecs_world.query_one_mut::<&m::Pose>(*entity) else { return true };
-                let Some(body) = physics.entity_set.get_body_mut(BodyKey(body_key)) else { return true };
+                let Ok(pose) = hecs_world.query_one_mut::<&m::Pose>(*entity) else {
+                    return true;
+                };
+                let Some(body) = physics.entity_set.get_body_mut(BodyKey(body_key)) else {
+                    return true;
+                };
                 body.pose = *pose;
             }
             true
@@ -161,8 +165,9 @@ impl HecsSyncManager {
                 return false;
             }
             if opts.hecs_to_physics {
-                let Ok(pose) = hecs_world
-                    .query_one_mut::<&m::Pose>(*entity) else { return true };
+                let Ok(pose) = hecs_world.query_one_mut::<&m::Pose>(*entity) else {
+                    return true;
+                };
 
                 if let Some(body) = physics.entity_set.get_collider_body_mut(coll_key) {
                     body.pose = *pose;
@@ -189,8 +194,9 @@ impl HecsSyncManager {
             if opts.physics_to_hecs {
                 // existence checked in the autodelete step
                 let body = physics.entity_set.get_body(BodyKey(body_key)).unwrap();
-                let Ok(pose) = hecs_world
-                    .query_one_mut::<&mut m::Pose>(*entity) else { return true };
+                let Ok(pose) = hecs_world.query_one_mut::<&mut m::Pose>(*entity) else {
+                    return true;
+                };
                 *pose = body.pose;
             }
             true
@@ -204,8 +210,9 @@ impl HecsSyncManager {
             }
             if opts.physics_to_hecs {
                 let coll_key = ColliderKey(coll_key);
-                let Ok(pose) = hecs_world
-                .query_one_mut::<&mut m::Pose>(*entity) else { return true };
+                let Ok(pose) = hecs_world.query_one_mut::<&mut m::Pose>(*entity) else {
+                    return true;
+                };
                 // sync the global pose of the collider if it's attached to a body
                 // (again, existence checked previously)
                 let coll = physics.entity_set.get_collider(coll_key).unwrap();

@@ -40,27 +40,22 @@ pub struct PlayerRecipe {
 }
 
 impl PlayerRecipe {
-    pub fn spawn(
-        &self,
-        physics: &mut sf::PhysicsWorld,
-        graphics: &sf::GraphicsManager,
-        world: &mut sf::hecs::World,
-    ) {
+    pub fn spawn(&self, game: &mut sf::Game) {
         let body = sf::Body::new_particle(1.0);
-        let body_key = physics.entity_set.insert_body(body);
+        let body_key = game.physics.entity_set.insert_body(body);
         let coll = player_collider();
-        let coll_key = physics.entity_set.attach_collider(body_key, coll);
+        let coll_key = game.physics.entity_set.attach_collider(body_key, coll);
         let pose = sf::PoseBuilder::new()
             .with_position(self.position)
             .with_rotation(sf::Angle::Deg(90.0))
             .build();
         let state = PlayerState::new();
 
-        world.spawn((
+        game.world.spawn((
             body_key,
             coll_key,
             pose,
-            graphics.get_mesh_id("player").unwrap(),
+            game.graphics.get_mesh_id("player").unwrap(),
             state,
         ));
     }
@@ -95,13 +90,8 @@ pub mod controller {
         graphics.insert_mesh(bullet_mesh, Some("bullet"));
     }
 
-    pub fn tick(
-        input: &sf::Input,
-        physics: &mut sf::PhysicsWorld,
-        graphics: &sf::GraphicsManager,
-        world: &mut sf::hecs::World,
-    ) {
-        let move_axis = input.axis(sf::AxisQuery {
+    pub fn tick(game: &mut sf::Game) {
+        let move_axis = game.input.axis(sf::AxisQuery {
             pos_btn: sf::Key::Right.into(),
             neg_btn: sf::Key::Left.into(),
         });
@@ -117,9 +107,11 @@ pub mod controller {
         let mut bullet_to_spawn = None;
 
         for (player_entity, (body_key, pose, state)) in
-            world.query_mut::<(&sf::BodyKey, &sf::Pose, &mut PlayerState)>()
+            game.world
+                .query_mut::<(&sf::BodyKey, &sf::Pose, &mut PlayerState)>()
         {
-            let body = physics
+            let body = game
+                .physics
                 .entity_set
                 .get_body_mut(*body_key)
                 .expect("Player body was unexpectedly deleted");
@@ -138,7 +130,7 @@ pub mod controller {
 
             // jump
 
-            if input.button(sf::Key::LShift.into()) {
+            if game.input.button(sf::Key::LShift.into()) {
                 // TODO: only on ground, double jump, custom curve
                 body.velocity.linear.y = 4.0;
             }
@@ -146,7 +138,12 @@ pub mod controller {
             // delete bullets that collided with something
 
             state.active_bullets.retain(|(entity, coll_key)| {
-                if physics.contacts_for_collider(*coll_key).next().is_none() {
+                if game
+                    .physics
+                    .contacts_for_collider(*coll_key)
+                    .next()
+                    .is_none()
+                {
                     true
                 } else {
                     bullet_delete_queue.push(*entity);
@@ -157,7 +154,7 @@ pub mod controller {
             // shoot
 
             if state.active_bullets.len() < MAX_SIMULTANEOUS_BULLETS
-                && input.button(sf::Key::Z.into())
+                && game.input.button(sf::Key::Z.into())
             {
                 const R: f64 = 0.05;
                 let player_pos = pose.translation;
@@ -171,14 +168,14 @@ pub mod controller {
                         linear: state.facing.orient_vec(sf::Vec2::new(20.0, 0.1)),
                     },
                 );
-                let b_body_key = physics.entity_set.insert_body(b_body);
-                let b_coll_key = physics.entity_set.attach_collider(b_body_key, b_coll);
+                let b_body_key = game.physics.entity_set.insert_body(b_body);
+                let b_coll_key = game.physics.entity_set.attach_collider(b_body_key, b_coll);
 
                 bullet_to_spawn = Some((
                     player_entity,
                     (
                         b_pose,
-                        graphics.get_mesh_id("bullet").unwrap(),
+                        game.graphics.get_mesh_id("bullet").unwrap(),
                         b_body_key,
                         b_coll_key,
                     ),
@@ -187,12 +184,18 @@ pub mod controller {
         }
 
         for bullet in bullet_delete_queue {
-            world.despawn(bullet).ok();
+            game.world.despawn(bullet).ok();
         }
         if let Some((player_ent, bullet)) = bullet_to_spawn {
-            let bullet_ent = world.spawn(bullet);
-            let bullet_coll = *world.query_one_mut::<&sf::ColliderKey>(bullet_ent).unwrap();
-            let player_state = world.query_one_mut::<&mut PlayerState>(player_ent).unwrap();
+            let bullet_ent = game.world.spawn(bullet);
+            let bullet_coll = *game
+                .world
+                .query_one_mut::<&sf::ColliderKey>(bullet_ent)
+                .unwrap();
+            let player_state = game
+                .world
+                .query_one_mut::<&mut PlayerState>(player_ent)
+                .unwrap();
             player_state.active_bullets.push((bullet_ent, bullet_coll));
         }
     }

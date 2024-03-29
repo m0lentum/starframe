@@ -117,33 +117,26 @@ impl Default for Block {
     }
 }
 
-// TODO: these huge argument lists are awful,
-// consolidate more of this stuff into one place that's easy to share
-fn spawn_block(
-    graphics: &mut sf::GraphicsManager,
-    physics: &mut sf::PhysicsWorld,
-    world: &mut sf::hecs::World,
-    block: Block,
-) -> sf::hecs::Entity {
+fn spawn_block(game: &mut sf::Game, block: Block) -> sf::hecs::Entity {
     let pose = sf::Pose::from(block.pose);
     let coll = sf::Collider::new_rounded_rect(block.width, block.height, block.radius);
-    let coll_key = physics.entity_set.insert_collider(coll);
+    let coll_key = game.physics.entity_set.insert_collider(coll);
     let mesh = sf::MeshParams {
         data: sf::MeshData::from(coll),
         ..Default::default()
     }
     .upload(None);
-    let mesh_id = graphics.insert_mesh(mesh, None);
+    let mesh_id = game.graphics.insert_mesh(mesh, None);
 
-    let entity = world.spawn((pose, coll_key, mesh_id));
+    let entity = game.world.spawn((pose, coll_key, mesh_id));
 
     if !block.is_static {
         let body = sf::Body::new_dynamic(coll.info(), 0.5);
-        let body_key = physics.entity_set.insert_body(body);
-        physics
+        let body_key = game.physics.entity_set.insert_body(body);
+        game.physics
             .entity_set
             .attach_existing_collider(body_key, coll_key);
-        world.insert_one(entity, body_key).ok();
+        game.world.insert_one(entity, body_key).ok();
     }
     entity
 }
@@ -155,14 +148,10 @@ struct Solid<'a> {
     material: Option<String>,
 }
 
-fn spawn_static(
-    graphics: &mut sf::GraphicsManager,
-    physics: &mut sf::PhysicsWorld,
-    world: &mut sf::hecs::World,
-    solid: Solid,
-) {
+fn spawn_static(game: &mut sf::Game, solid: Solid) {
     for coll in solid.colliders {
-        let coll_key = physics
+        let coll_key = game
+            .physics
             .entity_set
             .insert_collider(coll.with_pose(solid.pose));
         let mesh = sf::MeshParams {
@@ -171,35 +160,29 @@ fn spawn_static(
             ..Default::default()
         }
         .upload(None);
-        let mesh_id = graphics.insert_mesh(mesh, None);
+        let mesh_id = game.graphics.insert_mesh(mesh, None);
         if let Some(mat_id) = solid
             .material
             .as_ref()
-            .and_then(|mat| graphics.get_material_id(mat))
+            .and_then(|mat| game.graphics.get_material_id(mat))
         {
-            graphics.set_mesh_material(mesh_id, mat_id);
+            game.graphics.set_mesh_material(mesh_id, mat_id);
         }
-        world.spawn((coll_key, mesh_id));
+        game.world.spawn((coll_key, mesh_id));
     }
 }
 
-fn spawn_body(
-    graphics: &mut sf::GraphicsManager,
-    physics: &mut sf::PhysicsWorld,
-    world: &mut sf::hecs::World,
-    hecs_sync: &mut sf::HecsSyncManager,
-    solid: Solid,
-) -> sf::BodyKey {
+fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
     let coll_setup = sf::CompoundColliderSetup::new(solid.colliders);
     let center_of_mass = coll_setup.center_of_mass();
 
     let body = sf::Body::new_dynamic(coll_setup.info_around_point(center_of_mass), 0.5)
         .with_pose(solid.pose);
-    let body_key = physics.entity_set.insert_body(body);
+    let body_key = game.physics.entity_set.insert_body(body);
 
     for mut coll in solid.colliders.iter().cloned() {
         coll.pose.translation -= center_of_mass;
-        let coll_key = physics.entity_set.attach_collider(body_key, coll);
+        let coll_key = game.physics.entity_set.attach_collider(body_key, coll);
 
         // visualization with a mesh entity synced from physics
         let mesh = sf::MeshParams {
@@ -207,29 +190,30 @@ fn spawn_body(
             ..Default::default()
         }
         .upload(None);
-        let mesh_id = graphics.insert_mesh(mesh, None);
+        let mesh_id = game.graphics.insert_mesh(mesh, None);
         if let Some(mat_id) = solid
             .material
             .as_ref()
-            .and_then(|mat| graphics.get_material_id(mat))
+            .and_then(|mat| game.graphics.get_material_id(mat))
         {
-            graphics.set_mesh_material(mesh_id, mat_id);
+            game.graphics.set_mesh_material(mesh_id, mat_id);
         }
-        let ent = world.spawn((solid.pose, coll_key, mesh_id));
-        hecs_sync.register_collider(coll_key, ent, sf::HecsSyncOptions::physics_to_hecs_only());
+        let ent = game.world.spawn((solid.pose, coll_key, mesh_id));
+        // this is needed for compound colliders,
+        // could/should probably be inferred automatically
+        // and/or worked around in some other more clean way
+        game.hecs_sync.register_collider(
+            coll_key,
+            ent,
+            sf::HecsSyncOptions::physics_to_hecs_only(),
+        );
     }
 
     body_key
 }
 
 impl Recipe {
-    pub fn spawn(
-        &self,
-        physics: &mut sf::PhysicsWorld,
-        world: &mut sf::hecs::World,
-        hecs_sync: &mut sf::HecsSyncManager,
-        graphics: &mut sf::GraphicsManager,
-    ) {
+    pub fn spawn(&self, game: &mut sf::Game) {
         let mut rng = rand::thread_rng();
         let mut random_palette = || {
             Some(format!(
@@ -238,9 +222,9 @@ impl Recipe {
             ))
         };
         match self {
-            Recipe::Player(p_rec) => p_rec.spawn(physics, graphics, world),
+            Recipe::Player(p_rec) => p_rec.spawn(game),
             Recipe::Block(block) => {
-                spawn_block(graphics, physics, world, *block);
+                spawn_block(game, *block);
             }
             Recipe::Ball(Ball {
                 radius,
@@ -260,10 +244,10 @@ impl Recipe {
                     material: random_palette(),
                 };
                 if *is_static {
-                    spawn_static(graphics, physics, world, solid);
+                    spawn_static(game, solid);
                 } else {
-                    let body_key = spawn_body(graphics, physics, world, hecs_sync, solid);
-                    let body = physics.entity_set.get_body_mut(body_key).unwrap();
+                    let body_key = spawn_body(game, solid);
+                    let body = game.physics.entity_set.get_body_mut(body_key).unwrap();
                     body.velocity.linear = start_velocity.into();
                 }
             }
@@ -279,9 +263,9 @@ impl Recipe {
                     material: random_palette(),
                 };
                 if *is_static {
-                    spawn_static(graphics, physics, world, solid);
+                    spawn_static(game, solid);
                 } else {
-                    spawn_body(graphics, physics, world, hecs_sync, solid);
+                    spawn_body(game, solid);
                 }
             }
             Recipe::GenericBody { pose, colliders } => {
@@ -290,7 +274,7 @@ impl Recipe {
                     colliders,
                     material: random_palette(),
                 };
-                spawn_body(graphics, physics, world, hecs_sync, solid);
+                spawn_body(game, solid);
             }
             Recipe::Blockchain {
                 width,
@@ -319,10 +303,7 @@ impl Recipe {
 
                     let caps_full_length = dist_norm - spacing;
                     let capsule = spawn_body(
-                        graphics,
-                        physics,
-                        world,
-                        hecs_sync,
+                        game,
                         Solid {
                             pose: sf::PoseBuilder::new()
                                 .with_position(center)
@@ -337,7 +318,7 @@ impl Recipe {
                     );
                     let caps_length_half = caps_full_length / 2.0;
                     if let Some((prev_block, prev_block_offset)) = prev_block {
-                        physics.constraint_set.insert(
+                        game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(capsule)
                                 .with_target(prev_block)
                                 .with_origin(sf::Vec2::new(-caps_length_half - half_spacing, 0.0))
@@ -346,7 +327,7 @@ impl Recipe {
                                 .build_attachment(),
                         );
                     } else if *anchored_start {
-                        physics.constraint_set.insert(
+                        game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(capsule)
                                 .with_origin(sf::Vec2::new(-caps_length_half - half_spacing, 0.0))
                                 .with_target_origin(link1)
@@ -358,7 +339,7 @@ impl Recipe {
 
                 if *anchored_end {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
-                    physics.constraint_set.insert(
+                    game.physics.constraint_set.insert(
                         sf::ConstraintBuilder::new(prev_block)
                             .with_origin(sf::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
                             .with_target_origin(
@@ -381,9 +362,7 @@ impl Recipe {
                 let position: sf::Vec2 = position.into();
                 let offset = sf::Vec2::new(begin_length / 2.0, 0.0);
                 let b1 = spawn_block(
-                    graphics,
-                    physics,
-                    world,
+                    game,
                     Block {
                         width: 1.0,
                         height: 1.0,
@@ -392,11 +371,9 @@ impl Recipe {
                         is_static: false,
                     },
                 );
-                let b1 = *world.query_one_mut::<&sf::BodyKey>(b1).unwrap();
+                let b1 = *game.world.query_one_mut::<&sf::BodyKey>(b1).unwrap();
                 let b2 = spawn_block(
-                    graphics,
-                    physics,
-                    world,
+                    game,
                     Block {
                         width: 1.0,
                         height: 1.0,
@@ -405,8 +382,8 @@ impl Recipe {
                         is_static: false,
                     },
                 );
-                let b2 = *world.query_one_mut::<&sf::BodyKey>(b2).unwrap();
-                physics.constraint_set.insert(
+                let b2 = *game.world.query_one_mut::<&sf::BodyKey>(b2).unwrap();
+                game.physics.constraint_set.insert(
                     sf::ConstraintBuilder::new(b1)
                         .with_target(b2)
                         .with_compliance(*compliance)
@@ -420,10 +397,10 @@ impl Recipe {
                 block2,
                 offset2,
             } => {
-                let b1 = spawn_block(graphics, physics, world, *block1);
-                let b1 = world.query_one_mut::<&sf::BodyKey>(b1).copied();
-                let b2 = spawn_block(graphics, physics, world, *block2);
-                let b2 = world.query_one_mut::<&sf::BodyKey>(b2).copied();
+                let b1 = spawn_block(game, *block1);
+                let b1 = game.world.query_one_mut::<&sf::BodyKey>(b1).copied();
+                let b2 = spawn_block(game, *block2);
+                let b2 = game.world.query_one_mut::<&sf::BodyKey>(b2).copied();
                 let rope_end_1 = block1.pose.build() * sf::Vec2::from(offset1);
                 let rope_end_2 = block2.pose.build() * sf::Vec2::from(offset2);
                 let rope = sf::Rope::spawn_line(
@@ -432,7 +409,7 @@ impl Recipe {
                     },
                     rope_end_1,
                     rope_end_2,
-                    &mut physics.entity_set,
+                    &mut game.physics.entity_set,
                 );
                 // temporary visualisation with individual particle Meshes
                 let mesh = sf::MeshParams {
@@ -443,10 +420,10 @@ impl Recipe {
                     ..Default::default()
                 }
                 .upload(None);
-                let mesh_id = graphics.insert_mesh(mesh, None);
+                let mesh_id = game.graphics.insert_mesh(mesh, None);
                 for particle in &rope.particles {
-                    let mesh_ent = world.spawn((sf::Pose::default(), mesh_id, *particle));
-                    hecs_sync.register_body(
+                    let mesh_ent = game.world.spawn((sf::Pose::default(), mesh_id, *particle));
+                    game.hecs_sync.register_body(
                         particle.body,
                         mesh_ent,
                         sf::HecsSyncOptions::physics_to_hecs_only(),
@@ -456,7 +433,7 @@ impl Recipe {
                 let last_particle = *rope.particles.iter().last().expect("No particles in rope");
                 match b1 {
                     Ok(b1) => {
-                        physics.constraint_set.insert(
+                        game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(first_particle.body)
                                 .with_target(b1)
                                 .with_target_origin(offset1.into())
@@ -464,7 +441,7 @@ impl Recipe {
                         );
                     }
                     Err(_) => {
-                        physics.constraint_set.insert(
+                        game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(first_particle.body)
                                 .with_target_origin(rope_end_1)
                                 .build_attachment(),
@@ -473,7 +450,7 @@ impl Recipe {
                 }
                 match b2 {
                     Ok(b2) => {
-                        physics.constraint_set.insert(
+                        game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(last_particle.body)
                                 .with_target(b2)
                                 .with_target_origin(offset2.into())
@@ -481,24 +458,24 @@ impl Recipe {
                         );
                     }
                     Err(_) => {
-                        physics.constraint_set.insert(
+                        game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(last_particle.body)
                                 .with_target_origin(rope_end_2)
                                 .build_attachment(),
                         );
                     }
                 }
-                physics.rope_set.insert(rope);
+                game.physics.rope_set.insert(rope);
             }
             Recipe::BackgroundTree { pose, start_time } => {
-                let mesh_id = graphics.get_mesh_id("library.tree_mesh").unwrap();
-                let mesh_id = graphics.new_animation_target(mesh_id);
+                let mesh_id = game.graphics.get_mesh_id("library.tree_mesh").unwrap();
+                let mesh_id = game.graphics.new_animation_target(mesh_id);
                 let mut anim =
-                    sf::Animator::new(graphics.get_animation_id("library.sway").unwrap())
+                    sf::Animator::new(game.graphics.get_animation_id("library.sway").unwrap())
                         .with_target(mesh_id);
                 anim.t = *start_time;
-                graphics.insert_animator(anim);
-                world.spawn((*pose, mesh_id));
+                game.graphics.insert_animator(anim);
+                game.world.spawn((*pose, mesh_id));
             }
             Recipe::BackgroundForest {
                 mesh_count,
@@ -509,12 +486,12 @@ impl Recipe {
                 bottom,
             } => {
                 // spawn a ton of trees with a few shared animation states
-                let anim_id = graphics.get_animation_id("library.sway").unwrap();
-                let mesh_id = graphics.get_mesh_id("library.tree_mesh").unwrap();
+                let anim_id = game.graphics.get_animation_id("library.sway").unwrap();
+                let mesh_id = game.graphics.get_mesh_id("library.tree_mesh").unwrap();
 
                 let targets: Vec<sf::MeshId> = std::iter::once(mesh_id)
                     .chain(std::iter::repeat_with(|| {
-                        graphics.new_animation_target(mesh_id)
+                        game.graphics.new_animation_target(mesh_id)
                     }))
                     .take(*anim_count)
                     .collect_vec();
@@ -523,7 +500,7 @@ impl Recipe {
                 for (i, target) in targets.iter().enumerate() {
                     let mut animator = sf::Animator::new(anim_id).with_target(*target);
                     animator.t = time_increment * i as f32;
-                    graphics.insert_animator(animator);
+                    game.graphics.insert_animator(animator);
                 }
 
                 for mesh_idx in 0..*mesh_count {
@@ -533,7 +510,7 @@ impl Recipe {
                             distr::Uniform::from(*bottom..*top).sample(&mut rng) as f64,
                         ])
                         .build();
-                    world.spawn((pose, targets[mesh_idx % targets.len()]));
+                    game.world.spawn((pose, targets[mesh_idx % targets.len()]));
                 }
             }
         }

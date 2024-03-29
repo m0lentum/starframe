@@ -49,9 +49,6 @@ pub struct State {
     scenes_available: Vec<std::path::PathBuf>,
     scene: Scene,
     state: StateEnum,
-    world: sf::hecs::World,
-    physics: sf::PhysicsWorld,
-    hecs_sync: sf::HecsSyncManager,
     // gameplay
     mouse_grabber: MouseGrabber,
     // graphics
@@ -86,12 +83,6 @@ impl State {
             scenes_available: read_available_scenes().expect("Failed to read scenes directory"),
             scene: Scene::default(),
             state: StateEnum::Playing,
-            world: sf::hecs::World::new(),
-            physics: sf::PhysicsWorld::new(
-                sf::physics::TuningConstants::default(),
-                sf::CollisionMaskMatrix::default(),
-            ),
-            hecs_sync: sf::HecsSyncManager::new_autosync(sf::HecsSyncOptions::both_ways()),
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
             light: sf::DirectionalLight {
@@ -132,13 +123,6 @@ impl State {
             spawner_obj_count: 1,
             time_scale: 1.0,
         }
-    }
-
-    fn reset(&mut self, game: &mut sf::Game) {
-        self.physics.clear();
-        game.graphics.clear();
-        self.world.clear();
-        self.hecs_sync.clear();
     }
 }
 
@@ -223,15 +207,9 @@ impl Scene {
         <Self as serde::Deserialize>::deserialize(&mut deser)
     }
 
-    pub fn instantiate(
-        &self,
-        physics: &mut sf::PhysicsWorld,
-        world: &mut hecs::World,
-        hecs_sync: &mut sf::HecsSyncManager,
-        graphics: &mut sf::GraphicsManager,
-    ) {
+    pub fn instantiate(&self, game: &mut sf::Game) {
         for recipe in &self.recipes {
-            recipe.spawn(physics, world, hecs_sync, graphics);
+            recipe.spawn(game);
         }
     }
 }
@@ -429,7 +407,7 @@ impl sf::GameState for State {
                 .text("Camera zoom"),
             );
             ui.add(
-                egui::Slider::new(&mut self.physics.consts.substeps, 1..=15)
+                egui::Slider::new(&mut game.physics.consts.substeps, 1..=15)
                     .text("Physics substeps"),
             );
             ui.add(egui::Slider::new(&mut self.time_scale, 0.05..=2.0).text("Time scale"));
@@ -459,14 +437,9 @@ impl sf::GameState for State {
             return None;
         }
         if reload {
-            self.reset(game);
+            game.clear_state();
             load_common_assets(game);
-            self.scene.instantiate(
-                &mut self.physics,
-                &mut self.world,
-                &mut self.hecs_sync,
-                &mut game.graphics,
-            );
+            self.scene.instantiate(game);
         }
 
         self.last_egui_output = self.egui_context.end_frame();
@@ -474,7 +447,7 @@ impl sf::GameState for State {
         // mouse controls
 
         self.mouse_grabber
-            .update(&game.input, &self.camera, &mut self.physics);
+            .update(&game.input, &self.camera, &mut game.physics);
         self.camera_ctl.update(&mut self.camera, &game.input);
 
         // spawn stuff even when paused
@@ -503,12 +476,7 @@ impl sf::GameState for State {
                     }
                     .into()],
                 }
-                .spawn(
-                    &mut self.physics,
-                    &mut self.world,
-                    &mut self.hecs_sync,
-                    &mut game.graphics,
-                );
+                .spawn(game);
             }
         }
 
@@ -523,18 +491,8 @@ impl sf::GameState for State {
                 }
 
                 let grav = sf::forcefield::Gravity(self.scene.gravity.into());
-                self.hecs_sync
-                    .sync_hecs_to_physics(&mut self.physics, &mut self.world);
-                self.physics
-                    .tick(game.dt_fixed, Some(self.time_scale), &grav);
-                self.hecs_sync
-                    .sync_physics_to_hecs(&self.physics, &mut self.world);
-                player::controller::tick(
-                    &game.input,
-                    &mut self.physics,
-                    &game.graphics,
-                    &mut self.world,
-                );
+                game.physics_tick(&grav, Some(self.time_scale));
+                player::controller::tick(game);
 
                 Some(())
             }
@@ -568,14 +526,14 @@ impl sf::GameState for State {
         if self.bvh_vis_active {
             self.debug_visualizer.draw_bvh(
                 self.bvh_vis_levels,
-                &self.physics,
+                &game.physics,
                 &self.camera,
                 &mut ctx,
             );
         }
         if self.island_vis_active {
             self.debug_visualizer
-                .draw_islands(&self.physics, &self.camera, &mut ctx);
+                .draw_islands(&game.physics, &self.camera, &mut ctx);
         }
 
         if self.light_rotating {
@@ -587,7 +545,7 @@ impl sf::GameState for State {
             &self.camera,
             self.light,
             &mut ctx,
-            &mut self.world,
+            &mut game.world,
         );
 
         ctx.submit();
