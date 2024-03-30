@@ -121,12 +121,10 @@ fn spawn_block(game: &mut sf::Game, block: Block) -> sf::hecs::Entity {
     let pose = sf::Pose::from(block.pose);
     let coll = sf::Collider::new_rounded_rect(block.width, block.height, block.radius);
     let coll_key = game.physics.entity_set.insert_collider(coll);
-    let mesh = sf::MeshParams {
+    let mesh_id = game.graphics.create_mesh(sf::MeshParams {
         data: sf::MeshData::from(coll),
         ..Default::default()
-    }
-    .upload(None);
-    let mesh_id = game.graphics.insert_mesh(mesh, None);
+    });
 
     let entity = game.world.spawn((pose, coll_key, mesh_id));
 
@@ -154,13 +152,11 @@ fn spawn_static(game: &mut sf::Game, solid: Solid) {
             .physics
             .entity_set
             .insert_collider(coll.with_pose(solid.pose));
-        let mesh = sf::MeshParams {
+        let mesh_id = game.graphics.create_mesh(sf::MeshParams {
             data: sf::MeshData::from(*coll),
             offset: solid.pose * coll.pose,
             ..Default::default()
-        }
-        .upload(None);
-        let mesh_id = game.graphics.insert_mesh(mesh, None);
+        });
         if let Some(mat_id) = solid.material {
             game.graphics.set_mesh_material(mesh_id, mat_id);
         }
@@ -181,12 +177,10 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
         let coll_key = game.physics.entity_set.attach_collider(body_key, coll);
 
         // visualization with a mesh entity synced from physics
-        let mesh = sf::MeshParams {
+        let mesh_id = game.graphics.create_mesh(sf::MeshParams {
             data: sf::MeshData::from(coll),
             ..Default::default()
-        }
-        .upload(None);
-        let mesh_id = game.graphics.insert_mesh(mesh, None);
+        });
         if let Some(mat_id) = solid.material {
             game.graphics.set_mesh_material(mesh_id, mat_id);
         }
@@ -399,15 +393,13 @@ impl Recipe {
                     &mut game.physics.entity_set,
                 );
                 // temporary visualisation with individual particle Meshes
-                let mesh = sf::MeshParams {
+                let mesh_id = game.graphics.create_mesh(sf::MeshParams {
                     data: sf::MeshData::from(sf::ConvexMeshShape::Circle {
                         r: rope.params.thickness / 2.0,
                         points: 8,
                     }),
                     ..Default::default()
-                }
-                .upload(None);
-                let mesh_id = game.graphics.insert_mesh(mesh, None);
+                });
                 for particle in &rope.particles {
                     let mesh_ent = game.world.spawn((sf::Pose::default(), mesh_id, *particle));
                     game.hecs_sync.register_body(

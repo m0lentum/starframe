@@ -303,9 +303,10 @@ impl GraphicsManager {
 
                 let mesh = MeshParams {
                     data: mesh_data,
+                    name: gltf_mesh.name(),
                     ..Default::default()
                 }
-                .upload(gltf_mesh.name());
+                .upload();
 
                 let mesh_id = self.meshes.insert(mesh);
                 if let Some(name) = gltf_mesh.name() {
@@ -353,12 +354,15 @@ impl GraphicsManager {
     /// If `name` is given, the mesh can also be accessed by
     /// looking it up later with [`get_mesh_id`][Self::get_mesh_id].
     ///
-    /// Note: this does not automatically associate a skin or material with the mesh.
+    /// Note: the mesh initially gets the default material (a solid white).
+    /// Use [`set_mesh_material`][Self::set_mesh_material] to change it.
     #[inline]
-    pub fn insert_mesh(&mut self, mesh: Mesh, name: Option<&str>) -> MeshId {
+    pub fn create_mesh(&mut self, params: MeshParams) -> MeshId {
+        let name = params.name;
+        let mesh = params.upload();
         let key = self.meshes.insert(mesh);
-        if let Some(id) = name {
-            self.mesh_name_map.insert(id.to_string(), key);
+        if let Some(name) = name {
+            self.mesh_name_map.insert(name.to_string(), key);
         }
         MeshId {
             mesh: key,

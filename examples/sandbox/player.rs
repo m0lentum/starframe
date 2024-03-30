@@ -74,21 +74,18 @@ pub mod controller {
     use super::*;
 
     pub fn upload_meshes(graphics: &mut sf::GraphicsManager) -> PlayerMeshes {
-        // TODO: unify the mesh upload API and the graphics manager insert API
-        let player_mesh = sf::MeshParams {
+        let player = graphics.create_mesh(sf::MeshParams {
             data: sf::MeshData::from(player_collider()),
+            name: Some("player"),
             ..Default::default()
-        }
-        .upload(Some("player"));
-        let player = graphics.insert_mesh(player_mesh, Some("player"));
+        });
 
-        let bullet_mesh = sf::MeshParams {
+        let bullet = graphics.create_mesh(sf::MeshParams {
             data: sf::MeshData::from(sf::ConvexMeshShape::Circle { r: R, points: 5 }),
             has_outline: false,
+            name: Some("bullet"),
             ..Default::default()
-        }
-        .upload(Some("bullet"));
-        let bullet = graphics.insert_mesh(bullet_mesh, Some("bullet"));
+        });
 
         PlayerMeshes { player, bullet }
     }

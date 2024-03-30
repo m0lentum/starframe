@@ -18,11 +18,14 @@ use zerocopy::{AsBytes, FromBytes};
 // types
 //
 
-/// CPU-side data of a triangle mesh for rendering.
-/// Not to be used directly, instead should be converted
-/// into a GPU-side [`Mesh`] with [`upload`][Self::upload].
+/// Parameters for creating a triangle mesh.
+/// Used with [`GraphicsManager::create_mesh`][crate::GraphicsManager::create_mesh].
 #[derive(Debug, Clone)]
-pub struct MeshParams {
+pub struct MeshParams<'a> {
+    /// Name that can be later used to look up this mesh
+    /// with [`GraphicsManager::get_mesh_id`][crate::GraphicsManager::get_mesh_id].
+    /// Also gets set as a debug label on the GPU, visible in RenderDoc.
+    pub name: Option<&'a str>,
     /// Offset from the Pose of the entity this mesh is attached to,
     /// or the world origin if it doesn't have a Pose.
     pub offset: m::Pose,
@@ -41,9 +44,10 @@ pub struct MeshData {
     pub joints: Option<Vec<VertexJoints>>,
 }
 
-impl Default for MeshParams {
+impl<'a> Default for MeshParams<'a> {
     fn default() -> Self {
         Self {
+            name: None,
             offset: m::Pose::default(),
             has_outline: true,
             data: MeshData::default(),
@@ -51,23 +55,23 @@ impl Default for MeshParams {
     }
 }
 
-impl MeshParams {
-    pub fn upload(self, label: Option<&str>) -> Mesh {
+impl<'a> MeshParams<'a> {
+    pub fn upload(self) -> Mesh {
         let device = crate::Renderer::device();
         use wgpu::util::DeviceExt;
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label,
+            label: self.name,
             contents: self.data.vertices.as_bytes(),
             usage: wgpu::BufferUsages::VERTEX,
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label,
+            label: self.name,
             contents: self.data.indices.as_bytes(),
             usage: wgpu::BufferUsages::INDEX,
         });
         let joints_buf = self.data.joints.as_ref().map(|joints| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label,
+                label: self.name,
                 contents: joints.as_bytes(),
                 usage: wgpu::BufferUsages::VERTEX,
             })
