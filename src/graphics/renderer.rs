@@ -1,5 +1,8 @@
 use std::sync::OnceLock;
 
+mod gbuffer;
+pub use gbuffer::{GBuffer, GBuffers, DEPTH_FORMAT};
+
 // there is only ever one wgpu context,
 // and since the device and queue are frequently needed to create resources,
 // we store those globally here
@@ -16,8 +19,8 @@ pub struct Renderer {
     swapchain_format: wgpu::TextureFormat,
     window_scale_factor: f64,
 
-    /// Depth buffer automatically kept in sync with the swapchain size.
-    pub window_depth_buffer: super::DepthBuffer,
+    /// GBuffers for deferred shading.
+    pub gbufs: GBuffers,
 
     msaa_samples: u32,
     // texture to store multisampling results
@@ -102,13 +105,6 @@ impl Renderer {
         let msaa_texture =
             Self::create_msaa_texture(&device, swapchain_format, MSAA_SAMPLES, window_size);
 
-        let window_depth_buffer = super::DepthBuffer::new(
-            &device,
-            window_size.into(),
-            MSAA_SAMPLES,
-            Some("global depth buffer made on init"),
-        );
-
         let window_scale_factor = window.scale_factor();
 
         DEVICE
@@ -118,13 +114,15 @@ impl Renderer {
             .set(queue)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
+        let gbufs = GBuffers::new(window_size.into(), MSAA_SAMPLES);
+
         Ok(Renderer {
             window,
             surface,
             surface_config,
             swapchain_format,
             window_scale_factor,
-            window_depth_buffer,
+            gbufs,
             generation: 0,
             msaa_samples: MSAA_SAMPLES,
             msaa_texture,
@@ -184,12 +182,7 @@ impl Renderer {
         self.surface.configure(device, &self.surface_config);
         self.msaa_texture =
             Self::create_msaa_texture(device, self.swapchain_format, self.msaa_samples, new_size);
-        self.window_depth_buffer = super::DepthBuffer::new(
-            device,
-            new_size.into(),
-            self.msaa_samples,
-            Some("global depth buffer made on resize"),
-        );
+        self.gbufs = GBuffers::new(new_size.into(), self.msaa_samples);
         self.generation += 1;
     }
 
@@ -221,6 +214,18 @@ impl Renderer {
             count: self.msaa_samples,
             mask: !0,
             alpha_to_coverage_enabled: false,
+        }
+    }
+
+    /// Depth-stencil state that uses the same depth format as the window depth buffer
+    /// and writes depths to the buffer.
+    pub fn default_depth_stencil_state() -> wgpu::DepthStencilState {
+        wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
         }
     }
 
@@ -259,7 +264,7 @@ impl Renderer {
         let target = RenderTarget {
             view: &active_frame.msaa_view,
             resolve_target: Some(&active_frame.view),
-            depth: Some(&self.window_depth_buffer.view),
+            depth: Some(&self.gbufs.depth.view),
         };
 
         RenderContext {

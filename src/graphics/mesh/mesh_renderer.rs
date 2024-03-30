@@ -2,7 +2,7 @@ use crate::{
     graphics::{
         manager::MeshId,
         util::{GpuMat4, GpuVec3},
-        Camera, DepthBuffer, GraphicsManager, RenderContext,
+        Camera, GraphicsManager, RenderContext,
     },
     math::{self as m, uv},
 };
@@ -346,7 +346,7 @@ impl MeshRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(DepthBuffer::default_depth_stencil_state()),
+                depth_stencil: Some(crate::Renderer::default_depth_stencil_state()),
                 multisample: game.renderer.multisample_state(),
                 multiview: None,
             })

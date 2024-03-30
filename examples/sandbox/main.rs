@@ -58,7 +58,6 @@ pub struct State {
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     mesh_renderer: sf::MeshRenderer,
-    outline_renderer: sf::OutlineRenderer,
     debug_visualizer: sf::DebugVisualizer,
     // egui stuff
     egui_context: egui::Context,
@@ -99,21 +98,13 @@ impl State {
                 ..Default::default()
             },
             mesh_renderer: sf::MeshRenderer::new(game),
-            outline_renderer: sf::OutlineRenderer::new(
-                sf::OutlineParams {
-                    thickness: 10,
-                    color: [0.0, 0.0, 0.0, 1.0],
-                    shape: sf::OutlineShape::octagon(),
-                },
-                &game.renderer,
-            ),
             debug_visualizer: sf::DebugVisualizer::new(&game.renderer),
             egui_context,
             egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
-                Some(game.renderer.window_depth_buffer.texture.format()),
+                Some(sf::graphics::renderer::DEPTH_FORMAT),
                 game.renderer.msaa_samples(),
             ),
             last_egui_output: Default::default(),
@@ -429,13 +420,6 @@ impl sf::GameState for State {
                 );
             }
             ui.checkbox(&mut self.island_vis_active, "Display islands");
-            ui.add(
-                egui::Slider::new(&mut self.outline_renderer.params.thickness, 0..=100)
-                    .text("Outline thickness"),
-            );
-            ui.add(egui::Slider::new(&mut self.outline_interp, 0.0..=1.0).text("Outline shape"));
-            self.outline_renderer.params.shape =
-                sf::OutlineShape::octagon().lerp(self.outline_interp, sf::OutlineShape::circle());
             ui.separator();
             if ui.button("exit").clicked() {
                 exit = true;
@@ -557,8 +541,6 @@ impl sf::GameState for State {
         );
 
         ctx.submit();
-
-        self.outline_renderer.draw(&mut game.renderer);
 
         let mut ctx = game.renderer.draw_to_window();
 
