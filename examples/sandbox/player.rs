@@ -40,7 +40,7 @@ pub struct PlayerRecipe {
 }
 
 impl PlayerRecipe {
-    pub fn spawn(&self, game: &mut sf::Game) {
+    pub fn spawn(&self, game: &mut sf::Game, meshes: PlayerMeshes) {
         let body = sf::Body::new_particle(1.0);
         let body_key = game.physics.entity_set.insert_body(body);
         let coll = player_collider();
@@ -51,13 +51,8 @@ impl PlayerRecipe {
             .build();
         let state = PlayerState::new();
 
-        game.world.spawn((
-            body_key,
-            coll_key,
-            pose,
-            game.graphics.get_mesh_id("player").unwrap(),
-            state,
-        ));
+        game.world
+            .spawn((body_key, coll_key, pose, meshes.player, state));
     }
 }
 
@@ -69,17 +64,23 @@ fn player_collider() -> sf::Collider {
     })
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PlayerMeshes {
+    player: sf::MeshId,
+    bullet: sf::MeshId,
+}
+
 pub mod controller {
     use super::*;
 
-    pub fn upload_meshes(graphics: &mut sf::GraphicsManager) {
+    pub fn upload_meshes(graphics: &mut sf::GraphicsManager) -> PlayerMeshes {
         // TODO: unify the mesh upload API and the graphics manager insert API
         let player_mesh = sf::MeshParams {
             data: sf::MeshData::from(player_collider()),
             ..Default::default()
         }
         .upload(Some("player"));
-        graphics.insert_mesh(player_mesh, Some("player"));
+        let player = graphics.insert_mesh(player_mesh, Some("player"));
 
         let bullet_mesh = sf::MeshParams {
             data: sf::MeshData::from(sf::ConvexMeshShape::Circle { r: R, points: 5 }),
@@ -87,10 +88,12 @@ pub mod controller {
             ..Default::default()
         }
         .upload(Some("bullet"));
-        graphics.insert_mesh(bullet_mesh, Some("bullet"));
+        let bullet = graphics.insert_mesh(bullet_mesh, Some("bullet"));
+
+        PlayerMeshes { player, bullet }
     }
 
-    pub fn tick(game: &mut sf::Game) {
+    pub fn tick(game: &mut sf::Game, meshes: &PlayerMeshes) {
         let move_axis = game.input.axis(sf::AxisQuery {
             pos_btn: sf::Key::Right.into(),
             neg_btn: sf::Key::Left.into(),
@@ -173,12 +176,7 @@ pub mod controller {
 
                 bullet_to_spawn = Some((
                     player_entity,
-                    (
-                        b_pose,
-                        game.graphics.get_mesh_id("bullet").unwrap(),
-                        b_body_key,
-                        b_coll_key,
-                    ),
+                    (b_pose, meshes.bullet, b_body_key, b_coll_key),
                 ));
             }
         }

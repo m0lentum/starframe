@@ -55,6 +55,7 @@ pub struct State {
     camera: sf::Camera,
     light: sf::DirectionalLight,
     light_rotating: bool,
+    gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     mesh_renderer: sf::MeshRenderer,
     outline_renderer: sf::OutlineRenderer,
@@ -75,7 +76,7 @@ pub struct State {
 }
 impl State {
     fn init(game: &mut sf::Game) -> Self {
-        load_common_assets(game);
+        let gen_assets = load_common_assets(game);
 
         let egui_context = egui::Context::default();
         let viewport_id = egui_context.viewport_id();
@@ -91,6 +92,7 @@ impl State {
                 direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
             },
             light_rotating: false,
+            gen_assets,
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
                 reset_button: Some(sf::Key::R.into()),
@@ -136,31 +138,37 @@ const PALETTE_COLORS: [[f32; 4]; 6] = [
     [0.890, 0.721, 0.851, 1.],
 ];
 
+pub struct GeneratedAssets {
+    player: player::PlayerMeshes,
+    palette: Vec<sf::MaterialId>,
+}
+
 /// Load assets referenced by name elsewhere.
 ///
 /// Currently, this must be called after [`State::reset`] before loading a level.
 /// It would be nice to have a form of garbage collection for `GraphicsManager`
 /// that doesn't remove these, but that's not a top priority right now
-fn load_common_assets(game: &mut sf::Game) {
+fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
     game.graphics
         .load_gltf("examples/sandbox/assets/library.glb")
         .expect("Failed to load shared assets");
 
-    player::controller::upload_meshes(&mut game.graphics);
+    let player = player::controller::upload_meshes(&mut game.graphics);
 
-    for (i, col) in PALETTE_COLORS.into_iter().enumerate() {
-        game.graphics.create_material(
-            sf::MaterialParams {
-                base_color: Some(col),
-                ..Default::default()
-            },
-            // TODO: naming these with strings is kind of dumb
-            // when we could just store the ids,
-            // but I can't be bothered to refactor this right now
-            // when there's a much bigger refactoring coming up
-            Some(&format!("palette{i}")),
-        );
-    }
+    let palette = PALETTE_COLORS
+        .into_iter()
+        .map(|col| {
+            game.graphics.create_material(
+                sf::MaterialParams {
+                    base_color: Some(col),
+                    ..Default::default()
+                },
+                None,
+            )
+        })
+        .collect();
+
+    GeneratedAssets { player, palette }
 }
 
 //
@@ -207,9 +215,9 @@ impl Scene {
         <Self as serde::Deserialize>::deserialize(&mut deser)
     }
 
-    pub fn instantiate(&self, game: &mut sf::Game) {
+    pub fn instantiate(&self, game: &mut sf::Game, gen_assets: &GeneratedAssets) {
         for recipe in &self.recipes {
-            recipe.spawn(game);
+            recipe.spawn(game, gen_assets);
         }
     }
 }
@@ -438,8 +446,8 @@ impl sf::GameState for State {
         }
         if reload {
             game.clear_state();
-            load_common_assets(game);
-            self.scene.instantiate(game);
+            self.gen_assets = load_common_assets(game);
+            self.scene.instantiate(game, &self.gen_assets);
         }
 
         self.last_egui_output = self.egui_context.end_frame();
@@ -476,7 +484,7 @@ impl sf::GameState for State {
                     }
                     .into()],
                 }
-                .spawn(game);
+                .spawn(game, &self.gen_assets);
             }
         }
 
@@ -492,7 +500,7 @@ impl sf::GameState for State {
 
                 let grav = sf::forcefield::Gravity(self.scene.gravity.into());
                 game.physics_tick(&grav, Some(self.time_scale));
-                player::controller::tick(game);
+                player::controller::tick(game, &self.gen_assets.player);
 
                 Some(())
             }

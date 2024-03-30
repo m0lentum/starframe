@@ -6,7 +6,7 @@
 use itertools::Itertools;
 use starframe as sf;
 
-use rand::{distributions as distr, distributions::Distribution, Rng};
+use rand::{distributions as distr, distributions::Distribution, seq::SliceRandom};
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub enum Recipe {
@@ -145,7 +145,7 @@ fn spawn_block(game: &mut sf::Game, block: Block) -> sf::hecs::Entity {
 struct Solid<'a> {
     pose: sf::Pose,
     colliders: &'a [sf::Collider],
-    material: Option<String>,
+    material: Option<sf::MaterialId>,
 }
 
 fn spawn_static(game: &mut sf::Game, solid: Solid) {
@@ -161,11 +161,7 @@ fn spawn_static(game: &mut sf::Game, solid: Solid) {
         }
         .upload(None);
         let mesh_id = game.graphics.insert_mesh(mesh, None);
-        if let Some(mat_id) = solid
-            .material
-            .as_ref()
-            .and_then(|mat| game.graphics.get_material_id(mat))
-        {
+        if let Some(mat_id) = solid.material {
             game.graphics.set_mesh_material(mesh_id, mat_id);
         }
         game.world.spawn((coll_key, mesh_id));
@@ -191,11 +187,7 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
         }
         .upload(None);
         let mesh_id = game.graphics.insert_mesh(mesh, None);
-        if let Some(mat_id) = solid
-            .material
-            .as_ref()
-            .and_then(|mat| game.graphics.get_material_id(mat))
-        {
+        if let Some(mat_id) = solid.material {
             game.graphics.set_mesh_material(mesh_id, mat_id);
         }
         let ent = game.world.spawn((solid.pose, coll_key, mesh_id));
@@ -213,16 +205,11 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
 }
 
 impl Recipe {
-    pub fn spawn(&self, game: &mut sf::Game) {
+    pub fn spawn(&self, game: &mut sf::Game, gen_assets: &super::GeneratedAssets) {
         let mut rng = rand::thread_rng();
-        let mut random_palette = || {
-            Some(format!(
-                "palette{}",
-                rng.gen_range(0..super::PALETTE_COLORS.len())
-            ))
-        };
+        let mut random_palette = || gen_assets.palette.choose(&mut rng).copied();
         match self {
-            Recipe::Player(p_rec) => p_rec.spawn(game),
+            Recipe::Player(p_rec) => p_rec.spawn(game, gen_assets.player),
             Recipe::Block(block) => {
                 spawn_block(game, *block);
             }
