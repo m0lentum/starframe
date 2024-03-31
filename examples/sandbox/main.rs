@@ -58,7 +58,6 @@ pub struct State {
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     mesh_renderer: sf::MeshRenderer,
-    debug_visualizer: sf::DebugVisualizer,
     // egui stuff
     egui_context: egui::Context,
     egui_state: egui_winit::State,
@@ -97,7 +96,6 @@ impl State {
                 ..Default::default()
             },
             mesh_renderer: sf::MeshRenderer::new(game),
-            debug_visualizer: sf::DebugVisualizer::new(&game.renderer),
             egui_context,
             egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
             egui_renderer: egui_wgpu::Renderer::new(
@@ -501,40 +499,27 @@ impl sf::GameState for State {
     }
 
     fn draw(&mut self, game: &mut sf::Game, dt: f32) {
+        let device = sf::Renderer::device();
+        let queue = sf::Renderer::queue();
+
+        let window_size = game.renderer.window_size();
+
         if matches!(self.state, StateEnum::Playing) {
             game.graphics.update_animations(dt);
         }
-
-        let mut ctx = game.renderer.draw_to_window();
-        if self.bvh_vis_active {
-            self.debug_visualizer.draw_bvh(
-                self.bvh_vis_levels,
-                &game.physics,
-                &self.camera,
-                &mut ctx,
-            );
-        }
-        if self.island_vis_active {
-            self.debug_visualizer
-                .draw_islands(&game.physics, &self.camera, &mut ctx);
-        }
-        ctx.submit();
 
         if self.light_rotating {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
         }
 
-        game.renderer.deferred().draw(|pass| {
-            self.mesh_renderer.draw(
-                pass,
-                &mut game.graphics,
-                &mut game.world,
-                &self.camera,
-                self.light,
-            );
-        });
+        let mut ctx = game.renderer.deferred();
+        {
+            let mut pass = ctx.pass();
+            self.mesh_renderer
+                .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
+        }
 
-        let mut ctx = game.renderer.draw_to_window();
+        let mut ctx = ctx.shade();
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),
@@ -548,7 +533,7 @@ impl sf::GameState for State {
 
         for (tex_id, img_delta) in &self.last_egui_output.textures_delta.set {
             self.egui_renderer
-                .update_texture(ctx.device, ctx.queue, *tex_id, img_delta);
+                .update_texture(&device, &queue, *tex_id, img_delta);
         }
 
         for tex_id in &self.last_egui_output.textures_delta.free {
@@ -556,22 +541,21 @@ impl sf::GameState for State {
         }
 
         let screen_desc = egui_wgpu::renderer::ScreenDescriptor {
-            size_in_pixels: [ctx.target_size.0, ctx.target_size.1],
+            size_in_pixels: [window_size.width, window_size.height],
             pixels_per_point: self.egui_context.pixels_per_point(),
         };
         self.egui_renderer.update_buffers(
-            ctx.device,
-            ctx.queue,
+            &device,
+            &queue,
             &mut ctx.encoder.0,
             &paint_jobs,
             &screen_desc,
         );
 
-        let mut pass = ctx.pass(Some("egui"));
-        self.egui_renderer
-            .render(&mut pass, &paint_jobs, &screen_desc);
-        drop(pass);
-
-        ctx.submit();
+        {
+            let mut pass = ctx.pass();
+            self.egui_renderer
+                .render(&mut pass, &paint_jobs, &screen_desc);
+        }
     }
 }

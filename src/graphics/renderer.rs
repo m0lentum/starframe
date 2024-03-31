@@ -11,20 +11,23 @@ pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers};
 static DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
 static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
 
+pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+// constant number of samples for now,
+// TODO: make this configurable
+const MSAA_SAMPLES: u32 = 4;
+
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
     pub window: winit::window::Window,
     surface: wgpu::Surface,
     surface_config: wgpu::SurfaceConfiguration,
-    swapchain_format: wgpu::TextureFormat,
     window_scale_factor: f64,
 
     /// GBuffers for deferred shading.
     pub gbufs: GBuffers,
+    deferred_shading_pl: deferred::ShadingPipeline,
 
     msaa_samples: u32,
-    // view to a texture for storing multisampling results
-    msaa_view: wgpu::TextureView,
     // current active frame stored here instead of in RenderContext
     // so that we can interleave drawing to window and drawing to textures
     active_frame: Option<Frame>,
@@ -81,15 +84,11 @@ impl Renderer {
 
         let window_size = window.inner_size();
 
-        // surface.get_preferred_format gives a non-SRGB format on wasm
-        // which screws up colors. not sure if setting it to a constant
-        // is the correct solution but it works on my machines :v)
-        let swapchain_format = wgpu::TextureFormat::Bgra8UnormSrgb;
         let swapchain_capabilities = surface.get_capabilities(&adapter);
 
         let surface_config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: swapchain_format,
+            format: SWAPCHAIN_FORMAT,
             width: window_size.width,
             height: window_size.height,
             present_mode: wgpu::PresentMode::AutoVsync,
@@ -97,12 +96,6 @@ impl Renderer {
             view_formats: vec![],
         };
         surface.configure(&device, &surface_config);
-
-        // constant number of samples for now,
-        // TODO: make this configurable
-        const MSAA_SAMPLES: u32 = 4;
-        let msaa_view =
-            Self::create_msaa_texture(&device, swapchain_format, MSAA_SAMPLES, window_size);
 
         let window_scale_factor = window.scale_factor();
 
@@ -114,42 +107,19 @@ impl Renderer {
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
         let gbufs = GBuffers::new(window_size.into(), MSAA_SAMPLES);
+        let deferred_shading_pl = deferred::ShadingPipeline::new(&gbufs);
 
         Ok(Renderer {
             window,
             surface,
             surface_config,
-            swapchain_format,
             window_scale_factor,
             gbufs,
+            deferred_shading_pl,
             generation: 0,
             msaa_samples: MSAA_SAMPLES,
-            msaa_view,
             active_frame: None,
         })
-    }
-
-    fn create_msaa_texture(
-        device: &wgpu::Device,
-        swapchain_format: wgpu::TextureFormat,
-        msaa_samples: u32,
-        window_size: winit::dpi::PhysicalSize<u32>,
-    ) -> wgpu::TextureView {
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("MSAA resolve"),
-            size: wgpu::Extent3d {
-                width: window_size.width,
-                height: window_size.height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: msaa_samples,
-            dimension: wgpu::TextureDimension::D2,
-            format: swapchain_format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        tex.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
     /// Get a reference to the the global device instance.
@@ -180,15 +150,15 @@ impl Renderer {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(device, &self.surface_config);
-        self.msaa_view =
-            Self::create_msaa_texture(device, self.swapchain_format, self.msaa_samples, new_size);
         self.gbufs = GBuffers::new(new_size.into(), self.msaa_samples);
+        self.deferred_shading_pl
+            .update_gbufs_bind_group(&self.gbufs);
         self.generation += 1;
     }
 
     #[inline]
     pub fn swapchain_format(&self) -> wgpu::TextureFormat {
-        self.swapchain_format
+        SWAPCHAIN_FORMAT
     }
 
     /// Get the size of the window this Renderer draws to in pixels.
@@ -237,14 +207,11 @@ impl Renderer {
         ]
     }
 
-    pub fn deferred(&self) -> DeferredContext<'_> {
-        DeferredContext::new(&self.gbufs)
+    pub fn deferred(&mut self) -> DeferredContext<'_> {
+        DeferredContext::new(self)
     }
 
-    /// Begin drawing directly into the game window.
-    pub fn draw_to_window(&mut self) -> RenderContext<'_> {
-        // start a new frame if this is the first time we're drawing to the window
-        // since last present
+    fn begin_frame(&mut self) {
         if self.active_frame.is_none() {
             let surface = self
                 .surface
@@ -256,31 +223,6 @@ impl Renderer {
 
             self.active_frame = Some(Frame { surface, view });
         }
-
-        let device = Self::device();
-        let queue = Self::queue();
-
-        let encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        let target_size = self.window_size().into();
-
-        // active frame was just set so unwrap is safe
-        let active_frame = self.active_frame.as_ref().unwrap();
-        let target = RenderTarget {
-            view: &self.msaa_view,
-            resolve_target: Some(&active_frame.view),
-            depth: Some(&self.gbufs.depth),
-        };
-
-        RenderContext {
-            window: &self.window,
-            target,
-            encoder: CommandEncoder(encoder),
-            device,
-            queue,
-            target_size,
-            submit_check: SubmitCheck::new(),
-        }
     }
 
     /// Display everything drawn to the window since the last `present_frame` call.
@@ -289,179 +231,5 @@ impl Renderer {
         if let Some(frame) = self.active_frame.take() {
             frame.surface.present();
         }
-    }
-}
-
-pub struct RenderTarget<'a> {
-    pub view: &'a wgpu::TextureView,
-    pub resolve_target: Option<&'a wgpu::TextureView>,
-    pub depth: Option<&'a wgpu::TextureView>,
-}
-
-/// An interface that lets you send draw instructions to the GPU.
-///
-/// You **must** call [`submit`](Self::submit) when you drop the context.
-/// Not doing so would result in a memory leak, so
-/// `RenderContext` will panic on drop if you do this.
-pub struct RenderContext<'a> {
-    pub window: &'a winit::window::Window,
-    pub target: RenderTarget<'a>,
-    pub encoder: CommandEncoder,
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub target_size: (u32, u32),
-    // this is just used to warn if a context was dropped without submitting
-    submit_check: SubmitCheck,
-}
-
-impl<'a> RenderContext<'a> {
-    /// Fill the render target with a flat color.
-    ///
-    /// If you need access to other fields of the RenderContext, this method also exists on the
-    /// `encoder` so you can partial borrow when needed.
-    #[inline]
-    pub fn clear(&mut self, color: wgpu::Color) {
-        self.encoder.clear(&self.target, color)
-    }
-
-    /// Begin a render pass that draws on top of what's already in the target
-    /// and uses the depth buffer.
-    ///
-    /// If you need access to other fields of the RenderContext, this method also exists on the
-    /// `encoder` so you can partial borrow when needed.
-    #[inline]
-    pub fn pass(&mut self, label: Option<&'static str>) -> wgpu::RenderPass {
-        self.encoder.pass(&self.target, label)
-    }
-
-    /// Begin a render pass that draws on top of what's already in the target
-    /// and ignores (i.e. doesn't bind at all) the depth buffer.
-    ///
-    /// If you need access to other fields of the RenderContext, this method also exists on the
-    /// `encoder` so you can partial borrow when needed.
-    #[inline]
-    pub fn pass_without_depth(&mut self, label: Option<&'static str>) -> wgpu::RenderPass {
-        self.encoder.pass_without_depth(&self.target, label)
-    }
-
-    /// Submit the commands made through this context to the GPU.
-    /// Must be called or nothing is actually executed!
-    pub fn submit(mut self) {
-        self.queue.submit(Some(self.encoder.0.finish()));
-        self.submit_check.0 = true;
-    }
-}
-
-/// A wrapper around [`wgpu::CommandEncoder`][wgpu::CommandEncoder]
-/// to facilitate creation of render passes with default parameters
-/// while also partial borrowing other fields from [`RenderContext`][self::RenderContext].
-pub struct CommandEncoder(pub wgpu::CommandEncoder);
-
-impl CommandEncoder {
-    /// Fill the render target with a flat color.
-    pub fn clear(&mut self, target: &RenderTarget, color: wgpu::Color) {
-        self.0.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("clear"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target.view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(color),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: target.depth.map(|depth| {
-                wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                }
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
-        // drop the pass immediately, causing the clear instruction
-        // to be written to the encoder
-    }
-
-    /// Begin a render pass that draws on top of what's already in the target
-    /// and uses the depth buffer.
-    #[inline]
-    pub fn pass<'s, 't: 's>(
-        &'s mut self,
-        target: &'s RenderTarget<'t>,
-        label: Option<&'static str>,
-    ) -> wgpu::RenderPass {
-        self._pass(target, true, label)
-    }
-
-    /// Begin a render pass that draws on top of what's already in the target
-    /// and ignores (i.e. doesn't bind at all) the depth buffer.
-    #[inline]
-    pub fn pass_without_depth<'s, 't: 's>(
-        &'s mut self,
-        target: &'s RenderTarget<'t>,
-        label: Option<&'static str>,
-    ) -> wgpu::RenderPass {
-        self._pass(target, false, label)
-    }
-
-    fn _pass<'s, 't: 's>(
-        &'s mut self,
-        target: &'s RenderTarget<'t>,
-        use_depth: bool,
-        label: Option<&'static str>,
-    ) -> wgpu::RenderPass {
-        self.0.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target.view,
-                resolve_target: target.resolve_target,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: if !use_depth {
-                None
-            } else {
-                target
-                    .depth
-                    .map(|depth| wgpu::RenderPassDepthStencilAttachment {
-                        view: depth,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                    })
-            },
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        })
-    }
-}
-
-/// `RenderContext::submit` requires taking ownership and destructuring,
-/// which makes submitting on drop too annoying.
-/// Instead, use this to panic if the user drops a context wrong.
-struct SubmitCheck(bool);
-impl SubmitCheck {
-    fn new() -> Self {
-        Self(false)
-    }
-}
-impl Drop for SubmitCheck {
-    fn drop(&mut self) {
-        assert!(self.0, "Dropped a RenderContext without submitting");
     }
 }

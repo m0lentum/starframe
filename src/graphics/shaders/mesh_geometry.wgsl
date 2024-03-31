@@ -5,29 +5,21 @@ struct CameraUniforms {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniforms;
 
-struct LightUniforms {
-    direct_color: vec3<f32>,
-    ambient_color: vec3<f32>,
-    direction: vec3<f32>,
-}
 @group(1) @binding(0)
-var<uniform> light: LightUniforms;
-
-@group(2) @binding(0)
 var<storage> joint_mats: array<mat4x4<f32>>;
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
 }
-@group(3) @binding(0)
+@group(2) @binding(0)
 var<uniform> material: MaterialUniforms;
-@group(3) @binding(1)
+@group(2) @binding(1)
 var t_diffuse: texture_2d<f32>;
-@group(3) @binding(2)
+@group(2) @binding(2)
 var s_diffuse: sampler;
-@group(3) @binding(3)
+@group(2) @binding(3)
 var t_normal: texture_2d<f32>;
-@group(3) @binding(4)
+@group(2) @binding(4)
 var s_normal: sampler;
 
 struct VertexOutput {
@@ -204,40 +196,3 @@ fn fs_main(
     return out;
 }
 
-
-// TODO: move the shading to another pass
-@fragment
-fn shade(
-    in: VertexOutput
-) -> @location(0) vec4<f32> {
-    let tex_base_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-    // alpha clipping, no blending
-    // because we want parts of the same mesh to be able to overlap
-    if tex_base_color.a < 0.5 {
-	discard;
-    }
-
-    let normal = normalize(in.normal);
-    let tangent = normalize(in.tangent);
-    let bitangent = cross(tangent, normal);
-    let tbn = mat3x3(tangent, bitangent, normal);
-
-    let tex_normal = textureSample(t_normal, s_normal, in.tex_coords).xyz;
-    let normal_mapped = tbn * normalize(tex_normal * 2. - 1.);
-
-    // dot with the negative light direction
-    // indicates how opposite to the light the normal is,
-    // and hence the strength of the diffuse light
-    let normal_dot_light = -dot(normal_mapped, light.direction);
-
-    let diffuse_strength = max(normal_dot_light, 0.);
-    let diffuse_light = diffuse_strength * light.direct_color;
-
-    // stylized approximation: ambient light comes from the direction opposite to the main light
-    let ambient_strength = 0.1 + 0.1 * max(-normal_dot_light, 0.);
-    let ambient_light = light.ambient_color * ambient_strength;
-
-    let full_color = material.base_color * vec4<f32>(ambient_light + diffuse_light, 1.) * tex_base_color;
-
-    return full_color;
-}
