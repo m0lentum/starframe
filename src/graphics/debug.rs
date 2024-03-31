@@ -185,7 +185,7 @@ impl DebugVisualizer {
             );
         }
 
-        self.bvh_line_bufs.write(ctx);
+        self.bvh_line_bufs.write();
 
         {
             let mut pass = ctx.pass_without_depth(Some("BVH lines"));
@@ -239,7 +239,7 @@ impl DebugVisualizer {
             );
         }
 
-        self.island_line_bufs.write(ctx);
+        self.island_line_bufs.write();
 
         {
             let mut pass = ctx.pass_without_depth(Some("island lines"));

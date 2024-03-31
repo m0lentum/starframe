@@ -176,18 +176,10 @@ impl DynamicBuffer {
 
     /// Reallocate the buffer if needed, then write the given data to it.
     #[inline]
-    pub fn write<Data: AsBytes>(&mut self, ctx: &super::RenderContext, data: &[Data]) {
-        self.write_split_borrow(ctx.device, ctx.queue, data)
-    }
+    pub fn write<Data: AsBytes>(&mut self, data: &[Data]) {
+        let device = crate::Renderer::device();
+        let queue = crate::Renderer::queue();
 
-    /// Like [`write`][Self::write], but takes the required members of
-    /// [`RenderContext`][super::RenderContext] to facilitate partial borrows.
-    pub fn write_split_borrow<Data: AsBytes>(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[Data],
-    ) {
         self.len = data.len();
         let size_needed = data.len() as u64 * std::mem::size_of::<Data>() as u64;
         if self.buf.is_none() || size_needed > self.size {
@@ -245,13 +237,13 @@ impl<Vert: AsBytes> DynamicMeshBuffers<Vert> {
     }
 
     /// Write the data from `self.vertices` and `self.indices` to the GPU.
-    pub fn write(&mut self, ctx: &super::RenderContext) {
+    pub fn write(&mut self) {
         // pad the index buffer to 4 bytes
         self.unpadded_idx_len = self.indices.len() as u32;
         self.indices
             .resize(self.indices.len() + self.indices.len() % 2, 0);
-        self.vert_buf.write(ctx, &self.vertices);
-        self.idx_buf.write(ctx, &self.indices);
+        self.vert_buf.write(&self.vertices);
+        self.idx_buf.write(&self.indices);
     }
 
     /// Clear `self.vertices` and `self.indices`.

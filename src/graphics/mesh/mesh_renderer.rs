@@ -1,8 +1,9 @@
 use crate::{
     graphics::{
         manager::MeshId,
+        renderer::DeferredPass,
         util::{GpuMat4, GpuVec3},
-        Camera, GraphicsManager, RenderContext,
+        Camera, GraphicsManager,
     },
     math::{self as m, uv},
 };
@@ -102,7 +103,9 @@ impl MeshRenderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/mesh.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                "../shaders/mesh_geometry.wgsl"
+            ))),
         });
 
         //
@@ -135,7 +138,7 @@ impl MeshRenderer {
                         count: None,
                     },
                 ],
-                label: Some("skinned mesh camera"),
+                label: Some("mesh camera"),
             });
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -204,7 +207,7 @@ impl MeshRenderer {
                         count: None,
                     },
                 ],
-                label: Some("skinned mesh joints"),
+                label: Some("mesh joints"),
             });
         let joints_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &joints_bind_group_layout,
@@ -338,7 +341,7 @@ impl MeshRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: "fs_main",
-                    targets: &[Some(game.renderer.swapchain_format().into())],
+                    targets: &game.renderer.geometry_pass_targets(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -346,7 +349,7 @@ impl MeshRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(crate::Renderer::default_depth_stencil_state()),
+                depth_stencil: Some(game.renderer.default_depth_stencil_state()),
                 multisample: game.renderer.multisample_state(),
                 multiview: None,
             })
@@ -367,14 +370,17 @@ impl MeshRenderer {
     }
 
     /// Draw all the meshes in the world.
-    pub fn draw(
-        &mut self,
-        manager: &mut GraphicsManager,
+    pub fn draw<'pass>(
+        &'pass mut self,
+        pass: &mut DeferredPass<'pass>,
+        manager: &'pass mut GraphicsManager,
+        world: &mut hecs::World,
         camera: &Camera,
         light: DirectionalLight,
-        ctx: &mut RenderContext,
-        world: &mut hecs::World,
     ) {
+        let device = crate::Renderer::device();
+        let queue = crate::Renderer::queue();
+
         let mut meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
             .query_mut::<(&MeshId, Option<&m::Pose>)>()
             .into_iter()
@@ -415,13 +421,13 @@ impl MeshRenderer {
 
         // resize joint buffer if needed
         if joint_matrices.len() > self.joint_capacity {
-            self.joint_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            self.joint_storage = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("skinned mesh joints"),
                 size: (size_of::<GpuMat4>() * joint_matrices.len()) as _,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.joints_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            self.joints_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &self.joints_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
@@ -435,13 +441,10 @@ impl MeshRenderer {
         // upload uniforms
         //
 
-        let view_proj = camera.view_proj_matrix(ctx.target_size);
-        ctx.queue
-            .write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
-        ctx.queue
-            .write_buffer(&self.light_buf, 0, LightUniforms::from(light).as_bytes());
-        ctx.queue
-            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
+        let view_proj = camera.view_proj_matrix(pass.target_size);
+        queue.write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
+        queue.write_buffer(&self.light_buf, 0, LightUniforms::from(light).as_bytes());
+        queue.write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
 
         //
         // upload instance data
@@ -480,7 +483,7 @@ impl MeshRenderer {
                 curr_idx += 1;
             }
 
-            mesh.gpu_data.instance_buf.write(ctx, &instances);
+            mesh.gpu_data.instance_buf.write(&instances);
             mesh.gpu_data.instance_count = instances.len() as u32;
             instances.clear();
         }
@@ -521,7 +524,7 @@ impl MeshRenderer {
                 curr_idx += 1;
             }
 
-            mesh.gpu_data.instance_buf.write(ctx, &instances);
+            mesh.gpu_data.instance_buf.write(&instances);
             mesh.gpu_data.instance_count = instances.len() as u32;
             instances.clear();
         }
@@ -530,8 +533,7 @@ impl MeshRenderer {
         // render
         //
 
-        let mut pass = ctx.encoder.pass(&ctx.target, Some("mesh"));
-
+        let pass = &mut pass.pass;
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
         pass.set_bind_group(1, &self.light_bind_group, &[]);
         pass.set_bind_group(2, &self.joints_bind_group, &[]);
@@ -568,13 +570,13 @@ impl MeshRenderer {
         pass.set_pipeline(&self.unskinned_pipeline);
 
         for (id, _) in unskinned_meshes {
-            draw_mesh(&mut pass, manager, id);
+            draw_mesh(pass, manager, id);
         }
 
         pass.set_pipeline(&self.skinned_pipeline);
 
         for (id, _) in skinned_meshes {
-            draw_mesh(&mut pass, manager, id);
+            draw_mesh(pass, manager, id);
         }
     }
 }

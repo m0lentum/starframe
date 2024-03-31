@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
-mod gbuffer;
-pub use gbuffer::{GBuffer, GBuffers, DEPTH_FORMAT};
+mod deferred;
+pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers};
 
 // there is only ever one wgpu context,
 // and since the device and queue are frequently needed to create resources,
@@ -23,8 +23,8 @@ pub struct Renderer {
     pub gbufs: GBuffers,
 
     msaa_samples: u32,
-    // texture to store multisampling results
-    msaa_texture: wgpu::Texture,
+    // view to a texture for storing multisampling results
+    msaa_view: wgpu::TextureView,
     // current active frame stored here instead of in RenderContext
     // so that we can interleave drawing to window and drawing to textures
     active_frame: Option<Frame>,
@@ -37,7 +37,6 @@ pub struct Renderer {
 struct Frame {
     surface: wgpu::SurfaceTexture,
     view: wgpu::TextureView,
-    msaa_view: wgpu::TextureView,
 }
 
 /// An error that occurred during renderer initialization.
@@ -102,7 +101,7 @@ impl Renderer {
         // constant number of samples for now,
         // TODO: make this configurable
         const MSAA_SAMPLES: u32 = 4;
-        let msaa_texture =
+        let msaa_view =
             Self::create_msaa_texture(&device, swapchain_format, MSAA_SAMPLES, window_size);
 
         let window_scale_factor = window.scale_factor();
@@ -125,7 +124,7 @@ impl Renderer {
             gbufs,
             generation: 0,
             msaa_samples: MSAA_SAMPLES,
-            msaa_texture,
+            msaa_view,
             active_frame: None,
         })
     }
@@ -135,9 +134,9 @@ impl Renderer {
         swapchain_format: wgpu::TextureFormat,
         msaa_samples: u32,
         window_size: winit::dpi::PhysicalSize<u32>,
-    ) -> wgpu::Texture {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("screen multisample"),
+    ) -> wgpu::TextureView {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("MSAA resolve"),
             size: wgpu::Extent3d {
                 width: window_size.width,
                 height: window_size.height,
@@ -149,7 +148,8 @@ impl Renderer {
             format: swapchain_format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
-        })
+        });
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
     /// Get a reference to the the global device instance.
@@ -180,7 +180,7 @@ impl Renderer {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(device, &self.surface_config);
-        self.msaa_texture =
+        self.msaa_view =
             Self::create_msaa_texture(device, self.swapchain_format, self.msaa_samples, new_size);
         self.gbufs = GBuffers::new(new_size.into(), self.msaa_samples);
         self.generation += 1;
@@ -219,14 +219,26 @@ impl Renderer {
 
     /// Depth-stencil state that uses the same depth format as the window depth buffer
     /// and writes depths to the buffer.
-    pub fn default_depth_stencil_state() -> wgpu::DepthStencilState {
+    pub fn default_depth_stencil_state(&self) -> wgpu::DepthStencilState {
         wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
+            format: self.gbufs.depth_tex.format(),
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }
+    }
+
+    pub fn geometry_pass_targets(&self) -> [Option<wgpu::ColorTargetState>; 3] {
+        [
+            Some(self.gbufs.position.texture.format().into()),
+            Some(self.gbufs.normal.texture.format().into()),
+            Some(self.gbufs.albedo.texture.format().into()),
+        ]
+    }
+
+    pub fn deferred(&self) -> DeferredContext<'_> {
+        DeferredContext::new(&self.gbufs)
     }
 
     /// Begin drawing directly into the game window.
@@ -241,15 +253,8 @@ impl Renderer {
             let view = surface
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
-            let msaa_view = self
-                .msaa_texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
 
-            self.active_frame = Some(Frame {
-                surface,
-                view,
-                msaa_view,
-            });
+            self.active_frame = Some(Frame { surface, view });
         }
 
         let device = Self::device();
@@ -262,45 +267,14 @@ impl Renderer {
         // active frame was just set so unwrap is safe
         let active_frame = self.active_frame.as_ref().unwrap();
         let target = RenderTarget {
-            view: &active_frame.msaa_view,
+            view: &self.msaa_view,
             resolve_target: Some(&active_frame.view),
-            depth: Some(&self.gbufs.depth.view),
+            depth: Some(&self.gbufs.depth),
         };
 
         RenderContext {
             window: &self.window,
             target,
-            encoder: CommandEncoder(encoder),
-            device,
-            queue,
-            target_size,
-            submit_check: SubmitCheck::new(),
-        }
-    }
-
-    /// Begin drawing to a non-screen texture, optionally with a self-provided depth texture.
-    ///
-    /// If you need the depth texture from the window, use
-    /// [`draw_to_texture_window_depth`][Self::draw_to_texture_window_depth]
-    pub fn draw_to_texture<'s, 'v: 's>(
-        &'s mut self,
-        view: &'v wgpu::TextureView,
-        depth_target: Option<&'v wgpu::TextureView>,
-        target_size: (u32, u32),
-    ) -> RenderContext<'s> {
-        let device = Self::device();
-        let queue = Self::queue();
-
-        let encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-
-        RenderContext {
-            window: &self.window,
-            target: RenderTarget {
-                view,
-                resolve_target: None,
-                depth: depth_target,
-            },
             encoder: CommandEncoder(encoder),
             device,
             queue,

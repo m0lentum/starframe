@@ -65,7 +65,6 @@ pub struct State {
     egui_renderer: egui_wgpu::renderer::Renderer,
     last_egui_output: egui::FullOutput,
     // UI states
-    outline_interp: f32,
     bvh_vis_active: bool,
     bvh_vis_levels: usize,
     island_vis_active: bool,
@@ -104,11 +103,10 @@ impl State {
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
-                Some(sf::graphics::renderer::DEPTH_FORMAT),
+                Some(game.renderer.gbufs.depth_tex.format()),
                 game.renderer.msaa_samples(),
             ),
             last_egui_output: Default::default(),
-            outline_interp: 0.0,
             bvh_vis_active: false,
             bvh_vis_levels: 30,
             island_vis_active: false,
@@ -503,18 +501,11 @@ impl sf::GameState for State {
     }
 
     fn draw(&mut self, game: &mut sf::Game, dt: f32) {
-        let mut ctx = game.renderer.draw_to_window();
-        ctx.clear(sf::wgpu::Color {
-            r: 0.00802,
-            g: 0.0137,
-            b: 0.02732,
-            a: 1.0,
-        });
-
         if matches!(self.state, StateEnum::Playing) {
             game.graphics.update_animations(dt);
         }
 
+        let mut ctx = game.renderer.draw_to_window();
         if self.bvh_vis_active {
             self.debug_visualizer.draw_bvh(
                 self.bvh_vis_levels,
@@ -527,20 +518,21 @@ impl sf::GameState for State {
             self.debug_visualizer
                 .draw_islands(&game.physics, &self.camera, &mut ctx);
         }
+        ctx.submit();
 
         if self.light_rotating {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
         }
 
-        self.mesh_renderer.draw(
-            &mut game.graphics,
-            &self.camera,
-            self.light,
-            &mut ctx,
-            &mut game.world,
-        );
-
-        ctx.submit();
+        game.renderer.deferred().draw(|pass| {
+            self.mesh_renderer.draw(
+                pass,
+                &mut game.graphics,
+                &mut game.world,
+                &self.camera,
+                self.light,
+            );
+        });
 
         let mut ctx = game.renderer.draw_to_window();
 

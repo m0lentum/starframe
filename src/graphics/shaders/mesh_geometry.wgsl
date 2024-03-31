@@ -32,9 +32,10 @@ var s_normal: sampler;
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) tangent: vec3<f32>,
+    @location(0) world_position: vec3<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) tangent: vec3<f32>,
 };
 
 // counteract the scaling effect of a transformation
@@ -118,9 +119,10 @@ fn vs_skinned(
     tan_skinned = inv_scaling * (model_3 * tan_skinned);
 
     out.clip_position = camera.view_proj * pos_model;
+    out.world_position = position;
+    out.tex_coords = tex_coords;
     out.normal = normalize(norm_skinned);
     out.tangent = normalize(tan_skinned);
-    out.tex_coords = tex_coords;
 
     return out;
 }
@@ -156,15 +158,56 @@ fn vs_unskinned(
     let tan_transformed = inv_scaling * (model_3 * tangent);
 
     out.clip_position = camera.view_proj * pos_model;
+    out.world_position = position;
+    out.tex_coords = tex_coords;
     out.normal = normalize(norm_transformed);
     out.tangent = normalize(tan_transformed);
-    out.tex_coords = tex_coords;
 
     return out;
 }
 
+struct FragmentOutput {
+    @location(0) position: vec4<f32>,
+    @location(1) normal: vec4<f32>,
+    @location(2) albedo: vec4<f32>,
+}
+
 @fragment
 fn fs_main(
+    in: VertexOutput
+) -> FragmentOutput {
+    var out: FragmentOutput;
+
+    out.position = vec4<f32>(in.world_position, 1.);
+
+    // color texture
+
+    let tex_base_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    out.albedo = material.base_color * tex_base_color;
+    // alpha clipping, no blending
+    // because we want parts of the same mesh to be able to overlap
+    if out.albedo.a < 0.5 {
+	discard;
+    }
+
+    // normal mapping
+
+    let normal = normalize(in.normal);
+    let tangent = normalize(in.tangent);
+    let bitangent = cross(tangent, normal);
+    let tbn = mat3x3(tangent, bitangent, normal);
+
+    let tex_normal = textureSample(t_normal, s_normal, in.tex_coords).xyz;
+    let normal_mapped = tbn * normalize(tex_normal * 2. - 1.);
+    out.normal = vec4<f32>(normal_mapped, 0.);
+
+    return out;
+}
+
+
+// TODO: move the shading to another pass
+@fragment
+fn shade(
     in: VertexOutput
 ) -> @location(0) vec4<f32> {
     let tex_base_color = textureSample(t_diffuse, s_diffuse, in.tex_coords);
