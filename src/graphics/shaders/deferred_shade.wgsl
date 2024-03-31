@@ -39,14 +39,14 @@ fn vs_main(
 fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4<f32> {
-    let position = textureSample(position_gbuf, samp, in.uv);
-    let normal = textureSample(normal_gbuf, samp, in.uv);
+    let position = textureSample(position_gbuf, samp, in.uv).xyz;
+    let normal = textureSample(normal_gbuf, samp, in.uv).xyz;
     let albedo = textureSample(albedo_gbuf, samp, in.uv);
 
     // dot with the negative light direction
     // indicates how opposite to the light the normal is,
     // and hence the strength of the diffuse light
-    let normal_dot_light = -dot(normal_mapped, light.direction);
+    let normal_dot_light = -dot(normal, light.direction);
 
     let diffuse_strength = max(normal_dot_light, 0.);
     let diffuse_light = diffuse_strength * light.direct_color;

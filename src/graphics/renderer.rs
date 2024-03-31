@@ -3,6 +3,10 @@ use std::sync::OnceLock;
 mod deferred;
 pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers};
 
+mod shading;
+pub use shading::DirectionalLight;
+use shading::ShadingPipeline;
+
 // there is only ever one wgpu context,
 // and since the device and queue are frequently needed to create resources,
 // we store those globally here
@@ -10,6 +14,7 @@ pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers};
 
 static DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
 static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
+static WINDOW: OnceLock<winit::window::Window> = OnceLock::new();
 
 pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 // constant number of samples for now,
@@ -18,16 +23,17 @@ const MSAA_SAMPLES: u32 = 4;
 
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
-    pub window: winit::window::Window,
     surface: wgpu::Surface,
     surface_config: wgpu::SurfaceConfiguration,
     window_scale_factor: f64,
 
     /// GBuffers for deferred shading.
     pub gbufs: GBuffers,
-    deferred_shading_pl: deferred::ShadingPipeline,
+    deferred_shading_pl: ShadingPipeline,
 
     msaa_samples: u32,
+    // MSAA texture for drawing that happens after deferred shading
+    msaa_view: wgpu::TextureView,
     // current active frame stored here instead of in RenderContext
     // so that we can interleave drawing to window and drawing to textures
     active_frame: Option<Frame>,
@@ -105,12 +111,16 @@ impl Renderer {
         QUEUE
             .set(queue)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
+        WINDOW
+            .set(window)
+            .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
         let gbufs = GBuffers::new(window_size.into(), MSAA_SAMPLES);
-        let deferred_shading_pl = deferred::ShadingPipeline::new(&gbufs);
+        let deferred_shading_pl = ShadingPipeline::new(&gbufs);
+
+        let msaa_view = Self::create_msaa_texture((surface_config.width, surface_config.height));
 
         Ok(Renderer {
-            window,
             surface,
             surface_config,
             window_scale_factor,
@@ -118,8 +128,17 @@ impl Renderer {
             deferred_shading_pl,
             generation: 0,
             msaa_samples: MSAA_SAMPLES,
+            msaa_view,
             active_frame: None,
         })
+    }
+
+    /// Get a reference to the the window the game draws to.
+    /// # Panics
+    /// This function panics if the renderer hasn't been initialized yet,
+    /// i.e. if [`Game::run`][crate::Game::run] hasn't been called yet.
+    pub fn window<'a>() -> &'a winit::window::Window {
+        WINDOW.get().expect("Renderer has not been initialized yet")
     }
 
     /// Get a reference to the the global device instance.
@@ -138,6 +157,16 @@ impl Renderer {
     #[inline]
     pub fn queue<'a>() -> &'a wgpu::Queue {
         QUEUE.get().expect("Renderer has not been initialized yet")
+    }
+
+    fn create_msaa_texture(dimensions: (u32, u32)) -> wgpu::TextureView {
+        let tex = deferred::create_texture(
+            dimensions,
+            MSAA_SAMPLES,
+            SWAPCHAIN_FORMAT,
+            Some("window msaa"),
+        );
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
     /// Change the size of the frame `draw_to_window` draws into.

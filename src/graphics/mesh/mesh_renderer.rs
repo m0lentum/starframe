@@ -19,23 +19,6 @@ struct CameraUniforms {
     view_proj: GpuMat4,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct DirectionalLight {
-    pub direct_color: [f32; 3],
-    pub ambient_color: [f32; 3],
-    pub direction: uv::Vec3,
-}
-
-impl Default for DirectionalLight {
-    fn default() -> Self {
-        Self {
-            direct_color: [1.0, 1.0, 1.0],
-            ambient_color: [1.0, 1.0, 1.0],
-            direction: uv::Vec3::new(0.0, 0.0, 1.0),
-        }
-    }
-}
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
 struct Instance {

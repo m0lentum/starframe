@@ -97,7 +97,7 @@ impl State {
             },
             mesh_renderer: sf::MeshRenderer::new(game),
             egui_context,
-            egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
+            egui_state: egui_winit::State::new(viewport_id, sf::Renderer::window(), None, None),
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
@@ -291,7 +291,7 @@ impl sf::GameState for State {
         // gui controls
         //
 
-        let egui_input = self.egui_state.take_egui_input(&game.renderer.window);
+        let egui_input = self.egui_state.take_egui_input(sf::Renderer::window());
         self.egui_context.begin_frame(egui_input);
 
         let mut exit = false;
@@ -519,21 +519,21 @@ impl sf::GameState for State {
                 .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
         }
 
-        let mut ctx = ctx.shade();
+        let mut ctx = ctx.shade(self.light);
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),
             self.egui_context.pixels_per_point(),
         );
         self.egui_state.handle_platform_output(
-            ctx.window,
+            sf::Renderer::window(),
             &self.egui_context,
             self.last_egui_output.platform_output.clone(),
         );
 
         for (tex_id, img_delta) in &self.last_egui_output.textures_delta.set {
             self.egui_renderer
-                .update_texture(&device, &queue, *tex_id, img_delta);
+                .update_texture(device, queue, *tex_id, img_delta);
         }
 
         for tex_id in &self.last_egui_output.textures_delta.free {
@@ -545,9 +545,9 @@ impl sf::GameState for State {
             pixels_per_point: self.egui_context.pixels_per_point(),
         };
         self.egui_renderer.update_buffers(
-            &device,
-            &queue,
-            &mut ctx.encoder.0,
+            device,
+            queue,
+            ctx.encoder_mut(),
             &paint_jobs,
             &screen_desc,
         );

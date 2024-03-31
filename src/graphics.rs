@@ -5,7 +5,7 @@ mod manager;
 pub use manager::{AnimationId, GraphicsManager, MaterialId, MeshId};
 
 pub mod renderer;
-pub use renderer::{GBuffer, GBuffers, Renderer};
+pub use renderer::{DirectionalLight, GBuffer, GBuffers, Renderer};
 
 pub mod util;
 
