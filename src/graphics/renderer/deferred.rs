@@ -160,7 +160,7 @@ impl<'a> DeferredContext<'a> {
                 view: &gbufs.depth,
                 depth_ops: Some(wgpu::Operations {
                     load: if self.is_first_draw {
-                        wgpu::LoadOp::Clear(0.)
+                        wgpu::LoadOp::Clear(1.)
                     } else {
                         wgpu::LoadOp::Load
                     },
@@ -196,8 +196,8 @@ impl<'a> DeferredContext<'a> {
             label: Some("shade"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 // frame was just begun so this must exist
-                view: &self.renderer.active_frame.as_ref().unwrap().view,
-                resolve_target: None,
+                view: &self.renderer.msaa_view,
+                resolve_target: self.renderer.active_frame.as_ref().map(|f| &f.view),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,

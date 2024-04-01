@@ -111,7 +111,7 @@ fn vs_skinned(
     tan_skinned = inv_scaling * (model_3 * tan_skinned);
 
     out.clip_position = camera.view_proj * pos_model;
-    out.world_position = position;
+    out.world_position = pos_model.xyz;
     out.tex_coords = tex_coords;
     out.normal = normalize(norm_skinned);
     out.tangent = normalize(tan_skinned);
@@ -150,7 +150,7 @@ fn vs_unskinned(
     let tan_transformed = inv_scaling * (model_3 * tangent);
 
     out.clip_position = camera.view_proj * pos_model;
-    out.world_position = position;
+    out.world_position = pos_model.xyz;
     out.tex_coords = tex_coords;
     out.normal = normalize(norm_transformed);
     out.tangent = normalize(tan_transformed);

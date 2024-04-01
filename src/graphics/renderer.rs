@@ -116,7 +116,7 @@ impl Renderer {
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
         let gbufs = GBuffers::new(window_size.into(), MSAA_SAMPLES);
-        let deferred_shading_pl = ShadingPipeline::new(&gbufs);
+        let deferred_shading_pl = ShadingPipeline::new(&gbufs, MSAA_SAMPLES);
 
         let msaa_view = Self::create_msaa_texture((surface_config.width, surface_config.height));
 
@@ -182,6 +182,7 @@ impl Renderer {
         self.gbufs = GBuffers::new(new_size.into(), self.msaa_samples);
         self.deferred_shading_pl
             .update_gbufs_bind_group(&self.gbufs);
+        self.msaa_view = Self::create_msaa_texture(new_size.into());
         self.generation += 1;
     }
 

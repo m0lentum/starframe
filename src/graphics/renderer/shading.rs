@@ -55,7 +55,7 @@ impl From<crate::DirectionalLight> for LightUniforms {
 }
 
 impl ShadingPipeline {
-    pub fn new(gbufs: &GBuffers) -> Self {
+    pub fn new(gbufs: &GBuffers, msaa_samples: u32) -> Self {
         let device = super::Renderer::device();
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -154,7 +154,11 @@ impl ShadingPipeline {
                 ..Default::default()
             },
             depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: msaa_samples,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview: None,
         });
 

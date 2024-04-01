@@ -39,9 +39,12 @@ fn vs_main(
 fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4<f32> {
+    let albedo = textureSample(albedo_gbuf, samp, in.uv);
+    if albedo.x == 0. && albedo.y == 0. && albedo.z == 0. {
+        discard;
+    }
     let position = textureSample(position_gbuf, samp, in.uv).xyz;
     let normal = textureSample(normal_gbuf, samp, in.uv).xyz;
-    let albedo = textureSample(albedo_gbuf, samp, in.uv);
 
     // dot with the negative light direction
     // indicates how opposite to the light the normal is,
