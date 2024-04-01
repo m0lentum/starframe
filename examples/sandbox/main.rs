@@ -58,15 +58,12 @@ pub struct State {
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     mesh_renderer: sf::MeshRenderer,
-    outline_renderer: sf::OutlineRenderer,
-    debug_visualizer: sf::DebugVisualizer,
     // egui stuff
     egui_context: egui::Context,
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::renderer::Renderer,
     last_egui_output: egui::FullOutput,
     // UI states
-    outline_interp: f32,
     bvh_vis_active: bool,
     bvh_vis_levels: usize,
     island_vis_active: bool,
@@ -99,25 +96,15 @@ impl State {
                 ..Default::default()
             },
             mesh_renderer: sf::MeshRenderer::new(game),
-            outline_renderer: sf::OutlineRenderer::new(
-                sf::OutlineParams {
-                    thickness: 10,
-                    color: [0.0, 0.0, 0.0, 1.0],
-                    shape: sf::OutlineShape::octagon(),
-                },
-                &game.renderer,
-            ),
-            debug_visualizer: sf::DebugVisualizer::new(&game.renderer),
             egui_context,
-            egui_state: egui_winit::State::new(viewport_id, &game.renderer.window, None, None),
+            egui_state: egui_winit::State::new(viewport_id, sf::Renderer::window(), None, None),
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
-                Some(game.renderer.window_depth_buffer.texture.format()),
+                Some(game.renderer.gbufs.depth_tex.format()),
                 game.renderer.msaa_samples(),
             ),
             last_egui_output: Default::default(),
-            outline_interp: 0.0,
             bvh_vis_active: false,
             bvh_vis_levels: 30,
             island_vis_active: false,
@@ -304,7 +291,7 @@ impl sf::GameState for State {
         // gui controls
         //
 
-        let egui_input = self.egui_state.take_egui_input(&game.renderer.window);
+        let egui_input = self.egui_state.take_egui_input(sf::Renderer::window());
         self.egui_context.begin_frame(egui_input);
 
         let mut exit = false;
@@ -429,13 +416,6 @@ impl sf::GameState for State {
                 );
             }
             ui.checkbox(&mut self.island_vis_active, "Display islands");
-            ui.add(
-                egui::Slider::new(&mut self.outline_renderer.params.thickness, 0..=100)
-                    .text("Outline thickness"),
-            );
-            ui.add(egui::Slider::new(&mut self.outline_interp, 0.0..=1.0).text("Outline shape"));
-            self.outline_renderer.params.shape =
-                sf::OutlineShape::octagon().lerp(self.outline_interp, sf::OutlineShape::circle());
             ui.separator();
             if ui.button("exit").clicked() {
                 exit = true;
@@ -519,62 +499,41 @@ impl sf::GameState for State {
     }
 
     fn draw(&mut self, game: &mut sf::Game, dt: f32) {
-        let mut ctx = game.renderer.draw_to_window();
-        ctx.clear(sf::wgpu::Color {
-            r: 0.00802,
-            g: 0.0137,
-            b: 0.02732,
-            a: 1.0,
-        });
+        let device = sf::Renderer::device();
+        let queue = sf::Renderer::queue();
+
+        let window_size = game.renderer.window_size();
 
         if matches!(self.state, StateEnum::Playing) {
             game.graphics.update_animations(dt);
-        }
-
-        if self.bvh_vis_active {
-            self.debug_visualizer.draw_bvh(
-                self.bvh_vis_levels,
-                &game.physics,
-                &self.camera,
-                &mut ctx,
-            );
-        }
-        if self.island_vis_active {
-            self.debug_visualizer
-                .draw_islands(&game.physics, &self.camera, &mut ctx);
         }
 
         if self.light_rotating {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
         }
 
-        self.mesh_renderer.draw(
-            &mut game.graphics,
-            &self.camera,
-            self.light,
-            &mut ctx,
-            &mut game.world,
-        );
+        let mut ctx = game.renderer.begin_frame();
+        {
+            let mut pass = ctx.pass();
+            self.mesh_renderer
+                .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
+        }
 
-        ctx.submit();
-
-        self.outline_renderer.draw(&mut game.renderer);
-
-        let mut ctx = game.renderer.draw_to_window();
+        let mut ctx = ctx.shade([0.00802, 0.0137, 0.02732, 1.], self.light);
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),
             self.egui_context.pixels_per_point(),
         );
         self.egui_state.handle_platform_output(
-            ctx.window,
+            sf::Renderer::window(),
             &self.egui_context,
             self.last_egui_output.platform_output.clone(),
         );
 
         for (tex_id, img_delta) in &self.last_egui_output.textures_delta.set {
             self.egui_renderer
-                .update_texture(ctx.device, ctx.queue, *tex_id, img_delta);
+                .update_texture(device, queue, *tex_id, img_delta);
         }
 
         for tex_id in &self.last_egui_output.textures_delta.free {
@@ -582,22 +541,21 @@ impl sf::GameState for State {
         }
 
         let screen_desc = egui_wgpu::renderer::ScreenDescriptor {
-            size_in_pixels: [ctx.target_size.0, ctx.target_size.1],
+            size_in_pixels: [window_size.width, window_size.height],
             pixels_per_point: self.egui_context.pixels_per_point(),
         };
         self.egui_renderer.update_buffers(
-            ctx.device,
-            ctx.queue,
-            &mut ctx.encoder.0,
+            device,
+            queue,
+            ctx.encoder_mut(),
             &paint_jobs,
             &screen_desc,
         );
 
-        let mut pass = ctx.pass(Some("egui"));
-        self.egui_renderer
-            .render(&mut pass, &paint_jobs, &screen_desc);
-        drop(pass);
-
-        ctx.submit();
+        {
+            let mut pass = ctx.pass();
+            self.egui_renderer
+                .render(&mut pass, &paint_jobs, &screen_desc);
+        }
     }
 }

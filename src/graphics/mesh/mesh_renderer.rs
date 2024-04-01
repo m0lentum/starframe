@@ -1,8 +1,9 @@
 use crate::{
     graphics::{
         manager::MeshId,
+        renderer::DeferredPass,
         util::{GpuMat4, GpuVec3},
-        Camera, DepthBuffer, GraphicsManager, RenderContext,
+        Camera, GraphicsManager,
     },
     math::{self as m, uv},
 };
@@ -16,47 +17,6 @@ use zerocopy::{AsBytes, FromBytes};
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
 struct CameraUniforms {
     view_proj: GpuMat4,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct DirectionalLight {
-    pub direct_color: [f32; 3],
-    pub ambient_color: [f32; 3],
-    pub direction: uv::Vec3,
-}
-
-impl Default for DirectionalLight {
-    fn default() -> Self {
-        Self {
-            direct_color: [1.0, 1.0, 1.0],
-            ambient_color: [1.0, 1.0, 1.0],
-            direction: uv::Vec3::new(0.0, 0.0, 1.0),
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct LightUniforms {
-    direct_color: [f32; 3],
-    _pad0: u32,
-    ambient_color: [f32; 3],
-    _pad1: u32,
-    direction: [f32; 3],
-    _pad2: u32,
-}
-
-impl From<DirectionalLight> for LightUniforms {
-    fn from(l: DirectionalLight) -> Self {
-        Self {
-            direct_color: l.direct_color,
-            _pad0: 0,
-            ambient_color: l.ambient_color,
-            _pad1: 0,
-            direction: l.direction.normalized().into(),
-            _pad2: 0,
-        }
-    }
 }
 
 #[repr(C)]
@@ -77,8 +37,6 @@ pub struct MeshRenderer {
 
     camera_buf: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-    light_buf: wgpu::Buffer,
-    light_bind_group: wgpu::BindGroup,
 
     // joint storage which grows if needed.
     // not using util::DynamicBuffer because we also need to update a bind group
@@ -102,7 +60,9 @@ impl MeshRenderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/mesh.wgsl"))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                "../shaders/mesh_geometry.wgsl"
+            ))),
         });
 
         //
@@ -135,7 +95,7 @@ impl MeshRenderer {
                         count: None,
                     },
                 ],
-                label: Some("skinned mesh camera"),
+                label: Some("mesh camera"),
             });
 
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -144,39 +104,6 @@ impl MeshRenderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_buf.as_entire_binding(),
-            }],
-        });
-
-        // light
-
-        let light_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<LightUniforms>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("mesh lights"),
-            mapped_at_creation: false,
-        });
-
-        let light_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<LightUniforms>() as _),
-                    },
-                    count: None,
-                }],
-                label: Some("mesh lights"),
-            });
-
-        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("mesh lights"),
-            layout: &light_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: light_buf.as_entire_binding(),
             }],
         });
 
@@ -204,7 +131,7 @@ impl MeshRenderer {
                         count: None,
                     },
                 ],
-                label: Some("skinned mesh joints"),
+                label: Some("mesh joints"),
             });
         let joints_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &joints_bind_group_layout,
@@ -317,7 +244,6 @@ impl MeshRenderer {
             label: Some("mesh"),
             bind_group_layouts: &[
                 &camera_bind_group_layout,
-                &light_bind_group_layout,
                 &joints_bind_group_layout,
                 &game.graphics.material_res.bind_group_layout,
             ],
@@ -338,7 +264,7 @@ impl MeshRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: "fs_main",
-                    targets: &[Some(game.renderer.swapchain_format().into())],
+                    targets: &game.renderer.geometry_pass_targets(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -346,7 +272,7 @@ impl MeshRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(DepthBuffer::default_depth_stencil_state()),
+                depth_stencil: Some(game.renderer.default_depth_stencil_state()),
                 multisample: game.renderer.multisample_state(),
                 multiview: None,
             })
@@ -359,22 +285,22 @@ impl MeshRenderer {
             joints_bind_group_layout,
             camera_buf,
             camera_bind_group,
-            light_buf,
-            light_bind_group,
             joint_storage,
             joint_capacity: 0,
         }
     }
 
     /// Draw all the meshes in the world.
-    pub fn draw(
-        &mut self,
-        manager: &mut GraphicsManager,
-        camera: &Camera,
-        light: DirectionalLight,
-        ctx: &mut RenderContext,
+    pub fn draw<'pass>(
+        &'pass mut self,
+        pass: &mut DeferredPass<'pass>,
+        manager: &'pass mut GraphicsManager,
         world: &mut hecs::World,
+        camera: &Camera,
     ) {
+        let device = crate::Renderer::device();
+        let queue = crate::Renderer::queue();
+
         let mut meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
             .query_mut::<(&MeshId, Option<&m::Pose>)>()
             .into_iter()
@@ -415,13 +341,13 @@ impl MeshRenderer {
 
         // resize joint buffer if needed
         if joint_matrices.len() > self.joint_capacity {
-            self.joint_storage = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            self.joint_storage = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("skinned mesh joints"),
                 size: (size_of::<GpuMat4>() * joint_matrices.len()) as _,
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.joints_bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            self.joints_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout: &self.joints_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
@@ -435,13 +361,9 @@ impl MeshRenderer {
         // upload uniforms
         //
 
-        let view_proj = camera.view_proj_matrix(ctx.target_size);
-        ctx.queue
-            .write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
-        ctx.queue
-            .write_buffer(&self.light_buf, 0, LightUniforms::from(light).as_bytes());
-        ctx.queue
-            .write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
+        let view_proj = camera.view_proj_matrix(pass.target_size);
+        queue.write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
+        queue.write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
 
         //
         // upload instance data
@@ -480,7 +402,7 @@ impl MeshRenderer {
                 curr_idx += 1;
             }
 
-            mesh.gpu_data.instance_buf.write(ctx, &instances);
+            mesh.gpu_data.instance_buf.write(&instances);
             mesh.gpu_data.instance_count = instances.len() as u32;
             instances.clear();
         }
@@ -521,7 +443,7 @@ impl MeshRenderer {
                 curr_idx += 1;
             }
 
-            mesh.gpu_data.instance_buf.write(ctx, &instances);
+            mesh.gpu_data.instance_buf.write(&instances);
             mesh.gpu_data.instance_count = instances.len() as u32;
             instances.clear();
         }
@@ -530,11 +452,9 @@ impl MeshRenderer {
         // render
         //
 
-        let mut pass = ctx.encoder.pass(&ctx.target, Some("mesh"));
-
+        let pass = &mut pass.pass;
         pass.set_bind_group(0, &self.camera_bind_group, &[]);
-        pass.set_bind_group(1, &self.light_bind_group, &[]);
-        pass.set_bind_group(2, &self.joints_bind_group, &[]);
+        pass.set_bind_group(1, &self.joints_bind_group, &[]);
 
         fn draw_mesh<'pass>(
             pass: &mut wgpu::RenderPass<'pass>,
@@ -546,7 +466,7 @@ impl MeshRenderer {
             };
 
             let material = manager.get_mesh_material(mesh_id);
-            pass.set_bind_group(3, &material.bind_group, &[]);
+            pass.set_bind_group(2, &material.bind_group, &[]);
 
             pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
             pass.set_vertex_buffer(1, mesh.gpu_data.instance_buf.slice());
@@ -568,13 +488,13 @@ impl MeshRenderer {
         pass.set_pipeline(&self.unskinned_pipeline);
 
         for (id, _) in unskinned_meshes {
-            draw_mesh(&mut pass, manager, id);
+            draw_mesh(pass, manager, id);
         }
 
         pass.set_pipeline(&self.skinned_pipeline);
 
         for (id, _) in skinned_meshes {
-            draw_mesh(&mut pass, manager, id);
+            draw_mesh(pass, manager, id);
         }
     }
 }

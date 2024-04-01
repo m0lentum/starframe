@@ -2,7 +2,7 @@ pub(crate) mod skin;
 pub use skin::Skin;
 
 mod mesh_renderer;
-pub use mesh_renderer::{DirectionalLight, MeshRenderer};
+pub use mesh_renderer::MeshRenderer;
 
 //
 
