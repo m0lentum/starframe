@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 mod deferred;
-pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers};
+pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers, PostShadeContext};
 
 mod shading;
 pub use shading::DirectionalLight;
@@ -219,6 +219,7 @@ impl Renderer {
 
     /// Depth-stencil state that uses the same depth format as the window depth buffer
     /// and writes depths to the buffer.
+    #[inline]
     pub fn default_depth_stencil_state(&self) -> wgpu::DepthStencilState {
         wgpu::DepthStencilState {
             format: self.gbufs.depth_tex.format(),
@@ -229,6 +230,7 @@ impl Renderer {
         }
     }
 
+    #[inline]
     pub fn geometry_pass_targets(&self) -> [Option<wgpu::ColorTargetState>; 3] {
         [
             Some(self.gbufs.position.texture.format().into()),
@@ -237,22 +239,34 @@ impl Renderer {
         ]
     }
 
-    pub fn deferred(&mut self) -> DeferredContext<'_> {
+    /// Start drawing a frame.
+    ///
+    /// The first step of a frame is deferred shading pipeline,
+    /// which can be accessed through the returned [`DeferredContext`].
+    /// Typically in this phase you would render meshes with
+    /// [`MeshRenderer`][crate::MeshRenderer].
+    /// To end the deferred phase, call [`DeferredContext::shade`],
+    /// which performs shading, draws it into the framebuffer,
+    /// and returns a [`PostShadeContext`]
+    /// which can be used to draw on top of the framebuffer.
+    /// To finish drawing the frame, simply drop the [`PostShadeContext`].
+    #[inline]
+    pub fn begin_frame(&mut self) -> DeferredContext<'_> {
+        assert!(
+            self.active_frame.is_none(),
+            "Started a frame twice without presenting"
+        );
+        let surface = self
+            .surface
+            .get_current_texture()
+            .expect("Failed to get next swap chain texture");
+        let view = surface
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        self.active_frame = Some(Frame { surface, view });
+
         DeferredContext::new(self)
-    }
-
-    fn begin_frame(&mut self) {
-        if self.active_frame.is_none() {
-            let surface = self
-                .surface
-                .get_current_texture()
-                .expect("Failed to get next swap chain texture");
-            let view = surface
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-
-            self.active_frame = Some(Frame { surface, view });
-        }
     }
 
     /// Display everything drawn to the window since the last `present_frame` call.

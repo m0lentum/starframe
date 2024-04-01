@@ -512,7 +512,7 @@ impl sf::GameState for State {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
         }
 
-        let mut ctx = game.renderer.deferred();
+        let mut ctx = game.renderer.begin_frame();
         {
             let mut pass = ctx.pass();
             self.mesh_renderer

@@ -183,20 +183,11 @@ impl<'a> DeferredContext<'a> {
     /// Shade the image drawn with deferred rendering
     /// and move on to rendering directly to the window.
     pub fn shade(
-        self,
+        mut self,
         clear_color: [f32; 4],
         light: crate::DirectionalLight,
     ) -> PostShadeContext<'a> {
-        let device = super::Renderer::device();
-        let queue = super::Renderer::queue();
-        queue.submit(Some(self.encoder.finish()));
-
-        self.renderer.begin_frame();
-
-        // run the shading
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-        let mut shade_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut shade_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shade"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 // frame was just begun so this must exist
@@ -220,20 +211,23 @@ impl<'a> DeferredContext<'a> {
         self.renderer
             .deferred_shading_pl
             .draw(&mut shade_pass, light);
+
         drop(shade_pass);
 
         PostShadeContext {
             renderer: self.renderer,
-            encoder: Some(encoder),
+            encoder: Some(self.encoder),
         }
     }
 }
 
+/// A render pass for deferred shading.
 pub struct DeferredPass<'a> {
     pub pass: wgpu::RenderPass<'a>,
     pub target_size: (u32, u32),
 }
 
+/// A context allowing additional rendering after deferred shading has been performed.
 pub struct PostShadeContext<'a> {
     renderer: &'a mut super::Renderer,
     // encoder in an Option so that we can take it out
@@ -242,7 +236,8 @@ pub struct PostShadeContext<'a> {
 }
 
 impl<'a> PostShadeContext<'a> {
-    /// Begin a render pass that draws on top of what's already in the window.
+    /// Begin a render pass that draws on top of what's already in the window,
+    /// using the depth buffer.
     pub fn pass(&mut self) -> wgpu::RenderPass {
         // encoder always exists, it's only removed on drop
         let encoder = self.encoder.as_mut().unwrap();
@@ -269,6 +264,7 @@ impl<'a> PostShadeContext<'a> {
         })
     }
 
+    /// Access the command encoder being used in this context.
     #[inline]
     pub fn encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
         self.encoder.as_mut().unwrap()
