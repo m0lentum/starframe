@@ -4,8 +4,8 @@ mod deferred;
 pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers, PostShadeContext};
 
 mod shading;
-pub use shading::DirectionalLight;
 use shading::ShadingPipeline;
+pub use shading::{DirectionalLight, PointLight};
 
 // there is only ever one wgpu context,
 // and since the device and queue are frequently needed to create resources,

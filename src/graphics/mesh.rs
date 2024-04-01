@@ -3,6 +3,9 @@ pub use skin::Skin;
 
 mod mesh_renderer;
 pub use mesh_renderer::MeshRenderer;
+// quick hack to get camera working with the shading pipeline.
+// TODO: refactor these into one place in the camera module
+pub(crate) use mesh_renderer::CameraUniforms;
 
 //
 

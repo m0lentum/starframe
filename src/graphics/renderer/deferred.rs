@@ -1,3 +1,5 @@
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+
 //
 // GBuffer types
 //
@@ -18,12 +20,7 @@ impl GBuffers {
     pub fn new(dimensions: (u32, u32), sample_count: u32) -> Self {
         let device = super::Renderer::device();
 
-        let depth_tex = create_texture(
-            dimensions,
-            sample_count,
-            wgpu::TextureFormat::Depth16Unorm,
-            Some("depth"),
-        );
+        let depth_tex = create_texture(dimensions, sample_count, DEPTH_FORMAT, Some("depth"));
         let depth = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         // non-filtering sampler,
@@ -185,7 +182,9 @@ impl<'a> DeferredContext<'a> {
     pub fn shade(
         mut self,
         clear_color: [f32; 4],
-        light: crate::DirectionalLight,
+        camera: &crate::Camera,
+        dir_light: super::shading::DirectionalLight,
+        point_lights: &[super::shading::PointLight],
     ) -> PostShadeContext<'a> {
         let mut shade_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shade"),
@@ -203,14 +202,22 @@ impl<'a> DeferredContext<'a> {
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.renderer.gbufs.depth,
+                // load but don't store depth, for point lights
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Discard,
+                }),
+                stencil_ops: None,
+            }),
             occlusion_query_set: None,
             timestamp_writes: None,
         });
 
         self.renderer
             .deferred_shading_pl
-            .draw(&mut shade_pass, light);
+            .draw(&mut shade_pass, camera, dir_light, point_lights);
 
         drop(shade_pass);
 

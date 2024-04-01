@@ -5,6 +5,7 @@ static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
 
 use rand::{distributions as distr, distributions::Distribution};
 
+use sf::math::uv;
 use starframe as sf;
 
 mod mousegrab;
@@ -53,7 +54,8 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     // graphics
     camera: sf::Camera,
-    light: sf::DirectionalLight,
+    dir_light: sf::DirectionalLight,
+    point_lights: Vec<sf::PointLight>,
     light_rotating: bool,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
@@ -83,11 +85,12 @@ impl State {
             state: StateEnum::Playing,
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
-            light: sf::DirectionalLight {
+            dir_light: sf::DirectionalLight {
                 direct_color: [1.0, 0.949, 0.8],
                 ambient_color: [0.686, 0.875, 0.918],
                 direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
             },
+            point_lights: Vec::new(),
             light_rotating: false,
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
@@ -362,16 +365,37 @@ impl sf::GameState for State {
             ui.separator();
             ui.heading("Light");
             ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.light.direct_color);
+                ui.color_edit_button_rgb(&mut self.dir_light.direct_color);
                 ui.label("Direct light color");
             });
             ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.light.ambient_color);
+                ui.color_edit_button_rgb(&mut self.dir_light.ambient_color);
                 ui.label("Ambient light color");
             });
-            ui.add(egui::Slider::new(&mut self.light.direction.x, -5.0..=5.0).text("Direction x"));
-            ui.add(egui::Slider::new(&mut self.light.direction.y, -5.0..=5.0).text("Direction y"));
+            ui.add(
+                egui::Slider::new(&mut self.dir_light.direction.x, -5.0..=5.0).text("Direction x"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.dir_light.direction.y, -5.0..=5.0).text("Direction y"),
+            );
             ui.checkbox(&mut self.light_rotating, "Spin");
+
+            if ui.button("Spawn random point light").clicked() {
+                self.point_lights.push(sf::PointLight {
+                    position: uv::Vec3::new(
+                        distr::Uniform::from(-10.0..10.0).sample(&mut rng),
+                        distr::Uniform::from(-5.0..5.0).sample(&mut rng),
+                        1.5,
+                    ),
+                    color: [
+                        distr::Uniform::from(0.6..1.0).sample(&mut rng),
+                        distr::Uniform::from(0.6..1.0).sample(&mut rng),
+                        distr::Uniform::from(0.6..1.0).sample(&mut rng),
+                    ],
+                    radius: distr::Uniform::from(15.0..30.0).sample(&mut rng),
+                    falloff: distr::Uniform::from(0.5..5.0).sample(&mut rng),
+                });
+            }
 
             ui.separator();
             ui.heading("Other controls");
@@ -509,7 +533,7 @@ impl sf::GameState for State {
         }
 
         if self.light_rotating {
-            sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.light.direction);
+            sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.dir_light.direction);
         }
 
         let mut ctx = game.renderer.begin_frame();
@@ -519,7 +543,12 @@ impl sf::GameState for State {
                 .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
         }
 
-        let mut ctx = ctx.shade([0.00802, 0.0137, 0.02732, 1.], self.light);
+        let mut ctx = ctx.shade(
+            [0.00802, 0.0137, 0.02732, 1.],
+            &self.camera,
+            self.dir_light,
+            &self.point_lights,
+        );
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),

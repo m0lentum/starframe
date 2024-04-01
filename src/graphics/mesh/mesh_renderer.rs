@@ -15,7 +15,7 @@ use zerocopy::{AsBytes, FromBytes};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct CameraUniforms {
+pub(crate) struct CameraUniforms {
     view_proj: GpuMat4,
 }
 

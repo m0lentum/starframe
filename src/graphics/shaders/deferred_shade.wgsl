@@ -35,6 +35,7 @@ fn vs_main(
     return out;
 }
 
+// fragment shader draws the entire screen with a single directional light
 @fragment
 fn fs_main(
     in: VertexOutput
@@ -43,7 +44,6 @@ fn fs_main(
     if albedo.x == 0. && albedo.y == 0. && albedo.z == 0. {
         discard;
     }
-    let position = textureSample(position_gbuf, samp, in.uv).xyz;
     let normal = textureSample(normal_gbuf, samp, in.uv).xyz;
 
     // dot with the negative light direction
