@@ -519,7 +519,7 @@ impl sf::GameState for State {
                 .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
         }
 
-        let mut ctx = ctx.shade(self.light);
+        let mut ctx = ctx.shade([0.00802, 0.0137, 0.02732, 1.], self.light);
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),

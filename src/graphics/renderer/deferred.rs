@@ -182,7 +182,11 @@ impl<'a> DeferredContext<'a> {
 
     /// Shade the image drawn with deferred rendering
     /// and move on to rendering directly to the window.
-    pub fn shade(self, light: crate::DirectionalLight) -> PostShadeContext<'a> {
+    pub fn shade(
+        self,
+        clear_color: [f32; 4],
+        light: crate::DirectionalLight,
+    ) -> PostShadeContext<'a> {
         let device = super::Renderer::device();
         let queue = super::Renderer::queue();
         queue.submit(Some(self.encoder.finish()));
@@ -199,7 +203,12 @@ impl<'a> DeferredContext<'a> {
                 view: &self.renderer.msaa_view,
                 resolve_target: self.renderer.active_frame.as_ref().map(|f| &f.view),
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: clear_color[0] as f64,
+                        g: clear_color[1] as f64,
+                        b: clear_color[2] as f64,
+                        a: clear_color[3] as f64,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })],
