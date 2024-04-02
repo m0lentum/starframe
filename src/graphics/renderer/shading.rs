@@ -6,7 +6,7 @@ use zerocopy::{AsBytes, FromBytes};
 use super::GBuffers;
 use crate::{
     graphics::{mesh::CameraUniforms, util::DynamicBuffer},
-    math::uv,
+    math::{uv, Pose},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -39,9 +39,27 @@ impl Default for PointLight {
         Self {
             position: uv::Vec3::zero(),
             color: [1.; 3],
-            radius: 5.,
+            radius: 20.,
             falloff: 5.,
         }
+    }
+}
+
+impl PointLight {
+    pub fn gather_from_world(world: &mut hecs::World) -> impl '_ + Iterator<Item = PointLight> {
+        world
+            .query_mut::<(&PointLight, Option<&Pose>)>()
+            .into_iter()
+            .map(|(_, (light, pose))| {
+                let mut ret = *light;
+                if let Some(pose) = pose {
+                    let pos_offset =
+                        *pose * uv::DVec2::new(ret.position[0] as f64, ret.position[1] as f64);
+                    ret.position[0] = pos_offset.x as f32;
+                    ret.position[1] = pos_offset.y as f32;
+                }
+                ret
+            })
     }
 }
 
@@ -472,7 +490,7 @@ impl ShadingPipeline {
         pass: &mut wgpu::RenderPass<'pass>,
         camera: &crate::Camera,
         dir_light: DirectionalLight,
-        point_lights: &[PointLight],
+        point_lights: impl Iterator<Item = PointLight>,
     ) {
         let window = super::Renderer::window();
         let queue = super::Renderer::queue();
@@ -480,10 +498,8 @@ impl ShadingPipeline {
         let light_unif = DirectLightUniforms::from(dir_light);
         queue.write_buffer(&self.dir_light_buf, 0, light_unif.as_bytes());
 
-        let point_instances: Vec<PointLightInstance> = point_lights
-            .iter()
-            .map(|p| PointLightInstance::from(*p))
-            .collect();
+        let point_instances: Vec<PointLightInstance> =
+            point_lights.map(PointLightInstance::from).collect();
         self.point_instance_buf.write(&point_instances);
 
         let view_proj = camera.view_proj_matrix(window.inner_size().into());
@@ -494,7 +510,7 @@ impl ShadingPipeline {
         pass.set_bind_group(1, &self.dir_light_bind_group, &[]);
         pass.draw(0..3, 0..1);
 
-        if point_lights.is_empty() {
+        if point_instances.is_empty() {
             return;
         }
 
@@ -509,7 +525,7 @@ impl ShadingPipeline {
         pass.draw_indexed(
             0..self.point_volume_index_count,
             0,
-            0..point_lights.len() as u32,
+            0..point_instances.len() as u32,
         );
     }
 }

@@ -6,7 +6,7 @@
 use itertools::Itertools;
 use starframe as sf;
 
-use rand::{distributions as distr, distributions::Distribution, seq::SliceRandom};
+use rand::{distributions as distr, distributions::Distribution, Rng};
 
 #[derive(Clone, Debug, serde::Deserialize)]
 pub enum Recipe {
@@ -144,6 +144,7 @@ struct Solid<'a> {
     pose: sf::Pose,
     colliders: &'a [sf::Collider],
     material: Option<sf::MaterialId>,
+    light_color: Option<[f32; 4]>,
 }
 
 fn spawn_static(game: &mut sf::Game, solid: Solid) {
@@ -160,7 +161,15 @@ fn spawn_static(game: &mut sf::Game, solid: Solid) {
         if let Some(mat_id) = solid.material {
             game.graphics.set_mesh_material(mesh_id, mat_id);
         }
-        game.world.spawn((coll_key, mesh_id));
+        let ent = game.world.spawn((coll_key, mesh_id));
+        if let Some(l_col) = solid.light_color {
+            let light = sf::PointLight {
+                color: [l_col[0], l_col[1], l_col[2]],
+                position: sf::uv::Vec3::new(0., 0., 2.),
+                ..Default::default()
+            };
+            game.world.insert_one(ent, light).unwrap();
+        }
     }
 }
 
@@ -188,11 +197,20 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
         // this is needed for compound colliders,
         // could/should probably be inferred automatically
         // and/or worked around in some other more clean way
+        // (maybe merge meshes into one so we just have one entity?)
         game.hecs_sync.register_collider(
             coll_key,
             ent,
             sf::HecsSyncOptions::physics_to_hecs_only(),
         );
+        if let Some(l_col) = solid.light_color {
+            let light = sf::PointLight {
+                color: [l_col[0], l_col[1], l_col[2]],
+                position: sf::uv::Vec3::new(0., 0., 2.),
+                ..Default::default()
+            };
+            game.world.insert_one(ent, light).unwrap();
+        }
     }
 
     body_key
@@ -201,7 +219,10 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
 impl Recipe {
     pub fn spawn(&self, game: &mut sf::Game, gen_assets: &super::GeneratedAssets) {
         let mut rng = rand::thread_rng();
-        let mut random_palette = || gen_assets.palette.choose(&mut rng).copied();
+        let mut random_palette = || {
+            let idx = rng.gen_range(0..super::PALETTE_COLORS.len());
+            (super::PALETTE_COLORS[idx], gen_assets.palette[idx])
+        };
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(game, gen_assets.player),
             Recipe::Block(block) => {
@@ -219,10 +240,12 @@ impl Recipe {
                     restitution_coef: *restitution,
                     ..Default::default()
                 });
+                let (col, mat) = random_palette();
                 let solid = Solid {
                     pose,
                     colliders: &mut [coll],
-                    material: random_palette(),
+                    material: Some(mat),
+                    light_color: Some(col),
                 };
                 if *is_static {
                     spawn_static(game, solid);
@@ -238,10 +261,12 @@ impl Recipe {
                 pose,
                 is_static,
             }) => {
+                let (col, mat) = random_palette();
                 let solid = Solid {
                     pose: (*pose).into(),
                     colliders: &mut [sf::Collider::new_capsule(*length, *radius)],
-                    material: random_palette(),
+                    material: Some(mat),
+                    light_color: Some(col),
                 };
                 if *is_static {
                     spawn_static(game, solid);
@@ -250,10 +275,12 @@ impl Recipe {
                 }
             }
             Recipe::GenericBody { pose, colliders } => {
+                let (col, mat) = random_palette();
                 let solid = Solid {
                     pose: *pose,
                     colliders,
-                    material: random_palette(),
+                    material: Some(mat),
+                    light_color: Some(col),
                 };
                 spawn_body(game, solid);
             }
@@ -283,6 +310,7 @@ impl Recipe {
                     let orientation = (distance[0] / dist_norm).acos() * distance[1].signum();
 
                     let caps_full_length = dist_norm - spacing;
+                    let (col, mat) = random_palette();
                     let capsule = spawn_body(
                         game,
                         Solid {
@@ -294,7 +322,8 @@ impl Recipe {
                                 caps_full_length - width,
                                 radius,
                             )],
-                            material: random_palette(),
+                            material: Some(mat),
+                            light_color: Some(col),
                         },
                     );
                     let caps_length_half = caps_full_length / 2.0;

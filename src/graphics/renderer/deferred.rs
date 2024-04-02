@@ -184,7 +184,7 @@ impl<'a> DeferredContext<'a> {
         clear_color: [f32; 4],
         camera: &crate::Camera,
         dir_light: super::shading::DirectionalLight,
-        point_lights: &[super::shading::PointLight],
+        point_lights: impl Iterator<Item = crate::PointLight>,
     ) -> PostShadeContext<'a> {
         let mut shade_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shade"),

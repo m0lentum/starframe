@@ -5,7 +5,6 @@ static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
 
 use rand::{distributions as distr, distributions::Distribution};
 
-use sf::math::uv;
 use starframe as sf;
 
 mod mousegrab;
@@ -55,7 +54,6 @@ pub struct State {
     // graphics
     camera: sf::Camera,
     dir_light: sf::DirectionalLight,
-    point_lights: Vec<sf::PointLight>,
     light_rotating: bool,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
@@ -90,7 +88,6 @@ impl State {
                 ambient_color: [0.686, 0.875, 0.918],
                 direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
             },
-            point_lights: Vec::new(),
             light_rotating: false,
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
@@ -380,23 +377,6 @@ impl sf::GameState for State {
             );
             ui.checkbox(&mut self.light_rotating, "Spin");
 
-            if ui.button("Spawn random point light").clicked() {
-                self.point_lights.push(sf::PointLight {
-                    position: uv::Vec3::new(
-                        distr::Uniform::from(-10.0..10.0).sample(&mut rng),
-                        distr::Uniform::from(-5.0..5.0).sample(&mut rng),
-                        1.5,
-                    ),
-                    color: [
-                        distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                        distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                        distr::Uniform::from(0.6..1.0).sample(&mut rng),
-                    ],
-                    radius: distr::Uniform::from(15.0..30.0).sample(&mut rng),
-                    falloff: distr::Uniform::from(0.5..5.0).sample(&mut rng),
-                });
-            }
-
             ui.separator();
             ui.heading("Other controls");
             ui.horizontal(|ui| {
@@ -547,7 +527,7 @@ impl sf::GameState for State {
             [0.00802, 0.0137, 0.02732, 1.],
             &self.camera,
             self.dir_light,
-            &self.point_lights,
+            sf::PointLight::gather_from_world(&mut game.world),
         );
 
         let paint_jobs = self.egui_context.tessellate(
