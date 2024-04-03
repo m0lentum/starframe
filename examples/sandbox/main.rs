@@ -369,6 +369,14 @@ impl sf::GameState for State {
                 ui.color_edit_button_rgb(&mut self.dir_light.ambient_color);
                 ui.label("Ambient light color");
             });
+            if ui.button("Dim").clicked() {
+                for channel in itertools::chain(
+                    &mut self.dir_light.direct_color,
+                    &mut self.dir_light.ambient_color,
+                ) {
+                    *channel *= 0.2;
+                }
+            }
             ui.add(
                 egui::Slider::new(&mut self.dir_light.direction.x, -5.0..=5.0).text("Direction x"),
             );

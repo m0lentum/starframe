@@ -32,6 +32,7 @@ pub struct PointLight {
     pub color: [f32; 3],
     pub radius: f32,
     pub falloff: f32,
+    pub cutoff: f32,
 }
 
 impl Default for PointLight {
@@ -39,8 +40,9 @@ impl Default for PointLight {
         Self {
             position: uv::Vec3::zero(),
             color: [1.; 3],
-            radius: 20.,
+            radius: 10.,
             falloff: 5.,
+            cutoff: 1. / 256.,
         }
     }
 }
@@ -103,9 +105,8 @@ impl From<PointLight> for PointLightInstance {
         // see https://www.desmos.com/calculator/pccelgozae
         let attn_linear = light.falloff / light.radius;
         let intensity = light.color.into_iter().max_by(f32::total_cmp).unwrap();
-        let cutoff = 5. / 255.;
         let attn_quadratic =
-            (1. / light.radius.powi(2)) * ((intensity / cutoff) - cutoff - attn_linear);
+            (1. / light.radius.powi(2)) * ((intensity / light.cutoff) - light.cutoff - attn_linear);
         Self {
             position: light.position.into(),
             color: light.color,
