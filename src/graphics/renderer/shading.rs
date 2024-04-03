@@ -9,10 +9,25 @@ use crate::{
     math::{uv, Pose},
 };
 
+/// Primary light source covering the entire screen.
+/// There can only be one active at a time.
+///
+/// A directional light has no position,
+/// instead casting parallel rays over the entire scene.
+/// This emulates a distant, powerful point light source like the sun.
+///
+/// This light also includes a stylized ambient light,
+/// whose color can be configured independently from the direct light color
+/// The ambient light is more intense for surfaces facing away from the light,
+/// creating a "core shadow" effect.
 #[derive(Clone, Copy, Debug)]
 pub struct DirectionalLight {
+    /// Color of the light itself.
     pub direct_color: [f32; 3],
+    /// Color of light applied on every surface
+    /// regardless of whether it's hit by the direct light.
     pub ambient_color: [f32; 3],
+    /// Direction in which the light rays travel.
     pub direction: uv::Vec3,
 }
 
@@ -26,12 +41,39 @@ impl Default for DirectionalLight {
     }
 }
 
+/// A point-like light source. There can be many in a scene.
+///
+/// Can be created on its own or attached to entities in a [`hecs::World`].
+/// To get all lights in a world, use [`gather_from_world`][Self::gather_from_world].
+///
+/// The parameters `radius`, `falloff`, and `cutoff` control the shape of the light.
+/// For an interactive visualization of the way these work,
+/// see [this Desmos calculator](https://www.desmos.com/calculator/f7impirvum).
 #[derive(Clone, Copy, Debug)]
 pub struct PointLight {
+    /// Position of the light. Default: origin.
+    ///
+    /// If the light is attached to an entity
+    /// and acquired with [`gather_from_world`][Self::gather_from_world],
+    /// the position is interpreted to be relative to the entity's [`Pose`].
+    /// Otherwise, this is in world space.
     pub position: uv::Vec3,
+    /// Color of the light. Default: white.
     pub color: [f32; 3],
+    /// Maximum radius the light can reach. Default: 10.
+    ///
+    /// At this distance, the light intensity will reach
+    /// the cutoff value defined in `cutoff`.
+    /// Light reaching further won't be rendered,
+    /// so there will be a slight border visible at this distance
+    /// unless `cutoff` is set very low.
     pub radius: f32,
+    /// Falloff rate of light intensity. Default: 5.
+    ///
+    /// The higher this is, the faster the light intensity
+    /// will decrease with distance.
     pub falloff: f32,
+    /// Cutoff value for light intensity at a distance of `radius`.
     pub cutoff: f32,
 }
 
@@ -48,6 +90,12 @@ impl Default for PointLight {
 }
 
 impl PointLight {
+    /// Get all point lights attached to entities in a world.
+    ///
+    /// If the entity has a [`Pose`],
+    /// the position of the light is set to `pose * light.position`
+    /// (i.e. the original light position is interpreted as being in the entity's local space),
+    /// otherwise the light is returned as is.
     pub fn gather_from_world(world: &mut hecs::World) -> impl '_ + Iterator<Item = PointLight> {
         world
             .query_mut::<(&PointLight, Option<&Pose>)>()
@@ -102,7 +150,7 @@ struct PointLightInstance {
 
 impl From<PointLight> for PointLightInstance {
     fn from(light: PointLight) -> Self {
-        // see https://www.desmos.com/calculator/pccelgozae
+        // see https://www.desmos.com/calculator/f7impirvum
         let attn_linear = light.falloff / light.radius;
         let intensity = light.color.into_iter().max_by(f32::total_cmp).unwrap();
         let attn_quadratic =
