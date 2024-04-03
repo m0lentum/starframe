@@ -56,10 +56,12 @@ impl Camera {
 
         let ppwu = self.pixels_per_world_unit(viewport_size);
         let z_range_size = self.z_far - self.z_near;
+        // orthographic projection from starframe's left-handed space
+        // to the also left-handed wgpu device coordinates
         let projection = uv::Mat4::new(
             uv::Vec4::new(ppwu * 2. / viewport_size.0 as f32, 0., 0., 0.),
             uv::Vec4::new(0., ppwu * 2. / viewport_size.1 as f32, 0., 0.),
-            uv::Vec4::new(0., 0., -1. / z_range_size, 0.),
+            uv::Vec4::new(0., 0., 1. / z_range_size, 0.),
             uv::Vec4::new(0., 0., -self.z_near / z_range_size, 1.),
         );
 

@@ -26,7 +26,10 @@ pub fn load_mesh_data<'doc>(buffers: &'doc [&[u8]], prim: gltf::Primitive<'doc>)
     let mut vertices: Vec<mesh::Vertex> = positions
         .into_iter()
         .map(|p| mesh::Vertex {
-            position: p.into(),
+            // flip z coordinate because starframe uses
+            // a left-handed coordinate system (+z away from camera),
+            // whereas Blender's is right-handed (+z towards camera)
+            position: [p[0], p[1], -p[2]].into(),
             tex_coords: [0., 0.].into(),
         })
         .collect();
