@@ -523,8 +523,9 @@ impl sf::GameState for State {
     fn draw(&mut self, game: &mut sf::Game, dt: f32) {
         let device = sf::Renderer::device();
         let queue = sf::Renderer::queue();
-
         let window_size = game.renderer.window_size();
+
+        self.camera.upload();
 
         if matches!(self.state, StateEnum::Playing) {
             game.graphics.update_animations(dt);

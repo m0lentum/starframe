@@ -5,7 +5,7 @@ use zerocopy::{AsBytes, FromBytes};
 
 use super::GBuffers;
 use crate::{
-    graphics::{mesh::CameraUniforms, util::DynamicBuffer},
+    graphics::util::DynamicBuffer,
     math::{uv, Pose},
 };
 
@@ -181,8 +181,6 @@ pub struct ShadingPipeline {
     point_volume_vertex_buf: wgpu::Buffer,
     point_volume_index_buf: wgpu::Buffer,
     point_volume_index_count: u32,
-    camera_buf: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
     // instance buffer for all the point lights
     point_instance_buf: DynamicBuffer,
 }
@@ -347,45 +345,14 @@ impl ShadingPipeline {
         let point_instance_buf =
             DynamicBuffer::new(Some("point light instance"), wgpu::BufferUsages::VERTEX);
 
-        // camera bind group layout and buffer
-        // (TODO: refactor these into one place instead of redoing for every pipeline)
-
-        let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<CameraUniforms>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("mesh camera"),
-            mapped_at_creation: false,
-        });
-
-        let camera_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<CameraUniforms>() as _),
-                    },
-                    count: None,
-                }],
-                label: Some("camera"),
-            });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("camera"),
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buf.as_entire_binding(),
-            }],
-        });
-
         // pipeline
 
         let point_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("point lights"),
-            bind_group_layouts: &[&gbufs_bind_group_layout, &camera_bind_group_layout],
+            bind_group_layouts: &[
+                &gbufs_bind_group_layout,
+                &crate::Camera::bind_group_layout(),
+            ],
             push_constant_ranges: &[],
         });
 
@@ -494,8 +461,6 @@ impl ShadingPipeline {
             point_volume_vertex_buf,
             point_volume_index_buf,
             point_volume_index_count,
-            camera_buf,
-            camera_bind_group,
             point_instance_buf,
             point_pipeline,
         }
@@ -534,14 +499,13 @@ impl ShadingPipeline {
         self.gbufs_bind_group = Self::create_gbufs_bind_group(&self.gbufs_bind_group_layout, gbufs);
     }
 
-    pub fn draw<'pass, 's: 'pass>(
-        &'s mut self,
+    pub fn draw<'pass>(
+        &'pass mut self,
         pass: &mut wgpu::RenderPass<'pass>,
-        camera: &crate::Camera,
+        camera: &'pass crate::Camera,
         dir_light: DirectionalLight,
         point_lights: impl Iterator<Item = PointLight>,
     ) {
-        let window = super::Renderer::window();
         let queue = super::Renderer::queue();
 
         let light_unif = DirectLightUniforms::from(dir_light);
@@ -550,9 +514,6 @@ impl ShadingPipeline {
         let point_instances: Vec<PointLightInstance> =
             point_lights.map(PointLightInstance::from).collect();
         self.point_instance_buf.write(&point_instances);
-
-        let view_proj = camera.view_proj_matrix(window.inner_size().into());
-        queue.write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
 
         pass.set_pipeline(&self.direct_pipeline);
         pass.set_bind_group(0, &self.gbufs_bind_group, &[]);
@@ -564,7 +525,7 @@ impl ShadingPipeline {
         }
 
         pass.set_pipeline(&self.point_pipeline);
-        pass.set_bind_group(1, &self.camera_bind_group, &[]);
+        pass.set_bind_group(1, &camera.bind_group, &[]);
         pass.set_vertex_buffer(0, self.point_volume_vertex_buf.slice(..));
         pass.set_index_buffer(
             self.point_volume_index_buf.slice(..),

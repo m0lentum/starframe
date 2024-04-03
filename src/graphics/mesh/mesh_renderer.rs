@@ -35,9 +35,6 @@ pub struct MeshRenderer {
     joints_bind_group: wgpu::BindGroup,
     joints_bind_group_layout: wgpu::BindGroupLayout,
 
-    camera_buf: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-
     // joint storage which grows if needed.
     // not using util::DynamicBuffer because we also need to update a bind group
     // whenever this is reallocated
@@ -65,49 +62,7 @@ impl MeshRenderer {
             ))),
         });
 
-        //
-        // bind groups & buffers
-        //
-
-        // camera
-
-        let camera_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<CameraUniforms>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("mesh camera"),
-            mapped_at_creation: false,
-        });
-
-        let camera_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    // mesh uniforms
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                size_of::<CameraUniforms>() as _
-                            ),
-                        },
-                        count: None,
-                    },
-                ],
-                label: Some("mesh camera"),
-            });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("skinned mesh camera"),
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buf.as_entire_binding(),
-            }],
-        });
-
-        // joints
+        // joints bind group
 
         let joint_storage = device.create_buffer(&wgpu::BufferDescriptor {
             size: size_of::<GpuMat4>() as _,
@@ -243,7 +198,7 @@ impl MeshRenderer {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
-                &camera_bind_group_layout,
+                &crate::Camera::bind_group_layout(),
                 &joints_bind_group_layout,
                 &game.graphics.material_res.bind_group_layout,
             ],
@@ -283,8 +238,6 @@ impl MeshRenderer {
             unskinned_pipeline: pipeline(PipelineVariant::Unskinned),
             joints_bind_group,
             joints_bind_group_layout,
-            camera_buf,
-            camera_bind_group,
             joint_storage,
             joint_capacity: 0,
         }
@@ -296,7 +249,7 @@ impl MeshRenderer {
         pass: &mut DeferredPass<'pass>,
         manager: &'pass mut GraphicsManager,
         world: &mut hecs::World,
-        camera: &Camera,
+        camera: &'pass Camera,
     ) {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
@@ -358,16 +311,10 @@ impl MeshRenderer {
         }
 
         //
-        // upload uniforms
+        // upload uniforms and instance data
         //
 
-        let view_proj = camera.view_proj_matrix(pass.target_size);
-        queue.write_buffer(&self.camera_buf, 0, view_proj.as_byte_slice());
         queue.write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
-
-        //
-        // upload instance data
-        //
 
         let mut curr_idx = 0;
         let mut instances: Vec<Instance> = Vec::new();
@@ -453,7 +400,7 @@ impl MeshRenderer {
         //
 
         let pass = &mut pass.pass;
-        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        pass.set_bind_group(0, &camera.bind_group, &[]);
         pass.set_bind_group(1, &self.joints_bind_group, &[]);
 
         fn draw_mesh<'pass>(
