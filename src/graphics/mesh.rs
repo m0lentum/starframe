@@ -20,7 +20,7 @@ use zerocopy::{AsBytes, FromBytes};
 
 /// Parameters for creating a triangle mesh.
 /// Used with [`GraphicsManager::create_mesh`][crate::GraphicsManager::create_mesh].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MeshParams<'a> {
     /// Name that can be later used to look up this mesh
     /// with [`GraphicsManager::get_mesh_id`][crate::GraphicsManager::get_mesh_id].
@@ -29,9 +29,6 @@ pub struct MeshParams<'a> {
     /// Offset from the Pose of the entity this mesh is attached to,
     /// or the world origin if it doesn't have a Pose.
     pub offset: m::Pose,
-    /// Whether or not to draw an outline for the mesh when using
-    /// [`OutlineRenderer`][crate::OutlineRenderer].
-    pub has_outline: bool,
     /// Actual vertex data of the mesh.
     pub data: MeshData,
 }
@@ -42,17 +39,6 @@ pub struct MeshData {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
     pub joints: Option<Vec<VertexJoints>>,
-}
-
-impl<'a> Default for MeshParams<'a> {
-    fn default() -> Self {
-        Self {
-            name: None,
-            offset: m::Pose::default(),
-            has_outline: true,
-            data: MeshData::default(),
-        }
-    }
 }
 
 impl<'a> MeshParams<'a> {
@@ -91,7 +77,6 @@ impl<'a> MeshParams<'a> {
 
         Mesh {
             offset: self.offset,
-            has_outline: self.has_outline,
             gpu_data,
         }
     }
@@ -103,7 +88,6 @@ impl<'a> MeshParams<'a> {
 /// Vertex data only exists on the GPU at this point and is immutable.
 pub struct Mesh {
     pub offset: m::Pose,
-    pub has_outline: bool,
     gpu_data: GpuMeshData,
 }
 

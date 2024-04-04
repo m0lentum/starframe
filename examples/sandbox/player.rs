@@ -82,7 +82,6 @@ pub mod controller {
 
         let bullet = graphics.create_mesh(sf::MeshParams {
             data: sf::MeshData::from(sf::ConvexMeshShape::Circle { r: R, points: 5 }),
-            has_outline: false,
             name: Some("bullet"),
             ..Default::default()
         });

@@ -422,9 +422,6 @@ impl MeshRenderer {
             }
             pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
 
-            // stencil for outline rendering
-            pass.set_stencil_reference(if mesh.has_outline { 1 } else { 0 });
-
             pass.draw_indexed(
                 0..mesh.gpu_data.idx_count,
                 0,
