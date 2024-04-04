@@ -1,10 +1,14 @@
-use std::mem::size_of;
+use std::{mem::size_of, sync::OnceLock};
 
 use wgpu::util::DeviceExt;
 use zerocopy::{AsBytes, FromBytes};
 
-/// Singleton collection of shared resources stored in `GraphicsManager`.
-pub(crate) struct MaterialResources {
+static RESOURCES: OnceLock<MaterialResources> = OnceLock::new();
+// white material that gets loaded if a mesh has no material
+static DEFAULT_MATERIAL: OnceLock<Material> = OnceLock::new();
+
+/// Singleton collection of shared resources.
+struct MaterialResources {
     /// Bind group layout shared by all materials.
     pub bind_group_layout: wgpu::BindGroupLayout,
     /// White texture to bind when the material doesn't have a texture.
@@ -15,7 +19,11 @@ pub(crate) struct MaterialResources {
 }
 
 impl MaterialResources {
-    pub(super) fn new() -> Self {
+    fn get<'a>() -> &'a Self {
+        RESOURCES.get_or_init(Self::new)
+    }
+
+    fn new() -> Self {
         let device = crate::Renderer::device();
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("material"),
@@ -108,14 +116,15 @@ pub struct Material {
 }
 
 impl Material {
-    pub(super) fn new(defaults: &MaterialResources, params: MaterialParams) -> Self {
+    pub(super) fn new(params: MaterialParams) -> Self {
         let device = crate::Renderer::device();
+        let res = MaterialResources::get();
 
         let diffuse_tex = params.diffuse_tex.map(|t| t.upload());
         let normal_tex = params.normal_tex.map(|t| t.upload());
 
-        let diffuse = diffuse_tex.as_ref().unwrap_or(&defaults.blank_texture);
-        let normal = normal_tex.as_ref().unwrap_or(&defaults.blank_normal);
+        let diffuse = diffuse_tex.as_ref().unwrap_or(&res.blank_texture);
+        let normal = normal_tex.as_ref().unwrap_or(&res.blank_normal);
 
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("material uniforms"),
@@ -128,7 +137,7 @@ impl Material {
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &defaults.bind_group_layout,
+            layout: &res.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -159,6 +168,21 @@ impl Material {
             _diffuse_tex: diffuse_tex,
             _normal_tex: normal_tex,
         }
+    }
+
+    pub(super) fn get_default<'a>() -> &'a Self {
+        DEFAULT_MATERIAL.get_or_init(|| {
+            Self::new(MaterialParams {
+                base_color: Some([1.; 4]),
+                diffuse_tex: None,
+                normal_tex: None,
+            })
+        })
+    }
+
+    #[inline]
+    pub(crate) fn bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
+        &MaterialResources::get().bind_group_layout
     }
 }
 

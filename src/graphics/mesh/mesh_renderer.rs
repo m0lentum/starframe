@@ -1,6 +1,7 @@
 use crate::{
     graphics::{
         manager::MeshId,
+        material::Material,
         renderer::DeferredPass,
         util::{GpuMat4, GpuVec3},
         Camera, GraphicsManager,
@@ -200,7 +201,7 @@ impl MeshRenderer {
             bind_group_layouts: &[
                 &crate::Camera::bind_group_layout(),
                 &joints_bind_group_layout,
-                &game.graphics.material_res.bind_group_layout,
+                Material::bind_group_layout(),
             ],
             push_constant_ranges: &[],
         });

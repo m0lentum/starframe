@@ -3,7 +3,7 @@ use thunderdome as td;
 
 use super::{
     animation::{animator::Animator, gltf_animation::GltfAnimation},
-    material::{Material, MaterialParams, MaterialResources},
+    material::{Material, MaterialParams},
     mesh::{Mesh, MeshParams},
     Skin,
 };
@@ -109,8 +109,6 @@ pub struct GraphicsManager {
 
     materials: td::Arena<Material>,
     material_name_map: HashMap<String, td::Index>,
-    pub(crate) material_res: MaterialResources,
-    default_material: Material,
 }
 
 /// Error when loading assets from a glTF document.
@@ -129,16 +127,6 @@ impl GraphicsManager {
     /// Create a new graphics manager.
     #[inline]
     pub(crate) fn new() -> Self {
-        let material_res = MaterialResources::new();
-        let default_material = Material::new(
-            &material_res,
-            MaterialParams {
-                base_color: Some([1.; 4]),
-                diffuse_tex: None,
-                normal_tex: None,
-            },
-        );
-
         Self {
             meshes: td::Arena::new(),
             mesh_name_map: HashMap::new(),
@@ -153,8 +141,6 @@ impl GraphicsManager {
 
             materials: td::Arena::new(),
             material_name_map: HashMap::new(),
-            material_res,
-            default_material,
         }
     }
 
@@ -290,7 +276,7 @@ impl GraphicsManager {
             .materials()
             .map(|gltf_mat| {
                 let mat_params = gltf_import::load_material(&images, gltf_mat);
-                let mat = Material::new(&self.material_res, mat_params);
+                let mat = Material::new(mat_params);
                 self.materials.insert(mat)
             })
             .collect();
@@ -419,7 +405,7 @@ impl GraphicsManager {
         self.mesh_material_map
             .get(id.mesh)
             .and_then(|mat_idx| self.materials.get(*mat_idx))
-            .unwrap_or(&self.default_material)
+            .unwrap_or_else(Material::get_default)
     }
 
     /// Create a new material.
@@ -431,7 +417,7 @@ impl GraphicsManager {
         params: MaterialParams<'_>,
         name: Option<&str>,
     ) -> MaterialId {
-        let mat = Material::new(&self.material_res, params);
+        let mat = Material::new(params);
         let id = self.materials.insert(mat);
         if let Some(name) = name {
             self.material_name_map.insert(name.to_string(), id);
