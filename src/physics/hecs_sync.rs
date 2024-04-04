@@ -152,7 +152,7 @@ impl HecsSyncManager {
                 let Some(body) = physics.entity_set.get_body_mut(BodyKey(body_key)) else {
                     return true;
                 };
-                body.pose = *pose;
+                body.pose = m::PhysicsPose::from(*pose);
             }
             true
         });
@@ -170,9 +170,9 @@ impl HecsSyncManager {
                 };
 
                 if let Some(body) = physics.entity_set.get_collider_body_mut(coll_key) {
-                    body.pose = *pose;
+                    body.pose = m::PhysicsPose::from(*pose);
                 } else if let Some(coll) = physics.entity_set.get_collider_mut(coll_key) {
-                    coll.pose = *pose;
+                    coll.pose = m::PhysicsPose::from(*pose);
                 };
             }
             true
@@ -197,7 +197,7 @@ impl HecsSyncManager {
                 let Ok(pose) = hecs_world.query_one_mut::<&mut m::Pose>(*entity) else {
                     return true;
                 };
-                *pose = body.pose;
+                pose.sync_from_physics(body.pose);
             }
             true
         });
@@ -217,9 +217,9 @@ impl HecsSyncManager {
                 // (again, existence checked previously)
                 let coll = physics.entity_set.get_collider(coll_key).unwrap();
                 if let Some(body) = physics.entity_set.get_collider_body(coll_key) {
-                    *pose = body.pose * coll.pose;
+                    pose.sync_from_physics(body.pose * coll.pose);
                 } else {
-                    *pose = coll.pose;
+                    pose.sync_from_physics(coll.pose);
                 }
             }
             true

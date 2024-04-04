@@ -1,6 +1,6 @@
 //! Types of physical constraints.
 
-use crate::{math as m, physics::BodyKey};
+use crate::{math::uv, physics::BodyKey};
 
 /// A constraint restricts the relative motion of two bodies,
 /// or the motion of a single body in the world.
@@ -22,7 +22,7 @@ pub struct Constraint {
     /// Damping coefficient for angular velocity.
     pub angular_damping: f64,
     /// Offsets from each body's center of mass (or world origin).
-    pub offsets: [m::Vec2; 2],
+    pub offsets: [uv::DVec2; 2],
     /// Which directions to enforce the constraint in.
     pub limit: ConstraintLimit,
     /// Type of the constraint.
@@ -62,7 +62,7 @@ pub enum ConstraintLimit {
 pub struct ConstraintBuilder {
     owner: BodyKey,
     target: Option<BodyKey>,
-    offsets: [m::Vec2; 2],
+    offsets: [uv::DVec2; 2],
     limit: ConstraintLimit,
     compliance: f64,
     linear_damping: f64,
@@ -80,7 +80,7 @@ impl ConstraintBuilder {
         Self {
             owner,
             target: None,
-            offsets: [m::Vec2::zero(); 2],
+            offsets: [uv::DVec2::zero(); 2],
             limit: ConstraintLimit::Eq,
             compliance: 0.0,
             linear_damping: 0.1,
@@ -99,7 +99,7 @@ impl ConstraintBuilder {
     /// relative to the center of mass.
     ///
     /// This has no effect on angular-only constraints.
-    pub fn with_origin(mut self, point: m::Vec2) -> Self {
+    pub fn with_origin(mut self, point: uv::DVec2) -> Self {
         self.offsets[0] = point;
         self
     }
@@ -109,7 +109,7 @@ impl ConstraintBuilder {
     /// or in the world if the target is None.
     ///
     /// This has no effect on angular-only constraints.
-    pub fn with_target_origin(mut self, point: m::Vec2) -> Self {
+    pub fn with_target_origin(mut self, point: uv::DVec2) -> Self {
         self.offsets[1] = point;
         self
     }

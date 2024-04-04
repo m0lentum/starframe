@@ -19,14 +19,14 @@ pub struct DataView<'a> {
     pub global_body_order: &'a [usize],
     /// slice of sorted bodies that are part of the island
     pub bodies: &'a mut [Body],
-    pub old_poses: &'a mut [m::Pose],
-    pub pre_contact_poses: &'a mut [m::Pose],
+    pub old_poses: &'a mut [PhysicsPose],
+    pub pre_contact_poses: &'a mut [PhysicsPose],
     pub old_velocities: &'a mut [Velocity],
-    pub ext_f_accelerations: &'a mut [m::Vec2],
+    pub ext_f_accelerations: &'a mut [uv::DVec2],
     pub ropes: &'a mut [RopeView],
     pub rope_next_particles: &'a [Option<usize>],
     pub rope_prev_particles: &'a [Option<usize>],
-    pub rope_lateral_corrections: &'a mut [Option<m::Vec2>],
+    pub rope_lateral_corrections: &'a mut [Option<uv::DVec2>],
     pub constraints: &'a [Constraint],
     pub constraint_body_pairs: &'a [(usize, Option<usize>)],
     pub coll_pairs: &'a [[ColliderKey; 2]],
@@ -91,8 +91,9 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
     for (old_pose, body) in izip!(&mut *data.old_poses, &mut *data.bodies,) {
         body.velocity.linear = (body.pose.translation - old_pose.translation) * data.inv_dt;
         // I'm sure there are more efficient ways to handle the angle but this'll do
-        body.velocity.angular =
-            m::Angle::from(body.pose.rotation * old_pose.rotation.reversed()).rad() * data.inv_dt;
+        let pose_diff = body.pose.rotation * old_pose.rotation.reversed();
+        let angle_diff = -pose_diff.bv.xy.atan2(pose_diff.s) * 2.0;
+        body.velocity.angular = angle_diff * data.inv_dt;
     }
 
     if !data.contacts.is_empty() {
@@ -157,12 +158,12 @@ fn solve_ropes(data: &mut DataView<'_>) {
                     / (data.bodies[particle_after_next].mass.inv()
                         + rope.params.bending_compliance * data.inv_dt_sq);
 
-                let lambda_oriented = if m::left_normal(curr_to_next).dot(next_to_after) > 0.0 {
+                let lambda_oriented = if left_normal(curr_to_next).dot(next_to_after) > 0.0 {
                     lambda
                 } else {
                     -lambda
                 };
-                let correction = m::Rotor2::from_angle(
+                let correction = uv::DRotor2::from_angle(
                     lambda_oriented * data.bodies[particle_after_next].mass.inv(),
                 );
                 let old_pos = data.bodies[particle_after_next].pose.translation;
@@ -212,7 +213,7 @@ fn solve_constraints(data: &mut DataView<'_>) {
                     let dir = if actual_dist_mag != 0.0 {
                         actual_dist / actual_dist_mag
                     } else {
-                        m::Vec2::unit_y()
+                        uv::DVec2::unit_y()
                     };
 
                     match pair.1 {
@@ -232,20 +233,16 @@ fn solve_constraints(data: &mut DataView<'_>) {
                                     + eff_inv_masses[1]
                                     + constraint.compliance * data.inv_dt_sq);
 
-                            data.bodies[pair[0]]
-                                .pose
-                                .append_translation(inv_masses[0] * lambda * dir);
-                            data.bodies[pair[0]].pose.prepend_rotation(
-                                m::Angle::Rad(inv_mom_inertias[0] * lambda * offsets_wedge_dir[0])
-                                    .into(),
-                            );
-                            data.bodies[pair[1]]
-                                .pose
-                                .append_translation(-inv_masses[1] * lambda * dir);
-                            data.bodies[pair[1]].pose.prepend_rotation(
-                                m::Angle::Rad(-inv_mom_inertias[1] * lambda * offsets_wedge_dir[1])
-                                    .into(),
-                            );
+                            let p0 = &mut data.bodies[pair[0]].pose;
+                            p0.append_translation(inv_masses[0] * lambda * dir);
+                            p0.prepend_rotation(uv::DRotor2::from_angle(
+                                inv_mom_inertias[0] * lambda * offsets_wedge_dir[0],
+                            ));
+                            let p1 = &mut data.bodies[pair[1]].pose;
+                            p1.append_translation(-inv_masses[1] * lambda * dir);
+                            p1.prepend_rotation(uv::DRotor2::from_angle(
+                                -inv_mom_inertias[1] * lambda * offsets_wedge_dir[1],
+                            ));
                         }
                         None => {
                             // this is repetitive but kind of hard to abstract :thinking:
@@ -258,13 +255,11 @@ fn solve_constraints(data: &mut DataView<'_>) {
                             let lambda =
                                 -error / (eff_inv_mass + constraint.compliance * data.inv_dt_sq);
 
-                            data.bodies[pair.0]
-                                .pose
-                                .append_translation(inv_masses[0] * lambda * dir);
-                            data.bodies[pair.0].pose.prepend_rotation(
-                                m::Angle::Rad(inv_mom_inertias[0] * lambda * offset_wedge_dir)
-                                    .into(),
-                            );
+                            let p0 = &mut data.bodies[pair.0].pose;
+                            p0.append_translation(inv_masses[0] * lambda * dir);
+                            p0.prepend_rotation(uv::DRotor2::from_angle(
+                                inv_mom_inertias[0] * lambda * offset_wedge_dir,
+                            ));
                         }
                     }
                 }
@@ -305,7 +300,7 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
         let colls: [&Collider; 2] = map_pair(coll_keys, |c| entity_set.colliders.get(c.0).unwrap());
         // if a body is attached,
         // the pose of a collider is in the local space of the body
-        let poses_worldspace: [m::Pose; 2] = map_pair(&[0, 1], |&i| match bodies[i] {
+        let poses_worldspace: [PhysicsPose; 2] = map_pair(&[0, 1], |&i| match bodies[i] {
             Some(bi) => data.bodies[bi].pose * colls[i].pose,
             None => colls[i].pose,
         });
@@ -346,9 +341,9 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                             - data.pre_contact_poses[bi].translation;
                         let new_normal =
                             if normal_oriented.dot(to_prev) > normal_oriented.dot(to_next) {
-                                m::Unit::new_normalize(m::left_normal(to_prev))
+                                UnitDVec2::new_normalize(left_normal(to_prev))
                             } else {
-                                m::Unit::new_normalize(m::left_normal(to_next))
+                                UnitDVec2::new_normalize(left_normal(to_next))
                             };
                         contact.normal = if contact.normal.dot(*new_normal) > 0.0 {
                             new_normal
@@ -370,7 +365,7 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
 
         for contact in contact.iter() {
             // tangent for static friction
-            let tangent = m::left_normal(*contact.normal);
+            let tangent = left_normal(*contact.normal);
 
             // gather variables into a struct because they're different
             // for static and dynamic bodies and this lets us get them in one match
@@ -378,11 +373,11 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                 // we can't return depth directly from collision detection because
                 // earlier position corrections can change it,
                 // thus we compute depth here from the points on each object's surface
-                offset_worldspace: m::Vec2,
+                offset_worldspace: uv::DVec2,
                 offset_wedge_normal: f64,
                 eff_inv_mass_n: f64,
                 // for friction
-                offset_worldspace_old: m::Vec2,
+                offset_worldspace_old: uv::DVec2,
                 offset_wedge_tan: f64,
                 eff_inv_mass_tan: f64,
             }
@@ -434,22 +429,20 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
             if let Some(bi) = bodies[0] {
                 let im = data.bodies[bi].mass.inv();
                 let imi = data.bodies[bi].moment_of_inertia.inv();
-                data.bodies[bi]
-                    .pose
-                    .append_translation(im * *lambda_n * *contact.normal);
-                data.bodies[bi].pose.prepend_rotation(
-                    m::Angle::Rad(imi * *lambda_n * vars[0].offset_wedge_normal).into(),
-                );
+                let p = &mut data.bodies[bi].pose;
+                p.append_translation(im * *lambda_n * *contact.normal);
+                p.prepend_rotation(uv::DRotor2::from_angle(
+                    imi * *lambda_n * vars[0].offset_wedge_normal,
+                ));
             }
             if let Some(bi) = bodies[1] {
                 let im = data.bodies[bi].mass.inv();
                 let imi = data.bodies[bi].moment_of_inertia.inv();
-                data.bodies[bi]
-                    .pose
-                    .append_translation(-im * *lambda_n * *contact.normal);
-                data.bodies[bi].pose.prepend_rotation(
-                    m::Angle::Rad(-imi * *lambda_n * vars[1].offset_wedge_normal).into(),
-                );
+                let p = &mut data.bodies[bi].pose;
+                p.append_translation(-im * *lambda_n * *contact.normal);
+                p.prepend_rotation(uv::DRotor2::from_angle(
+                    -imi * *lambda_n * vars[1].offset_wedge_normal,
+                ));
             }
 
             // static friction
@@ -469,22 +462,20 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                     if let Some(bi) = bodies[0] {
                         let im = data.bodies[bi].mass.inv();
                         let imi = data.bodies[bi].moment_of_inertia.inv();
-                        data.bodies[bi]
-                            .pose
-                            .append_translation(im * lambda_t * tangent);
-                        data.bodies[bi].pose.prepend_rotation(
-                            m::Angle::Rad(imi * lambda_t * vars[0].offset_wedge_tan).into(),
-                        );
+                        let p = &mut data.bodies[bi].pose;
+                        p.append_translation(im * lambda_t * tangent);
+                        p.prepend_rotation(uv::DRotor2::from_angle(
+                            imi * lambda_t * vars[0].offset_wedge_tan,
+                        ));
                     }
                     if let Some(bi) = bodies[1] {
                         let im = data.bodies[bi].mass.inv();
                         let imi = data.bodies[bi].moment_of_inertia.inv();
-                        data.bodies[bi]
-                            .pose
-                            .append_translation(-im * lambda_t * tangent);
-                        data.bodies[bi].pose.prepend_rotation(
-                            m::Angle::Rad(-imi * lambda_t * vars[1].offset_wedge_tan).into(),
-                        );
+                        let p = &mut data.bodies[bi].pose;
+                        p.append_translation(-im * lambda_t * tangent);
+                        p.prepend_rotation(uv::DRotor2::from_angle(
+                            -imi * lambda_t * vars[1].offset_wedge_tan,
+                        ));
                     }
                 }
             }
@@ -520,10 +511,10 @@ fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
             struct WorkingVars {
                 inv_mass: f64,
                 inv_mom_inertia: f64,
-                offset_rotated: m::Vec2,
-                point_vel: m::Vec2,
-                old_point_vel: m::Vec2,
-                ext_f_accel: m::Vec2,
+                offset_rotated: uv::DVec2,
+                point_vel: uv::DVec2,
+                old_point_vel: uv::DVec2,
+                ext_f_accel: uv::DVec2,
             }
             let vars = map_pair(&[0, 1], |&i| match bodies[i] {
                 // no body => infinite mass
@@ -531,9 +522,9 @@ fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
                     inv_mass: 0.0,
                     inv_mom_inertia: 0.0,
                     offset_rotated: colls[i].pose.rotation * contact.offsets[i],
-                    point_vel: m::Vec2::zero(),
-                    old_point_vel: m::Vec2::zero(),
-                    ext_f_accel: m::Vec2::zero(),
+                    point_vel: uv::DVec2::zero(),
+                    old_point_vel: uv::DVec2::zero(),
+                    ext_f_accel: uv::DVec2::zero(),
                 },
                 Some(bi) => {
                     // the contact was transformed into the body's local space in `solve_contacts`,
@@ -569,7 +560,7 @@ fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
 
             // dynamic friction
 
-            let tangent = m::left_normal(*contact.normal);
+            let tangent = left_normal(*contact.normal);
             let delta_tan_vel = match materials[0].dynamic_friction_with(&materials[1]) {
                 Some(friction_coef) => {
                     let tangent_vel = relative_vel_at_p.dot(tangent);

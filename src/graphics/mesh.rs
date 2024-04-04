@@ -8,7 +8,7 @@ pub use mesh_renderer::MeshRenderer;
 
 use crate::{
     graphics as gx,
-    math::{self as m},
+    math::{self as m, ConvertPrecision},
     physics as phys,
 };
 use itertools::Itertools;
@@ -143,15 +143,16 @@ pub enum ConvexMeshShape {
 }
 
 impl MeshData {
-    pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f64) -> Self {
+    pub fn from_collider_shape(shape: &phys::ColliderShape, max_circle_vert_distance: f32) -> Self {
         let mut vertices: Vec<m::Vec2> = Vec::new();
 
         match shape.polygon {
             phys::ColliderPolygon::Point => {
-                use std::f64::consts::TAU;
-                let num_increments = (TAU * shape.circle_r / max_circle_vert_distance).ceil();
+                use std::f32::consts::TAU;
+                let num_increments =
+                    (TAU * shape.circle_r as f32 / max_circle_vert_distance).ceil();
                 let angle_increment = m::Rotor2::from_angle(TAU / num_increments);
-                let mut curr_vert = m::Vec2::new(shape.circle_r, 0.0);
+                let mut curr_vert = m::Vec2::new(shape.circle_r as f32, 0.0);
                 for _ in 0..(num_increments as usize) {
                     vertices.push(curr_vert);
                     curr_vert = angle_increment * curr_vert;
@@ -181,20 +182,21 @@ impl MeshData {
 
                     if shape.circle_r == 0.0 {
                         // just a polygon, all we need are the ends of the edges
-                        vertices.push(next_edge.edge.start);
+                        vertices.push(next_edge.edge.start.conv_p());
                     } else {
                         // rounded polygon, generate circle caps offset from the vertex
-                        let angle_btw_edges = prev_edge.normal.dot(*next_edge.normal).acos();
-                        let num_increments =
-                            (angle_btw_edges * shape.circle_r / max_circle_vert_distance).ceil();
+                        let angle_btw_edges = prev_edge.normal.dot(*next_edge.normal).acos() as f32;
+                        let num_increments = (angle_btw_edges * shape.circle_r as f32
+                            / max_circle_vert_distance)
+                            .ceil();
                         let angle_increment =
                             m::Rotor2::from_angle(angle_btw_edges / num_increments);
 
-                        let mut curr_offset = shape.circle_r * *prev_edge.normal;
-                        vertices.push(next_edge.edge.start + curr_offset);
+                        let mut curr_offset = (shape.circle_r * *prev_edge.normal).conv_p();
+                        vertices.push(next_edge.edge.start.conv_p() + curr_offset);
                         for _ in 0..(num_increments as usize) {
                             curr_offset = angle_increment * curr_offset;
-                            vertices.push(next_edge.edge.start + curr_offset);
+                            vertices.push(next_edge.edge.start.conv_p() + curr_offset);
                         }
                     }
                     prev_edge = next_edge;
@@ -258,11 +260,12 @@ impl From<ConvexMeshShape> for MeshData {
 
         let vertices: Vec<Vertex> = match shape {
             ConvexMeshShape::Circle { r, points } => {
+                let r = r as f32;
                 let diameter = 2. * r;
-                let angle_incr = 2.0 * std::f64::consts::PI / points as f64;
+                let angle_incr = 2.0 * std::f32::consts::PI / points as f32;
                 (0..points)
                     .map(|i| {
-                        let angle = angle_incr * i as f64;
+                        let angle = angle_incr * i as f32;
                         m::Vec2::new(r * angle.cos(), r * angle.sin())
                     })
                     .map(|vert| Vertex {
@@ -272,8 +275,8 @@ impl From<ConvexMeshShape> for MeshData {
                     .collect()
             }
             ConvexMeshShape::Rect { w, h } => {
-                let hw = 0.5 * w;
-                let hh = 0.5 * h;
+                let hw = 0.5 * w as f32;
+                let hh = 0.5 * h as f32;
                 [
                     m::Vec2::new(hw, hh),
                     m::Vec2::new(-hw, hh),
@@ -283,7 +286,11 @@ impl From<ConvexMeshShape> for MeshData {
                 .into_iter()
                 .map(|vert| Vertex {
                     position: vert.into(),
-                    tex_coords: flip_y(m::Vec2::new((vert.x + hw) / w, (vert.y + hh) / h)).into(),
+                    tex_coords: flip_y(m::Vec2::new(
+                        (vert.x + hw) / w as f32,
+                        (vert.y + hh) / h as f32,
+                    ))
+                    .into(),
                 })
                 .collect()
             }
@@ -292,14 +299,16 @@ impl From<ConvexMeshShape> for MeshData {
                 r,
                 points_per_cap,
             } => {
-                let angle_incr = std::f64::consts::PI / points_per_cap as f64;
+                let r = r as f32;
+                let hl = hl as f32;
+                let angle_incr = std::f32::consts::PI / points_per_cap as f32;
                 (0..=points_per_cap)
                     .map(|i| {
-                        let angle = angle_incr * i as f64;
+                        let angle = angle_incr * i as f32;
                         m::Vec2::new(r * angle.sin() + hl, r * angle.cos())
                     })
                     .chain((points_per_cap..=2 * points_per_cap).map(|i| {
-                        let angle = angle_incr * i as f64;
+                        let angle = angle_incr * i as f32;
                         m::Vec2::new(r * angle.sin() - hl, r * angle.cos())
                     }))
                     .map(|vert| Vertex {

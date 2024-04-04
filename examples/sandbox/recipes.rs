@@ -4,6 +4,7 @@
 //! TODO: streamline this and bring in the Tiled editor integration from Flamegrower
 
 use itertools::Itertools;
+use sf::math::ConvertPrecision;
 use starframe as sf;
 
 use rand::{distributions as distr, distributions::Distribution, Rng};
@@ -27,8 +28,8 @@ pub enum Recipe {
         anchored_end: bool,
     },
     Oscillator {
-        position: [f64; 2],
-        begin_length: f64,
+        position: [f32; 2],
+        begin_length: f32,
         target_length: f64,
         compliance: f64,
     },
@@ -50,14 +51,16 @@ pub enum Recipe {
         right: f32,
         top: f32,
         bottom: f32,
+        front: f32,
+        back: f32,
     },
 }
 
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
 #[serde(default)]
 pub struct Ball {
-    pub radius: f64,
-    pub position: [f64; 2],
+    pub radius: f32,
+    pub position: [f32; 2],
     pub restitution: f64,
     pub start_velocity: [f64; 2],
     pub is_static: bool,
@@ -149,13 +152,14 @@ struct Solid<'a> {
 
 fn spawn_static(game: &mut sf::Game, solid: Solid) {
     for coll in solid.colliders {
+        let phys_pose = sf::PhysicsPose::from(solid.pose);
         let coll_key = game
             .physics
             .entity_set
-            .insert_collider(coll.with_pose(solid.pose));
+            .insert_collider(coll.with_pose(phys_pose));
         let mesh_id = game.graphics.create_mesh(sf::MeshParams {
             data: sf::MeshData::from(*coll),
-            offset: solid.pose * coll.pose,
+            offset: solid.pose * sf::Pose::from(coll.pose),
             ..Default::default()
         });
         if let Some(mat_id) = solid.material {
@@ -178,7 +182,7 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
     let center_of_mass = coll_setup.center_of_mass();
 
     let body = sf::Body::new_dynamic(coll_setup.info_around_point(center_of_mass), 0.5)
-        .with_pose(solid.pose);
+        .with_pose(solid.pose.into());
     let body_key = game.physics.entity_set.insert_body(body);
 
     for mut coll in solid.colliders.iter().cloned() {
@@ -235,11 +239,12 @@ impl Recipe {
                 start_velocity,
                 is_static,
             }) => {
-                let pose = sf::Pose::new(position.into(), sf::Rotor2::identity());
-                let coll = sf::Collider::new_circle(*radius).with_material(sf::PhysicsMaterial {
-                    restitution_coef: *restitution,
-                    ..Default::default()
-                });
+                let pose = sf::Pose::new(position.into(), sf::Angle::default());
+                let coll =
+                    sf::Collider::new_circle(*radius as f64).with_material(sf::PhysicsMaterial {
+                        restitution_coef: *restitution,
+                        ..Default::default()
+                    });
                 let (col, mat) = random_palette();
                 let solid = Solid {
                     pose,
@@ -299,7 +304,7 @@ impl Recipe {
                 let half_spacing = spacing / 2.0;
                 let radius = width / 2.0;
 
-                let mut links_iter = links.iter().map(|p| sf::Vec2::new(p[0], p[1])).peekable();
+                let mut links_iter = links.iter().map(|p| sf::DVec2::new(p[0], p[1])).peekable();
 
                 // to connect another block to it
                 let mut prev_block: Option<(sf::BodyKey, f64)> = None;
@@ -315,8 +320,8 @@ impl Recipe {
                         game,
                         Solid {
                             pose: sf::PoseBuilder::new()
-                                .with_position(center)
-                                .with_rotation(sf::Angle::Rad(orientation))
+                                .with_position(center.conv_p())
+                                .with_rotation(sf::Angle::Rad(orientation as f32))
                                 .into(),
                             colliders: &mut [sf::Collider::new_capsule(
                                 caps_full_length - width,
@@ -331,15 +336,15 @@ impl Recipe {
                         game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(capsule)
                                 .with_target(prev_block)
-                                .with_origin(sf::Vec2::new(-caps_length_half - half_spacing, 0.0))
-                                .with_target_origin(sf::Vec2::new(prev_block_offset, 0.0))
+                                .with_origin(sf::DVec2::new(-caps_length_half - half_spacing, 0.0))
+                                .with_target_origin(sf::DVec2::new(prev_block_offset, 0.0))
                                 .with_compliance(0.015)
                                 .build_attachment(),
                         );
                     } else if *anchored_start {
                         game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(capsule)
-                                .with_origin(sf::Vec2::new(-caps_length_half - half_spacing, 0.0))
+                                .with_origin(sf::DVec2::new(-caps_length_half - half_spacing, 0.0))
                                 .with_target_origin(link1)
                                 .build_attachment(),
                         );
@@ -351,11 +356,11 @@ impl Recipe {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
                     game.physics.constraint_set.insert(
                         sf::ConstraintBuilder::new(prev_block)
-                            .with_origin(sf::Vec2::new(prev_block_offset + (spacing / 2.0), 0.0))
+                            .with_origin(sf::DVec2::new(prev_block_offset + (spacing / 2.0), 0.0))
                             .with_target_origin(
                                 links
                                     .iter()
-                                    .map(|p| sf::Vec2::new(p[0], p[1]))
+                                    .map(|p| sf::DVec2::new(p[0], p[1]))
                                     .last()
                                     .unwrap(),
                             )
@@ -411,8 +416,8 @@ impl Recipe {
                 let b1 = game.world.query_one_mut::<&sf::BodyKey>(b1).copied();
                 let b2 = spawn_block(game, *block2);
                 let b2 = game.world.query_one_mut::<&sf::BodyKey>(b2).copied();
-                let rope_end_1 = block1.pose.build() * sf::Vec2::from(offset1);
-                let rope_end_2 = block2.pose.build() * sf::Vec2::from(offset2);
+                let rope_end_1 = (block1.pose.build() * sf::DVec2::from(offset1).conv_p()).conv_p();
+                let rope_end_2 = (block2.pose.build() * sf::DVec2::from(offset2).conv_p()).conv_p();
                 let rope = sf::Rope::spawn_line(
                     sf::RopeParameters {
                         ..Default::default()
@@ -492,6 +497,8 @@ impl Recipe {
                 right,
                 top,
                 bottom,
+                front,
+                back,
             } => {
                 // spawn a ton of trees with a few shared animation states
                 let anim_id = game.graphics.get_animation_id("library.sway").unwrap();
@@ -514,9 +521,10 @@ impl Recipe {
                 for mesh_idx in 0..*mesh_count {
                     let pose = sf::PoseBuilder::new()
                         .with_position([
-                            distr::Uniform::from(*left..*right).sample(&mut rng) as f64,
-                            distr::Uniform::from(*bottom..*top).sample(&mut rng) as f64,
+                            distr::Uniform::from(*left..*right).sample(&mut rng),
+                            distr::Uniform::from(*bottom..*top).sample(&mut rng),
                         ])
+                        .with_depth(distr::Uniform::from(*front..*back).sample(&mut rng))
                         .build();
                     game.world.spawn((pose, targets[mesh_idx % targets.len()]));
                 }

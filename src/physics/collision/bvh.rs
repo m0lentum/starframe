@@ -2,7 +2,7 @@
 //! for speeding up collision detection and other spatial queries.
 
 use crate::{
-    math as m,
+    math::uv,
     physics::{
         collision::{query::ray_aabb, Ray, AABB},
         ColliderKey,
@@ -188,7 +188,7 @@ impl Bvh {
         }
     }
 
-    pub fn test_point(&mut self, point: m::Vec2) -> PointIter<'_> {
+    pub fn test_point(&mut self, point: uv::DVec2) -> PointIter<'_> {
         PointIter {
             point,
             stack: &mut self.shared_stack,
@@ -341,7 +341,7 @@ impl<'a> Drop for AABBIter<'a> {
 /// An iterator that yields every collider that may intersect with a given point.
 #[derive(Debug)]
 pub struct PointIter<'a> {
-    point: m::Vec2,
+    point: uv::DVec2,
     stack: &'a mut Stack,
     nodes: &'a [Node],
     next_node: Option<usize>,

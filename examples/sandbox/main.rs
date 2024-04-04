@@ -176,8 +176,8 @@ impl Default for Scene {
         Self {
             gravity: [0.0, -9.81],
             spawn_zone: sf::AABB {
-                min: sf::Vec2::new(-5.0, 1.0),
-                max: sf::Vec2::new(5.0, 4.0),
+                min: sf::uv::DVec2::new(-5.0, 1.0),
+                max: sf::uv::DVec2::new(5.0, 4.0),
             },
             recipes: vec![],
         }
@@ -466,8 +466,8 @@ impl sf::GameState for State {
         let random_pos = || {
             let mut rng = rand::thread_rng();
             sf::Vec2::new(
-                distr::Uniform::from(zone.min.x..zone.max.x).sample(&mut rng),
-                distr::Uniform::from(zone.min.y..zone.max.y).sample(&mut rng),
+                distr::Uniform::from(zone.min.x..zone.max.x).sample(&mut rng) as f32,
+                distr::Uniform::from(zone.min.y..zone.max.y).sample(&mut rng) as f32,
             )
         };
         let random_angle =

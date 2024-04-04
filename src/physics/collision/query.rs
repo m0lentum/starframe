@@ -1,10 +1,10 @@
 //! Intersection queries for points, rays, etc. vs. colliders.
 
 use super::{Collider, ColliderPolygon, AABB};
-use crate::math as m;
+use crate::math::{uv, UnitDVec2, PhysicsPose, unit_left_normal};
 
 /// Check whether or not a point intersects with a collider.
-pub fn point_collider_bool(point: m::Vec2, pose: m::Pose, coll: Collider) -> bool {
+pub fn point_collider_bool(point: uv::DVec2, pose: PhysicsPose, coll: Collider) -> bool {
     let r = coll.shape.circle_r;
     let p_wrt_c = pose.inversed() * point;
     match coll.shape.polygon {
@@ -30,10 +30,10 @@ pub fn point_collider_bool(point: m::Vec2, pose: m::Pose, coll: Collider) -> boo
 
 #[derive(Clone, Copy, Debug)]
 pub struct Ray {
-    pub start: m::Vec2,
-    pub dir: m::Unit<m::Vec2>,
+    pub start: uv::DVec2,
+    pub dir: UnitDVec2,
 }
-impl std::ops::Mul<Ray> for m::Pose {
+impl std::ops::Mul<Ray> for PhysicsPose {
     type Output = Ray;
 
     fn mul(self, rhs: Ray) -> Self::Output {
@@ -46,23 +46,23 @@ impl std::ops::Mul<Ray> for m::Pose {
 impl Ray {
     /// Get the point at `(start + t * dir)`, i.e. the point reache by travelling
     /// `t` units along the ray.
-    pub fn point_at_t(&self, t: f64) -> m::Vec2 {
+    pub fn point_at_t(&self, t: f64) -> uv::DVec2 {
         self.start + t * *self.dir
     }
 
     /// Mirror by the x axis, i.e. flip the y values.
     pub fn mirrored_by_x(self) -> Self {
         Self {
-            start: m::Vec2::new(self.start.x, -self.start.y),
-            dir: m::Unit::new_unchecked(m::Vec2::new(self.dir.x, -self.dir.y)),
+            start: uv::DVec2::new(self.start.x, -self.start.y),
+            dir: UnitDVec2::new_unchecked(uv::DVec2::new(self.dir.x, -self.dir.y)),
         }
     }
 
     /// Mirror by the y axis, i.e. flip the x values.
     pub fn mirrored_by_y(self) -> Self {
         Self {
-            start: m::Vec2::new(-self.start.x, self.start.y),
-            dir: m::Unit::new_unchecked(m::Vec2::new(-self.dir.x, self.dir.y)),
+            start: uv::DVec2::new(-self.start.x, self.start.y),
+            dir: UnitDVec2::new_unchecked(uv::DVec2::new(-self.dir.x, self.dir.y)),
         }
     }
 }
@@ -99,14 +99,14 @@ pub fn ray_aabb(ray: Ray, aabb: AABB) -> Option<f64> {
 #[derive(Clone, Copy, Debug)]
 pub struct CastHit {
     pub t: f64,
-    pub normal: m::Unit<m::Vec2>,
-    pub point: m::Vec2,
+    pub normal: UnitDVec2,
+    pub point: uv::DVec2,
 }
 
 /// Find the value of t where the sphere with radius `r` swept along the ray
 /// `start + t * dir` intersects with the collider.
 #[inline]
-pub fn spherecast_collider(ray: Ray, r: f64, pose: m::Pose, mut coll: Collider) -> Option<CastHit> {
+pub fn spherecast_collider(ray: Ray, r: f64, pose: PhysicsPose, mut coll: Collider) -> Option<CastHit> {
     coll.shape = coll.shape.expanded(r);
     ray_collider(ray, pose, coll).map(|hit| {
         CastHit {
@@ -117,7 +117,7 @@ pub fn spherecast_collider(ray: Ray, r: f64, pose: m::Pose, mut coll: Collider) 
 }
 
 /// Find the value of t where the ray `start + t * dir` intersects with the collider.
-pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> {
+pub fn ray_collider(ray: Ray, pose: PhysicsPose, coll: Collider) -> Option<CastHit> {
     let r = coll.shape.circle_r;
     match coll.shape.polygon {
         // special cases for circles and line segments
@@ -138,7 +138,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> 
                 } else {
                     return ray_circle(
                         ray,
-                        m::Vec2::new(hl.copysign(ray.start.x), 0.0),
+                        uv::DVec2::new(hl.copysign(ray.start.x), 0.0),
                         coll.shape.circle_r,
                     );
                 }
@@ -156,14 +156,14 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> 
                 // hit the flat edge
                 Some(CastHit {
                     t: t_to_facing_edge,
-                    normal: pose.rotation * m::Unit::new_unchecked(m::Vec2::new(0.0, ray.start.y.signum())),
+                    normal: pose.rotation * UnitDVec2::new_unchecked(uv::DVec2::new(0.0, ray.start.y.signum())),
                     point: ray_worldspace.point_at_t(t_to_facing_edge),
                 })
             } else {
                 // missed the flat edge, check circle cap on the side where we missed
                 ray_circle(
                     ray,
-                    m::Vec2::new(hl.copysign(x_at_edge_hit), 0.0),
+                    uv::DVec2::new(hl.copysign(x_at_edge_hit), 0.0),
                     coll.shape.circle_r,
                 )
             }
@@ -177,7 +177,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> 
             // first do a separating axis test against the perpendicular of the ray
             // to quickly check if an intersection occurs at all
 
-            let ray_dir_perp = m::Unit::new_unchecked(m::left_normal(*ray.dir));
+            let ray_dir_perp = unit_left_normal(ray.dir);
             let ray_dist = ray.start.dot(*ray_dir_perp);
             // orient away from object center
             let (ray_dir_perp, ray_dist) = if ray_dist >= 0.0 {
@@ -207,9 +207,9 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> 
 
             // if the closest edge hit was hit outside of the flat part,
             // we'll need to check against the circle at the closest vertex
-            let mut vertex_for_circle_check: Option<m::Vec2> = None;
+            let mut vertex_for_circle_check: Option<uv::DVec2> = None;
             let mut closest_hit_t = f64::MAX;
-            let mut closest_edge_normal = m::Unit::unit_x();
+            let mut closest_edge_normal = UnitDVec2::unit_x();
             for edge_idx in 0..coll.shape.polygon.edge_count() {
                 let edge = coll.shape.polygon.get_edge(edge_idx);
                 // only consider edges that point towards the ray start direction
@@ -278,7 +278,7 @@ pub fn ray_collider(ray: Ray, pose: m::Pose, coll: Collider) -> Option<CastHit> 
     }
 }
 
-fn ray_circle(ray: Ray, circ_pos: m::Vec2, r: f64) -> Option<CastHit> {
+fn ray_circle(ray: Ray, circ_pos: uv::DVec2, r: f64) -> Option<CastHit> {
     // source: Real-Time Collision Detection chapter 5
 
     // solve t from t^2 + 2(m*d)t + (m*m)-r^2 = 0
@@ -296,7 +296,7 @@ fn ray_circle(ray: Ray, circ_pos: m::Vec2, r: f64) -> Option<CastHit> {
     let t = -b - discr.sqrt();
     if t >= 0.0 {
         let point = ray.point_at_t(t);
-        let normal = m::Unit::new_normalize(point - circ_pos);
+        let normal = UnitDVec2::new_normalize(point - circ_pos);
         Some(CastHit {t, normal, point})
     } else {
         // ray started inside the circle, we consider that a miss here
@@ -307,6 +307,7 @@ fn ray_circle(ray: Ray, circ_pos: m::Vec2, r: f64) -> Option<CastHit> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::Angle;
 
     // This is hard to test thorougly, just a quick smoketest to make sure
     // an obvious hit hits and an obvious miss misses.
@@ -315,19 +316,19 @@ mod tests {
     fn ray_circle_() {
         assert!(ray_circle(
             Ray {
-                start: m::Vec2::zero(),
-                dir: m::Unit::unit_y(),
+                start: uv::DVec2::zero(),
+                dir: UnitDVec2::unit_y(),
             },
-            m::Vec2::new(0.0, 2.0),
+            uv::DVec2::new(0.0, 2.0),
             1.0,
         )
         .is_some());
         assert!(ray_circle(
             Ray {
-                start: m::Vec2::zero(),
-                dir: m::Unit::new_normalize(m::Vec2::new(1.0, 1.0)),
+                start: uv::DVec2::zero(),
+                dir: UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0)),
             },
-            m::Vec2::new(0.0, 2.0),
+            uv::DVec2::new(0.0, 2.0),
             1.0,
         )
         .is_none());
@@ -336,7 +337,7 @@ mod tests {
     #[test]
     fn ray_capsule() {
         // whatever pose to make sure poses are being applied
-        let pose = m::Pose::new(m::Vec2::new(5.0, 3.5), m::Angle::Deg(65.0).into());
+        let pose = PhysicsPose::new(uv::DVec2::new(5.0, 3.5), Angle::Deg(65.0).into());
         let cap = Collider::new_capsule(4.0, 1.0);
 
         let should_hit = |ray, expected_t| {
@@ -356,34 +357,34 @@ mod tests {
         let should_miss = |ray| assert!(ray_collider(pose * ray, pose, cap).is_none());
 
         let mut ray = Ray {
-            start: m::Vec2::new(0.0, -2.0),
-            dir: m::Unit::unit_y(),
+            start: uv::DVec2::new(0.0, -2.0),
+            dir: UnitDVec2::unit_y(),
         };
         should_hit(ray, 1.0);
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
         should_hit(ray, 2_f64.sqrt());
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(2.1, 1.0));
-        should_hit_circle(ray, m::Vec2::new(2.0, 0.0));
-        ray.dir = m::Unit::unit_x();
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(2.1, 1.0));
+        should_hit_circle(ray, uv::DVec2::new(2.0, 0.0));
+        ray.dir = UnitDVec2::unit_x();
         should_miss(ray);
         ray.start.x = -3.0;
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 1.0));
-        should_hit_circle(ray, m::Vec2::new(-2.0, 0.0));
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(2.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
+        should_hit_circle(ray, uv::DVec2::new(-2.0, 0.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(2.0, 1.0));
         should_hit(ray, 5_f64.sqrt());
         ray.start.x = -2.5;
-        ray.dir = m::Unit::unit_y();
-        should_hit_circle(ray, m::Vec2::new(-2.0, 0.0));
-        ray.start = m::Vec2::new(-500.0, 0.0);
-        ray.dir = m::Unit::unit_x();
-        should_hit_circle(ray, m::Vec2::new(-2.0, 0.0));
+        ray.dir = UnitDVec2::unit_y();
+        should_hit_circle(ray, uv::DVec2::new(-2.0, 0.0));
+        ray.start = uv::DVec2::new(-500.0, 0.0);
+        ray.dir = UnitDVec2::unit_x();
+        should_hit_circle(ray, uv::DVec2::new(-2.0, 0.0));
         ray.start.y = 3.0;
         should_miss(ray);
     }
 
     #[test]
     fn ray_rect() {
-        let pose = m::Pose::new(m::Vec2::new(-5.0, 8.3), m::Angle::Deg(2.0).into());
+        let pose = PhysicsPose::new(uv::DVec2::new(-5.0, 8.3), Angle::Deg(2.0).into());
         let rect = Collider::new_rect(4.0, 2.0);
 
         let should_hit = |ray, expected_t| {
@@ -393,29 +394,29 @@ mod tests {
         let should_miss = |ray| assert!(ray_collider(pose * ray, pose, rect).is_none());
 
         let mut ray = Ray {
-            start: m::Vec2::new(0.0, -2.0),
-            dir: m::Unit::unit_y(),
+            start: uv::DVec2::new(0.0, -2.0),
+            dir: UnitDVec2::unit_y(),
         };
         should_hit(ray, 1.0);
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
         should_hit(ray, 2_f64.sqrt());
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(2.1, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(2.1, 1.0));
         should_miss(ray);
-        ray.dir = m::Unit::unit_x();
+        ray.dir = UnitDVec2::unit_x();
         should_miss(ray);
         ray.start.x = -3.0;
         should_miss(ray);
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
         should_hit(ray, 2_f64.sqrt());
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(2.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(2.0, 1.0));
         should_hit(ray, 5_f64.sqrt());
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 2.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 2.0));
         should_hit(ray, 5_f64.sqrt());
     }
 
     #[test]
     fn ray_rounded_rect() {
-        let pose = m::Pose::new(m::Vec2::new(500.0, 8.5), m::Angle::Deg(23.0).into());
+        let pose = PhysicsPose::new(uv::DVec2::new(500.0, 8.5), Angle::Deg(23.0).into());
         let rect = Collider::new_rounded_rect(6.0, 4.0, 1.0);
 
         let should_hit = |ray, expected_t| {
@@ -434,33 +435,33 @@ mod tests {
         let should_miss = |ray| assert!(ray_collider(pose * ray, pose, rect).is_none());
 
         let mut ray = Ray {
-            start: m::Vec2::new(0.0, -3.0),
-            dir: m::Unit::unit_y(),
+            start: uv::DVec2::new(0.0, -3.0),
+            dir: UnitDVec2::unit_y(),
         };
         should_hit(ray, 1.0);
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
         should_hit(ray, 2_f64.sqrt());
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(2.1, 1.0));
-        should_hit_circle(ray, m::Vec2::new(2.0, -1.0));
-        ray.dir = m::Unit::unit_x();
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(2.1, 1.0));
+        should_hit_circle(ray, uv::DVec2::new(2.0, -1.0));
+        ray.dir = UnitDVec2::unit_x();
         should_miss(ray);
         ray.start.x = -4.0;
         should_miss(ray);
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 1.0));
-        should_hit_circle(ray, m::Vec2::new(-2.0, -1.0));
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(2.0, 1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
+        should_hit_circle(ray, uv::DVec2::new(-2.0, -1.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(2.0, 1.0));
         should_hit(ray, 5_f64.sqrt());
-        ray.dir = m::Unit::new_normalize(m::Vec2::new(1.0, 2.0));
+        ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 2.0));
         should_hit(ray, 5_f64.sqrt());
         ray.start.x = -2.5;
-        ray.dir = m::Unit::unit_y();
-        should_hit_circle(ray, m::Vec2::new(-2.0, -1.0));
+        ray.dir = UnitDVec2::unit_y();
+        should_hit_circle(ray, uv::DVec2::new(-2.0, -1.0));
     }
 
     /// Convention: ray always misses if it starts inside the collider
     #[test]
     fn inside_always_misses() {
-        let pose = m::Pose::identity();
+        let pose = PhysicsPose::identity();
         for coll in [
             Collider::new_circle(1.0),
             Collider::new_capsule(2.0, 0.5),
@@ -470,13 +471,13 @@ mod tests {
             let mut ray = Ray {
                 // start at origin and hope it works for all other interior points.
                 // this could be more robustly tested with fuzzing but I can't be bothered
-                start: m::Vec2::zero(),
-                dir: m::Unit::unit_x(),
+                start: uv::DVec2::zero(),
+                dir: UnitDVec2::unit_x(),
             };
             let mut angle = 0.0;
             while angle < 2.0 * std::f64::consts::TAU {
                 let (y, x) = angle.sin_cos();
-                ray.dir = m::Unit::new_unchecked(m::Vec2::new(x, y));
+                ray.dir = UnitDVec2::new_unchecked(uv::DVec2::new(x, y));
                 let hit = ray_collider(ray, pose, coll);
                 assert!(hit.is_none(), "hit shape {:?} from the inside", coll.shape);
                 angle += 0.05;

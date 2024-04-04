@@ -3,7 +3,7 @@ use itertools::izip;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use crate::math as m;
+use crate::math::{left_normal, uv, PhysicsPose, UnitDVec2};
 
 //
 
@@ -47,7 +47,7 @@ pub mod hecs_sync;
 #[derive(Copy, Clone, Debug)]
 pub struct Velocity {
     /// Linear velocity in metres per second.
-    pub linear: m::Vec2,
+    pub linear: uv::DVec2,
     /// Angular velocity in radians per second.
     pub angular: f64,
 }
@@ -55,7 +55,7 @@ pub struct Velocity {
 impl Default for Velocity {
     fn default() -> Self {
         Velocity {
-            linear: m::Vec2::zero(),
+            linear: uv::DVec2::zero(),
             angular: 0.0,
         }
     }
@@ -69,16 +69,16 @@ impl Velocity {
 
     /// Get the linear velocity of a point offset from the center of mass.
     #[inline]
-    pub fn point_velocity(&self, offset: m::Vec2) -> m::Vec2 {
-        let tangent = m::left_normal(offset) * self.angular;
+    pub fn point_velocity(&self, offset: uv::DVec2) -> uv::DVec2 {
+        let tangent = left_normal(offset) * self.angular;
         self.linear + tangent
     }
 
     #[inline]
-    pub fn apply_to_pose(&self, dt: f64, mut pose: m::Pose) -> m::Pose {
+    pub fn apply_to_pose(&self, dt: f64, mut pose: PhysicsPose) -> PhysicsPose {
         let scaled = *self * dt;
         pose.append_translation(scaled.linear);
-        pose.prepend_rotation(m::Angle::Rad(scaled.angular).into());
+        pose.prepend_rotation(uv::DRotor2::from_angle(scaled.angular));
         pose
     }
 }
@@ -112,7 +112,7 @@ impl std::ops::Mul<f64> for Velocity {
 #[derive(Clone, Copy, Debug)]
 pub struct ContactInfo {
     pub colliders: [ColliderKey; 2],
-    pub normal: m::Unit<m::Vec2>,
+    pub normal: UnitDVec2,
     // island id stored to allow retaining of sleeping contacts
     island_id: IslandId,
 }
@@ -136,9 +136,9 @@ pub struct CastHit {
     ///
     /// This is always a point on the hit collider's surface.
     /// To get the center point of the swept shape on impact, use `ray.point_at_t(hit.t)`.
-    pub point: m::Vec2,
+    pub point: uv::DVec2,
     /// The surface normal of the collider at the point of impact.
-    pub normal: m::Unit<m::Vec2>,
+    pub normal: UnitDVec2,
     /// The parameter `t` in the ray equation `start + t * dir`
     /// for the point where the ray or swept shape intersected the collider.
     ///
@@ -227,12 +227,12 @@ struct WorkingBuffers {
     body_order: Vec<usize>,
     rope_next_particles: Vec<Option<usize>>,
     rope_prev_particles: Vec<Option<usize>>,
-    rope_lateral_corrections: Vec<Option<m::Vec2>>,
+    rope_lateral_corrections: Vec<Option<uv::DVec2>>,
 
-    old_poses: Vec<m::Pose>,
-    pre_contact_poses: Vec<m::Pose>,
+    old_poses: Vec<PhysicsPose>,
+    pre_contact_poses: Vec<PhysicsPose>,
     old_velocities: Vec<Velocity>,
-    ext_f_accelerations: Vec<m::Vec2>,
+    ext_f_accelerations: Vec<uv::DVec2>,
 
     constraint_body_pairs: Vec<(usize, Option<usize>)>,
     coll_pair_keys: Vec<[ColliderKey; 2]>,
@@ -855,7 +855,7 @@ impl PhysicsWorld {
         // accelerations from external forces used as a speed limit for restitution
         bufs.ext_f_accelerations.clear();
         bufs.ext_f_accelerations
-            .resize(bufs.sorted_second_pass.bodies.len(), m::Vec2::default());
+            .resize(bufs.sorted_second_pass.bodies.len(), uv::DVec2::default());
 
         bufs.constraint_body_pairs.clear();
         bufs.constraint_body_pairs
@@ -1187,7 +1187,7 @@ impl PhysicsWorld {
     /// do this with interior mutability. (TODO)
     pub fn query_point(
         &mut self,
-        point: m::Vec2,
+        point: uv::DVec2,
     ) -> impl '_ + Iterator<Item = (ColliderKey, Option<BodyKey>)> {
         // TODO: using this requires dropping the iterator.
         // restructure this such that references to the collider and body
@@ -1214,7 +1214,7 @@ impl PhysicsWorld {
     /// also a key to the body.
     pub fn query_shape<'p, 'g: 'p>(
         &'p mut self,
-        pose: m::Pose,
+        pose: PhysicsPose,
         shape: ColliderShape,
         mask: CollisionLayerMask,
     ) -> impl '_ + Iterator<Item = (ColliderKey, Option<BodyKey>)> {

@@ -4,7 +4,10 @@ use super::{
     shape_shape::{ClosestBoundaryPoint, Edge, PolygonEdge},
     AABB,
 };
-use crate::{math as m, physics::body};
+use crate::{
+    math::{self as m, uv, UnitDVec2},
+    physics::body,
+};
 
 /// A component that allows a game object to collide with others
 /// or act as a sensor.
@@ -18,8 +21,8 @@ pub struct Collider {
     pub ty: ColliderType,
     /// Pose of the collider relative to the body it's attached to,
     /// or the world if it's not attached to a body.
-    #[serde(with = "m::serde_pose")]
-    pub pose: m::Pose,
+    #[serde(with = "m::serde_physics_pose")]
+    pub pose: m::PhysicsPose,
     /// Collision layer, see [`MaskMatrix`][super::MaskMatrix] for info.
     /// Defaults to 0.
     pub layer: usize,
@@ -32,7 +35,7 @@ impl Default for Collider {
                 circle_r: 1.0,
             },
             ty: ColliderType::default(),
-            pose: m::Pose::default(),
+            pose: m::PhysicsPose::default(),
             layer: 0,
         }
     }
@@ -124,7 +127,7 @@ impl Collider {
     /// Set the pose of the collider relative to the body it's attached to,
     /// or relative to the world if it's not attached to a body.
     #[inline]
-    pub fn with_pose(mut self, pose: m::Pose) -> Self {
+    pub fn with_pose(mut self, pose: m::PhysicsPose) -> Self {
         self.pose = pose;
         self
     }
@@ -287,7 +290,7 @@ impl ColliderShape {
                 let circle_cap_sum = {
                     let base = circle(self.circle_r);
                     let area = PI * self.circle_r.powi(2);
-                    let offset_sq = m::Vec2::new(hw, hh).mag_sq();
+                    let offset_sq = uv::DVec2::new(hw, hh).mag_sq();
                     base + area * offset_sq
                 };
                 2.0 * (horiz_edge_rect + vert_edge_rect) + circle_cap_sum
@@ -338,7 +341,7 @@ impl ColliderShape {
         self.polygon.bounding_sphere_r() + self.circle_r
     }
 
-    pub fn aabb(&self, pose: m::Pose) -> AABB {
+    pub fn aabb(&self, pose: m::PhysicsPose) -> AABB {
         self.polygon
             .aabb(pose.rotation)
             .padded(self.circle_r)
@@ -419,15 +422,15 @@ const FRAC_PI_6_SIN: f64 = 0.5;
 const FRAC_PI_6_TAN: f64 = 0.57735026919;
 const FRAC_PI_3_COS: f64 = FRAC_PI_6_SIN;
 const FRAC_PI_3_SIN: f64 = FRAC_PI_6_COS;
-const AXIS_30_DEG: m::Unit<m::Vec2> =
-    m::Unit::new_unchecked(m::Vec2::new(FRAC_PI_6_COS, FRAC_PI_6_SIN));
-const AXIS_60_DEG: m::Unit<m::Vec2> =
-    m::Unit::new_unchecked(m::Vec2::new(FRAC_PI_3_COS, FRAC_PI_3_SIN));
+const AXIS_30_DEG: UnitDVec2 =
+    UnitDVec2::new_unchecked(uv::DVec2::new(FRAC_PI_6_COS, FRAC_PI_6_SIN));
+const AXIS_60_DEG: UnitDVec2 =
+    UnitDVec2::new_unchecked(uv::DVec2::new(FRAC_PI_3_COS, FRAC_PI_3_SIN));
 // these are left normals of 30 and 60 but normal can't be const computed because of negation
-const AXIS_120_DEG: m::Unit<m::Vec2> =
-    m::Unit::new_unchecked(m::Vec2::new(-FRAC_PI_6_SIN, FRAC_PI_6_COS));
-const AXIS_150_DEG: m::Unit<m::Vec2> =
-    m::Unit::new_unchecked(m::Vec2::new(-FRAC_PI_3_SIN, FRAC_PI_3_COS));
+const AXIS_120_DEG: UnitDVec2 =
+    UnitDVec2::new_unchecked(uv::DVec2::new(-FRAC_PI_6_SIN, FRAC_PI_6_COS));
+const AXIS_150_DEG: UnitDVec2 =
+    UnitDVec2::new_unchecked(uv::DVec2::new(-FRAC_PI_3_SIN, FRAC_PI_3_COS));
 
 impl ColliderPolygon {
     //
@@ -499,17 +502,18 @@ impl ColliderPolygon {
         }
     }
 
-    fn aabb(&self, rotation: m::Rotor2) -> AABB {
+    fn aabb(&self, rotation: uv::DRotor2) -> AABB {
         let symmetric_extent = match *self {
-            Self::Point => m::Vec2::zero(),
-            Self::LineSegment { hl } => (rotation * m::Vec2::new(hl, 0.0)).abs(),
+            Self::Point => uv::DVec2::zero(),
+            Self::LineSegment { hl } => (rotation * uv::DVec2::new(hl, 0.0)).abs(),
             Self::Rect { hw, hh } => {
-                (rotation * m::Vec2::new(hw, 0.0)).abs() + (rotation * m::Vec2::new(0.0, hh)).abs()
+                (rotation * uv::DVec2::new(hw, 0.0)).abs()
+                    + (rotation * uv::DVec2::new(0.0, hh)).abs()
             }
             // probably not worth the computation time of all the trigonometry
             // to get the exact smallest aabb
             Self::Triangle { outer_r } | Self::Hexagon { outer_r } => {
-                m::Vec2::new(outer_r, outer_r)
+                uv::DVec2::new(outer_r, outer_r)
             }
         };
         AABB {
@@ -575,27 +579,27 @@ impl ColliderPolygon {
         match *self {
             Self::Point => bad_edge(),
             Self::LineSegment { hl } => PolygonEdge {
-                normal: m::Unit::unit_y(),
+                normal: UnitDVec2::unit_y(),
                 edge: Edge {
-                    start: m::Vec2::new(hl, 0.0),
-                    dir: -m::Unit::unit_x(),
+                    start: uv::DVec2::new(hl, 0.0),
+                    dir: -UnitDVec2::unit_x(),
                     length: 2.0 * hl,
                 },
             },
             Self::Rect { hw, hh } => match idx {
                 0 => PolygonEdge {
-                    normal: m::Unit::unit_x(),
+                    normal: UnitDVec2::unit_x(),
                     edge: Edge {
-                        start: m::Vec2::new(hw, -hh),
-                        dir: m::Unit::unit_y(),
+                        start: uv::DVec2::new(hw, -hh),
+                        dir: UnitDVec2::unit_y(),
                         length: 2.0 * hh,
                     },
                 },
                 1 => PolygonEdge {
-                    normal: m::Unit::unit_y(),
+                    normal: UnitDVec2::unit_y(),
                     edge: Edge {
-                        start: m::Vec2::new(hw, hh),
-                        dir: -m::Unit::unit_x(),
+                        start: uv::DVec2::new(hw, hh),
+                        dir: -UnitDVec2::unit_x(),
                         length: 2.0 * hw,
                     },
                 },
@@ -603,12 +607,12 @@ impl ColliderPolygon {
             },
             Self::Triangle { outer_r } => match idx {
                 0 => PolygonEdge {
-                    normal: -m::Unit::unit_y(),
+                    normal: -UnitDVec2::unit_y(),
                     // distance to the endpoints of an equilateral triangle
                     // is double the radius of the inscribed circle
                     edge: Edge {
                         start: -outer_r * *AXIS_30_DEG,
-                        dir: m::Unit::unit_x(),
+                        dir: UnitDVec2::unit_x(),
                         length: outer_r / FRAC_PI_6_TAN,
                     },
                 },
@@ -623,7 +627,7 @@ impl ColliderPolygon {
                 2 => PolygonEdge {
                     normal: AXIS_150_DEG,
                     edge: Edge {
-                        start: m::Vec2::new(0.0, outer_r),
+                        start: uv::DVec2::new(0.0, outer_r),
                         dir: -AXIS_60_DEG,
                         length: outer_r / FRAC_PI_6_TAN,
                     },
@@ -634,16 +638,16 @@ impl ColliderPolygon {
                 0 => PolygonEdge {
                     normal: AXIS_30_DEG,
                     edge: Edge {
-                        start: m::Vec2::new(outer_r, 0.0),
+                        start: uv::DVec2::new(outer_r, 0.0),
                         dir: AXIS_120_DEG,
                         length: outer_r,
                     },
                 },
                 1 => PolygonEdge {
-                    normal: m::Unit::unit_y(),
+                    normal: UnitDVec2::unit_y(),
                     edge: Edge {
                         start: outer_r * *AXIS_60_DEG,
-                        dir: -m::Unit::unit_x(),
+                        dir: -UnitDVec2::unit_x(),
                         length: outer_r,
                     },
                 },
@@ -685,13 +689,13 @@ impl ColliderPolygon {
     /// when projected onto the given axis.
     ///
     /// `dir` must be given in object-local space.
-    pub(super) fn projected_extent(&self, dir: m::Unit<m::Vec2>) -> f64 {
+    pub(super) fn projected_extent(&self, dir: UnitDVec2) -> f64 {
         match *self {
             Self::Point => 0.0,
             Self::LineSegment { hl } => dir.x.abs() * hl,
             Self::Rect { hw, hh } => dir.x.abs() * hw + dir.y.abs() * hh,
             Self::Triangle { outer_r } => {
-                [m::Unit::unit_y(), -AXIS_30_DEG, -AXIS_150_DEG]
+                [UnitDVec2::unit_y(), -AXIS_30_DEG, -AXIS_150_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir))
                     .max_by(|p0, p1| p0.total_cmp(p1))
@@ -699,7 +703,7 @@ impl ColliderPolygon {
                     * outer_r
             }
             Self::Hexagon { outer_r } => {
-                [m::Unit::unit_x(), AXIS_60_DEG, AXIS_120_DEG]
+                [UnitDVec2::unit_x(), AXIS_60_DEG, AXIS_120_DEG]
                     .into_iter()
                     .map(|dir_to_vertex| dir_to_vertex.dot(*dir).abs())
                     .max_by(|p0, p1| p0.total_cmp(p1))
@@ -715,42 +719,48 @@ impl ColliderPolygon {
     /// `dir` must be given in object-local space but does not need to be
     /// normalized (note to self: DO NOT USE THE VALUE OF `dir * thing`, only compare).
     /// Returns None only if the shape is Point.
-    pub(super) fn supporting_edge(&self, dir: m::Vec2) -> PolygonEdge {
+    pub(super) fn supporting_edge(&self, dir: uv::DVec2) -> PolygonEdge {
         match *self {
             Self::Point => panic!("Don't call supporting_edge on a point"),
             Self::LineSegment { hl } => PolygonEdge {
                 edge: Edge {
-                    start: m::Vec2::new(hl.copysign(dir.x), 0.0),
-                    dir: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(-dir.x), 0.0)),
+                    start: uv::DVec2::new(hl.copysign(dir.x), 0.0),
+                    dir: UnitDVec2::new_unchecked(uv::DVec2::new(1_f64.copysign(-dir.x), 0.0)),
                     length: 2.0 * hl,
                 },
-                normal: m::Unit::new_unchecked(m::Vec2::new(0.0, 1_f64.copysign(dir.y))),
+                normal: UnitDVec2::new_unchecked(uv::DVec2::new(0.0, 1_f64.copysign(dir.y))),
             },
             Self::Rect { hw, hh } => {
-                let start = m::Vec2::new(hw.copysign(dir.x), hh.copysign(dir.y));
+                let start = uv::DVec2::new(hw.copysign(dir.x), hh.copysign(dir.y));
                 if dir.x.abs() > dir.y.abs() {
                     PolygonEdge {
                         edge: Edge {
                             start,
-                            dir: m::Unit::new_unchecked(m::Vec2::new(
+                            dir: UnitDVec2::new_unchecked(uv::DVec2::new(
                                 0.0,
                                 -(1_f64.copysign(dir.y)),
                             )),
                             length: hh * 2.0,
                         },
-                        normal: m::Unit::new_unchecked(m::Vec2::new(1_f64.copysign(dir.x), 0.0)),
+                        normal: UnitDVec2::new_unchecked(uv::DVec2::new(
+                            1_f64.copysign(dir.x),
+                            0.0,
+                        )),
                     }
                 } else {
                     PolygonEdge {
                         edge: Edge {
                             start,
-                            dir: m::Unit::new_unchecked(m::Vec2::new(
+                            dir: UnitDVec2::new_unchecked(uv::DVec2::new(
                                 -(1_f64.copysign(dir.x)),
                                 0.0,
                             )),
                             length: hw * 2.0,
                         },
-                        normal: m::Unit::new_unchecked(m::Vec2::new(0.0, 1_f64.copysign(dir.y))),
+                        normal: UnitDVec2::new_unchecked(uv::DVec2::new(
+                            0.0,
+                            1_f64.copysign(dir.y),
+                        )),
                     }
                 }
             }
@@ -783,14 +793,14 @@ impl ColliderPolygon {
     /// plus whether or not the queried point is inside the polygon.
     ///
     /// Used in the special case of circle - other shape collisions.
-    pub(super) fn closest_boundary_point(&self, pt: m::Vec2) -> ClosestBoundaryPoint {
+    pub(super) fn closest_boundary_point(&self, pt: uv::DVec2) -> ClosestBoundaryPoint {
         match *self {
             Self::Point => ClosestBoundaryPoint {
-                pt: m::Vec2::zero(),
+                pt: uv::DVec2::zero(),
                 is_interior: false,
             },
             Self::LineSegment { hl } => ClosestBoundaryPoint {
-                pt: m::Vec2::new(pt.x.max(-hl).min(hl), 0.0),
+                pt: uv::DVec2::new(pt.x.max(-hl).min(hl), 0.0),
                 is_interior: false,
             },
             Self::Rect { hw, hh } => {
@@ -799,25 +809,25 @@ impl ColliderPolygon {
                 match (x_dist > 0.0, y_dist > 0.0) {
                     // we're outside the whole rect and closest point is a corner
                     (true, true) => ClosestBoundaryPoint {
-                        pt: m::Vec2::new(hw.copysign(pt.x), hh.copysign(pt.y)),
+                        pt: uv::DVec2::new(hw.copysign(pt.x), hh.copysign(pt.y)),
                         is_interior: false,
                     },
                     // outside only on the x-axis
                     (true, false) => ClosestBoundaryPoint {
-                        pt: m::Vec2::new(hw.copysign(pt.x), pt.y),
+                        pt: uv::DVec2::new(hw.copysign(pt.x), pt.y),
                         is_interior: false,
                     },
                     // outside only on the y-axis
                     (false, true) => ClosestBoundaryPoint {
-                        pt: m::Vec2::new(pt.x, hh.copysign(pt.y)),
+                        pt: uv::DVec2::new(pt.x, hh.copysign(pt.y)),
                         is_interior: false,
                     },
                     // inside
                     (false, false) => ClosestBoundaryPoint {
                         pt: if x_dist.abs() < y_dist.abs() {
-                            m::Vec2::new(hw.copysign(pt.x), pt.y)
+                            uv::DVec2::new(hw.copysign(pt.x), pt.y)
                         } else {
-                            m::Vec2::new(pt.x, hh.copysign(pt.y))
+                            uv::DVec2::new(pt.x, hh.copysign(pt.y))
                         },
                         is_interior: true,
                     },
@@ -830,7 +840,7 @@ impl ColliderPolygon {
                 let mut min_dist_to_edge = f64::MAX;
                 // meaningless default that is guaranteed to be overwritten
                 let mut closest_point = ClosestBoundaryPoint {
-                    pt: m::Vec2::zero(),
+                    pt: uv::DVec2::zero(),
                     is_interior: false,
                 };
                 for edge in (0..self.edge_count()).map(|i| self.get_edge(i)) {
@@ -964,7 +974,7 @@ mod tests {
                 .map(|i| shape.get_edge(i).mirrored()),
             ) {
                 let assert_print_info = |cond: bool,
-                                         pt: m::Vec2,
+                                         pt: uv::DVec2,
                                          cp: ClosestBoundaryPoint,
                                          region: &str,
                                          t: f64| {
@@ -1146,12 +1156,12 @@ mod tests {
         }
     }
 
-    fn sample_unit_circle(sample_count: usize) -> impl Iterator<Item = m::Unit<m::Vec2>> {
+    fn sample_unit_circle(sample_count: usize) -> impl Iterator<Item = m::UnitDVec2> {
         let angle_incr = std::f64::consts::TAU / sample_count as f64;
         (0..sample_count).map(move |i| {
             let angle = i as f64 * angle_incr;
             let (sin, cos) = angle.sin_cos();
-            m::Unit::new_unchecked(m::Vec2::new(cos, sin))
+            m::UnitDVec2::new_unchecked(uv::DVec2::new(cos, sin))
         })
     }
 }

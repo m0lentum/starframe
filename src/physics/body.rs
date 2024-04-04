@@ -1,11 +1,11 @@
 use super::Velocity;
-use crate::math::Pose;
+use crate::math::PhysicsPose;
 
 /// A body is something that moves, typically a physics-enabled rigid body or particle.
 /// Connect a Body with a Collider to make it collide with other things.
 #[derive(Clone, Copy, Debug)]
 pub struct Body {
-    pub pose: Pose,
+    pub pose: PhysicsPose,
     pub velocity: Velocity,
     pub mass: Mass,
     pub moment_of_inertia: Mass,
@@ -21,7 +21,7 @@ impl Body {
     /// A particle responds to external forces but does not rotate.
     pub fn new_particle(mass: f64) -> Self {
         Self {
-            pose: Pose::default(),
+            pose: PhysicsPose::default(),
             velocity: Velocity::default(),
             mass: Mass::from(mass),
             moment_of_inertia: Mass::Infinite,
@@ -34,7 +34,7 @@ impl Body {
     pub fn new_dynamic(coll_info: ColliderInfo, density: f64) -> Self {
         let mass = coll_info.area * density;
         Self {
-            pose: Pose::default(),
+            pose: PhysicsPose::default(),
             velocity: Velocity::default(),
             mass: Mass::from(mass),
             moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
@@ -46,7 +46,7 @@ impl Body {
     pub fn new_dynamic_const_mass(coll_info: ColliderInfo, mass: f64) -> Self {
         let density = mass / coll_info.area;
         Self {
-            pose: Pose::default(),
+            pose: PhysicsPose::default(),
             velocity: Velocity::default(),
             mass: Mass::from(mass),
             moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
@@ -56,7 +56,7 @@ impl Body {
     /// Kinematic bodies are not affected by collision forces.
     pub fn new_kinematic() -> Self {
         Self {
-            pose: Pose::default(),
+            pose: PhysicsPose::default(),
             velocity: Velocity::default(),
             mass: Mass::Infinite,
             moment_of_inertia: Mass::Infinite,
@@ -64,7 +64,7 @@ impl Body {
     }
 
     /// Set the pose of the body in a builder-like chain.
-    pub fn with_pose(mut self, pose: Pose) -> Self {
+    pub fn with_pose(mut self, pose: PhysicsPose) -> Self {
         self.pose = pose;
         self
     }

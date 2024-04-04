@@ -102,11 +102,9 @@ impl PointLight {
             .into_iter()
             .map(|(_, (light, pose))| {
                 let mut ret = *light;
-                if let Some(pose) = pose {
-                    let pos_offset =
-                        *pose * uv::DVec2::new(ret.position[0] as f64, ret.position[1] as f64);
-                    ret.position[0] = pos_offset.x as f32;
-                    ret.position[1] = pos_offset.y as f32;
+                if let Some(&pose) = pose {
+                    let pos_with_offset = pose * ret.position;
+                    ret.position = pos_with_offset;
                 }
                 ret
             })

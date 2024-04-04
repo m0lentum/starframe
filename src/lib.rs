@@ -7,7 +7,7 @@ pub use input::{AxisQuery, Button, ButtonQuery, Input, Key, MouseButton};
 pub mod math;
 #[cfg(feature = "serde-types")]
 pub use math::serde_pose;
-pub use math::{uv, Angle, Pose, PoseBuilder, Rotor2, Transform, Unit, Vec2};
+pub use math::{uv, Angle, DVec2, PhysicsPose, Pose, PoseBuilder, Rotor2, Rotor3, Vec2, Vec3};
 
 pub mod graphics;
 pub use graphics::{

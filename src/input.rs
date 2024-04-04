@@ -187,7 +187,7 @@ impl Input {
 
     #[inline]
     fn track_cursor_movement(&mut self, pos: PhysicalPosition<f64>) {
-        self.cursor_pos = m::Vec2::new(pos.x, pos.y);
+        self.cursor_pos = m::Vec2::new(pos.x as f32, pos.y as f32);
     }
 
     /// Track a mouse wheel movement.

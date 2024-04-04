@@ -331,14 +331,11 @@ impl MeshRenderer {
                 let (_, pose) = unskinned_meshes[curr_idx];
 
                 // build the model matrix and push it into the instance buffer
-                let model = {
-                    let mesh_pose = match pose {
-                        Some(&entity_pose) => entity_pose * mesh.offset,
-                        None => mesh.offset,
-                    };
-                    let pose_3d = m::pose_to_3d(&mesh_pose);
-                    pose_3d.into_homogeneous_matrix()
-                };
+                let model = match pose {
+                    Some(&entity_pose) => entity_pose * mesh.offset,
+                    None => mesh.offset,
+                }
+                .into_homogeneous_matrix();
                 instances.push(Instance {
                     joint_offset: 0,
                     model_col0: model.cols[0].xyz().into(),
@@ -372,14 +369,11 @@ impl MeshRenderer {
                 };
 
                 // build the model matrix and push it into the instance buffer
-                let model = {
-                    let mesh_pose = match pose {
-                        Some(&entity_pose) => entity_pose * mesh.offset,
-                        None => mesh.offset,
-                    };
-                    let pose_3d = m::pose_to_3d(&mesh_pose);
-                    pose_3d.into_homogeneous_matrix()
-                };
+                let model = match pose {
+                    Some(&entity_pose) => entity_pose * mesh.offset,
+                    None => mesh.offset,
+                }
+                .into_homogeneous_matrix();
                 instances.push(Instance {
                     joint_offset,
                     model_col0: model.cols[0].xyz().into(),

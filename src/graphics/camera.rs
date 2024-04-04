@@ -152,8 +152,8 @@ impl Camera {
         let window = crate::Renderer::window();
         let viewport_size = window.inner_size().into();
 
-        let ppwu = self.pixels_per_world_unit(viewport_size) as f64;
-        let half_vp_diag = m::Vec2::new(viewport_size.0 as f64 / 2.0, viewport_size.1 as f64 / 2.0);
+        let ppwu = self.pixels_per_world_unit(viewport_size);
+        let half_vp_diag = m::Vec2::new(viewport_size.0 as f32 / 2., viewport_size.1 as f32 / 2.);
         let point_screen_wrt_center = {
             let p = point_screen - half_vp_diag;
             m::Vec2::new(p.x, -p.y) / ppwu
@@ -169,19 +169,16 @@ impl Camera {
     pub fn vector_screen_to_world(&self, vec_screen: m::Vec2) -> m::Vec2 {
         let window = crate::Renderer::window();
         let viewport_size = window.inner_size().into();
-        let ppwu = self.pixels_per_world_unit(viewport_size) as f64;
+        let ppwu = self.pixels_per_world_unit(viewport_size);
         m::Vec2::new(vec_screen.x, -vec_screen.y) / ppwu
     }
 
-    fn pose_as_2d(&self) -> m::Pose {
-        m::Pose::new(
-            uv::DVec2::new(
-                self.pose.translation.x as f64,
-                self.pose.translation.y as f64,
-            ),
-            uv::DRotor2::new(
-                self.pose.rotation.s as f64,
-                uv::DBivec2::new(self.pose.rotation.bv.xy as f64),
+    fn pose_as_2d(&self) -> uv::Isometry2 {
+        uv::Isometry2::new(
+            uv::Vec2::new(self.pose.translation.x, self.pose.translation.y),
+            uv::Rotor2::new(
+                self.pose.rotation.s,
+                uv::Bivec2::new(self.pose.rotation.bv.xy),
             ),
         )
     }

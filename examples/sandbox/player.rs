@@ -36,7 +36,7 @@ impl Facing {
 #[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct PlayerRecipe {
-    pub position: [f64; 2],
+    pub position: [f32; 2],
 }
 
 impl PlayerRecipe {
@@ -71,6 +71,8 @@ pub struct PlayerMeshes {
 }
 
 pub mod controller {
+    use sf::math::ConvertPrecision;
+
     use super::*;
 
     pub fn upload_meshes(graphics: &mut sf::GraphicsManager) -> PlayerMeshes {
@@ -156,15 +158,17 @@ pub mod controller {
                 && game.input.button(sf::Key::Z.into())
             {
                 const R: f64 = 0.05;
-                let player_pos = pose.translation;
-                let b_pose = sf::PoseBuilder::new()
-                    .with_position(player_pos + state.facing.orient_vec(sf::Vec2::new(0.2, 0.0)))
-                    .build();
+                let player_pos = pose.position_2d();
+                let b_pose = sf::Pose::new(
+                    player_pos + state.facing.orient_vec(sf::Vec2::new(0.2, 0.)),
+                    sf::Angle::default(),
+                )
+                .with_depth(pose.translation.z);
                 let b_coll = sf::Collider::new_circle(R);
                 let b_body = sf::Body::new_dynamic_const_mass(b_coll.info(), 1.0).with_velocity(
                     sf::Velocity {
                         angular: 0.0,
-                        linear: state.facing.orient_vec(sf::Vec2::new(20.0, 0.1)),
+                        linear: state.facing.orient_vec(sf::Vec2::new(20.0, 0.1)).conv_p(),
                     },
                 );
                 let b_body_key = game.physics.entity_set.insert_body(b_body);

@@ -1,7 +1,7 @@
 //! Tools for creating and manipulating physically simulated ropes.
 
 use crate::{
-    math as m,
+    math::{uv, Angle, PhysicsPose, UnitDVec2},
     physics::{
         collision::ROPE_LAYER, Body, BodyKey, Collider, ColliderKey, EntitySet, PhysicsMaterial,
     },
@@ -29,7 +29,7 @@ impl Default for RopeParameters {
             spacing: 0.1,
             thickness: 0.12,
             compliance: 0.0000001,
-            bending_max_angle: m::Angle::Deg(30.0).rad(),
+            bending_max_angle: Angle::Deg(30.0).rad() as f64,
             bending_compliance: 0.2,
             damping: 20.0,
             material: PhysicsMaterial {
@@ -60,8 +60,8 @@ impl Rope {
     /// the start and end points.
     pub fn spawn_line(
         mut params: RopeParameters,
-        start: m::Vec2,
-        end: m::Vec2,
+        start: uv::DVec2,
+        end: uv::DVec2,
         entity_set: &mut EntitySet,
     ) -> Self {
         let dist = end - start;
@@ -86,12 +86,15 @@ impl Rope {
     }
 
     /// Add `count` particles to the end of an existing rope in a line.
-    pub fn extend_line(&mut self, dir: m::Unit<m::Vec2>, count: usize, entity_set: &mut EntitySet) {
+    pub fn extend_line(&mut self, dir: UnitDVec2, count: usize, entity_set: &mut EntitySet) {
         let Some(&last_particle) = self
             .particles
             .iter()
             .last()
-            .and_then(|p| entity_set.bodies.get(p.body.0)) else { return; };
+            .and_then(|p| entity_set.bodies.get(p.body.0))
+        else {
+            return;
+        };
 
         let step = *dir * self.params.spacing;
         let first_new_pos = last_particle.pose.translation + step;
@@ -110,8 +113,8 @@ impl Rope {
     fn build_line(
         particles: &mut Vec<RopeParticle>,
         params: &RopeParameters,
-        start: m::Vec2,
-        step: m::Vec2,
+        start: uv::DVec2,
+        step: uv::DVec2,
         count: usize,
         entity_set: &mut EntitySet,
     ) {
@@ -120,10 +123,10 @@ impl Rope {
             .with_layer(ROPE_LAYER)
             .with_material(params.material);
 
-        let mut next_pos: m::Vec2 = start;
+        let mut next_pos: uv::DVec2 = start;
         for _ in 0..count {
             let body = Body {
-                pose: m::Pose::new(next_pos, Default::default()),
+                pose: PhysicsPose::new(next_pos, Default::default()),
                 ..body_proto
             };
             let body_key = entity_set.insert_body(body);
@@ -198,7 +201,9 @@ impl RopeSet {
     /// Remove a Rope and all its particles from the physics world.
     #[inline]
     pub fn remove(&mut self, key: RopeKey, entity_set: &mut EntitySet) {
-        let Some(rope) = self.ropes.remove(key.0) else { return };
+        let Some(rope) = self.ropes.remove(key.0) else {
+            return;
+        };
         for particle in rope.particles {
             entity_set.remove_body(particle.body);
         }
@@ -227,13 +232,15 @@ impl RopeSet {
             let mut queued_rope: Option<Rope> = None;
             'curr_rope: loop {
                 let editing_rope = queued_rope.as_mut().unwrap_or(rope);
-                let Some(removed_particle_idx) =
-                    editing_rope
-                        .particles
-                        .iter()
-                        .enumerate()
-                        .find(|(_, p)| !entity_set.bodies.contains(p.body.0))
-                        .map(|(i, _)| i) else { break 'curr_rope };
+                let Some(removed_particle_idx) = editing_rope
+                    .particles
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| !entity_set.bodies.contains(p.body.0))
+                    .map(|(i, _)| i)
+                else {
+                    break 'curr_rope;
+                };
                 // take the particles after the removed one into a new rope,
                 // removing any consecutive dead particles,
                 // then repeat this process for the new rope

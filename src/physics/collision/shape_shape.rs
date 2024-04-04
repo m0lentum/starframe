@@ -1,5 +1,5 @@
 use super::collider::{ColliderPolygon, ColliderShape};
-use crate::math::{self as m, Pose, Unit};
+use crate::math::{uv, PhysicsPose, UnitDVec2};
 
 /// 0-2 points of contact can occur between two 2D objects.
 #[derive(Clone, Copy, Debug)]
@@ -54,13 +54,13 @@ impl<'a> Iterator for ContactIterator<'a> {
 #[derive(Clone, Copy, Debug)]
 pub struct Contact {
     /// The normal in world space, facing away from the first object
-    pub normal: m::Unit<m::Vec2>,
+    pub normal: UnitDVec2,
     /// Points of contact on the surface of each object, in object-local space.
-    pub offsets: [m::Vec2; 2],
+    pub offsets: [uv::DVec2; 2],
 }
 
 /// Checks two colliders for intersection.
-pub fn intersection_check(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
+pub fn intersection_check(poses: [PhysicsPose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     let r0 = shapes[0].circle_r;
     let r1 = shapes[1].circle_r;
     type P = ColliderPolygon;
@@ -84,7 +84,7 @@ fn flip_contacts(contacts: ContactResult) -> ContactResult {
 // simplified special cases for circles
 //
 
-fn circle_circle(pose1: m::Pose, r1: f64, pose2: m::Pose, r2: f64) -> ContactResult {
+fn circle_circle(pose1: PhysicsPose, r1: f64, pose2: PhysicsPose, r2: f64) -> ContactResult {
     let pos1 = pose1.translation;
     let pos2 = pose2.translation;
 
@@ -94,10 +94,10 @@ fn circle_circle(pose1: m::Pose, r1: f64, pose2: m::Pose, r2: f64) -> ContactRes
 
     let normal = if dist_sq < 0.001 {
         // same position, consider penetration to be on x axis
-        Unit::unit_x()
+        UnitDVec2::unit_x()
     } else if dist_sq < r_sum * r_sum {
         // typical collision
-        Unit::new_normalize(dist)
+        UnitDVec2::new_normalize(dist)
     } else {
         return ContactResult::Zero;
     };
@@ -112,9 +112,9 @@ fn circle_circle(pose1: m::Pose, r1: f64, pose2: m::Pose, r2: f64) -> ContactRes
 }
 
 fn circle_any(
-    pose_circ: Pose,
+    pose_circ: PhysicsPose,
     r_circ: f64,
-    pose_other: Pose,
+    pose_other: PhysicsPose,
     shape_other: ColliderShape,
     r_other: f64,
 ) -> ContactResult {
@@ -125,7 +125,7 @@ fn circle_any(
     let closest_pt = shape_other.polygon.closest_boundary_point(dist);
     let dist_from_closest = dist - closest_pt.pt;
     if closest_pt.is_interior {
-        let dir_from_closest = Unit::new_normalize(dist_from_closest);
+        let dir_from_closest = UnitDVec2::new_normalize(dist_from_closest);
         ContactResult::One(Contact {
             // remember: normal away from the circle!
             // in this case, dir_from_closest points inward to the other shape
@@ -141,7 +141,7 @@ fn circle_any(
         if dist_sq >= r_sum * r_sum {
             ContactResult::Zero
         } else {
-            let dir_from_closest = Unit::new_unchecked(dist_from_closest / dist_sq.sqrt());
+            let dir_from_closest = UnitDVec2::new_unchecked(dist_from_closest / dist_sq.sqrt());
             ContactResult::One(Contact {
                 normal: pose_other.rotation * (-dir_from_closest),
                 offsets: [
@@ -157,7 +157,7 @@ fn circle_any(
 // generic test for all other shape pairs
 //
 
-fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
+fn any_any(poses: [PhysicsPose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     let po2_wrt_po1 = poses[0].inversed() * poses[1];
     let relative_poses = [po2_wrt_po1.inversed(), po2_wrt_po1];
 
@@ -335,7 +335,7 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
     }
 
     // there was a collision on a circular corner
-    let axis = m::Unit::new_unchecked(dist_btw_closest_points / dist_sq.sqrt());
+    let axis = UnitDVec2::new_unchecked(dist_btw_closest_points / dist_sq.sqrt());
     let axis_worldspace = poses[shape_order[0]].rotation * axis;
 
     orient_result(ContactResult::One(Contact {
@@ -356,18 +356,18 @@ fn any_any(poses: [Pose; 2], shapes: [ColliderShape; 2]) -> ContactResult {
 /// plus whether the query point is inside the polygon or not.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct ClosestBoundaryPoint {
-    pub pt: m::Vec2,
+    pub pt: uv::DVec2,
     pub is_interior: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PolygonEdge {
-    pub normal: m::Unit<m::Vec2>,
+    pub normal: UnitDVec2,
     pub edge: Edge,
 }
 impl PolygonEdge {
     /// Transform the edge by a Pose.
-    pub fn transformed(self, pose: m::Pose) -> Self {
+    pub fn transformed(self, pose: PhysicsPose) -> Self {
         Self {
             edge: self.edge.transformed(pose),
             normal: pose.rotation * self.normal,
@@ -390,13 +390,13 @@ impl PolygonEdge {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Edge {
-    pub start: m::Vec2,
-    pub dir: Unit<m::Vec2>,
+    pub start: uv::DVec2,
+    pub dir: UnitDVec2,
     pub length: f64,
 }
 impl Edge {
     #[inline]
-    pub fn transformed(self, pose: Pose) -> Self {
+    pub fn transformed(self, pose: PhysicsPose) -> Self {
         Self {
             start: pose * self.start,
             dir: pose.rotation * self.dir,
@@ -414,7 +414,7 @@ impl Edge {
     }
 
     #[inline]
-    pub fn offset(self, amount: m::Vec2) -> Self {
+    pub fn offset(self, amount: uv::DVec2) -> Self {
         Self {
             start: self.start + amount,
             dir: self.dir,
@@ -435,7 +435,7 @@ impl Edge {
 
     #[allow(dead_code)]
     #[inline]
-    pub fn end_point(&self) -> m::Vec2 {
+    pub fn end_point(&self) -> uv::DVec2 {
         self.start + self.length * *self.dir
     }
 }
@@ -499,13 +499,13 @@ mod tests {
         // intersection
         match clip_edge(
             Edge {
-                start: m::Vec2::new(1.0, 1.0),
-                dir: Unit::unit_x(),
+                start: uv::DVec2::new(1.0, 1.0),
+                dir: UnitDVec2::unit_x(),
                 length: 2.0,
             },
             Edge {
-                start: m::Vec2::new(1.0, 0.0),
-                dir: Unit::new_normalize(m::Vec2::new(1.0, 1.0)),
+                start: uv::DVec2::new(1.0, 0.0),
+                dir: UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0)),
                 length: 2.0,
             },
         ) {
@@ -515,13 +515,13 @@ mod tests {
         // miss that starts at 0
         match clip_edge(
             Edge {
-                start: m::Vec2::new(1.0, 1.0),
-                dir: Unit::unit_x(),
+                start: uv::DVec2::new(1.0, 1.0),
+                dir: UnitDVec2::unit_x(),
                 length: 2.0,
             },
             Edge {
-                start: m::Vec2::new(2.0, 0.0),
-                dir: m::Rotor2::from_angle(PI / 6.0) * Unit::unit_x(),
+                start: uv::DVec2::new(2.0, 0.0),
+                dir: uv::DRotor2::from_angle(PI / 6.0) * UnitDVec2::unit_x(),
                 length: 2.0,
             },
         ) {
@@ -535,13 +535,13 @@ mod tests {
         // and also starts at the end of the other one
         match clip_edge(
             Edge {
-                start: m::Vec2::new(1.0, 1.0),
-                dir: Unit::unit_x(),
+                start: uv::DVec2::new(1.0, 1.0),
+                dir: UnitDVec2::unit_x(),
                 length: 2.0,
             },
             Edge {
-                start: m::Vec2::new(4.0, 0.0),
-                dir: m::Rotor2::from_angle(7.0 * PI / 8.0) * Unit::unit_x(),
+                start: uv::DVec2::new(4.0, 0.0),
+                dir: uv::DRotor2::from_angle(7.0 * PI / 8.0) * UnitDVec2::unit_x(),
                 length: 2.0,
             },
         ) {

@@ -1,5 +1,5 @@
 use super::Collider;
-use crate::{math as m, physics::body};
+use crate::{math::uv, physics::body};
 
 /// Helper for building compound colliders.
 /// Computes total area, moment of inertia and center of mass.
@@ -14,17 +14,17 @@ impl<'a> CompoundColliderSetup<'a> {
         Self { colliders }
     }
 
-    pub fn center_of_mass(&self) -> m::Vec2 {
+    pub fn center_of_mass(&self) -> uv::DVec2 {
         self.colliders
             .iter()
             .map(|c| c.shape.area() * c.pose.translation)
-            .sum::<m::Vec2>()
+            .sum::<uv::DVec2>()
             / self.colliders.len() as f64
     }
 
     /// Get the area and second moment of area for this set of colliders,
     /// measured around a given point. Usually this offset would be `self.center_of_mass()`.
-    pub fn info_around_point(&self, center: m::Vec2) -> body::ColliderInfo {
+    pub fn info_around_point(&self, center: uv::DVec2) -> body::ColliderInfo {
         let (mut total_area, mut total_second_moment) = (0.0, 0.0);
 
         for coll in self.colliders {

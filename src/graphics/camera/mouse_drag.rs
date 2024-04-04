@@ -39,11 +39,9 @@ impl MouseDragCameraController {
 
         if input.button(ButtonQuery::from(self.activate_button).held_min(1)) {
             let cursor_delta = input.cursor_movement_world(camera);
-            camera.pose.append_translation(uv::Vec3::new(
-                -cursor_delta.x as f32,
-                -cursor_delta.y as f32,
-                0.,
-            ));
+            camera
+                .pose
+                .append_translation(uv::Vec3::new(-cursor_delta.x, -cursor_delta.y, 0.));
         }
 
         let scroll = input.scroll_delta() as f32;

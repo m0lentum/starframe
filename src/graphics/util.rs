@@ -47,7 +47,7 @@ pub struct GpuVec2(pub [f32; 2]);
 
 impl From<m::Vec2> for GpuVec2 {
     fn from(v: m::Vec2) -> Self {
-        Self([v.x as f32, v.y as f32])
+        Self([v.x, v.y])
     }
 }
 
@@ -64,7 +64,7 @@ pub struct GpuVec2Padded(pub [f32; 4]);
 
 impl From<m::Vec2> for GpuVec2Padded {
     fn from(v: m::Vec2) -> Self {
-        Self([v.x as f32, v.y as f32, 0.0, 0.0])
+        Self([v.x, v.y, 0.0, 0.0])
     }
 }
 
@@ -81,7 +81,7 @@ pub struct GpuVec3(pub [f32; 3]);
 
 impl From<m::Vec2> for GpuVec3 {
     fn from(v: m::Vec2) -> Self {
-        Self([v.x as f32, v.y as f32, 0.0])
+        Self([v.x, v.y, 0.0])
     }
 }
 
@@ -110,7 +110,7 @@ pub struct GpuVec4(pub [f32; 4]);
 
 impl From<m::Vec2> for GpuVec4 {
     fn from(v: m::Vec2) -> Self {
-        Self([v.x as f32, v.y as f32, 0.0, 0.0])
+        Self([v.x, v.y, 0.0, 0.0])
     }
 }
 

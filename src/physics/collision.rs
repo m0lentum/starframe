@@ -14,20 +14,20 @@ pub use query::Ray;
 
 //
 
-use crate::math as m;
+use crate::math::uv;
 
 /// Axis-aligned bounding box.
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub struct AABB {
-    pub min: m::Vec2,
-    pub max: m::Vec2,
+    pub min: uv::DVec2,
+    pub max: uv::DVec2,
 }
 
 impl AABB {
     /// Move the AABB by the given vector without changing its size.
     #[inline]
-    pub fn translated(self, translation: m::Vec2) -> Self {
+    pub fn translated(self, translation: uv::DVec2) -> Self {
         Self {
             min: self.min + translation,
             max: self.max + translation,
@@ -46,7 +46,7 @@ impl AABB {
 
     /// Increase the size of the AABB in the direction of a vector.
     #[inline]
-    pub fn extended(mut self, amount: m::Vec2) -> Self {
+    pub fn extended(mut self, amount: uv::DVec2) -> Self {
         if amount.x < 0.0 {
             self.min.x += amount.x;
         } else {
@@ -99,7 +99,7 @@ impl AABB {
     }
 
     #[inline]
-    pub fn contains_point(&self, p: m::Vec2) -> bool {
+    pub fn contains_point(&self, p: uv::DVec2) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
 }
