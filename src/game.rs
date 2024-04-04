@@ -156,7 +156,7 @@ impl Game {
         let renderer = crate::Renderer::init(window).await?;
 
         let mut game = Game {
-            input: crate::Input::new(renderer.window_size().into()),
+            input: crate::Input::new(),
             graphics: crate::GraphicsManager::new(),
             renderer,
             world: hecs::World::new(),

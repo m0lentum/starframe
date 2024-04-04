@@ -16,20 +16,17 @@ pub struct Input {
     // previous tick's cursor position to track movements for dragging and such
     prev_cursor_pos: Option<m::Vec2>,
     scroll_delta: f64,
-    // window size stored for convenient cursor queries
-    window_size: (u32, u32),
 }
 
 impl Input {
     #[inline]
-    pub(crate) fn new(window_size: (u32, u32)) -> Self {
+    pub(crate) fn new() -> Self {
         Input {
             keyboard: [AgedState::default(); 163],
             mouse_buttons: Default::default(),
             cursor_pos: m::Vec2::zero(),
             prev_cursor_pos: None,
             scroll_delta: 0.0,
-            window_size,
         }
     }
 
@@ -96,14 +93,14 @@ impl Input {
     /// Get the cursor position in world space, with screen space defined by a camera.
     #[inline]
     pub fn cursor_position_world(&self, camera: &Camera) -> m::Vec2 {
-        camera.point_screen_to_world(self.window_size, self.cursor_pos)
+        camera.point_screen_to_world(self.cursor_pos)
     }
 
     /// Get the cursor movement since last tick in world space,
     /// with screen space defined by a camera.
     #[inline]
     pub fn cursor_movement_world(&self, camera: &Camera) -> m::Vec2 {
-        camera.vector_screen_to_world(self.window_size, self.cursor_movement())
+        camera.vector_screen_to_world(self.cursor_movement())
     }
 
     /// Get the vertical scroll distance in pixels during the last tick.
@@ -176,9 +173,6 @@ impl Input {
             MouseInput { button, state, .. } => self.track_mouse_button(*button, *state),
             MouseWheel { delta, .. } => self.track_mouse_wheel(*delta),
             CursorMoved { position, .. } => self.track_cursor_movement(*position),
-            Resized(new_size) => {
-                self.window_size = (new_size.width, new_size.height);
-            }
             _ => (),
         }
     }
@@ -206,7 +200,7 @@ impl Input {
         use ev::MouseScrollDelta::*;
         match delta {
             LineDelta(_, y) => self.scroll_delta += PIXELS_PER_LINE * y as f64,
-            PixelDelta(PhysicalPosition { y, .. }) => self.scroll_delta += y as f64,
+            PixelDelta(PhysicalPosition { y, .. }) => self.scroll_delta += y,
         }
     }
 }

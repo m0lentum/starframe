@@ -100,16 +100,8 @@ impl Camera {
     /// Call at the start of a frame.
     pub fn upload(&mut self) {
         let queue = crate::Renderer::queue();
-        // This assumes that the viewport being drawn to is the game window,
-        // which is currently the only target you can draw to.
-        // if this changes, we'll have to rethink this architecture -
-        // can one camera be used to draw to multiple viewports?
-        // if so, it would need more than one uniform buffer.
-        // alternatively the viewport size could be a different uniform
-        // instead of being packaged into the projection matrix
-        let window = crate::Renderer::window();
         let unif = CameraUniforms {
-            view_proj: self.view_proj_matrix(window.inner_size().into()).into(),
+            view_proj: self.view_proj_matrix().into(),
         };
         queue.write_buffer(&self.uniform_buf, 0, unif.as_bytes());
     }
@@ -125,7 +117,17 @@ impl Camera {
     /// Usually doesn't need to be called directly,
     /// since the camera handles uploading this to the GPU internally
     /// (with [`upload`][Self::upload]).
-    pub fn view_proj_matrix(&self, viewport_size: (u32, u32)) -> uv::Mat4 {
+    pub fn view_proj_matrix(&self) -> uv::Mat4 {
+        let window = crate::Renderer::window();
+        // This assumes that the viewport being drawn to is the game window,
+        // which is currently the only target you can draw to.
+        // if this changes, we'll have to rethink this architecture -
+        // can one camera be used to draw to multiple viewports?
+        // if so, it would need more than one uniform buffer.
+        // alternatively the viewport size could be a different uniform
+        // instead of being packaged into the projection matrix
+        let viewport_size = window.inner_size().into();
+
         let view = self.pose.inversed().into_homogeneous_matrix();
 
         let ppwu = self.pixels_per_world_unit(viewport_size);
@@ -146,11 +148,10 @@ impl Camera {
     ///
     /// This expects that the camera has not been rotated outside of the xy plane.
     /// Results will be incorrect otherwise.
-    pub fn point_screen_to_world(
-        &self,
-        viewport_size: (u32, u32),
-        point_screen: m::Vec2,
-    ) -> m::Vec2 {
+    pub fn point_screen_to_world(&self, point_screen: m::Vec2) -> m::Vec2 {
+        let window = crate::Renderer::window();
+        let viewport_size = window.inner_size().into();
+
         let ppwu = self.pixels_per_world_unit(viewport_size) as f64;
         let half_vp_diag = m::Vec2::new(viewport_size.0 as f64 / 2.0, viewport_size.1 as f64 / 2.0);
         let point_screen_wrt_center = {
@@ -165,11 +166,9 @@ impl Camera {
     ///
     /// This expects that the camera has not been rotated outside of the xy plane.
     /// Results will be incorrect otherwise.
-    pub fn vector_screen_to_world(
-        &self,
-        viewport_size: (u32, u32),
-        vec_screen: m::Vec2,
-    ) -> m::Vec2 {
+    pub fn vector_screen_to_world(&self, vec_screen: m::Vec2) -> m::Vec2 {
+        let window = crate::Renderer::window();
+        let viewport_size = window.inner_size().into();
         let ppwu = self.pixels_per_world_unit(viewport_size) as f64;
         m::Vec2::new(vec_screen.x, -vec_screen.y) / ppwu
     }
