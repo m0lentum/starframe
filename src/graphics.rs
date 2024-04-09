@@ -15,5 +15,8 @@ pub use camera::{Camera, MouseDragCameraController};
 pub(super) mod mesh;
 pub use mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin, Vertex as MeshVertex};
 
+mod line_renderer;
+pub use line_renderer::{LineRenderer, LineStrip, LineVertex};
+
 pub mod material;
 pub use material::Texture;

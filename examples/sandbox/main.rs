@@ -554,6 +554,8 @@ impl sf::GameState for State {
 
         let mut forward = shade.finish(&self.camera);
 
+        // forward pass
+
         // egui
 
         let paint_jobs = self.egui_context.tessellate(

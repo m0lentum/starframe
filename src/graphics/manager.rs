@@ -433,6 +433,16 @@ impl GraphicsManager {
         self.material_name_map.get(name).copied().map(MaterialId)
     }
 
+    /// Access a material stored in the manager, or the default material if it doesn't exist.
+    #[inline]
+    pub fn get_material(&self, id: MaterialId) -> &Material {
+        if let Some(mat) = self.materials.get(id.0) {
+            mat
+        } else {
+            Material::get_default()
+        }
+    }
+
     /// Set a mesh to be drawn with the specified material.
     #[inline]
     pub fn set_mesh_material(&mut self, mesh: MeshId, mat: MaterialId) {

@@ -240,10 +240,9 @@ impl<'a> ShadingContext<'a> {
             })],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &self.renderer.gbufs.depth,
-                // load but don't store depth, for point lights
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Discard,
+                    store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
             }),
