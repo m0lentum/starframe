@@ -36,7 +36,11 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    let vert_pos_world = light_position + vec3<f32>(radius * vert_position, 0.);
+    // since our light volumes are flat circles,
+    // in order to have them affect things in front of them
+    // and not get obscured by the depth buffer,
+    // we need to offset the volume in the z direction as well
+    let vert_pos_world = light_position + vec3<f32>(radius * vert_position, -radius);
     out.clip_position = camera.view_proj * vec4<f32>(vert_pos_world, 1.);
 
     out.light_position = light_position;

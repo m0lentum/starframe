@@ -169,7 +169,7 @@ fn spawn_static(game: &mut sf::Game, solid: Solid) {
         if let Some(l_col) = solid.light_color {
             let light = sf::PointLight {
                 color: [l_col[0], l_col[1], l_col[2]],
-                position: sf::uv::Vec3::new(0., 0., -2.),
+                position: sf::uv::Vec3::zero(),
                 ..Default::default()
             };
             game.world.insert_one(ent, light).unwrap();
