@@ -102,7 +102,7 @@ impl State {
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
                 Some(game.renderer.gbufs.depth_tex.format()),
-                game.renderer.msaa_samples(),
+                1,
             ),
             last_egui_output: Default::default(),
             bvh_vis_active: false,

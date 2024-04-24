@@ -229,7 +229,7 @@ impl MeshRenderer {
                     ..Default::default()
                 },
                 depth_stencil: Some(game.renderer.default_depth_stencil_state()),
-                multisample: game.renderer.multisample_state(),
+                multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             })
         };

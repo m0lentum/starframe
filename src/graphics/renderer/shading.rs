@@ -202,7 +202,7 @@ pub struct ShadingPipeline {
 }
 
 impl ShadingPipeline {
-    pub fn new(gbufs: &GBuffers, msaa_samples: u32) -> Self {
+    pub fn new(gbufs: &GBuffers) -> Self {
         let device = super::Renderer::device();
 
         let dir_light_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -317,11 +317,7 @@ impl ShadingPipeline {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState {
-                    count: msaa_samples,
-                    mask: !0,
-                    alpha_to_coverage_enabled: false,
-                },
+                multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             })
         };
@@ -464,11 +460,7 @@ impl ShadingPipeline {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState {
-                count: msaa_samples,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
+            multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
 

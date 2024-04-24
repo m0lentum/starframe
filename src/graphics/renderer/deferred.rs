@@ -9,7 +9,6 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 /// All GBuffers needed for Starframe's deferred shading pipeline.
 pub struct GBuffers {
     pub dimensions: (u32, u32),
-    // depth is not a GBuffer because it requires different multisampling configuration
     pub depth_tex: wgpu::Texture,
     pub depth: wgpu::TextureView,
     pub position: GBuffer,
@@ -19,10 +18,10 @@ pub struct GBuffers {
 }
 
 impl GBuffers {
-    pub fn new(dimensions: (u32, u32), sample_count: u32) -> Self {
+    pub fn new(dimensions: (u32, u32)) -> Self {
         let device = super::Renderer::device();
 
-        let depth_tex = create_texture(dimensions, sample_count, DEPTH_FORMAT, Some("depth"));
+        let depth_tex = create_texture(dimensions, DEPTH_FORMAT, Some("depth"));
         let depth = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         // non-filtering sampler,
@@ -39,7 +38,7 @@ impl GBuffers {
         });
 
         let gbuf = |format: wgpu::TextureFormat, label: &str| {
-            GBuffer::new(dimensions, sample_count, format, Some(label))
+            GBuffer::new(dimensions, format, Some(label))
         };
         Self {
             dimensions,
@@ -57,26 +56,14 @@ impl GBuffers {
 pub struct GBuffer {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub msaa_view: wgpu::TextureView,
 }
 
 impl GBuffer {
-    pub fn new(
-        dimensions: (u32, u32),
-        sample_count: u32,
-        format: wgpu::TextureFormat,
-        label: Option<&str>,
-    ) -> Self {
-        let texture = create_texture(dimensions, 1, format, label);
+    pub fn new(dimensions: (u32, u32), format: wgpu::TextureFormat, label: Option<&str>) -> Self {
+        let texture = create_texture(dimensions, format, label);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let msaa_texture = create_texture(dimensions, sample_count, format, label);
-        let msaa_view = msaa_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        Self {
-            texture,
-            view,
-            msaa_view,
-        }
+        Self { texture, view }
     }
 
     fn color_attachment<'s, 't: 's>(
@@ -84,8 +71,8 @@ impl GBuffer {
         is_first_draw: bool,
     ) -> wgpu::RenderPassColorAttachment<'s> {
         wgpu::RenderPassColorAttachment {
-            view: &self.msaa_view,
-            resolve_target: Some(&self.view),
+            view: &self.view,
+            resolve_target: None,
             ops: wgpu::Operations {
                 load: if is_first_draw {
                     wgpu::LoadOp::Clear(wgpu::Color::BLACK)
@@ -100,7 +87,6 @@ impl GBuffer {
 
 pub(super) fn create_texture(
     dimensions: (u32, u32),
-    sample_count: u32,
     format: wgpu::TextureFormat,
     label: Option<&str>,
 ) -> wgpu::Texture {
@@ -114,7 +100,7 @@ pub(super) fn create_texture(
             depth_or_array_layers: 1,
         },
         mip_level_count: 1,
-        sample_count,
+        sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -244,8 +230,9 @@ impl<'a> ShadingContext<'a> {
         let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("directional light"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.renderer.msaa_view,
-                resolve_target: self.renderer.active_frame.as_ref().map(|f| &f.view),
+                // frame is guaranteed to be active at this point
+                view: &self.renderer.active_frame.as_ref().unwrap().view,
+                resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(self.clear_color),
                     store: wgpu::StoreOp::Store,
@@ -303,8 +290,8 @@ impl<'a> PostShadeContext<'a> {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("post-shade"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.renderer.msaa_view,
-                resolve_target: self.renderer.active_frame.as_ref().map(|f| &f.view),
+                view: &self.renderer.active_frame.as_ref().unwrap().view,
+                resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,

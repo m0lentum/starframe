@@ -17,9 +17,6 @@ static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
 static WINDOW: OnceLock<winit::window::Window> = OnceLock::new();
 
 pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-// constant number of samples for now,
-// TODO: make this configurable
-const MSAA_SAMPLES: u32 = 4;
 
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
@@ -30,10 +27,6 @@ pub struct Renderer {
     /// GBuffers for deferred shading.
     pub gbufs: GBuffers,
     deferred_shading_pl: ShadingPipeline,
-
-    msaa_samples: u32,
-    // MSAA texture for drawing that happens after deferred shading
-    msaa_view: wgpu::TextureView,
     // current active frame stored here instead of in RenderContext
     // so that we can interleave drawing to window and drawing to textures
     active_frame: Option<Frame>,
@@ -115,10 +108,8 @@ impl Renderer {
             .set(window)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
-        let gbufs = GBuffers::new(window_size.into(), MSAA_SAMPLES);
-        let deferred_shading_pl = ShadingPipeline::new(&gbufs, MSAA_SAMPLES);
-
-        let msaa_view = Self::create_msaa_texture((surface_config.width, surface_config.height));
+        let gbufs = GBuffers::new(window_size.into());
+        let deferred_shading_pl = ShadingPipeline::new(&gbufs);
 
         Ok(Renderer {
             surface,
@@ -127,8 +118,6 @@ impl Renderer {
             gbufs,
             deferred_shading_pl,
             generation: 0,
-            msaa_samples: MSAA_SAMPLES,
-            msaa_view,
             active_frame: None,
         })
     }
@@ -159,16 +148,6 @@ impl Renderer {
         QUEUE.get().expect("Renderer has not been initialized yet")
     }
 
-    fn create_msaa_texture(dimensions: (u32, u32)) -> wgpu::TextureView {
-        let tex = deferred::create_texture(
-            dimensions,
-            MSAA_SAMPLES,
-            SWAPCHAIN_FORMAT,
-            Some("window msaa"),
-        );
-        tex.create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
     /// Change the size of the frame `draw_to_window` draws into.
     /// This is called automatically by the gameloop when the window size changes.
     pub(crate) fn resize_swap_chain(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
@@ -179,10 +158,9 @@ impl Renderer {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(device, &self.surface_config);
-        self.gbufs = GBuffers::new(new_size.into(), self.msaa_samples);
+        self.gbufs = GBuffers::new(new_size.into());
         self.deferred_shading_pl
             .update_gbufs_bind_group(&self.gbufs);
-        self.msaa_view = Self::create_msaa_texture(new_size.into());
         self.generation += 1;
     }
 
@@ -201,20 +179,6 @@ impl Renderer {
     #[inline]
     pub fn window_scale_factor(&self) -> f64 {
         self.window_scale_factor
-    }
-
-    #[inline]
-    pub fn msaa_samples(&self) -> u32 {
-        self.msaa_samples
-    }
-
-    #[inline]
-    pub fn multisample_state(&self) -> wgpu::MultisampleState {
-        wgpu::MultisampleState {
-            count: self.msaa_samples,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        }
     }
 
     /// Depth-stencil state that uses the same depth format as the window depth buffer
