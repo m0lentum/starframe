@@ -135,10 +135,13 @@ impl From<crate::DirectionalLight> for DirectLightUniforms {
     }
 }
 
-/// Point lights are drawn as instanced light volumes
+/// Point lights are drawn as instanced light volumes.
+///
+/// This is pub(super) because the shading pass defined in `deferred.rs`
+/// collects these for us
 #[repr(C)]
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
-struct PointLightInstance {
+pub(super) struct PointLightInstance {
     position: [f32; 3],
     color: [f32; 3],
     radius: f32,
@@ -163,11 +166,26 @@ impl From<PointLight> for PointLightInstance {
     }
 }
 
+/// Main light of the scene can be a directional light,
+/// no light at all,
+/// or just copy the albedo without any lighting
+/// (the last one is mainly useful in my artworks
+/// where I paint the main light by hand)
+#[derive(Clone, Copy, Debug)]
+pub(super) enum MainLight {
+    Directional(DirectionalLight),
+    Dark,
+    Fullbright,
+}
+
 /// Pipeline that performs deferred shading with a single direct light,
 /// followed by additional lighting with a set of point lights.
 pub struct ShadingPipeline {
     // pipeline for the first pass
     direct_pipeline: wgpu::RenderPipeline,
+    // simplified pipeline variants that don't do lighting
+    dark_pipeline: wgpu::RenderPipeline,
+    fullbright_pipeline: wgpu::RenderPipeline,
     gbufs_bind_group_layout: wgpu::BindGroupLayout,
     // bind group must be recreated when the window size changes
     pub(super) gbufs_bind_group: wgpu::BindGroup,
@@ -190,7 +208,7 @@ impl ShadingPipeline {
         let dir_light_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("deferred shading"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../shaders/deferred_shade.wgsl"
+                "../shaders/directional_light.wgsl"
             ))),
         });
 
@@ -272,41 +290,45 @@ impl ShadingPipeline {
             bind_group_layouts: &[&gbufs_bind_group_layout, &dir_light_bind_group_layout],
             push_constant_ranges: &[],
         });
-        let direct_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("deferred shading"),
-            layout: Some(&dir_pl_layout),
-            vertex: wgpu::VertexState {
-                module: &dir_light_shader,
-                entry_point: "vs_main",
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &dir_light_shader,
-                entry_point: "fs_main",
-                targets: &[Some(super::SWAPCHAIN_FORMAT.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                ..Default::default()
-            },
-            // bind the depth texture so it's ready for point lights,
-            // but don't do anything with it
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: crate::graphics::renderer::deferred::DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: msaa_samples,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });
+        let make_direct_pipeline = |fs_entry_point: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("deferred shading"),
+                layout: Some(&dir_pl_layout),
+                vertex: wgpu::VertexState {
+                    module: &dir_light_shader,
+                    entry_point: "vs_main",
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &dir_light_shader,
+                    entry_point: fs_entry_point,
+                    targets: &[Some(super::SWAPCHAIN_FORMAT.into())],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: crate::graphics::renderer::deferred::DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: msaa_samples,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+            })
+        };
+        let direct_pipeline = make_direct_pipeline("fs_main");
+        // variants for drawing no light or fully lit
+        let dark_pipeline = make_direct_pipeline("fs_dark");
+        let fullbright_pipeline = make_direct_pipeline("fs_fullbright");
 
         //
         // point light buffers and pipeline
@@ -452,6 +474,8 @@ impl ShadingPipeline {
 
         Self {
             direct_pipeline,
+            dark_pipeline,
+            fullbright_pipeline,
             gbufs_bind_group_layout,
             gbufs_bind_group,
             dir_light_buf,
@@ -501,26 +525,39 @@ impl ShadingPipeline {
         &'pass mut self,
         pass: &mut wgpu::RenderPass<'pass>,
         camera: &'pass crate::Camera,
-        dir_light: DirectionalLight,
-        point_lights: impl Iterator<Item = PointLight>,
+        main_light: MainLight,
+        point_instances: &[PointLightInstance],
     ) {
         let queue = super::Renderer::queue();
 
-        let light_unif = DirectLightUniforms::from(dir_light);
-        queue.write_buffer(&self.dir_light_buf, 0, light_unif.as_bytes());
+        // directional light
 
-        let point_instances: Vec<PointLightInstance> =
-            point_lights.map(PointLightInstance::from).collect();
-        self.point_instance_buf.write(&point_instances);
-
-        pass.set_pipeline(&self.direct_pipeline);
         pass.set_bind_group(0, &self.gbufs_bind_group, &[]);
         pass.set_bind_group(1, &self.dir_light_bind_group, &[]);
-        pass.draw(0..3, 0..1);
+        match main_light {
+            MainLight::Directional(dir_light) => {
+                let light_unif = DirectLightUniforms::from(dir_light);
+                queue.write_buffer(&self.dir_light_buf, 0, light_unif.as_bytes());
+
+                pass.set_pipeline(&self.direct_pipeline);
+                pass.draw(0..3, 0..1);
+            }
+            MainLight::Dark => {
+                pass.set_pipeline(&self.dark_pipeline);
+                pass.draw(0..3, 0..1);
+            }
+            MainLight::Fullbright => {
+                pass.set_pipeline(&self.fullbright_pipeline);
+                pass.draw(0..3, 0..1);
+            }
+        }
+
+        // point lights
 
         if point_instances.is_empty() {
             return;
         }
+        self.point_instance_buf.write(point_instances);
 
         pass.set_pipeline(&self.point_pipeline);
         pass.set_bind_group(1, &camera.bind_group, &[]);

@@ -55,10 +55,36 @@ fn fs_main(
     let diffuse_light = diffuse_strength * light.direct_color;
 
     // stylized approximation: ambient light comes from the direction opposite to the main light
+    // TODO: instead of hardcoding intensity 0.1 here,
+    // give it as part of the ambient color
     let ambient_strength = 0.1 + 0.1 * max(-normal_dot_light, 0.);
     let ambient_light = light.ambient_color * ambient_strength;
 
     let full_color = vec4<f32>(ambient_light + diffuse_light, 1.) * albedo;
 
     return full_color;
+}
+
+// alternative fragment shader that draws everything black with no light at all
+@fragment
+fn fs_dark(
+    in: VertexOutput
+) -> @location(0) vec4<f32> {
+    let albedo = textureSample(albedo_gbuf, samp, in.uv);
+    if albedo.x == 0. && albedo.y == 0. && albedo.z == 0. {
+        discard;
+    }
+    return vec4<f32>(0., 0., 0., 1.);
+}
+
+// another alternative fragment shader that copies the albedo directly
+@fragment
+fn fs_fullbright(
+    in: VertexOutput
+) -> @location(0) vec4<f32> {
+    let albedo = textureSample(albedo_gbuf, samp, in.uv);
+    if albedo.x == 0. && albedo.y == 0. && albedo.z == 0. {
+        discard;
+    }
+    return vec4<f32>(albedo.xyz, 1.);
 }

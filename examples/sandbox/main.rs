@@ -525,6 +525,8 @@ impl sf::GameState for State {
         let queue = sf::Renderer::queue();
         let window_size = game.renderer.window_size();
 
+        // state updates
+
         self.camera.upload();
 
         if matches!(self.state, StateEnum::Playing) {
@@ -535,19 +537,24 @@ impl sf::GameState for State {
             sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.dir_light.direction);
         }
 
-        let mut ctx = game.renderer.begin_frame();
+        // scene rendering
+
+        let mut deferred = game.renderer.begin_frame();
         {
-            let mut pass = ctx.pass();
+            let mut pass = deferred.pass();
             self.mesh_renderer
                 .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
         }
 
-        let mut ctx = ctx.shade(
-            [0.00802, 0.0137, 0.02732, 1.],
-            &self.camera,
-            self.dir_light,
-            sf::PointLight::gather_from_world(&mut game.world),
-        );
+        let mut shade = deferred.shade();
+
+        shade.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
+        shade.set_directional_light(self.dir_light);
+        shade.extend_point_lights(sf::PointLight::gather_from_world(&mut game.world));
+
+        let mut forward = shade.finish(&self.camera);
+
+        // egui
 
         let paint_jobs = self.egui_context.tessellate(
             self.last_egui_output.shapes.clone(),
@@ -575,13 +582,13 @@ impl sf::GameState for State {
         self.egui_renderer.update_buffers(
             device,
             queue,
-            ctx.encoder_mut(),
+            forward.encoder_mut(),
             &paint_jobs,
             &screen_desc,
         );
 
         {
-            let mut pass = ctx.pass();
+            let mut pass = forward.pass();
             self.egui_renderer
                 .render(&mut pass, &paint_jobs, &screen_desc);
         }

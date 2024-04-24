@@ -1,3 +1,5 @@
+use super::shading::{MainLight, PointLightInstance};
+
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
 //
@@ -177,28 +179,75 @@ impl<'a> DeferredContext<'a> {
         }
     }
 
-    /// Shade the image drawn with deferred rendering
-    /// and move on to rendering directly to the window.
-    pub fn shade(
-        mut self,
-        clear_color: [f32; 4],
-        camera: &crate::Camera,
-        dir_light: super::shading::DirectionalLight,
-        point_lights: impl Iterator<Item = crate::PointLight>,
-    ) -> PostShadeContext<'a> {
-        let mut shade_pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("shade"),
+    /// Begin to shade the image drawn with deferred rendering.
+    pub fn shade(self) -> ShadingContext<'a> {
+        ShadingContext {
+            renderer: self.renderer,
+            encoder: self.encoder,
+            clear_color: wgpu::Color::BLACK,
+            main_light: MainLight::Dark,
+            point_lights: Vec::new(),
+        }
+    }
+}
+
+/// Context that gathers lighting information for shading.
+pub struct ShadingContext<'a> {
+    renderer: &'a mut crate::Renderer,
+    encoder: wgpu::CommandEncoder,
+    clear_color: wgpu::Color,
+    main_light: MainLight,
+    point_lights: Vec<PointLightInstance>,
+}
+
+impl<'a> ShadingContext<'a> {
+    /// Set the color the framebuffer will be cleared with
+    /// when the shading is executed (i.e. on [`finish`][Self::finish]).
+    /// Black by default.
+    pub fn set_clear_color(&mut self, color: [f32; 4]) {
+        self.clear_color = wgpu::Color {
+            r: color[0] as f64,
+            g: color[1] as f64,
+            b: color[2] as f64,
+            a: color[3] as f64,
+        };
+    }
+
+    /// Set the directional light of the scene.
+    ///
+    /// Only one of these can be active at a given time.
+    pub fn set_directional_light(&mut self, light: crate::DirectionalLight) {
+        self.main_light = MainLight::Directional(light);
+    }
+
+    /// Set the scene to be fully lit from all directions without any shading.
+    ///
+    /// This and a directional light cannot be active at the same time.
+    /// If a directional light was set, it is removed.
+    pub fn set_fullbright(&mut self) {
+        self.main_light = MainLight::Fullbright;
+    }
+
+    /// Add a point light.
+    pub fn push_point_light(&mut self, light: crate::PointLight) {
+        self.point_lights.push(PointLightInstance::from(light));
+    }
+
+    /// Add point lights from an iterator.
+    pub fn extend_point_lights(&mut self, lights: impl Iterator<Item = crate::PointLight>) {
+        self.point_lights
+            .extend(lights.map(PointLightInstance::from));
+    }
+
+    /// Complete the shading phase and move on to forward rendering and postprocessing.
+    pub fn finish(mut self, camera: &crate::Camera) -> PostShadeContext<'a> {
+        let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("directional light"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                // frame was just begun so this must exist
                 view: &self.renderer.msaa_view,
                 resolve_target: self.renderer.active_frame.as_ref().map(|f| &f.view),
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear_color[0] as f64,
-                        g: clear_color[1] as f64,
-                        b: clear_color[2] as f64,
-                        a: clear_color[3] as f64,
-                    }),
+                    load: wgpu::LoadOp::Clear(self.clear_color),
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -215,11 +264,14 @@ impl<'a> DeferredContext<'a> {
             timestamp_writes: None,
         });
 
-        self.renderer
-            .deferred_shading_pl
-            .draw(&mut shade_pass, camera, dir_light, point_lights);
+        self.renderer.deferred_shading_pl.draw(
+            &mut pass,
+            camera,
+            self.main_light,
+            &self.point_lights,
+        );
 
-        drop(shade_pass);
+        drop(pass);
 
         PostShadeContext {
             renderer: self.renderer,
