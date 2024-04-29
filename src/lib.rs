@@ -14,8 +14,8 @@ pub use graphics::{
     camera::{Camera, MouseDragCameraController},
     material::{Material, MaterialParams, Texture, TextureData},
     mesh::{ConvexMeshShape, Mesh, MeshData, MeshParams, MeshRenderer, Skin},
-    AnimationId, Animator, DirectionalLight, GraphicsManager, MaterialId, MeshId, PointLight,
-    Renderer,
+    AnimationId, Animator, DirectionalLight, GraphicsManager, MaterialId, MeshId, MeshVertex,
+    PointLight, Renderer,
 };
 
 pub mod physics;

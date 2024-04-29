@@ -48,7 +48,7 @@ impl<'a> MeshParams<'a> {
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
             contents: self.data.vertices.as_bytes(),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
@@ -118,6 +118,21 @@ pub struct Vertex {
 pub struct VertexJoints {
     pub joints: [u16; 4],
     pub weights: gx::util::GpuVec4,
+}
+
+impl Mesh {
+    /// Replace the vertex data of this mesh.
+    ///
+    /// This is more efficient than creating an entirely new mesh.
+    /// Useful for e.g. hand-animating a mesh.
+    ///
+    /// Note that This does not check if the number of vertices is the same as on initial upload.
+    /// Fewer vertices will leave vertices past the end unchanged,
+    /// and more vertices will panic.
+    pub fn overwrite(&self, vertices: &[Vertex]) {
+        let queue = crate::Renderer::queue();
+        queue.write_buffer(&self.gpu_data.vertex_buf, 0, vertices.as_bytes());
+    }
 }
 
 //

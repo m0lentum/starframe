@@ -13,7 +13,7 @@ pub mod camera;
 pub use camera::{Camera, MouseDragCameraController};
 
 pub(super) mod mesh;
-pub use mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin};
+pub use mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin, Vertex as MeshVertex};
 
 pub mod material;
 pub use material::Texture;
