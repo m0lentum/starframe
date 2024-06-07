@@ -229,7 +229,6 @@ impl Game {
 
                             let dt = game.dt_fixed as f32;
                             state.draw(&mut game, dt);
-                            game.renderer.present_frame();
                         }
 
                         tracy_client::frame_mark();

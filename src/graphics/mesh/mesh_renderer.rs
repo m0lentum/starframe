@@ -1,8 +1,9 @@
 use crate::{
     graphics::{
+        light::LightBuffers,
         manager::MeshId,
         material::Material,
-        renderer::DeferredPass,
+        renderer::{DEPTH_FORMAT, SWAPCHAIN_FORMAT},
         util::{GpuMat4, GpuVec3},
         Camera, GraphicsManager,
     },
@@ -13,12 +14,6 @@ use itertools::Itertools;
 use std::{borrow::Cow, mem::size_of};
 use thunderdome as td;
 use zerocopy::{AsBytes, FromBytes};
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-pub(crate) struct CameraUniforms {
-    view_proj: GpuMat4,
-}
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
@@ -44,7 +39,7 @@ pub struct MeshRenderer {
 }
 
 impl MeshRenderer {
-    pub fn new(game: &crate::Game) -> Self {
+    pub(crate) fn new(light_bufs: &LightBuffers) -> Self {
         let device = crate::Renderer::device();
 
         /// Different pipelines for skinned and unskinned meshes;
@@ -58,9 +53,7 @@ impl MeshRenderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../shaders/mesh_geometry.wgsl"
-            ))),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/mesh.wgsl"))),
         });
 
         // joints bind group
@@ -199,7 +192,8 @@ impl MeshRenderer {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
-                &crate::Camera::bind_group_layout(),
+                crate::Camera::bind_group_layout(),
+                &light_bufs.bind_group_layout,
                 &joints_bind_group_layout,
                 Material::bind_group_layout(),
             ],
@@ -220,7 +214,11 @@ impl MeshRenderer {
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
                     entry_point: "fs_main",
-                    targets: &game.renderer.geometry_pass_targets(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: SWAPCHAIN_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::COLOR,
+                    })],
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -228,7 +226,13 @@ impl MeshRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(game.renderer.default_depth_stencil_state()),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             })
@@ -245,12 +249,13 @@ impl MeshRenderer {
     }
 
     /// Draw all the meshes in the world.
-    pub fn draw<'pass>(
+    pub(crate) fn draw<'pass>(
         &'pass mut self,
-        pass: &mut DeferredPass<'pass>,
+        pass: &mut wgpu::RenderPass<'pass>,
         manager: &'pass mut GraphicsManager,
         world: &mut hecs::World,
         camera: &'pass Camera,
+        light_bufs: &'pass LightBuffers,
     ) {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
@@ -394,9 +399,9 @@ impl MeshRenderer {
         // render
         //
 
-        let pass = &mut pass.pass;
         pass.set_bind_group(0, &camera.bind_group, &[]);
-        pass.set_bind_group(1, &self.joints_bind_group, &[]);
+        pass.set_bind_group(1, &light_bufs.bind_group, &[]);
+        pass.set_bind_group(2, &self.joints_bind_group, &[]);
 
         fn draw_mesh<'pass>(
             pass: &mut wgpu::RenderPass<'pass>,
@@ -408,7 +413,7 @@ impl MeshRenderer {
             };
 
             let material = manager.get_mesh_material(mesh_id);
-            pass.set_bind_group(2, &material.bind_group, &[]);
+            pass.set_bind_group(3, &material.bind_group, &[]);
 
             pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
             pass.set_vertex_buffer(1, mesh.gpu_data.instance_buf.slice());

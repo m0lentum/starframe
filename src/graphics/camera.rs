@@ -78,8 +78,8 @@ impl Camera {
     }
 
     pub(crate) fn bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
-        let device = crate::Renderer::device();
         BIND_GROUP_LAYOUT.get_or_init(|| {
+            let device = crate::Renderer::device();
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
