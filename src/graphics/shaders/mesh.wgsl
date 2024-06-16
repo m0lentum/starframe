@@ -50,6 +50,7 @@ var<storage> joint_mats: array<mat4x4<f32>>;
 struct MaterialUniforms {
     base_color: vec4<f32>,
 }
+
 @group(3) @binding(0)
 var<uniform> material: MaterialUniforms;
 @group(3) @binding(1)
@@ -60,6 +61,18 @@ var s_diffuse: sampler;
 var t_normal: texture_2d<f32>;
 @group(3) @binding(4)
 var s_normal: sampler;
+
+// instance
+
+struct InstanceUniforms {
+    model_row0: vec4<f32>,
+    model_row1: vec4<f32>,
+    model_row2: vec4<f32>,
+    joint_offset: u32,
+}
+
+@group(4) @binding(0)
+var<uniform> instance: InstanceUniforms;
 
 //
 // vertex shader
@@ -88,27 +101,21 @@ fn mat3_inv_scale_sq(m: mat3x3<f32>) -> vec3<f32> {
 fn vs_skinned(
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
-    // instance variables: position in the joint buffer, model matrix
-    @location(2) joint_offset: u32,
-    @location(3) model_col0: vec3<f32>,
-    @location(4) model_col1: vec3<f32>,
-    @location(5) model_col2: vec3<f32>,
-    @location(6) model_col3: vec3<f32>,
     // additional vertex data for skinning in a separate buffer
     // (u16 not supported in wgsl, so bit-twiddle joint indices from two u32s)
-    @location(7) joints: vec2<u32>,
-    @location(8) weights: vec4<f32>,
+    @location(2) joints: vec2<u32>,
+    @location(3) weights: vec4<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
     let model = mat4x4<f32>(
-        vec4<f32>(model_col0, 0.),
-        vec4<f32>(model_col1, 0.),
-        vec4<f32>(model_col2, 0.),
-        vec4<f32>(model_col3, 1.),
+        instance.model_row0.x, instance.model_row1.x, instance.model_row2.x, 0.,
+        instance.model_row0.y, instance.model_row1.y, instance.model_row2.y, 0.,
+        instance.model_row0.z, instance.model_row1.z, instance.model_row2.z, 0.,
+        instance.model_row0.w, instance.model_row1.w, instance.model_row2.w, 1.,
     );
 
-    let joint_indices = vec4<u32>(joint_offset) + vec4<u32>(
+    let joint_indices = vec4<u32>(instance.joint_offset) + vec4<u32>(
         joints[0] & 0xFFFFu,
         joints[0] >> 16u,
         joints[1] & 0xFFFFu,
@@ -167,20 +174,14 @@ fn vs_skinned(
 fn vs_unskinned(
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
-    // instance variables: position in the joint buffer, model matrix
-    @location(2) joint_offset: u32,
-    @location(3) model_col0: vec3<f32>,
-    @location(4) model_col1: vec3<f32>,
-    @location(5) model_col2: vec3<f32>,
-    @location(6) model_col3: vec3<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
     let model = mat4x4<f32>(
-        vec4<f32>(model_col0, 0.),
-        vec4<f32>(model_col1, 0.),
-        vec4<f32>(model_col2, 0.),
-        vec4<f32>(model_col3, 1.),
+        instance.model_row0.x, instance.model_row1.x, instance.model_row2.x, 0.,
+        instance.model_row0.y, instance.model_row1.y, instance.model_row2.y, 0.,
+        instance.model_row0.z, instance.model_row1.z, instance.model_row2.z, 0.,
+        instance.model_row0.w, instance.model_row1.w, instance.model_row2.w, 1.,
     );
 
     let normal = vec3<f32>(0., 0., -1.);

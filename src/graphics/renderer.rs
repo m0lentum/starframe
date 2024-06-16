@@ -63,7 +63,13 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    limits: wgpu::Limits {
+                        // TODO we won't need 5 bind groups eventually,
+                        // reduce this back to the default
+                        max_bind_groups: 5,
+                        min_uniform_buffer_offset_alignment: 64,
+                        ..Default::default()
+                    },
                     label: None,
                 },
                 None,

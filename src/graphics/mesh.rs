@@ -63,16 +63,11 @@ impl<'a> MeshParams<'a> {
             })
         });
 
-        let instance_buf =
-            gx::util::DynamicBuffer::new(Some("mesh instance"), wgpu::BufferUsages::VERTEX);
-
         let gpu_data = GpuMeshData {
             vertex_buf,
             index_buf,
             idx_count: self.data.indices.len() as u32,
             joints_buf,
-            instance_buf,
-            instance_count: 0,
         };
 
         Mesh {
@@ -97,11 +92,6 @@ pub(crate) struct GpuMeshData {
     index_buf: wgpu::Buffer,
     idx_count: u32,
     joints_buf: Option<wgpu::Buffer>,
-    // instance buffer containing joint offsets and model matrices,
-    // allowing the same mesh to be rendered multiple times
-    // with potentially different animation states
-    instance_buf: gx::util::DynamicBuffer,
-    instance_count: u32,
 }
 
 /// Position and texture coordinates of a vertex in a mesh.

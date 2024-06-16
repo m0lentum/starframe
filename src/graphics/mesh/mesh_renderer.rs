@@ -4,38 +4,43 @@ use crate::{
         manager::MeshId,
         material::Material,
         renderer::{DEPTH_FORMAT, SWAPCHAIN_FORMAT},
-        util::{GpuMat4, GpuVec3},
+        util::{GpuMat4, GpuVec4},
         Camera, GraphicsManager,
     },
     math::{self as m, uv},
 };
 
-use itertools::Itertools;
-use std::{borrow::Cow, mem::size_of};
+use std::mem::size_of;
 use thunderdome as td;
 use zerocopy::{AsBytes, FromBytes};
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct Instance {
-    joint_offset: u32,
-    model_col0: GpuVec3,
-    model_col1: GpuVec3,
-    model_col2: GpuVec3,
-    model_col3: GpuVec3,
-}
 
 pub struct MeshRenderer {
     skinned_pipeline: wgpu::RenderPipeline,
     unskinned_pipeline: wgpu::RenderPipeline,
     joints_bind_group: wgpu::BindGroup,
     joints_bind_group_layout: wgpu::BindGroupLayout,
-
     // joint storage which grows if needed.
     // not using util::DynamicBuffer because we also need to update a bind group
     // whenever this is reallocated
+    // (this could totally be another thing in util,
+    // but hasn't been needed many times yet)
     joint_storage: wgpu::Buffer,
     joint_capacity: usize,
+    // same for instance uniforms
+    instance_unif_buf: wgpu::Buffer,
+    instance_unif_bind_group_layout: wgpu::BindGroupLayout,
+    instance_unif_bind_group: wgpu::BindGroup,
+    instance_capacity: usize,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
+struct InstanceUniforms {
+    model_row0: GpuVec4,
+    model_row1: GpuVec4,
+    model_row2: GpuVec4,
+    joint_offset: u32,
+    _pad: [u32; 3],
 }
 
 impl MeshRenderer {
@@ -51,10 +56,7 @@ impl MeshRenderer {
 
         // shaders
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("mesh"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("../shaders/mesh.wgsl"))),
-        });
+        let shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/mesh.wgsl"));
 
         // joints bind group
 
@@ -91,7 +93,40 @@ impl MeshRenderer {
             label: Some("mesh joints"),
         });
 
-        // vertex and instance layouts
+        // instance uniforms bind group
+
+        let instance_unif_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: size_of::<InstanceUniforms>() as _,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            label: Some("mesh instance uniforms"),
+            mapped_at_creation: false,
+        });
+
+        let instance_unif_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("mesh instance uniforms"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<InstanceUniforms>() as _),
+                    },
+                    count: None,
+                }],
+            });
+
+        let instance_unif_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mesh instance uniforms"),
+            layout: &instance_unif_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: instance_unif_buf.as_entire_binding(),
+            }],
+        });
+
+        // vertex layouts
 
         let vertex_buffers = |variant: PipelineVariant| {
             let mut bufs = Vec::new();
@@ -117,49 +152,7 @@ impl MeshRenderer {
                 ],
             });
 
-            // instance buffer
-
-            bufs.push(wgpu::VertexBufferLayout {
-                array_stride: size_of::<Instance>() as wgpu::BufferAddress,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &[
-                    // joint offset
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Uint32,
-                        offset: 0,
-                        shader_location: 2,
-                    },
-                    // model matrix column 0
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4,
-                        shader_location: 3,
-                    },
-                    // model matrix column 1
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3,
-                        shader_location: 4,
-                    },
-                    // model matrix column 2
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 2,
-                        shader_location: 5,
-                    },
-                    // model matrix column 3
-                    wgpu::VertexAttribute {
-                        format: wgpu::VertexFormat::Float32x3,
-                        offset: 4 + 4 * 3 * 3,
-                        shader_location: 6,
-                    },
-                ],
-            });
-
             // joints buffer
-            // comes after the instance buffer
-            // because we want the instance buffer to have the same binding index
-            // in both skinned and unskinned pipelines
 
             if matches!(variant, PipelineVariant::Skinned) {
                 bufs.push(wgpu::VertexBufferLayout {
@@ -170,13 +163,13 @@ impl MeshRenderer {
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Uint16x4,
                             offset: 0,
-                            shader_location: 7,
+                            shader_location: 2,
                         },
                         // weights
                         wgpu::VertexAttribute {
                             format: wgpu::VertexFormat::Float32x4,
                             offset: 2 * 4,
-                            shader_location: 8,
+                            shader_location: 3,
                         },
                     ],
                 });
@@ -196,6 +189,7 @@ impl MeshRenderer {
                 &light_bufs.bind_group_layout,
                 &joints_bind_group_layout,
                 Material::bind_group_layout(),
+                &instance_unif_bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -244,7 +238,11 @@ impl MeshRenderer {
             joints_bind_group,
             joints_bind_group_layout,
             joint_storage,
-            joint_capacity: 0,
+            joint_capacity: 1,
+            instance_unif_buf,
+            instance_unif_bind_group_layout,
+            instance_unif_bind_group,
+            instance_capacity: 1,
         }
     }
 
@@ -260,23 +258,15 @@ impl MeshRenderer {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
 
-        let mut meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
+        let meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
             .query_mut::<(&MeshId, Option<&m::Pose>)>()
             .into_iter()
             .map(|(_, values)| values)
-            .collect_vec();
+            .collect();
 
-        // split into skinned and unskinned meshes
-        let split_idx = itertools::partition(&mut meshes_in_world, |(id, _)| {
-            manager
-                .get_mesh(id)
-                .and_then(|mesh| mesh.gpu_data.joints_buf.as_ref())
-                .is_some()
-        });
-        let (skinned_meshes, unskinned_meshes) = meshes_in_world.split_at_mut(split_idx);
-        // group by mesh id for instanced rendering
-        skinned_meshes.sort_by_key(|(id, _)| *id);
-        unskinned_meshes.sort_by_key(|(id, _)| *id);
+        //
+        // gather joint matrices
+        //
 
         // collect all joint matrices in the world,
         // we'll shove them all in the storage buffer in one go.
@@ -316,84 +306,63 @@ impl MeshRenderer {
             });
         }
 
-        //
-        // upload uniforms and instance data
-        //
-
         queue.write_buffer(&self.joint_storage, 0, joint_matrices.as_bytes());
 
-        let mut curr_idx = 0;
-        let mut instances: Vec<Instance> = Vec::new();
-        while curr_idx < unskinned_meshes.len() {
-            let (id, _) = unskinned_meshes[curr_idx];
-            let Some(mesh) = manager.get_mesh_mut(id) else {
+        //
+        // gather uniforms
+        //
+
+        // collect all instance uniforms into a big buffer;
+        // we'll use dynamic offsets to bind them
+        let mut instance_unifs = Vec::new();
+        for (mesh_id, pose) in &meshes_in_world {
+            let Some(mesh) = manager.get_mesh_mut(mesh_id) else {
                 continue;
             };
 
-            // meshes were sorted by id earlier; collect all instances of the same mesh
-            while curr_idx < unskinned_meshes.len() && unskinned_meshes[curr_idx].0.mesh == id.mesh
-            {
-                let (_, pose) = unskinned_meshes[curr_idx];
+            let joint_offset = mesh_id
+                .skin
+                .and_then(|skin_id| skin_offset_map.get(skin_id).copied())
+                .unwrap_or(0);
 
-                // build the model matrix and push it into the instance buffer
-                let model = match pose {
-                    Some(&entity_pose) => entity_pose * mesh.offset,
-                    None => mesh.offset,
-                }
-                .into_homogeneous_matrix();
-                instances.push(Instance {
-                    joint_offset: 0,
-                    model_col0: model.cols[0].xyz().into(),
-                    model_col1: model.cols[1].xyz().into(),
-                    model_col2: model.cols[2].xyz().into(),
-                    model_col3: model.cols[3].xyz().into(),
-                });
-
-                curr_idx += 1;
+            let model = match pose {
+                Some(&entity_pose) => entity_pose * mesh.offset,
+                None => mesh.offset,
             }
+            .into_homogeneous_matrix();
+            let model_rows = model.transposed();
 
-            mesh.gpu_data.instance_buf.write(&instances);
-            mesh.gpu_data.instance_count = instances.len() as u32;
-            instances.clear();
+            instance_unifs.push(InstanceUniforms {
+                model_row0: model_rows.cols[0].into(),
+                model_row1: model_rows.cols[1].into(),
+                model_row2: model_rows.cols[2].into(),
+                joint_offset,
+                _pad: [0; 3],
+            });
         }
 
-        // same for skinned meshes, with the addition of finding the right joint offset
-        curr_idx = 0;
-        while curr_idx < skinned_meshes.len() {
-            let (id, _) = skinned_meshes[curr_idx];
-
-            let Some(mesh) = manager.get_mesh_mut(id) else {
-                continue;
-            };
-
-            while curr_idx < skinned_meshes.len() && skinned_meshes[curr_idx].0.mesh == id.mesh {
-                let (id, pose) = skinned_meshes[curr_idx];
-                let Some(&joint_offset) = id.skin.and_then(|skin_id| skin_offset_map.get(skin_id))
-                else {
-                    continue;
-                };
-
-                // build the model matrix and push it into the instance buffer
-                let model = match pose {
-                    Some(&entity_pose) => entity_pose * mesh.offset,
-                    None => mesh.offset,
-                }
-                .into_homogeneous_matrix();
-                instances.push(Instance {
-                    joint_offset,
-                    model_col0: model.cols[0].xyz().into(),
-                    model_col1: model.cols[1].xyz().into(),
-                    model_col2: model.cols[2].xyz().into(),
-                    model_col3: model.cols[3].xyz().into(),
-                });
-
-                curr_idx += 1;
-            }
-
-            mesh.gpu_data.instance_buf.write(&instances);
-            mesh.gpu_data.instance_count = instances.len() as u32;
-            instances.clear();
+        if instance_unifs.len() > self.instance_capacity {
+            self.instance_unif_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mesh instance uniforms"),
+                size: (size_of::<InstanceUniforms>() * instance_unifs.len()) as _,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.instance_unif_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("mesh instance uniforms"),
+                layout: &self.instance_unif_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.instance_unif_buf,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(size_of::<InstanceUniforms>() as _),
+                    }),
+                }],
+            });
         }
+
+        queue.write_buffer(&self.instance_unif_buf, 0, instance_unifs.as_bytes());
 
         //
         // render
@@ -403,42 +372,29 @@ impl MeshRenderer {
         pass.set_bind_group(1, &light_bufs.bind_group, &[]);
         pass.set_bind_group(2, &self.joints_bind_group, &[]);
 
-        fn draw_mesh<'pass>(
-            pass: &mut wgpu::RenderPass<'pass>,
-            manager: &'pass GraphicsManager,
-            mesh_id: &MeshId,
-        ) {
+        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate() {
             let Some(mesh) = manager.get_mesh(mesh_id) else {
                 return;
             };
 
             let material = manager.get_mesh_material(mesh_id);
             pass.set_bind_group(3, &material.bind_group, &[]);
+            pass.set_bind_group(
+                4,
+                &self.instance_unif_bind_group,
+                &[(idx * size_of::<InstanceUniforms>()) as u32],
+            );
 
             pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
-            pass.set_vertex_buffer(1, mesh.gpu_data.instance_buf.slice());
             if let Some(joints_buf) = &mesh.gpu_data.joints_buf {
-                pass.set_vertex_buffer(2, joints_buf.slice(..))
+                pass.set_vertex_buffer(1, joints_buf.slice(..));
+                pass.set_pipeline(&self.skinned_pipeline);
+            } else {
+                pass.set_pipeline(&self.unskinned_pipeline);
             }
             pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
 
-            pass.draw_indexed(
-                0..mesh.gpu_data.idx_count,
-                0,
-                0..mesh.gpu_data.instance_count,
-            );
-        }
-
-        pass.set_pipeline(&self.unskinned_pipeline);
-
-        for (id, _) in unskinned_meshes {
-            draw_mesh(pass, manager, id);
-        }
-
-        pass.set_pipeline(&self.skinned_pipeline);
-
-        for (id, _) in skinned_meshes {
-            draw_mesh(pass, manager, id);
+            pass.draw_indexed(0..mesh.gpu_data.idx_count, 0, 0..1);
         }
     }
 }
