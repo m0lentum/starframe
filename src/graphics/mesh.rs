@@ -45,6 +45,20 @@ impl<'a> MeshParams<'a> {
     pub fn upload(self) -> Mesh {
         let device = crate::Renderer::device();
         use wgpu::util::DeviceExt;
+
+        // sort triangles into reverse z order
+        // to make sure self-overlapping meshes render correctly with alpha blending
+        let mut sorted_indices: Vec<u16> = Vec::with_capacity(self.data.indices.len());
+        for tri_indices in self.data.indices.chunks_exact(3).sorted_by(|tri_a, tri_b| {
+            // assuming each triangle is aligned with the xy plane
+            // and using the first vertex's z coordinate for sorting
+            let z_a = self.data.vertices[tri_a[0] as usize].position.0[2];
+            let z_b = self.data.vertices[tri_b[0] as usize].position.0[2];
+            z_b.total_cmp(&z_a)
+        }) {
+            sorted_indices.extend_from_slice(tri_indices);
+        }
+
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
             contents: self.data.vertices.as_bytes(),
@@ -52,7 +66,7 @@ impl<'a> MeshParams<'a> {
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
-            contents: self.data.indices.as_bytes(),
+            contents: sorted_indices.as_bytes(),
             usage: wgpu::BufferUsages::INDEX,
         });
         let joints_buf = self.data.joints.as_ref().map(|joints| {
@@ -116,7 +130,7 @@ impl Mesh {
     /// This is more efficient than creating an entirely new mesh.
     /// Useful for e.g. hand-animating a mesh.
     ///
-    /// Note that This does not check if the number of vertices is the same as on initial upload.
+    /// Note that this does not check if the number of vertices is the same as on initial upload.
     /// Fewer vertices will leave vertices past the end unchanged,
     /// and more vertices will panic.
     pub fn overwrite(&self, vertices: &[Vertex]) {

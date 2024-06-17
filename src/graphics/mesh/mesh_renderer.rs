@@ -258,11 +258,21 @@ impl MeshRenderer {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
 
-        let meshes_in_world: Vec<(&MeshId, Option<&m::Pose>)> = world
+        let mut meshes_in_world: Vec<(MeshId, Option<m::Pose>)> = world
             .query_mut::<(&MeshId, Option<&m::Pose>)>()
             .into_iter()
-            .map(|(_, values)| values)
+            .map(|(_, (id, pose))| (*id, pose.copied()))
             .collect();
+        // sort in z order for transparency and efficient depth prepass.
+        // the z order of meshes very rarely changes,
+        // so there's some room for perf gains here by caching the order,
+        // but it's a little finicky to do well.
+        // prefer to profile before doing that
+        meshes_in_world.sort_by(|(_, pose_a), (_, pose_b)| {
+            let z_a = pose_a.map(|p| p.translation.z).unwrap_or(0.);
+            let z_b = pose_b.map(|p| p.translation.z).unwrap_or(0.);
+            z_a.total_cmp(&z_b)
+        });
 
         //
         // gather joint matrices
@@ -326,7 +336,7 @@ impl MeshRenderer {
                 .unwrap_or(0);
 
             let model = match pose {
-                Some(&entity_pose) => entity_pose * mesh.offset,
+                Some(entity_pose) => *entity_pose * mesh.offset,
                 None => mesh.offset,
             }
             .into_homogeneous_matrix();
@@ -356,6 +366,8 @@ impl MeshRenderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &self.instance_unif_buf,
                         offset: 0,
+                        // size set manually instead of using as_entire_binding
+                        // because we're using dynamic offsets
                         size: wgpu::BufferSize::new(size_of::<InstanceUniforms>() as _),
                     }),
                 }],
@@ -372,7 +384,8 @@ impl MeshRenderer {
         pass.set_bind_group(1, &light_bufs.bind_group, &[]);
         pass.set_bind_group(2, &self.joints_bind_group, &[]);
 
-        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate() {
+        // reverse z order - +z is away from camera
+        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate().rev() {
             let Some(mesh) = manager.get_mesh(mesh_id) else {
                 return;
             };
