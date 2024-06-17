@@ -40,38 +40,30 @@ var<uniform> dir_light: DirectionalLight;
 @group(1) @binding(1)
 var<storage> point_lights: PointLights;
 
-// joints
-
-@group(2) @binding(0)
-var<storage> joint_mats: array<mat4x4<f32>>;
-
 // material
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
 }
 
-@group(3) @binding(0)
+@group(2) @binding(0)
 var<uniform> material: MaterialUniforms;
-@group(3) @binding(1)
+@group(2) @binding(1)
 var t_diffuse: texture_2d<f32>;
-@group(3) @binding(2)
+@group(2) @binding(2)
 var s_diffuse: sampler;
-@group(3) @binding(3)
+@group(2) @binding(3)
 var t_normal: texture_2d<f32>;
-@group(3) @binding(4)
+@group(2) @binding(4)
 var s_normal: sampler;
 
 // instance
 
 struct InstanceUniforms {
-    model_row0: vec4<f32>,
-    model_row1: vec4<f32>,
-    model_row2: vec4<f32>,
-    joint_offset: u32,
+    model: mat4x4<f32>,
 }
 
-@group(4) @binding(0)
+@group(3) @binding(0)
 var<uniform> instance: InstanceUniforms;
 
 //
@@ -96,96 +88,16 @@ fn mat3_inv_scale_sq(m: mat3x3<f32>) -> vec3<f32> {
     );
 }
 
-// vertex shader with skinning, joints and weights in a separate vertex buffer
 @vertex
-fn vs_skinned(
+fn vs_main(
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
-    // additional vertex data for skinning in a separate buffer
-    // (u16 not supported in wgsl, so bit-twiddle joint indices from two u32s)
-    @location(2) joints: vec2<u32>,
-    @location(3) weights: vec4<f32>,
+    @location(2) normal: vec3<f32>,
+    @location(3) tangent: vec3<f32>,
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    let model = mat4x4<f32>(
-        instance.model_row0.x, instance.model_row1.x, instance.model_row2.x, 0.,
-        instance.model_row0.y, instance.model_row1.y, instance.model_row2.y, 0.,
-        instance.model_row0.z, instance.model_row1.z, instance.model_row2.z, 0.,
-        instance.model_row0.w, instance.model_row1.w, instance.model_row2.w, 1.,
-    );
-
-    let joint_indices = vec4<u32>(instance.joint_offset) + vec4<u32>(
-        joints[0] & 0xFFFFu,
-        joints[0] >> 16u,
-        joints[1] & 0xFFFFu,
-        joints[1] >> 16u
-    );
-
-    var pos = vec3<f32>(0.);
-    var has_joints = false;
-    // hardcoded normal and tangent in the x,y plane,
-    // since we don't support general 3D rendering
-    let normal = vec3<f32>(0., 0., -1.);
-    let tangent = vec3<f32>(1., 0., 0.);
-    var norm_skinned = vec3<f32>(0.);
-    var tan_skinned = vec3<f32>(0.);
-
-    for (var i = 0; i < 4; i++) {
-        let weight = weights[i];
-        if weight > 0. {
-            has_joints = true;
-            let ji = joint_indices[i];
-            let joint_mat = joint_mats[ji];
-            pos += weight * (joint_mat * vec4<f32>(position, 1.)).xyz;
-
-            let joint_mat_3 = mat3x3<f32>(joint_mat[0].xyz, joint_mat[1].xyz, joint_mat[2].xyz);
-            let inv_scaling = mat3_inv_scale_sq(joint_mat_3);
-            let weight_scaled = weight * inv_scaling;
-            norm_skinned += weight_scaled * (joint_mat_3 * normal);
-            tan_skinned += weight_scaled * (joint_mat_3 * tangent);
-        }
-    }
-    // if no joints had any weight, fallback to original values
-    if !has_joints {
-        pos = position;
-        norm_skinned = normal;
-        tan_skinned = tangent;
-    }
-
-    // transform skinned values with the model matrix
-    let pos_model = model * vec4<f32>(pos, 1.);
-    let model_3 = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
-    let inv_scaling = mat3_inv_scale_sq(model_3);
-    norm_skinned = inv_scaling * (model_3 * norm_skinned);
-    tan_skinned = inv_scaling * (model_3 * tan_skinned);
-
-    out.clip_position = camera.view_proj * pos_model;
-    out.world_position = pos_model.xyz;
-    out.tex_coords = tex_coords;
-    out.normal = normalize(norm_skinned);
-    out.tangent = normalize(tan_skinned);
-
-    return out;
-}
-
-// vertex shader without skinning
-@vertex
-fn vs_unskinned(
-    @location(0) position: vec3<f32>,
-    @location(1) tex_coords: vec2<f32>,
-) -> VertexOutput {
-    var out: VertexOutput;
-
-    let model = mat4x4<f32>(
-        instance.model_row0.x, instance.model_row1.x, instance.model_row2.x, 0.,
-        instance.model_row0.y, instance.model_row1.y, instance.model_row2.y, 0.,
-        instance.model_row0.z, instance.model_row1.z, instance.model_row2.z, 0.,
-        instance.model_row0.w, instance.model_row1.w, instance.model_row2.w, 1.,
-    );
-
-    let normal = vec3<f32>(0., 0., -1.);
-    let tangent = vec3<f32>(1., 0., 0.);
+    let model = instance.model;
 
     let pos_model = model * vec4<f32>(position, 1.);
     let model_3 = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);

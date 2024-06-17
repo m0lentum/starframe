@@ -1,7 +1,7 @@
 //! Intersection queries for points, rays, etc. vs. colliders.
 
 use super::{Collider, ColliderPolygon, AABB};
-use crate::math::{uv, UnitDVec2, PhysicsPose, unit_left_normal};
+use crate::math::{unit_left_normal, uv, PhysicsPose, UnitDVec2};
 
 /// Check whether or not a point intersects with a collider.
 pub fn point_collider_bool(point: uv::DVec2, pose: PhysicsPose, coll: Collider) -> bool {
@@ -74,18 +74,16 @@ pub fn ray_aabb(ray: Ray, aabb: AABB) -> Option<f64> {
 
     let mut t_enter = 0.0_f64;
     let mut t_exit = f64::MAX;
-    for (ray_to_min, ray_to_max, ray_speed) in
-        [(ray_to_min.x, ray_to_max.x, ray.dir.x), (ray_to_min.y, ray_to_max.y, ray.dir.y)]
-    {
+    for (ray_to_min, ray_to_max, ray_speed) in [
+        (ray_to_min.x, ray_to_max.x, ray.dir.x),
+        (ray_to_min.y, ray_to_max.y, ray.dir.y),
+    ] {
         if ray_speed.abs() < 0.00001 && ray_to_min.signum() == ray_to_max.signum() {
             // ray is parallel to this slab and starts outside of it
             return None;
         }
         let speed_inv = 1.0 / ray_speed;
-        let t = [
-            ray_to_min * speed_inv,
-            ray_to_max * speed_inv,
-        ];
+        let t = [ray_to_min * speed_inv, ray_to_max * speed_inv];
         let t = if t[0] < t[1] { t } else { [t[1], t[0]] };
         t_enter = t_enter.max(t[0]);
         t_exit = t_exit.min(t[1]);
@@ -106,13 +104,16 @@ pub struct CastHit {
 /// Find the value of t where the sphere with radius `r` swept along the ray
 /// `start + t * dir` intersects with the collider.
 #[inline]
-pub fn spherecast_collider(ray: Ray, r: f64, pose: PhysicsPose, mut coll: Collider) -> Option<CastHit> {
+pub fn spherecast_collider(
+    ray: Ray,
+    r: f64,
+    pose: PhysicsPose,
+    mut coll: Collider,
+) -> Option<CastHit> {
     coll.shape = coll.shape.expanded(r);
-    ray_collider(ray, pose, coll).map(|hit| {
-        CastHit {
-            point: hit.point - r * *hit.normal,
-            ..hit
-        }
+    ray_collider(ray, pose, coll).map(|hit| CastHit {
+        point: hit.point - r * *hit.normal,
+        ..hit
     })
 }
 
@@ -130,10 +131,11 @@ pub fn ray_collider(ray: Ray, pose: PhysicsPose, coll: Collider) -> Option<CastH
 
             // special case where ray is parallel to the capsule
             if ray.dir.y.abs() < 0.0001 {
-                    // outside in y direction, can't possibly hit
+                // outside in y direction, can't possibly hit
                 if ray.start.y.abs() >= r 
                     // inside, return None by convention
-                    || ray.start.x.abs() < hl{
+                    || ray.start.x.abs() < hl
+                {
                     return None;
                 } else {
                     return ray_circle(
@@ -156,7 +158,8 @@ pub fn ray_collider(ray: Ray, pose: PhysicsPose, coll: Collider) -> Option<CastH
                 // hit the flat edge
                 Some(CastHit {
                     t: t_to_facing_edge,
-                    normal: pose.rotation * UnitDVec2::new_unchecked(uv::DVec2::new(0.0, ray.start.y.signum())),
+                    normal: pose.rotation
+                        * UnitDVec2::new_unchecked(uv::DVec2::new(0.0, ray.start.y.signum())),
                     point: ray_worldspace.point_at_t(t_to_facing_edge),
                 })
             } else {
@@ -297,7 +300,7 @@ fn ray_circle(ray: Ray, circ_pos: uv::DVec2, r: f64) -> Option<CastHit> {
     if t >= 0.0 {
         let point = ray.point_at_t(t);
         let normal = UnitDVec2::new_normalize(point - circ_pos);
-        Some(CastHit {t, normal, point})
+        Some(CastHit { t, normal, point })
     } else {
         // ray started inside the circle, we consider that a miss here
         None

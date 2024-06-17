@@ -62,7 +62,7 @@ impl<'a> MeshParams<'a> {
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
             contents: self.data.vertices.as_bytes(),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
@@ -73,12 +73,13 @@ impl<'a> MeshParams<'a> {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: self.name,
                 contents: joints.as_bytes(),
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             })
         });
 
         let gpu_data = GpuMeshData {
             vertex_buf,
+            vertex_count: self.data.vertices.len() as u32,
             index_buf,
             idx_count: self.data.indices.len() as u32,
             joints_buf,
@@ -103,6 +104,7 @@ pub struct Mesh {
 #[derive(Debug)]
 pub(crate) struct GpuMeshData {
     vertex_buf: wgpu::Buffer,
+    vertex_count: u32,
     index_buf: wgpu::Buffer,
     idx_count: u32,
     joints_buf: Option<wgpu::Buffer>,
@@ -110,10 +112,29 @@ pub(crate) struct GpuMeshData {
 
 /// Position and texture coordinates of a vertex in a mesh.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 pub struct Vertex {
-    pub position: gx::util::GpuVec3,
-    pub tex_coords: gx::util::GpuVec2,
+    // padding needed between fields
+    // because we're putting vertices in storage buffers,
+    // hence all vec4s
+    // (this could be squeezed into a smaller space with a bit of care,
+    // but just trying to get it to work for now)
+    pub position: gx::util::GpuVec4,
+    pub tex_coords: gx::util::GpuVec4,
+    pub normal: gx::util::GpuVec4,
+    pub tangent: gx::util::GpuVec4,
+}
+
+impl Default for Vertex {
+    fn default() -> Self {
+        Self {
+            position: [0.; 3].into(),
+            tex_coords: [0.; 2].into(),
+            // normal and tangent aligning with the xy plane
+            normal: [0., 0., -1.].into(),
+            tangent: [1., 0., 0.].into(),
+        }
+    }
 }
 
 /// Joints and weights of a vertex in a skinned mesh.
@@ -257,6 +278,7 @@ impl MeshData {
                     -(vert.y + height / 2.) / height,
                 )
                 .into(),
+                ..Default::default()
             })
             .collect();
 
@@ -290,6 +312,7 @@ impl From<ConvexMeshShape> for MeshData {
                     .map(|vert| Vertex {
                         position: vert.into(),
                         tex_coords: flip_y((vert + m::Vec2::new(r, r)) / diameter).into(),
+                        ..Default::default()
                     })
                     .collect()
             }
@@ -310,6 +333,7 @@ impl From<ConvexMeshShape> for MeshData {
                         (vert.y + hh) / h as f32,
                     ))
                     .into(),
+                    ..Default::default()
                 })
                 .collect()
             }
@@ -337,6 +361,7 @@ impl From<ConvexMeshShape> for MeshData {
                             (vert.y + r) / (2. * r),
                         ))
                         .into(),
+                        ..Default::default()
                     })
                     .collect()
             }

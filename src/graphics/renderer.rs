@@ -1,4 +1,8 @@
-use super::{light, line_renderer::LineRenderer, mesh::MeshRenderer};
+use super::{
+    light,
+    line_renderer::LineRenderer,
+    mesh::{skin::SkinPipeline, MeshRenderer},
+};
 use std::sync::OnceLock;
 
 // there is only ever one wgpu context,
@@ -23,10 +27,11 @@ pub struct Renderer {
     depth_view: wgpu::TextureView,
     light_bufs: light::LightBuffers,
 
-    // rendering subsystems in lazily initialized Options
+    mesh_renderer: MeshRenderer,
+    skin_pl: SkinPipeline,
+    // rendering subsystems that aren't always used in lazily initialized Options
     // so we can have a unified API to call them through `Frame`
     // but don't pay for them if the user doesn't use them
-    mesh_renderer: Option<MeshRenderer>,
     line_renderer: Option<LineRenderer>,
 }
 
@@ -107,6 +112,8 @@ impl Renderer {
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         let light_bufs = light::LightBuffers::new();
+        let mesh_renderer = MeshRenderer::new(&light_bufs);
+        let skin_pl = SkinPipeline::new();
 
         Ok(Renderer {
             surface,
@@ -115,7 +122,8 @@ impl Renderer {
             depth_tex,
             depth_view,
             light_bufs,
-            mesh_renderer: None,
+            mesh_renderer,
+            skin_pl,
             line_renderer: None,
         })
     }
@@ -306,19 +314,34 @@ impl<'a> Frame<'a> {
         let point_lights = std::mem::take(&mut self.point_lights);
         self.renderer.light_bufs.write_point_lights(point_lights);
 
-        let mesh_rend = self
-            .renderer
-            .mesh_renderer
-            .get_or_insert_with(|| MeshRenderer::new(&self.renderer.light_bufs));
+        let encoder = self.encoder.as_mut().unwrap();
 
-        let mut pass = Self::_pass(
-            self.encoder.as_mut().unwrap(),
-            &self.view,
-            Some(&self.renderer.depth_view),
-            self.clear_color.take(),
-        );
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("skin"),
+                timestamp_writes: None,
+            });
 
-        mesh_rend.draw(&mut pass, manager, world, camera, &self.renderer.light_bufs);
+            self.renderer.skin_pl.compute_skins(&mut cpass, manager);
+        }
+
+        {
+            let mut rpass = Self::_pass(
+                encoder,
+                &self.view,
+                Some(&self.renderer.depth_view),
+                self.clear_color.take(),
+            );
+
+            let mesh_rend = &mut self.renderer.mesh_renderer;
+            mesh_rend.draw(
+                &mut rpass,
+                manager,
+                world,
+                camera,
+                &self.renderer.light_bufs,
+            );
+        }
     }
 
     /// Draw a collection of line strips with the line renderer.
