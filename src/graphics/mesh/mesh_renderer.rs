@@ -86,19 +86,19 @@ impl MeshRenderer {
                 // texture coordinates
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: 4 * 4,
+                    offset: 4 * 3,
                     shader_location: 1,
                 },
                 // normal
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: 4 * 4 + 4 * 4,
+                    offset: 4 * 3 + 4 * 2,
                     shader_location: 2,
                 },
                 // tangent
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: 4 * 4 + 4 * 4 + 4 * 4,
+                    offset: 4 * 3 + 4 * 2 + 4 * 3,
                     shader_location: 3,
                 },
             ],

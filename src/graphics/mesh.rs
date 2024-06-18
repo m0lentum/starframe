@@ -119,10 +119,10 @@ pub struct Vertex {
     // hence all vec4s
     // (this could be squeezed into a smaller space with a bit of care,
     // but just trying to get it to work for now)
-    pub position: gx::util::GpuVec4,
-    pub tex_coords: gx::util::GpuVec4,
-    pub normal: gx::util::GpuVec4,
-    pub tangent: gx::util::GpuVec4,
+    pub position: gx::util::GpuVec3,
+    pub tex_coords: gx::util::GpuVec2,
+    pub normal: gx::util::GpuVec3,
+    pub tangent: gx::util::GpuVec3,
 }
 
 impl Default for Vertex {
