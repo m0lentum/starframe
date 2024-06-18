@@ -99,14 +99,14 @@ fn vs_main(
 
     let model = instance.model;
 
-    let pos_model = model * vec4<f32>(position, 1.);
+    let pos_world = model * vec4<f32>(position, 1.);
     let model_3 = mat3x3<f32>(model[0].xyz, model[1].xyz, model[2].xyz);
     let inv_scaling = mat3_inv_scale_sq(model_3);
     let norm_transformed = inv_scaling * (model_3 * normal);
     let tan_transformed = inv_scaling * (model_3 * tangent);
 
-    out.clip_position = camera.view_proj * pos_model;
-    out.world_position = pos_model.xyz;
+    out.clip_position = camera.view_proj * pos_world;
+    out.world_position = pos_world.xyz;
     out.tex_coords = tex_coords;
     out.normal = normalize(norm_transformed);
     out.tangent = normalize(tan_transformed);

@@ -14,8 +14,8 @@ use std::mem::size_of;
 use zerocopy::{AsBytes, FromBytes};
 
 pub struct MeshRenderer {
-    pipeline: wgpu::RenderPipeline,
-    // same for instance uniforms
+    depth_pipeline: wgpu::RenderPipeline,
+    main_pipeline: wgpu::RenderPipeline,
     instance_unif_buf: wgpu::Buffer,
     instance_unif_bind_group_layout: wgpu::BindGroupLayout,
     instance_unif_bind_group: wgpu::BindGroup,
@@ -36,7 +36,9 @@ impl MeshRenderer {
     pub(crate) fn new(light_bufs: &LightBuffers) -> Self {
         let device = crate::Renderer::device();
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/mesh.wgsl"));
+        let depth_shader =
+            device.create_shader_module(wgpu::include_wgsl!("../shaders/depth_prepass.wgsl"));
+        let main_shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/mesh.wgsl"));
 
         // instance uniforms bind group
 
@@ -108,7 +110,54 @@ impl MeshRenderer {
         // pipeline
         //
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let depth_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("depth prepass"),
+            bind_group_layouts: &[
+                crate::Camera::bind_group_layout(),
+                &light_bufs.bind_group_layout,
+                Material::bind_group_layout(),
+                &instance_unif_bind_group_layout,
+            ],
+            push_constant_ranges: &[],
+        });
+        let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("depth prepass"),
+            layout: Some(&depth_pl_layout),
+            vertex: wgpu::VertexState {
+                module: &depth_shader,
+                entry_point: "vs_main",
+                buffers: &[vertex_buffers.clone()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &depth_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: SWAPCHAIN_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 1,
+                    ..Default::default()
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+        });
+
+        let main_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh"),
             bind_group_layouts: &[
                 crate::Camera::bind_group_layout(),
@@ -118,16 +167,16 @@ impl MeshRenderer {
             ],
             push_constant_ranges: &[],
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let main_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("mesh"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&main_pl_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &main_shader,
                 entry_point: "vs_main",
                 buffers: &[vertex_buffers],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &main_shader,
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: SWAPCHAIN_FORMAT,
@@ -153,7 +202,8 @@ impl MeshRenderer {
         });
 
         Self {
-            pipeline,
+            depth_pipeline,
+            main_pipeline,
             instance_unif_buf,
             instance_unif_bind_group_layout,
             instance_unif_bind_group,
@@ -241,36 +291,56 @@ impl MeshRenderer {
         // render
         //
 
-        pass.set_pipeline(&self.pipeline);
+        // depth prepass in forward z order (+z is away from camera),
+        // drawing closest things first to maximize depth test discards
+
+        pass.set_pipeline(&self.depth_pipeline);
         pass.set_bind_group(0, &camera.bind_group, &[]);
         pass.set_bind_group(1, &light_bufs.bind_group, &[]);
 
-        // reverse z order - +z is away from camera
-        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate().rev() {
-            let Some(mesh) = manager.get_mesh(mesh_id) else {
-                continue;
-            };
-
-            let material = manager.get_mesh_material(mesh_id);
-            pass.set_bind_group(2, &material.bind_group, &[]);
-            pass.set_bind_group(
-                3,
-                &self.instance_unif_bind_group,
-                &[(idx * size_of::<InstanceUniforms>()) as u32],
-            );
-
-            if let Some(target) = mesh_id
-                .skin
-                .and_then(|skin_id| manager.skins.get(skin_id))
-                .and_then(|skin| skin.compute_res.as_ref())
-            {
-                pass.set_vertex_buffer(0, target.vertex_buf.slice(..));
-            } else {
-                pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
-            }
-            pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-
-            pass.draw_indexed(0..mesh.gpu_data.idx_count, 0, 0..1);
+        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate() {
+            self.draw_mesh(pass, manager, idx, mesh_id);
         }
+
+        // full render in reverse z order for transparency
+
+        pass.set_pipeline(&self.main_pipeline);
+
+        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate().rev() {
+            self.draw_mesh(pass, manager, idx, mesh_id);
+        }
+    }
+
+    fn draw_mesh<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        manager: &'pass GraphicsManager,
+        idx: usize,
+        mesh_id: &MeshId,
+    ) {
+        let Some(mesh) = manager.get_mesh(mesh_id) else {
+            return;
+        };
+
+        let material = manager.get_mesh_material(mesh_id);
+        pass.set_bind_group(2, &material.bind_group, &[]);
+        pass.set_bind_group(
+            3,
+            &self.instance_unif_bind_group,
+            &[(idx * size_of::<InstanceUniforms>()) as u32],
+        );
+
+        if let Some(target) = mesh_id
+            .skin
+            .and_then(|skin_id| manager.skins.get(skin_id))
+            .and_then(|skin| skin.compute_res.as_ref())
+        {
+            pass.set_vertex_buffer(0, target.vertex_buf.slice(..));
+        } else {
+            pass.set_vertex_buffer(0, mesh.gpu_data.vertex_buf.slice(..));
+        }
+        pass.set_index_buffer(mesh.gpu_data.index_buf.slice(..), wgpu::IndexFormat::Uint16);
+
+        pass.draw_indexed(0..mesh.gpu_data.idx_count, 0, 0..1);
     }
 }
