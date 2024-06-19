@@ -1,6 +1,6 @@
 use crate::{
     graphics::{
-        light::LightBuffers,
+        light::LightManager,
         manager::MeshId,
         material::Material,
         renderer::{DEPTH_FORMAT, SWAPCHAIN_FORMAT},
@@ -20,6 +20,7 @@ pub struct MeshRenderer {
     instance_unif_bind_group_layout: wgpu::BindGroupLayout,
     instance_unif_bind_group: wgpu::BindGroup,
     instance_capacity: usize,
+    meshes_sorted: Vec<(MeshId, Option<m::Pose>)>,
 }
 
 #[repr(C)]
@@ -33,7 +34,7 @@ struct InstanceUniforms {
 }
 
 impl MeshRenderer {
-    pub(crate) fn new(light_bufs: &LightBuffers) -> Self {
+    pub(crate) fn new(light_man: &LightManager) -> Self {
         let device = crate::Renderer::device();
 
         let depth_shader =
@@ -114,7 +115,6 @@ impl MeshRenderer {
             label: Some("depth prepass"),
             bind_group_layouts: &[
                 crate::Camera::bind_group_layout(),
-                &light_bufs.bind_group_layout,
                 Material::bind_group_layout(),
                 &instance_unif_bind_group_layout,
             ],
@@ -131,11 +131,7 @@ impl MeshRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
                 entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: SWAPCHAIN_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::empty(),
-                })],
+                targets: &[],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -161,7 +157,7 @@ impl MeshRenderer {
             label: Some("mesh"),
             bind_group_layouts: &[
                 crate::Camera::bind_group_layout(),
-                &light_bufs.bind_group_layout,
+                &light_man.bind_group_layout,
                 Material::bind_group_layout(),
                 &instance_unif_bind_group_layout,
             ],
@@ -208,32 +204,28 @@ impl MeshRenderer {
             instance_unif_bind_group_layout,
             instance_unif_bind_group,
             instance_capacity: 1,
+            meshes_sorted: Vec::new(),
         }
     }
 
-    /// Draw all the meshes in the world.
-    pub(crate) fn draw<'pass>(
-        &'pass mut self,
-        pass: &mut wgpu::RenderPass<'pass>,
-        manager: &'pass mut GraphicsManager,
-        world: &mut hecs::World,
-        camera: &'pass Camera,
-        light_bufs: &'pass LightBuffers,
-    ) {
+    /// Sort meshes by depth and upload their information to the gpu.
+    pub(crate) fn prepare(&mut self, manager: &mut GraphicsManager, world: &mut hecs::World) {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
 
-        let mut meshes_in_world: Vec<(MeshId, Option<m::Pose>)> = world
-            .query_mut::<(&MeshId, Option<&m::Pose>)>()
-            .into_iter()
-            .map(|(_, (id, pose))| (*id, pose.copied()))
-            .collect();
+        self.meshes_sorted.clear();
+        self.meshes_sorted.extend(
+            world
+                .query_mut::<(&MeshId, Option<&m::Pose>)>()
+                .into_iter()
+                .map(|(_, (id, pose))| (*id, pose.copied())),
+        );
         // sort in z order for transparency and efficient depth prepass.
         // the z order of meshes very rarely changes,
         // so there's some room for perf gains here by caching the order,
         // but it's a little finicky to do well.
         // prefer to profile before doing that
-        meshes_in_world.sort_by(|(_, pose_a), (_, pose_b)| {
+        self.meshes_sorted.sort_by(|(_, pose_a), (_, pose_b)| {
             let z_a = pose_a.map(|p| p.translation.z).unwrap_or(0.);
             let z_b = pose_b.map(|p| p.translation.z).unwrap_or(0.);
             z_a.total_cmp(&z_b)
@@ -246,7 +238,7 @@ impl MeshRenderer {
         // collect all instance uniforms into a big buffer;
         // we'll use dynamic offsets to bind them
         let mut instance_unifs = Vec::new();
-        for (mesh_id, pose) in &meshes_in_world {
+        for (mesh_id, pose) in &self.meshes_sorted {
             let Some(mesh) = manager.get_mesh_mut(mesh_id) else {
                 continue;
             };
@@ -286,28 +278,40 @@ impl MeshRenderer {
         }
 
         queue.write_buffer(&self.instance_unif_buf, 0, instance_unifs.as_bytes());
+    }
 
-        //
-        // render
-        //
-
+    /// Draw meshes into the depth buffer.
+    pub(crate) fn depth_pass<'pass>(
+        &'pass mut self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        manager: &'pass mut GraphicsManager,
+        camera: &'pass Camera,
+    ) {
         // depth prepass in forward z order (+z is away from camera),
         // drawing closest things first to maximize depth test discards
-
         pass.set_pipeline(&self.depth_pipeline);
         pass.set_bind_group(0, &camera.bind_group, &[]);
-        pass.set_bind_group(1, &light_bufs.bind_group, &[]);
 
-        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate() {
-            self.draw_mesh(pass, manager, idx, mesh_id);
+        for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate() {
+            self.draw_mesh(pass, manager, idx, mesh_id, false);
         }
+    }
 
+    pub(crate) fn draw_pass<'pass>(
+        &'pass mut self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        manager: &'pass mut GraphicsManager,
+        camera: &'pass Camera,
+        light_man: &'pass LightManager,
+    ) {
         // full render in reverse z order for transparency
 
         pass.set_pipeline(&self.main_pipeline);
+        pass.set_bind_group(0, &camera.bind_group, &[]);
+        pass.set_bind_group(1, &light_man.bind_group, &[]);
 
-        for (idx, (mesh_id, _)) in meshes_in_world.iter().enumerate().rev() {
-            self.draw_mesh(pass, manager, idx, mesh_id);
+        for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate().rev() {
+            self.draw_mesh(pass, manager, idx, mesh_id, true);
         }
     }
 
@@ -317,15 +321,18 @@ impl MeshRenderer {
         manager: &'pass GraphicsManager,
         idx: usize,
         mesh_id: &MeshId,
+        lights_bound: bool,
     ) {
         let Some(mesh) = manager.get_mesh(mesh_id) else {
             return;
         };
 
+        let bg_offset = if lights_bound { 1 } else { 0 };
+
         let material = manager.get_mesh_material(mesh_id);
-        pass.set_bind_group(2, &material.bind_group, &[]);
+        pass.set_bind_group(1 + bg_offset, &material.bind_group, &[]);
         pass.set_bind_group(
-            3,
+            2 + bg_offset,
             &self.instance_unif_bind_group,
             &[(idx * size_of::<InstanceUniforms>()) as u32],
         );

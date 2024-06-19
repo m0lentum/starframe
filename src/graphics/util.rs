@@ -104,31 +104,34 @@ impl From<[f32; 3]> for GpuVec3 {
 }
 
 /// Type for sending 4D vectors (like colors) to the GPU.
+///
+/// Default conversions set the fourth element to 1
+/// (homogeneous point or full-opacity color).
 #[derive(Clone, Copy, Debug, Default, AsBytes, FromBytes)]
 #[repr(transparent)]
 pub struct GpuVec4(pub [f32; 4]);
 
 impl From<m::Vec2> for GpuVec4 {
     fn from(v: m::Vec2) -> Self {
-        Self([v.x, v.y, 0.0, 0.0])
+        Self([v.x, v.y, 0.0, 1.0])
     }
 }
 
 impl From<[f32; 2]> for GpuVec4 {
     fn from(v: [f32; 2]) -> Self {
-        Self([v[0], v[1], 0.0, 0.0])
+        Self([v[0], v[1], 0.0, 1.0])
     }
 }
 
 impl From<uv::Vec3> for GpuVec4 {
     fn from(v: uv::Vec3) -> Self {
-        Self([v.x, v.y, v.z, 0.0])
+        Self([v.x, v.y, v.z, 1.0])
     }
 }
 
 impl From<[f32; 3]> for GpuVec4 {
     fn from(v: [f32; 3]) -> Self {
-        Self([v[0], v[1], v[2], 0.0])
+        Self([v[0], v[1], v[2], 1.0])
     }
 }
 

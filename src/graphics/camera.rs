@@ -1,5 +1,5 @@
 use crate::{
-    graphics::util::GpuMat4,
+    graphics::util::{GpuMat4, GpuVec2Padded},
     math::{self as m, uv},
 };
 use std::{mem::size_of, sync::OnceLock};
@@ -36,6 +36,8 @@ pub struct Camera {
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
 pub(crate) struct CameraUniforms {
     view_proj: GpuMat4,
+    view: GpuMat4,
+    viewport_size_world: GpuVec2Padded,
 }
 
 impl Default for Camera {
@@ -83,7 +85,7 @@ impl Camera {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -100,8 +102,14 @@ impl Camera {
     /// Call at the start of a frame.
     pub fn upload(&mut self) {
         let queue = crate::Renderer::queue();
+
+        let view = self.view_matrix();
+        let proj = self.projection_matrix();
+        let view_proj = proj * view;
         let unif = CameraUniforms {
-            view_proj: self.view_proj_matrix().into(),
+            view_proj: view_proj.into(),
+            view: view.into(),
+            viewport_size_world: self.visible_area_size().into(),
         };
         queue.write_buffer(&self.uniform_buf, 0, unif.as_bytes());
     }
@@ -112,12 +120,28 @@ impl Camera {
         (vp_w as f32 / self.view_width).min(vp_h as f32 / self.view_height) * self.zoom
     }
 
-    /// View-projection matrix of this camera.
-    ///
-    /// Usually doesn't need to be called directly,
-    /// since the camera handles uploading this to the GPU internally
-    /// (with [`upload`][Self::upload]).
-    pub fn view_proj_matrix(&self) -> uv::Mat4 {
+    /// Compute the area seen by this camera,
+    /// taking into account zoom level and window aspect ratio.
+    pub fn visible_area_size(&self) -> m::Vec2 {
+        let window = crate::Renderer::window();
+        let win_size = window.inner_size();
+        let aspect_ratio = win_size.width as f32 / win_size.height as f32;
+        let target_ratio = self.view_width / self.view_height;
+        if aspect_ratio <= target_ratio {
+            m::Vec2::new(self.view_width, self.view_width / aspect_ratio) / self.zoom
+        } else {
+            m::Vec2::new(self.view_height * aspect_ratio, self.view_height) / self.zoom
+        }
+    }
+
+    /// The matrix transforming coordinates from world space to camera space.
+    #[inline]
+    pub fn view_matrix(&self) -> uv::Mat4 {
+        self.pose.inversed().into_homogeneous_matrix()
+    }
+
+    /// The orthographic projection matrix used by this camera.
+    pub fn projection_matrix(&self) -> uv::Mat4 {
         let window = crate::Renderer::window();
         // This assumes that the viewport being drawn to is the game window,
         // which is currently the only target you can draw to.
@@ -127,21 +151,17 @@ impl Camera {
         // alternatively the viewport size could be a different uniform
         // instead of being packaged into the projection matrix
         let viewport_size = window.inner_size().into();
-
-        let view = self.pose.inversed().into_homogeneous_matrix();
-
         let ppwu = self.pixels_per_world_unit(viewport_size);
+
         let z_range_size = self.z_far - self.z_near;
         // orthographic projection from starframe's left-handed space
         // to the also left-handed wgpu device coordinates
-        let projection = uv::Mat4::new(
+        uv::Mat4::new(
             uv::Vec4::new(ppwu * 2. / viewport_size.0 as f32, 0., 0., 0.),
             uv::Vec4::new(0., ppwu * 2. / viewport_size.1 as f32, 0., 0.),
             uv::Vec4::new(0., 0., 1. / z_range_size, 0.),
             uv::Vec4::new(0., 0., -self.z_near / z_range_size, 1.),
-        );
-
-        projection * view
+        )
     }
 
     /// Transform a point from screen space into world space.

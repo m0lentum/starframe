@@ -13,6 +13,11 @@ use std::sync::OnceLock;
 static DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
 static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
 static WINDOW: OnceLock<winit::window::Window> = OnceLock::new();
+// bind group layout in a global for convenience.
+// these are a bit scattered right now with dependencies in many places
+// and the globals are a little ugly,
+// might want to refactor bind group layouts into one place
+static DEPTH_BIND_GROUP_LAYOUT: OnceLock<wgpu::BindGroupLayout> = OnceLock::new();
 
 pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
@@ -25,7 +30,10 @@ pub struct Renderer {
 
     depth_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
-    light_bufs: light::LightBuffers,
+    // bind group for reading the depth texture in a shader
+    depth_bind_group: wgpu::BindGroup,
+
+    light_man: light::LightManager,
 
     mesh_renderer: MeshRenderer,
     skin_pl: SkinPipeline,
@@ -110,9 +118,10 @@ impl Renderer {
 
         let depth_tex = Self::create_depth_texture(window_size);
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_bind_group = Self::create_depth_bind_group(&depth_view);
 
-        let light_bufs = light::LightBuffers::new();
-        let mesh_renderer = MeshRenderer::new(&light_bufs);
+        let light_man = light::LightManager::new();
+        let mesh_renderer = MeshRenderer::new(&light_man);
         let skin_pl = SkinPipeline::new();
 
         Ok(Renderer {
@@ -121,7 +130,8 @@ impl Renderer {
             window_scale_factor,
             depth_tex,
             depth_view,
-            light_bufs,
+            depth_bind_group,
+            light_man,
             mesh_renderer,
             skin_pl,
             line_renderer: None,
@@ -168,6 +178,8 @@ impl Renderer {
         self.depth_view = self
             .depth_tex
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.depth_bind_group = Self::create_depth_bind_group(&self.depth_view);
+        self.light_man.recreate_light_bins(new_size.into());
     }
 
     fn create_depth_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
@@ -185,6 +197,38 @@ impl Renderer {
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
+        })
+    }
+
+    pub(crate) fn depth_bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
+        DEPTH_BIND_GROUP_LAYOUT.get_or_init(|| {
+            let device = Self::device();
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("depth"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            })
+        })
+    }
+
+    fn create_depth_bind_group(view: &wgpu::TextureView) -> wgpu::BindGroup {
+        let device = Self::device();
+        let layout = Self::depth_bind_group_layout();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("depth"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            }],
         })
     }
 
@@ -310,21 +354,59 @@ impl<'a> Frame<'a> {
         world: &mut hecs::World,
         camera: &crate::Camera,
     ) {
-        self.renderer.light_bufs.write_main_light(self.main_light);
+        self.renderer.light_man.write_main_light(self.main_light);
         let point_lights = std::mem::take(&mut self.point_lights);
-        self.renderer.light_bufs.write_point_lights(point_lights);
+        self.renderer.light_man.write_point_lights(point_lights);
 
         let encoder = self.encoder.as_mut().unwrap();
 
+        // compute skins
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("skin"),
+                label: None,
                 timestamp_writes: None,
             });
-
             self.renderer.skin_pl.compute_skins(&mut cpass, manager);
         }
 
+        // upload mesh data
+        self.renderer.mesh_renderer.prepare(manager, world);
+
+        // render depth
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.renderer.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            let mesh_rend = &mut self.renderer.mesh_renderer;
+            mesh_rend.depth_pass(&mut rpass, manager, camera);
+        }
+
+        // compute light culling
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            self.renderer.light_man.cull_lights(
+                &mut cpass,
+                camera,
+                &self.renderer.depth_bind_group,
+            );
+        }
+
+        // final render
         {
             let mut rpass = Self::_pass(
                 encoder,
@@ -334,13 +416,7 @@ impl<'a> Frame<'a> {
             );
 
             let mesh_rend = &mut self.renderer.mesh_renderer;
-            mesh_rend.draw(
-                &mut rpass,
-                manager,
-                world,
-                camera,
-                &self.renderer.light_bufs,
-            );
+            mesh_rend.draw_pass(&mut rpass, manager, camera, &self.renderer.light_man);
         }
     }
 
@@ -385,7 +461,7 @@ impl<'a> Frame<'a> {
         depth_view: Option<&'view wgpu::TextureView>,
         clear_color: Option<wgpu::Color>,
     ) -> wgpu::RenderPass<'enc> {
-        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target_view,
@@ -403,11 +479,7 @@ impl<'a> Frame<'a> {
                 wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: if clear_color.is_some() {
-                            wgpu::LoadOp::Clear(1.)
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
+                        load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
@@ -415,9 +487,7 @@ impl<'a> Frame<'a> {
             }),
             occlusion_query_set: None,
             timestamp_writes: None,
-        });
-
-        pass
+        })
     }
 
     /// Access the command encoder recording commands for this frame.

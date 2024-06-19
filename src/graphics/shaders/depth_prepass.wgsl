@@ -15,15 +15,15 @@ struct MaterialUniforms {
     base_color: vec4<f32>,
 }
 
-@group(2) @binding(0)
+@group(1) @binding(0)
 var<uniform> material: MaterialUniforms;
-@group(2) @binding(1)
+@group(1) @binding(1)
 var t_diffuse: texture_2d<f32>;
-@group(2) @binding(2)
+@group(1) @binding(2)
 var s_diffuse: sampler;
-@group(2) @binding(3)
+@group(1) @binding(3)
 var t_normal: texture_2d<f32>;
-@group(2) @binding(4)
+@group(1) @binding(4)
 var s_normal: sampler;
 
 // instance
@@ -32,7 +32,7 @@ struct InstanceUniforms {
     model: mat4x4<f32>,
 }
 
-@group(3) @binding(0)
+@group(2) @binding(0)
 var<uniform> instance: InstanceUniforms;
 
 struct VertexOutput {

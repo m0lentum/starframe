@@ -13,6 +13,9 @@ var<uniform> camera: CameraUniforms;
 
 // lights
 
+const MAX_LIGHTS: u32 = 1024u;
+const TILE_SIZE: u32 = 16u;
+
 struct DirectionalLight {
     direct_color: vec3<f32>,
     ambient_color: vec3<f32>,
@@ -32,13 +35,17 @@ struct PointLight {
 
 struct PointLights {
     count: u32,
-    lights: array<PointLight, 1024>,
+    tiles_x: u32,
+    tiles_y: u32,
+    lights: array<PointLight, MAX_LIGHTS>,
 }
 
 @group(1) @binding(0)
-var<uniform> dir_light: DirectionalLight;
-@group(1) @binding(1)
 var<storage> point_lights: PointLights;
+@group(1) @binding(1)
+var<storage, read_write> light_bins: array<i32>;
+@group(1) @binding(2)
+var<uniform> dir_light: DirectionalLight;
 
 // material
 
@@ -158,8 +165,19 @@ fn fs_main(
 
     // point lights
 
+    // get the pixel we're in from the screenspace coordinates
+    // and select the right tile based on it
+    let pixel = vec2<u32>(in.clip_position.xy);
+    let tile_id = pixel / TILE_SIZE;
+    let bin_idx = tile_id.y * point_lights.tiles_x + tile_id.x;
+    let bin_start = bin_idx * MAX_LIGHTS;
+
     var point_light_total = vec3<f32>(0., 0., 0.);
-    for (var li: u32 = 0u; li < point_lights.count; li++) {
+    for (var bi: u32 = 0u; bi < point_lights.count; bi++) {
+        let li = light_bins[bin_start + bi];
+        if li == -1 {
+            break;
+        }
         let light = point_lights.lights[li];
 
         let from_light = in.world_position - light.position;
