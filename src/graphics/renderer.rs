@@ -421,11 +421,11 @@ impl<'a> Frame<'a> {
     }
 
     /// Draw a collection of line strips with the line renderer.
-    pub fn draw_lines(
+    pub fn draw_lines<'s>(
         &mut self,
         manager: &crate::GraphicsManager,
         camera: &crate::Camera,
-        lines: &[super::line_renderer::LineStrip],
+        lines: impl IntoIterator<Item = &'s super::line_renderer::LineStrip>,
     ) {
         let line_rend = self
             .renderer
