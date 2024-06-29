@@ -1,11 +1,9 @@
+use super::{
+    light,
+    line_renderer::LineRenderer,
+    mesh::{skin::SkinPipeline, MeshRenderer},
+};
 use std::sync::OnceLock;
-
-mod deferred;
-pub use deferred::{DeferredContext, DeferredPass, GBuffer, GBuffers, PostShadeContext};
-
-mod shading;
-use shading::ShadingPipeline;
-pub use shading::{DirectionalLight, PointLight};
 
 // there is only ever one wgpu context,
 // and since the device and queue are frequently needed to create resources,
@@ -15,8 +13,14 @@ pub use shading::{DirectionalLight, PointLight};
 static DEVICE: OnceLock<wgpu::Device> = OnceLock::new();
 static QUEUE: OnceLock<wgpu::Queue> = OnceLock::new();
 static WINDOW: OnceLock<winit::window::Window> = OnceLock::new();
+// bind group layout in a global for convenience.
+// these are a bit scattered right now with dependencies in many places
+// and the globals are a little ugly,
+// might want to refactor bind group layouts into one place
+static DEPTH_BIND_GROUP_LAYOUT: OnceLock<wgpu::BindGroupLayout> = OnceLock::new();
 
 pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
@@ -24,21 +28,19 @@ pub struct Renderer {
     surface_config: wgpu::SurfaceConfiguration,
     window_scale_factor: f64,
 
-    /// GBuffers for deferred shading.
-    pub gbufs: GBuffers,
-    deferred_shading_pl: ShadingPipeline,
-    // current active frame stored here instead of in RenderContext
-    // so that we can interleave drawing to window and drawing to textures
-    active_frame: Option<Frame>,
+    depth_tex: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    // bind group for reading the depth texture in a shader
+    depth_bind_group: wgpu::BindGroup,
 
-    /// Index incremented whenever the window is resized,
-    /// used to notify rendering subsystems to update their internal textures.
-    pub generation: usize,
-}
+    light_man: light::LightManager,
 
-struct Frame {
-    surface: wgpu::SurfaceTexture,
-    view: wgpu::TextureView,
+    mesh_renderer: MeshRenderer,
+    skin_pl: SkinPipeline,
+    // rendering subsystems that aren't always used in lazily initialized Options
+    // so we can have a unified API to call them through `Frame`
+    // but don't pay for them if the user doesn't use them
+    line_renderer: Option<LineRenderer>,
 }
 
 /// An error that occurred during renderer initialization.
@@ -74,7 +76,13 @@ impl Renderer {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     features: wgpu::Features::empty(),
-                    limits: wgpu::Limits::default(),
+                    limits: wgpu::Limits {
+                        // TODO we won't need 5 bind groups eventually,
+                        // reduce this back to the default
+                        max_bind_groups: 5,
+                        min_uniform_buffer_offset_alignment: 64,
+                        ..Default::default()
+                    },
                     label: None,
                 },
                 None,
@@ -108,17 +116,25 @@ impl Renderer {
             .set(window)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
-        let gbufs = GBuffers::new(window_size.into());
-        let deferred_shading_pl = ShadingPipeline::new(&gbufs);
+        let depth_tex = Self::create_depth_texture(window_size);
+        let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_bind_group = Self::create_depth_bind_group(&depth_view);
+
+        let light_man = light::LightManager::new();
+        let mesh_renderer = MeshRenderer::new(&light_man);
+        let skin_pl = SkinPipeline::new();
 
         Ok(Renderer {
             surface,
             surface_config,
             window_scale_factor,
-            gbufs,
-            deferred_shading_pl,
-            generation: 0,
-            active_frame: None,
+            depth_tex,
+            depth_view,
+            depth_bind_group,
+            light_man,
+            mesh_renderer,
+            skin_pl,
+            line_renderer: None,
         })
     }
 
@@ -158,15 +174,72 @@ impl Renderer {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(device, &self.surface_config);
-        self.gbufs = GBuffers::new(new_size.into());
-        self.deferred_shading_pl
-            .update_gbufs_bind_group(&self.gbufs);
-        self.generation += 1;
+        self.depth_tex = Self::create_depth_texture(new_size);
+        self.depth_view = self
+            .depth_tex
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.depth_bind_group = Self::create_depth_bind_group(&self.depth_view);
+        self.light_man.recreate_light_bins(new_size.into());
+    }
+
+    fn create_depth_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
+        let device = Self::device();
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth"),
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+    }
+
+    pub(crate) fn depth_bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
+        DEPTH_BIND_GROUP_LAYOUT.get_or_init(|| {
+            let device = Self::device();
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("depth"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            })
+        })
+    }
+
+    fn create_depth_bind_group(view: &wgpu::TextureView) -> wgpu::BindGroup {
+        let device = Self::device();
+        let layout = Self::depth_bind_group_layout();
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("depth"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            }],
+        })
     }
 
     #[inline]
     pub fn swapchain_format(&self) -> wgpu::TextureFormat {
         SWAPCHAIN_FORMAT
+    }
+
+    #[inline]
+    pub fn depth_format(&self) -> wgpu::TextureFormat {
+        DEPTH_FORMAT
     }
 
     /// Get the size of the window this Renderer draws to in pixels.
@@ -186,7 +259,7 @@ impl Renderer {
     #[inline]
     pub fn default_depth_stencil_state(&self) -> wgpu::DepthStencilState {
         wgpu::DepthStencilState {
-            format: self.gbufs.depth_tex.format(),
+            format: self.depth_tex.format(),
             depth_write_enabled: true,
             depth_compare: wgpu::CompareFunction::Less,
             stencil: wgpu::StencilState::default(),
@@ -194,32 +267,9 @@ impl Renderer {
         }
     }
 
-    #[inline]
-    pub fn geometry_pass_targets(&self) -> [Option<wgpu::ColorTargetState>; 3] {
-        [
-            Some(self.gbufs.position.texture.format().into()),
-            Some(self.gbufs.normal.texture.format().into()),
-            Some(self.gbufs.albedo.texture.format().into()),
-        ]
-    }
-
     /// Start drawing a frame.
-    ///
-    /// The first step of a frame is deferred shading pipeline,
-    /// which can be accessed through the returned [`DeferredContext`].
-    /// Typically in this phase you would render meshes with
-    /// [`MeshRenderer`][crate::MeshRenderer].
-    /// To end the deferred phase, call [`DeferredContext::shade`],
-    /// which performs shading, draws it into the framebuffer,
-    /// and returns a [`PostShadeContext`]
-    /// which can be used to draw on top of the framebuffer.
-    /// To finish drawing the frame, simply drop the [`PostShadeContext`].
     #[inline]
-    pub fn begin_frame(&mut self) -> DeferredContext<'_> {
-        assert!(
-            self.active_frame.is_none(),
-            "Started a frame twice without presenting"
-        );
+    pub fn begin_frame(&mut self) -> Frame<'_> {
         let surface = self
             .surface
             .get_current_texture()
@@ -228,16 +278,229 @@ impl Renderer {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.active_frame = Some(Frame { surface, view });
+        let device = Self::device();
+        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("deferred"),
+        });
 
-        DeferredContext::new(self)
+        Frame {
+            renderer: self,
+            encoder: Some(encoder),
+            surface: Some(surface),
+            view,
+            clear_color: Some(wgpu::Color::BLACK),
+            main_light: light::MainLight::AmbientOnly([0., 0., 0.]),
+            point_lights: Vec::new(),
+        }
+    }
+}
+
+pub struct Frame<'a> {
+    renderer: &'a mut Renderer,
+    // encoder and surface in Options
+    // so that we can take them out on drop without using unsafe
+    encoder: Option<wgpu::CommandEncoder>,
+    surface: Option<wgpu::SurfaceTexture>,
+    view: wgpu::TextureView,
+    clear_color: Option<wgpu::Color>,
+    // lighting state
+    main_light: light::MainLight,
+    point_lights: Vec<light::GpuPointLight>,
+}
+
+impl<'a> Frame<'a> {
+    /// Set the color the framebuffer will be cleared with
+    /// when the shading is executed (i.e. on [`finish`][Self::finish]).
+    /// Black by default.
+    pub fn set_clear_color(&mut self, color: [f32; 4]) {
+        self.clear_color = Some(wgpu::Color {
+            r: color[0] as f64,
+            g: color[1] as f64,
+            b: color[2] as f64,
+            a: color[3] as f64,
+        });
     }
 
-    /// Display everything drawn to the window since the last `present_frame` call.
-    /// Called automatically at the end of the frame by [`Game`][crate::Game].
-    pub(crate) fn present_frame(&mut self) {
-        if let Some(frame) = self.active_frame.take() {
-            frame.surface.present();
+    /// Set the directional light of the scene.
+    ///
+    /// Only one of these can be active at a given time.
+    pub fn set_directional_light(&mut self, light: crate::DirectionalLight) {
+        self.main_light = light::MainLight::Directional(light);
+    }
+
+    /// Set the scene to be fully lit with a uniformly colored light
+    /// without any directional shading.
+    ///
+    /// This removes any directional light that was set before.
+    pub fn set_ambient_light(&mut self, light_color: [f32; 3]) {
+        self.main_light = light::MainLight::AmbientOnly(light_color);
+    }
+
+    /// Add a point light.
+    pub fn push_point_light(&mut self, light: crate::PointLight) {
+        self.point_lights.push(light::GpuPointLight::from(light));
+    }
+
+    /// Add point lights from an iterator.
+    pub fn extend_point_lights(&mut self, lights: impl Iterator<Item = crate::PointLight>) {
+        self.point_lights
+            .extend(lights.map(light::GpuPointLight::from));
+    }
+
+    /// Draw all meshes in the world.
+    pub fn draw_meshes(
+        &mut self,
+        manager: &mut crate::GraphicsManager,
+        world: &mut hecs::World,
+        camera: &crate::Camera,
+    ) {
+        self.renderer.light_man.write_main_light(self.main_light);
+        let point_lights = std::mem::take(&mut self.point_lights);
+        self.renderer.light_man.write_point_lights(point_lights);
+
+        let encoder = self.encoder.as_mut().unwrap();
+
+        // compute skins
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            self.renderer.skin_pl.compute_skins(&mut cpass, manager);
         }
+
+        // upload mesh data
+        self.renderer.mesh_renderer.prepare(manager, world);
+
+        // render depth
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.renderer.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            let mesh_rend = &mut self.renderer.mesh_renderer;
+            mesh_rend.depth_pass(&mut rpass, manager, camera);
+        }
+
+        // compute light culling
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
+            self.renderer.light_man.cull_lights(
+                &mut cpass,
+                camera,
+                &self.renderer.depth_bind_group,
+            );
+        }
+
+        // final render
+        {
+            let mut rpass = Self::_pass(
+                encoder,
+                &self.view,
+                Some(&self.renderer.depth_view),
+                self.clear_color.take(),
+            );
+
+            let mesh_rend = &mut self.renderer.mesh_renderer;
+            mesh_rend.draw_pass(&mut rpass, manager, camera, &self.renderer.light_man);
+        }
+    }
+
+    /// Draw a collection of line strips with the line renderer.
+    pub fn draw_lines(
+        &mut self,
+        manager: &crate::GraphicsManager,
+        camera: &crate::Camera,
+        lines: &[super::line_renderer::LineStrip],
+    ) {
+        let line_rend = self
+            .renderer
+            .line_renderer
+            .get_or_insert_with(LineRenderer::new);
+
+        let mut pass = Self::_pass(
+            self.encoder.as_mut().unwrap(),
+            &self.view,
+            Some(&self.renderer.depth_view),
+            self.clear_color.take(),
+        );
+        for line in lines {
+            line_rend.draw(&mut pass, manager, camera, line);
+        }
+    }
+
+    /// Begin a render pass with default parameters.
+    pub fn pass(&mut self) -> wgpu::RenderPass<'_> {
+        Self::_pass(
+            self.encoder.as_mut().unwrap(),
+            &self.view,
+            Some(&self.renderer.depth_view),
+            self.clear_color.take(),
+        )
+    }
+
+    // these arguments need to be partially borrowed from a &mut Self
+    // to avoid lifetime trouble
+    fn _pass<'enc, 'view: 'enc>(
+        encoder: &'enc mut wgpu::CommandEncoder,
+        target_view: &'view wgpu::TextureView,
+        depth_view: Option<&'view wgpu::TextureView>,
+        clear_color: Option<wgpu::Color>,
+    ) -> wgpu::RenderPass<'enc> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: if let Some(color) = clear_color {
+                        wgpu::LoadOp::Clear(color)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: depth_view.map(|depth_view| {
+                wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        })
+    }
+
+    /// Access the command encoder recording commands for this frame.
+    #[inline]
+    pub fn encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
+        self.encoder.as_mut().unwrap()
+    }
+}
+
+impl<'a> Drop for Frame<'a> {
+    fn drop(&mut self) {
+        let queue = Renderer::queue();
+        queue.submit(Some(self.encoder.take().unwrap().finish()));
+        self.surface.take().unwrap().present();
     }
 }

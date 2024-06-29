@@ -1,5 +1,8 @@
-use super::util::DynamicBuffer;
-use crate::{math::uv, MaterialId};
+use crate::{
+    graphics::{renderer::DEPTH_FORMAT, util::DynamicBuffer},
+    math::uv,
+    MaterialId,
+};
 
 use std::borrow::Cow;
 use zerocopy::{AsBytes, FromBytes};
@@ -151,7 +154,7 @@ impl Primitives {
 }
 
 impl LineRenderer {
-    pub fn new(game: &crate::Game) -> Self {
+    pub(crate) fn new() -> Self {
         let device = crate::Renderer::device();
 
         let label = Some("line");
@@ -303,7 +306,13 @@ impl LineRenderer {
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(game.renderer.default_depth_stencil_state()),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Less,
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
             })
@@ -322,8 +331,8 @@ impl LineRenderer {
     pub fn draw<'pass>(
         &'pass self,
         pass: &mut wgpu::RenderPass<'pass>,
-        camera: &'pass crate::Camera,
         manager: &'pass crate::GraphicsManager,
+        camera: &'pass crate::Camera,
         line: &'pass LineStrip,
     ) {
         let material = if let Some(mid) = line.material_id {

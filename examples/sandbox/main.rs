@@ -57,7 +57,6 @@ pub struct State {
     light_rotating: bool,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
-    mesh_renderer: sf::MeshRenderer,
     // egui stuff
     egui_context: egui::Context,
     egui_state: egui_winit::State,
@@ -95,13 +94,12 @@ impl State {
                 reset_button: Some(sf::Key::R.into()),
                 ..Default::default()
             },
-            mesh_renderer: sf::MeshRenderer::new(game),
             egui_context,
             egui_state: egui_winit::State::new(viewport_id, sf::Renderer::window(), None, None),
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
-                Some(game.renderer.gbufs.depth_tex.format()),
+                Some(game.renderer.depth_format()),
                 1,
             ),
             last_egui_output: Default::default(),
@@ -539,20 +537,12 @@ impl sf::GameState for State {
 
         // scene rendering
 
-        let mut deferred = game.renderer.begin_frame();
-        {
-            let mut pass = deferred.pass();
-            self.mesh_renderer
-                .draw(&mut pass, &mut game.graphics, &mut game.world, &self.camera);
-        }
+        let mut frame = game.renderer.begin_frame();
 
-        let mut shade = deferred.shade();
-
-        shade.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
-        shade.set_directional_light(self.dir_light);
-        shade.extend_point_lights(sf::PointLight::gather_from_world(&mut game.world));
-
-        let mut forward = shade.finish(&self.camera);
+        frame.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
+        frame.set_directional_light(self.dir_light);
+        frame.extend_point_lights(sf::PointLight::gather_from_world(&mut game.world));
+        frame.draw_meshes(&mut game.graphics, &mut game.world, &self.camera);
 
         // forward pass
 
@@ -584,13 +574,13 @@ impl sf::GameState for State {
         self.egui_renderer.update_buffers(
             device,
             queue,
-            forward.encoder_mut(),
+            frame.encoder_mut(),
             &paint_jobs,
             &screen_desc,
         );
 
         {
-            let mut pass = forward.pass();
+            let mut pass = frame.pass();
             self.egui_renderer
                 .render(&mut pass, &paint_jobs, &screen_desc);
         }

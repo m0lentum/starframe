@@ -31,6 +31,8 @@ pub fn load_mesh_data<'doc>(buffers: &'doc [&[u8]], prim: gltf::Primitive<'doc>)
             // whereas Blender's is right-handed (+z towards camera)
             position: [p[0], p[1], -p[2]].into(),
             tex_coords: [0., 0.].into(),
+            // TODO: also read normals and tangents if available
+            ..Default::default()
         })
         .collect();
 
@@ -186,6 +188,7 @@ pub fn load_skin<'doc>(
         root_transform,
         joint_set: skin::JointSet { joints },
         inv_bind_matrices: Rc::from(inv_bind_matrices),
+        compute_res: None,
     }
 }
 

@@ -26,12 +26,6 @@ pub struct MeshId {
     pub(crate) skin: Option<td::Index>,
 }
 
-/// Skin ids for internal use only,
-/// users don't see them directly
-/// and instead operate on meshes and animations
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct SkinId(pub(crate) td::Index);
-
 /// Identifier for a [`Material`] stored in a [`GraphicsManager`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MaterialId(td::Index);
@@ -89,11 +83,14 @@ pub struct AnimatorId(td::Index);
 /// which returns a new mesh id that can be set as an animator's target
 /// with [`Animator::with_target`].
 pub struct GraphicsManager {
-    meshes: td::Arena<Mesh>,
+    pub(crate) meshes: td::Arena<Mesh>,
     /// map from mesh names to mesh ids
     mesh_name_map: HashMap<String, td::Index>,
-    /// map from mesh ids to skin ids
+    /// map from mesh id to the first skin id associated with the mesh
+    /// (there can be many in case of multiple animations)
     mesh_skin_map: td::Arena<td::Index>,
+    /// map from skin ids to mesh ids, needed for computing skins on the gpu
+    pub(crate) skin_mesh_map: td::Arena<td::Index>,
     /// map from mesh ids to material ids
     mesh_material_map: td::Arena<td::Index>,
 
@@ -131,6 +128,7 @@ impl GraphicsManager {
             meshes: td::Arena::new(),
             mesh_name_map: HashMap::new(),
             mesh_skin_map: td::Arena::new(),
+            skin_mesh_map: td::Arena::new(),
             mesh_material_map: td::Arena::new(),
 
             skins: td::Arena::new(),
@@ -191,13 +189,13 @@ impl GraphicsManager {
         // so we can collect the associations into a map here.
         // this maps mesh indices to skin indices,
         // which we'll convert to asset ids later
-        let mut mesh_skin_map: HashMap<usize, usize> = HashMap::new();
+        let mut mesh_skin_idx_map: HashMap<usize, usize> = HashMap::new();
         // recursive traversal of the scene graph to get node data
         for scene in doc.scenes() {
             for node in scene.nodes() {
                 struct TraversalContext<'a> {
                     node_transforms_world: &'a mut [uv::Mat4],
-                    mesh_skin_map: &'a mut HashMap<usize, usize>,
+                    mesh_skin_idx_map: &'a mut HashMap<usize, usize>,
                 }
                 fn traverse_node(
                     ctx: &mut TraversalContext<'_>,
@@ -209,7 +207,7 @@ impl GraphicsManager {
 
                     ctx.node_transforms_world[node.index()] = node_transform;
                     if let (Some(mesh), Some(skin)) = (node.mesh(), node.skin()) {
-                        ctx.mesh_skin_map.insert(mesh.index(), skin.index());
+                        ctx.mesh_skin_idx_map.insert(mesh.index(), skin.index());
                     }
 
                     for child in node.children() {
@@ -219,7 +217,7 @@ impl GraphicsManager {
                 traverse_node(
                     &mut TraversalContext {
                         node_transforms_world: &mut node_transforms_world,
-                        mesh_skin_map: &mut mesh_skin_map,
+                        mesh_skin_idx_map: &mut mesh_skin_idx_map,
                     },
                     node,
                     uv::Mat4::identity(),
@@ -302,9 +300,11 @@ impl GraphicsManager {
                     self.mesh_material_map
                         .insert_at(mesh_id, loaded_materials[mat_idx]);
                 }
-                if let Some(&skin_idx) = mesh_skin_map.get(&gltf_mesh.index()) {
+                if let Some(&skin_idx) = mesh_skin_idx_map.get(&gltf_mesh.index()) {
                     self.mesh_skin_map
                         .insert_at(mesh_id, loaded_skins[skin_idx]);
+                    self.skin_mesh_map
+                        .insert_at(loaded_skins[skin_idx], mesh_id);
                 }
             }
         }
@@ -317,12 +317,12 @@ impl GraphicsManager {
     /// This is a crude solution; ideally we'd like to load
     /// a common set of assets on game start that never gets unloaded
     /// and then only remove level-specific state on level change.
-    /// Better garbage collection is being thought about
-    /// and will be implemented later.
+    /// Better garbage collection will (hopefully) be implemented later.
     pub fn clear(&mut self) {
         self.meshes.clear();
         self.mesh_name_map.clear();
         self.mesh_skin_map.clear();
+        self.skin_mesh_map.clear();
         self.mesh_material_map.clear();
         self.skins.clear();
         self.animations.clear();
@@ -375,6 +375,7 @@ impl GraphicsManager {
     pub fn new_animation_target(&mut self, mesh_id: MeshId) -> MeshId {
         if let Some(skin) = mesh_id.skin.and_then(|skin_id| self.skins.get(skin_id)) {
             let new_skin = self.skins.insert(skin.clone());
+            self.skin_mesh_map.insert_at(new_skin, mesh_id.mesh);
             MeshId {
                 skin: Some(new_skin),
                 ..mesh_id

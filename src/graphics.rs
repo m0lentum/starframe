@@ -5,7 +5,10 @@ mod manager;
 pub use manager::{AnimationId, GraphicsManager, MaterialId, MeshId};
 
 pub mod renderer;
-pub use renderer::{DirectionalLight, GBuffer, GBuffers, PointLight, Renderer};
+pub use renderer::Renderer;
+
+pub(crate) mod light;
+pub use light::{DirectionalLight, PointLight};
 
 pub mod util;
 
@@ -16,7 +19,7 @@ pub(super) mod mesh;
 pub use mesh::{ConvexMeshShape, Mesh, MeshRenderer, Skin, Vertex as MeshVertex};
 
 mod line_renderer;
-pub use line_renderer::{LineRenderer, LineStrip, LineVertex};
+pub use line_renderer::{LineStrip, LineVertex};
 
 pub mod material;
 pub use material::Texture;
