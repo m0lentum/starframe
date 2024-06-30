@@ -112,34 +112,25 @@ impl PointLight {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
 struct DirectLightUniforms {
-    direct_color: [f32; 3],
-    _pad0: u32,
-    ambient_color: [f32; 3],
-    _pad1: u32,
-    direction: [f32; 3],
-    // tag is either 0 or 1,
+    direct_color: GpuVec4,
+    ambient_color: GpuVec4,
+    // final element of direction is either 0 or 1,
     // 0 means ambient light only, no directional light
-    tag: f32,
+    direction: GpuVec4,
 }
 
 impl From<MainLight> for DirectLightUniforms {
     fn from(main_light: MainLight) -> Self {
         match main_light {
             MainLight::Directional(l) => Self {
-                direct_color: l.direct_color,
-                _pad0: 0,
-                ambient_color: l.ambient_color,
-                _pad1: 0,
+                direct_color: l.direct_color.into(),
+                ambient_color: l.ambient_color.into(),
                 direction: l.direction.normalized().into(),
-                tag: 1.0,
             },
             MainLight::AmbientOnly(color) => Self {
-                direct_color: [0.; 3],
-                _pad0: 0,
-                ambient_color: color,
-                _pad1: 0,
-                direction: [0., 0., 0.],
-                tag: 1.,
+                direct_color: [0.; 4].into(),
+                ambient_color: color.into(),
+                direction: [0.; 4].into(),
             },
         }
     }
