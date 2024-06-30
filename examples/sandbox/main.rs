@@ -53,6 +53,7 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     // graphics
     camera: sf::Camera,
+    ambient_light: [f32; 3],
     dir_light: sf::DirectionalLight,
     light_rotating: bool,
     gen_assets: GeneratedAssets,
@@ -82,9 +83,9 @@ impl State {
             state: StateEnum::Playing,
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
+            ambient_light: [0.0686, 0.0875, 0.0918],
             dir_light: sf::DirectionalLight {
-                direct_color: [1.0, 0.949, 0.8],
-                ambient_color: [0.686, 0.875, 0.918],
+                color: [0.7, 0.65, 0.4],
                 direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
             },
             light_rotating: false,
@@ -360,27 +361,21 @@ impl sf::GameState for State {
             ui.separator();
             ui.heading("Light");
             ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.dir_light.direct_color);
+                ui.color_edit_button_rgb(&mut self.dir_light.color);
                 ui.label("Direct light color");
             });
             ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.dir_light.ambient_color);
+                ui.color_edit_button_rgb(&mut self.ambient_light);
                 ui.label("Ambient light color");
             });
             ui.horizontal(|ui| {
                 if ui.button("Dim").clicked() {
-                    for channel in itertools::chain(
-                        &mut self.dir_light.direct_color,
-                        &mut self.dir_light.ambient_color,
-                    ) {
+                    for channel in &mut self.dir_light.color {
                         *channel *= 0.5;
                     }
                 }
                 if ui.button("Brighten").clicked() {
-                    for channel in itertools::chain(
-                        &mut self.dir_light.direct_color,
-                        &mut self.dir_light.ambient_color,
-                    ) {
+                    for channel in &mut self.dir_light.color {
                         *channel *= 2.;
                     }
                 }
@@ -540,7 +535,18 @@ impl sf::GameState for State {
         let mut frame = game.renderer.begin_frame();
 
         frame.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
-        frame.set_directional_light(self.dir_light);
+        frame.set_ambient_light(self.ambient_light);
+        // main sunlight
+        frame.push_directional_light(self.dir_light);
+        // fill light based on the ambient color
+        frame.push_directional_light(sf::DirectionalLight {
+            color: self.ambient_light.map(|channel| channel * 0.5),
+            direction: sf::Vec3::new(
+                -self.dir_light.direction.x,
+                -self.dir_light.direction.y,
+                self.dir_light.direction.z,
+            ),
+        });
         frame.extend_point_lights(sf::PointLight::gather_from_world(&mut game.world));
         frame.draw_meshes(&mut game.graphics, &mut game.world, &self.camera);
 

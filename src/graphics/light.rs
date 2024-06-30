@@ -12,27 +12,18 @@ use super::util::{GpuVec3, GpuVec4};
 /// A directional light has no position,
 /// instead casting parallel rays over the entire scene.
 /// This emulates a distant, powerful point light source like the sun.
-///
-/// This light also includes a stylized ambient light,
-/// whose color can be configured independently from the direct light color
-/// The ambient light is more intense for surfaces facing away from the light,
-/// creating a "core shadow" effect.
 #[derive(Clone, Copy, Debug)]
 pub struct DirectionalLight {
-    /// Color of the light itself.
-    pub direct_color: [f32; 3],
-    /// Color of light applied on every surface
-    /// regardless of whether it's hit by the direct light.
-    pub ambient_color: [f32; 3],
-    /// Direction in which the light rays travel.
+    /// Color of the light. Default: white.
+    pub color: [f32; 3],
+    /// Direction in which the light rays travel. Default: positive z-axis.
     pub direction: uv::Vec3,
 }
 
 impl Default for DirectionalLight {
     fn default() -> Self {
         Self {
-            direct_color: [1.0, 1.0, 1.0],
-            ambient_color: [1.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0],
             direction: uv::Vec3::new(0.0, 0.0, 1.0),
         }
     }
@@ -111,29 +102,23 @@ impl PointLight {
 /// Gpu-side representation of a directional light.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, AsBytes, FromBytes)]
-struct DirectLightUniforms {
-    direct_color: GpuVec4,
-    ambient_color: GpuVec4,
-    // final element of direction is either 0 or 1,
-    // 0 means ambient light only, no directional light
+struct GpuDirectionalLight {
+    color: GpuVec4,
     direction: GpuVec4,
 }
 
-impl From<MainLight> for DirectLightUniforms {
-    fn from(main_light: MainLight) -> Self {
-        match main_light {
-            MainLight::Directional(l) => Self {
-                direct_color: l.direct_color.into(),
-                ambient_color: l.ambient_color.into(),
-                direction: l.direction.normalized().into(),
-            },
-            MainLight::AmbientOnly(color) => Self {
-                direct_color: [0.; 4].into(),
-                ambient_color: color.into(),
-                direction: [0.; 4].into(),
-            },
+impl From<DirectionalLight> for GpuDirectionalLight {
+    fn from(l: DirectionalLight) -> Self {
+        Self {
+            color: l.color.into(),
+            direction: l.direction.into(),
         }
     }
+}
+
+pub(crate) struct MainLights {
+    pub ambient_color: [f32; 3],
+    pub dir_lights: Vec<DirectionalLight>,
 }
 
 /// Gpu-side representation of a single point light.
@@ -166,7 +151,7 @@ impl From<PointLight> for GpuPointLight {
     }
 }
 
-const MAX_LIGHTS: usize = 1024;
+const MAX_POINT_LIGHTS: usize = 1024;
 /// pixels per light bin
 const TILE_SIZE: usize = 16;
 
@@ -177,7 +162,7 @@ struct GpuPointLightBuffer {
     tiles_x: u32,
     tiles_y: u32,
     _pad: u32,
-    lights: [GpuPointLight; MAX_LIGHTS],
+    lights: [GpuPointLight; MAX_POINT_LIGHTS],
 }
 
 impl Default for GpuPointLightBuffer {
@@ -193,17 +178,10 @@ impl Default for GpuPointLightBuffer {
     }
 }
 
-/// Main light of the scene can be a directional light
-/// or just a flat ambient light with no direction information.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum MainLight {
-    Directional(DirectionalLight),
-    AmbientOnly([f32; 3]),
-}
-
 /// GPU-side structures for lighting.
 pub(crate) struct LightManager {
-    dir_light_buf: wgpu::Buffer,
+    main_light_buf: wgpu::Buffer,
+    dir_light_count: usize,
     point_light_buf: wgpu::Buffer,
     light_bin_buf: wgpu::Buffer,
     pub bind_group_layout: wgpu::BindGroupLayout,
@@ -215,10 +193,12 @@ pub(crate) struct LightManager {
 impl LightManager {
     pub fn new() -> Self {
         let device = crate::Renderer::device();
-        let dir_light_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            size: size_of::<DirectLightUniforms>() as _,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            label: Some("directional light"),
+        // manual size computation needed due to dynamically sized array
+        let min_main_light_buf_size = 4 * 4 + 4 + size_of::<GpuDirectionalLight>() as u64;
+        let main_light_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            size: min_main_light_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            label: Some("main lights"),
             mapped_at_creation: false,
         });
 
@@ -253,7 +233,7 @@ impl LightManager {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(4 * MAX_LIGHTS as u64),
+                        min_binding_size: wgpu::BufferSize::new(4 * MAX_POINT_LIGHTS as u64),
                     },
                     count: None,
                 },
@@ -262,11 +242,9 @@ impl LightManager {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            size_of::<DirectLightUniforms>() as _
-                        ),
+                        min_binding_size: wgpu::BufferSize::new(min_main_light_buf_size),
                     },
                     count: None,
                 },
@@ -288,7 +266,7 @@ impl LightManager {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: dir_light_buf.as_entire_binding(),
+                    resource: main_light_buf.as_entire_binding(),
                 },
             ],
         });
@@ -314,7 +292,8 @@ impl LightManager {
         });
 
         Self {
-            dir_light_buf,
+            main_light_buf,
+            dir_light_count: 1,
             point_light_buf,
             light_bin_buf,
             bind_group_layout,
@@ -333,10 +312,13 @@ impl LightManager {
 
     /// Recreate the light culling buffer when window size changes.
     pub fn recreate_light_bins(&mut self, target_dimensions: (u32, u32)) {
-        let device = crate::Renderer::device();
-
         self.tile_count = Self::tile_count_for_target(target_dimensions);
         self.light_bin_buf = Self::create_light_bin_buf(self.tile_count);
+        self.recreate_bind_group();
+    }
+
+    fn recreate_bind_group(&mut self) {
+        let device = crate::Renderer::device();
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("lights"),
             layout: &self.bind_group_layout,
@@ -351,7 +333,7 @@ impl LightManager {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: self.dir_light_buf.as_entire_binding(),
+                    resource: self.main_light_buf.as_entire_binding(),
                 },
             ],
         });
@@ -361,26 +343,53 @@ impl LightManager {
         let device = crate::Renderer::device();
 
         device.create_buffer(&wgpu::BufferDescriptor {
-            size: (tile_count.0 * tile_count.1) as u64 * MAX_LIGHTS as u64 * 4,
+            size: (tile_count.0 * tile_count.1) as u64 * MAX_POINT_LIGHTS as u64 * 4,
             usage: wgpu::BufferUsages::STORAGE,
             label: Some("point light bins"),
             mapped_at_creation: false,
         })
     }
 
-    /// Write the main light (directional or ambient) to the GPU.
-    pub fn write_main_light(&self, main_light: MainLight) {
+    /// Write the directional and ambient light information to the GPU.
+    pub fn write_main_lights(&mut self, main_lights: MainLights) {
         let queue = crate::Renderer::queue();
 
-        let light_unif = DirectLightUniforms::from(main_light);
-        queue.write_buffer(&self.dir_light_buf, 0, light_unif.as_bytes());
+        // recreate the main light buffer
+        // if the number of directional lights increases past capacity
+        // (most of the time the number won't be changing at all so this will be rare)
+        let dir_light_count = main_lights.dir_lights.len();
+        let buf_size = 4 * 4 + 4 + (dir_light_count * size_of::<GpuDirectionalLight>());
+        if dir_light_count > self.dir_light_count {
+            let device = crate::Renderer::device();
+            self.main_light_buf = device.create_buffer(&wgpu::BufferDescriptor {
+                size: buf_size as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                label: Some("main lights"),
+                mapped_at_creation: false,
+            });
+            self.dir_light_count = dir_light_count;
+            self.recreate_bind_group();
+        }
+
+        // there's a dynamically-sized array here
+        // so we can't directly convert a cpu-side type to bytes.
+        // `encase` could do this for us
+        // but I can't be bothered to pull that in for this one case,
+        // so do it manually
+        let mut bytes = Vec::with_capacity(buf_size);
+        bytes.extend_from_slice(GpuVec3::from(main_lights.ambient_color).as_bytes());
+        bytes.extend_from_slice((dir_light_count as u32).as_bytes());
+        for dir_light in main_lights.dir_lights {
+            bytes.extend_from_slice(GpuDirectionalLight::from(dir_light).as_bytes());
+        }
+        queue.write_buffer(&self.main_light_buf, 0, &bytes);
     }
 
     /// Write point lights to the GPU.
     pub fn write_point_lights(&self, mut lights: Vec<GpuPointLight>) {
         let queue = crate::Renderer::queue();
 
-        lights.truncate(MAX_LIGHTS);
+        lights.truncate(MAX_POINT_LIGHTS);
 
         let mut contents = GpuPointLightBuffer {
             count: lights.len() as u32,

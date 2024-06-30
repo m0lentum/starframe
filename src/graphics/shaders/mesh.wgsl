@@ -17,12 +17,14 @@ const MAX_LIGHTS: u32 = 1024u;
 const TILE_SIZE: u32 = 16u;
 
 struct DirectionalLight {
-    direct_color: vec3<f32>,
+    color: vec3<f32>,
+    direction: vec3<f32>,
+}
+
+struct MainLights {
     ambient_color: vec3<f32>,
-    // the w component determines whether or not the direction
-    // is actually used in shading;
-    // if 1 we do normal shading and if 0 we only do a flat ambient light
-    direction: vec4<f32>,
+    dir_light_count: u32,
+    dir_lights: array<DirectionalLight>,
 }
 
 struct PointLight {
@@ -45,7 +47,7 @@ var<storage> point_lights: PointLights;
 @group(1) @binding(1)
 var<storage, read_write> light_bins: array<i32>;
 @group(1) @binding(2)
-var<uniform> dir_light: DirectionalLight;
+var<storage> main_lights: MainLights;
 
 // material
 
@@ -139,28 +141,17 @@ fn fs_main(
     let tex_normal = textureSample(t_normal, s_normal, in.tex_coords).xyz;
     let normal = tbn * normalize(tex_normal * 2. - 1.);
 
-    // directional light
+    // directional lights
 
-    var diffuse_light: vec3<f32>;
-    var ambient_light: vec3<f32>;
-    if dir_light.direction.w == 0. {
-        // no direct light, flat ambient lighting only
-        diffuse_light = vec3<f32>(0., 0., 0.);
-        ambient_light = dir_light.ambient_color;
-    } else {
+    var dir_light_total = vec3<f32>(0.);
+    for (var li = 0u; li < main_lights.dir_light_count; li++) {
+        let dir_light = main_lights.dir_lights[li];
         // dot with the negative light direction
         // indicates how opposite to the light the normal is,
         // and hence the strength of the diffuse light
         let normal_dot_light = -dot(normal, dir_light.direction.xyz);
-
         let diffuse_strength = max(normal_dot_light, 0.);
-        diffuse_light = diffuse_strength * dir_light.direct_color;
-
-        // stylized approximation: ambient light comes from the direction opposite to the main light
-        // TODO: instead of hardcoding intensity 0.1 here,
-        // give it as part of the ambient color
-        let ambient_strength = 0.1 + 0.1 * max(-normal_dot_light, 0.);
-        ambient_light = dir_light.ambient_color * ambient_strength;
+        dir_light_total += diffuse_strength * dir_light.color;
     }
 
     // point lights
@@ -173,7 +164,7 @@ fn fs_main(
     let bin_start = bin_idx * MAX_LIGHTS;
 
     var point_light_total = vec3<f32>(0., 0., 0.);
-    for (var bi: u32 = 0u; bi < point_lights.count; bi++) {
+    for (var bi = 0u; bi < point_lights.count; bi++) {
         let li = light_bins[bin_start + bi];
         if li == -1 {
             break;
@@ -192,7 +183,8 @@ fn fs_main(
         point_light_total += light_contrib;
     }
 
-    let full_color = vec4<f32>(ambient_light + diffuse_light + point_light_total, 1.) * diffuse_color;
-    return full_color;
+    let light_total = main_lights.ambient_color + dir_light_total + point_light_total;
+    let final_color = vec4<f32>(light_total, 1.) * diffuse_color;
+    return final_color;
 }
 

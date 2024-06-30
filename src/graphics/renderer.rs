@@ -316,7 +316,8 @@ impl Renderer {
             surface: Some(surface),
             view,
             clear_color: Some(wgpu::Color::BLACK),
-            main_light: light::MainLight::AmbientOnly([0., 0., 0.]),
+            ambient_color: [0.; 3],
+            dir_lights: Vec::new(),
             point_lights: Vec::new(),
         }
     }
@@ -331,7 +332,8 @@ pub struct Frame<'a> {
     view: wgpu::TextureView,
     clear_color: Option<wgpu::Color>,
     // lighting state
-    main_light: light::MainLight,
+    ambient_color: [f32; 3],
+    dir_lights: Vec<light::DirectionalLight>,
     point_lights: Vec<light::GpuPointLight>,
 }
 
@@ -348,27 +350,36 @@ impl<'a> Frame<'a> {
         });
     }
 
-    /// Set the directional light of the scene.
-    ///
-    /// Only one of these can be active at a given time.
-    pub fn set_directional_light(&mut self, light: crate::DirectionalLight) {
-        self.main_light = light::MainLight::Directional(light);
+    /// Set the ambient light color of the scene.
+    /// This is light that is applied everywhere regardless of surface direction.
+    #[inline]
+    pub fn set_ambient_light(&mut self, light_color: [f32; 3]) {
+        self.ambient_color = light_color;
     }
 
-    /// Set the scene to be fully lit with a uniformly colored light
-    /// without any directional shading.
-    ///
-    /// This removes any directional light that was set before.
-    pub fn set_ambient_light(&mut self, light_color: [f32; 3]) {
-        self.main_light = light::MainLight::AmbientOnly(light_color);
+    /// Add a directional light.
+    #[inline]
+    pub fn push_directional_light(&mut self, light: crate::DirectionalLight) {
+        self.dir_lights.push(light);
+    }
+
+    /// Add directional lights from an iterator.
+    #[inline]
+    pub fn extend_directional_lights(
+        &mut self,
+        lights: impl Iterator<Item = crate::DirectionalLight>,
+    ) {
+        self.dir_lights.extend(lights);
     }
 
     /// Add a point light.
+    #[inline]
     pub fn push_point_light(&mut self, light: crate::PointLight) {
         self.point_lights.push(light::GpuPointLight::from(light));
     }
 
     /// Add point lights from an iterator.
+    #[inline]
     pub fn extend_point_lights(&mut self, lights: impl Iterator<Item = crate::PointLight>) {
         self.point_lights
             .extend(lights.map(light::GpuPointLight::from));
@@ -381,13 +392,19 @@ impl<'a> Frame<'a> {
         world: &mut hecs::World,
         camera: &crate::Camera,
     ) {
-        self.renderer.light_man.write_main_light(self.main_light);
+        // upload lights
+
+        let main_lights = light::MainLights {
+            ambient_color: self.ambient_color,
+            dir_lights: std::mem::take(&mut self.dir_lights),
+        };
         let point_lights = std::mem::take(&mut self.point_lights);
+        self.renderer.light_man.write_main_lights(main_lights);
         self.renderer.light_man.write_point_lights(point_lights);
 
-        let encoder = self.encoder.as_mut().unwrap();
-
         // compute skins
+
+        let encoder = self.encoder.as_mut().unwrap();
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
@@ -397,9 +414,11 @@ impl<'a> Frame<'a> {
         }
 
         // upload mesh data
+
         self.renderer.mesh_renderer.prepare(manager, world);
 
         // render depth
+
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
@@ -421,6 +440,7 @@ impl<'a> Frame<'a> {
         }
 
         // compute light culling
+
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
@@ -434,6 +454,7 @@ impl<'a> Frame<'a> {
         }
 
         // final render
+
         {
             let mut rpass = Self::_pass(
                 encoder,
