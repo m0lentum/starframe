@@ -62,7 +62,9 @@ impl<'a> MeshParams<'a> {
         let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
             contents: self.data.vertices.as_bytes(),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
         });
         let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: self.name,
