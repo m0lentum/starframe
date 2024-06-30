@@ -39,7 +39,7 @@ var<storage, read_write> light_bins: array<i32>;
 // no sampler needed for depth because every thread
 // corresponds exactly to a pixel
 @group(2) @binding(0)
-var depth_tex: texture_depth_2d;
+var depth_tex: texture_depth_multisampled_2d;
 
 // workgroup variables
 

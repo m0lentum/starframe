@@ -1,5 +1,8 @@
 use crate::{
-    graphics::{renderer::DEPTH_FORMAT, util::DynamicBuffer},
+    graphics::{
+        renderer::{DEFAULT_MULTISAMPLE_STATE, DEPTH_FORMAT},
+        util::DynamicBuffer,
+    },
     math::uv,
     MaterialId,
 };
@@ -313,7 +316,7 @@ impl LineRenderer {
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
+                multisample: DEFAULT_MULTISAMPLE_STATE,
                 multiview: None,
             })
         };

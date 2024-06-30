@@ -21,6 +21,12 @@ static DEPTH_BIND_GROUP_LAYOUT: OnceLock<wgpu::BindGroupLayout> = OnceLock::new(
 
 pub const SWAPCHAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+pub const MSAA_SAMPLES: u32 = 4;
+pub const DEFAULT_MULTISAMPLE_STATE: wgpu::MultisampleState = wgpu::MultisampleState {
+    count: MSAA_SAMPLES,
+    mask: !0,
+    alpha_to_coverage_enabled: false,
+};
 
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
@@ -28,6 +34,7 @@ pub struct Renderer {
     surface_config: wgpu::SurfaceConfiguration,
     window_scale_factor: f64,
 
+    msaa_view: wgpu::TextureView,
     depth_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
     // bind group for reading the depth texture in a shader
@@ -113,6 +120,9 @@ impl Renderer {
             .set(window)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
+        let msaa_tex = Self::create_msaa_texture(window_size);
+        let msaa_view = msaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
         let depth_tex = Self::create_depth_texture(window_size);
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_bind_group = Self::create_depth_bind_group(&depth_view);
@@ -125,6 +135,7 @@ impl Renderer {
             surface,
             surface_config,
             window_scale_factor,
+            msaa_view,
             depth_tex,
             depth_view,
             depth_bind_group,
@@ -171,12 +182,32 @@ impl Renderer {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(device, &self.surface_config);
+        let msaa_tex = Self::create_msaa_texture(new_size);
+        self.msaa_view = msaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
         self.depth_tex = Self::create_depth_texture(new_size);
         self.depth_view = self
             .depth_tex
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.depth_bind_group = Self::create_depth_bind_group(&self.depth_view);
         self.light_man.recreate_light_bins(new_size.into());
+    }
+
+    fn create_msaa_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
+        let device = Self::device();
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa"),
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLES,
+            dimension: wgpu::TextureDimension::D2,
+            format: SWAPCHAIN_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
     }
 
     fn create_depth_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
@@ -189,7 +220,7 @@ impl Renderer {
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: MSAA_SAMPLES,
             dimension: wgpu::TextureDimension::D2,
             format: DEPTH_FORMAT,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -208,7 +239,7 @@ impl Renderer {
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
+                        multisampled: true,
                     },
                     count: None,
                 }],
@@ -276,9 +307,8 @@ impl Renderer {
             .create_view(&wgpu::TextureViewDescriptor::default());
 
         let device = Self::device();
-        let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("deferred"),
-        });
+        let encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         Frame {
             renderer: self,
@@ -407,6 +437,7 @@ impl<'a> Frame<'a> {
         {
             let mut rpass = Self::_pass(
                 encoder,
+                &self.renderer.msaa_view,
                 &self.view,
                 Some(&self.renderer.depth_view),
                 self.clear_color.take(),
@@ -431,6 +462,7 @@ impl<'a> Frame<'a> {
 
         let mut pass = Self::_pass(
             self.encoder.as_mut().unwrap(),
+            &self.renderer.msaa_view,
             &self.view,
             Some(&self.renderer.depth_view),
             self.clear_color.take(),
@@ -444,6 +476,7 @@ impl<'a> Frame<'a> {
     pub fn pass(&mut self) -> wgpu::RenderPass<'_> {
         Self::_pass(
             self.encoder.as_mut().unwrap(),
+            &self.renderer.msaa_view,
             &self.view,
             Some(&self.renderer.depth_view),
             self.clear_color.take(),
@@ -454,6 +487,7 @@ impl<'a> Frame<'a> {
     // to avoid lifetime trouble
     fn _pass<'enc, 'view: 'enc>(
         encoder: &'enc mut wgpu::CommandEncoder,
+        msaa_view: &'view wgpu::TextureView,
         target_view: &'view wgpu::TextureView,
         depth_view: Option<&'view wgpu::TextureView>,
         clear_color: Option<wgpu::Color>,
@@ -461,8 +495,8 @@ impl<'a> Frame<'a> {
         encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                resolve_target: None,
+                view: msaa_view,
+                resolve_target: Some(target_view),
                 ops: wgpu::Operations {
                     load: if let Some(color) = clear_color {
                         wgpu::LoadOp::Clear(color)

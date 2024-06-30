@@ -3,7 +3,7 @@ use crate::{
         light::LightManager,
         manager::MeshId,
         material::Material,
-        renderer::{DEPTH_FORMAT, SWAPCHAIN_FORMAT},
+        renderer::{DEFAULT_MULTISAMPLE_STATE, DEPTH_FORMAT, SWAPCHAIN_FORMAT},
         util::GpuMat4,
         Camera, GraphicsManager,
     },
@@ -149,7 +149,7 @@ impl MeshRenderer {
                     ..Default::default()
                 },
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: DEFAULT_MULTISAMPLE_STATE,
             multiview: None,
         });
 
@@ -193,7 +193,7 @@ impl MeshRenderer {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: DEFAULT_MULTISAMPLE_STATE,
             multiview: None,
         });
 
