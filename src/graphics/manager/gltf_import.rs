@@ -78,6 +78,13 @@ pub fn load_material<'doc>(
     let mr = material.pbr_metallic_roughness();
 
     let base_color = Some(mr.base_color_factor());
+    let mat_emissive = material.emissive_factor();
+    let emissive_color = if mat_emissive.into_iter().any(|ch| ch != 0.) {
+        Some([mat_emissive[0], mat_emissive[1], mat_emissive[2], 1.])
+    } else {
+        None
+    };
+
     let diffuse_tex = mr.base_color_texture().map(|tex_info| {
         let tex = tex_info.texture();
         let image = &images[tex.source().index()];
@@ -102,6 +109,7 @@ pub fn load_material<'doc>(
 
     MaterialParams {
         base_color,
+        emissive_color,
         diffuse_tex,
         normal_tex,
     }

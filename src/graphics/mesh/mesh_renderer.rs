@@ -14,7 +14,11 @@ use std::mem::size_of;
 use zerocopy::{AsBytes, FromBytes};
 
 pub struct MeshRenderer {
+    // depth prepass to prevent overdraw
     depth_pipeline: wgpu::RenderPipeline,
+    // light pass drawing light emitters and occluders to a different target
+    emissive_pipeline: wgpu::RenderPipeline,
+    // pipeline actually drawing the meshes
     main_pipeline: wgpu::RenderPipeline,
     instance_unif_buf: wgpu::Buffer,
     instance_unif_bind_group_layout: wgpu::BindGroupLayout,
@@ -38,7 +42,7 @@ impl MeshRenderer {
         let device = crate::Renderer::device();
 
         let depth_shader =
-            device.create_shader_module(wgpu::include_wgsl!("../shaders/depth_prepass.wgsl"));
+            device.create_shader_module(wgpu::include_wgsl!("../shaders/depth_and_emissive.wgsl"));
         let main_shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/mesh.wgsl"));
 
         // instance uniforms bind group
@@ -108,7 +112,7 @@ impl MeshRenderer {
         };
 
         //
-        // pipeline
+        // pipelines
         //
 
         let depth_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -130,7 +134,7 @@ impl MeshRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
-                entry_point: "fs_main",
+                entry_point: "fs_depth",
                 targets: &[],
             }),
             primitive: wgpu::PrimitiveState {
@@ -150,6 +154,32 @@ impl MeshRenderer {
                 },
             }),
             multisample: DEFAULT_MULTISAMPLE_STATE,
+            multiview: None,
+        });
+
+        let emissive_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("emissive"),
+            layout: Some(&depth_pl_layout),
+            vertex: wgpu::VertexState {
+                module: &depth_shader,
+                entry_point: "vs_main",
+                buffers: &[vertex_buffers.clone()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &depth_shader,
+                entry_point: "fs_light",
+                targets: &[],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            // when drawing lights we draw to a different, lower-res render target
+            // without depth testing or multisampling
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
             multiview: None,
         });
 
@@ -199,6 +229,7 @@ impl MeshRenderer {
 
         Self {
             depth_pipeline,
+            emissive_pipeline,
             main_pipeline,
             instance_unif_buf,
             instance_unif_bind_group_layout,
@@ -293,7 +324,22 @@ impl MeshRenderer {
         pass.set_bind_group(0, &camera.bind_group, &[]);
 
         for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate() {
-            self.draw_mesh(pass, manager, idx, mesh_id, false);
+            self.draw_mesh(pass, manager, idx, mesh_id, PassId::Depth);
+        }
+    }
+
+    /// Draw meshes with emissive / occlusive materials to the light texture
+    /// for global illumination (see gi.rs)
+    pub(crate) fn emissive_pass<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        manager: &'pass mut GraphicsManager,
+        camera: &'pass Camera,
+    ) {
+        pass.set_pipeline(&self.emissive_pipeline);
+        pass.set_bind_group(0, &camera.bind_group, &[]);
+        for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate() {
+            self.draw_mesh(pass, manager, idx, mesh_id, PassId::Emissive);
         }
     }
 
@@ -311,7 +357,7 @@ impl MeshRenderer {
         pass.set_bind_group(1, &light_man.bind_group, &[]);
 
         for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate().rev() {
-            self.draw_mesh(pass, manager, idx, mesh_id, true);
+            self.draw_mesh(pass, manager, idx, mesh_id, PassId::Main);
         }
     }
 
@@ -321,15 +367,21 @@ impl MeshRenderer {
         manager: &'pass GraphicsManager,
         idx: usize,
         mesh_id: &MeshId,
-        lights_bound: bool,
+        pass_id: PassId,
     ) {
         let Some(mesh) = manager.get_mesh(mesh_id) else {
             return;
         };
 
-        let bg_offset = if lights_bound { 1 } else { 0 };
-
         let material = manager.get_mesh_material(mesh_id);
+        if matches!(pass_id, PassId::Emissive) && !material.has_emissive {
+            return;
+        }
+
+        let bg_offset = match pass_id {
+            PassId::Main => 1,
+            _ => 0,
+        };
         pass.set_bind_group(1 + bg_offset, &material.bind_group, &[]);
         pass.set_bind_group(
             2 + bg_offset,
@@ -350,4 +402,11 @@ impl MeshRenderer {
 
         pass.draw_indexed(0..mesh.gpu_data.idx_count, 0, 0..1);
     }
+}
+
+#[derive(Clone, Copy)]
+enum PassId {
+    Depth,
+    Emissive,
+    Main,
 }

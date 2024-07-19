@@ -1,4 +1,5 @@
 use super::{
+    gi::GlobalIlluminationPipeline,
     light,
     line_renderer::LineRenderer,
     mesh::{skin::SkinPipeline, MeshRenderer},
@@ -35,12 +36,16 @@ pub struct Renderer {
     window_scale_factor: f64,
 
     msaa_view: wgpu::TextureView,
+    // textures and bind group for depth and lights to use in GI
     depth_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
-    // bind group for reading the depth texture in a shader
+    emissive_tex: wgpu::Texture,
+    emissive_view: wgpu::TextureView,
+    screen_samp: wgpu::Sampler,
     depth_bind_group: wgpu::BindGroup,
 
     light_man: light::LightManager,
+    gi_pipeline: GlobalIlluminationPipeline,
 
     mesh_renderer: MeshRenderer,
     skin_pl: SkinPipeline,
@@ -120,13 +125,26 @@ impl Renderer {
             .set(window)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
+        let device = Self::device();
+
         let msaa_tex = Self::create_msaa_texture(window_size);
         let msaa_view = msaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         let depth_tex = Self::create_depth_texture(window_size);
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let depth_bind_group = Self::create_depth_bind_group(&depth_view);
+        let emissive_tex = Self::create_emissive_texture(window_size);
+        let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let screen_samp = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("screen"),
+            // nearest-neighbor sampling should be sufficient for the raymarching in GI
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        let depth_bind_group =
+            Self::create_depth_bind_group(&depth_view, &emissive_view, &screen_samp);
 
+        let gi_pipeline = GlobalIlluminationPipeline::new();
         let light_man = light::LightManager::new();
         let mesh_renderer = MeshRenderer::new(&light_man);
         let skin_pl = SkinPipeline::new();
@@ -138,7 +156,11 @@ impl Renderer {
             msaa_view,
             depth_tex,
             depth_view,
+            emissive_tex,
+            emissive_view,
+            screen_samp,
             depth_bind_group,
+            gi_pipeline,
             light_man,
             mesh_renderer,
             skin_pl,
@@ -188,7 +210,13 @@ impl Renderer {
         self.depth_view = self
             .depth_tex
             .create_view(&wgpu::TextureViewDescriptor::default());
-        self.depth_bind_group = Self::create_depth_bind_group(&self.depth_view);
+        self.emissive_tex = Self::create_emissive_texture(new_size);
+        self.emissive_view = self
+            .emissive_tex
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        self.gi_pipeline.resize(new_size);
+        self.depth_bind_group =
+            Self::create_depth_bind_group(&self.depth_view, &self.emissive_view, &self.screen_samp);
         self.light_man.recreate_light_bins(new_size.into());
     }
 
@@ -228,35 +256,85 @@ impl Renderer {
         })
     }
 
+    fn create_emissive_texture(size: winit::dpi::PhysicalSize<u32>) -> wgpu::Texture {
+        let device = Self::device();
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("emissive"),
+            size: wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+    }
+
     pub(crate) fn depth_bind_group_layout<'a>() -> &'a wgpu::BindGroupLayout {
         DEPTH_BIND_GROUP_LAYOUT.get_or_init(|| {
             let device = Self::device();
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("depth"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: true,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: true,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                        count: None,
+                    },
+                ],
             })
         })
     }
 
-    fn create_depth_bind_group(view: &wgpu::TextureView) -> wgpu::BindGroup {
+    fn create_depth_bind_group(
+        depth_view: &wgpu::TextureView,
+        emissive_view: &wgpu::TextureView,
+        screen_samp: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
         let device = Self::device();
         let layout = Self::depth_bind_group_layout();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("depth"),
             layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(view),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(emissive_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(screen_samp),
+                },
+            ],
         })
     }
 
@@ -439,18 +517,39 @@ impl<'a> Frame<'a> {
             mesh_rend.depth_pass(&mut rpass, manager, camera);
         }
 
-        // compute light culling
+        // render light emitters and occluders
+
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("lights"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.renderer.gi_pipeline.light_tex,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            let mesh_rend = &mut self.renderer.mesh_renderer;
+            mesh_rend.emissive_pass(&mut rpass, manager, camera);
+        }
+
+        // compute global illumination
 
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: None,
+                label: Some("global illumination"),
                 timestamp_writes: None,
             });
-            self.renderer.light_man.cull_lights(
-                &mut cpass,
-                camera,
-                &self.renderer.depth_bind_group,
-            );
+
+            self.renderer
+                .gi_pipeline
+                .compute_gi(&mut cpass, &self.renderer.depth_bind_group);
         }
 
         // final render

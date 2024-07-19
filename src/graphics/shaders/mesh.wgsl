@@ -53,6 +53,7 @@ var<storage> main_lights: MainLights;
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
+    emissive_color: vec4<f32>,
 }
 
 @group(2) @binding(0)

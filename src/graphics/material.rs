@@ -100,14 +100,30 @@ impl MaterialResources {
     }
 }
 
+/// Creation parameters for a material.
 #[derive(Debug, Clone, Default)]
 pub struct MaterialParams<'a> {
     pub base_color: Option<[f32; 4]>,
+    pub emissive_color: Option<[f32; 4]>,
     pub diffuse_tex: Option<TextureData<'a>>,
     pub normal_tex: Option<TextureData<'a>>,
 }
 
+impl<'a> MaterialParams<'a> {
+    /// Set the material to cast shadows.
+    ///
+    /// This sets emissive color to opaque black,
+    /// which means the material can't both cast shadows and emit light.
+    #[inline]
+    pub fn cast_shadows(mut self) -> Self {
+        self.emissive_color = Some([0., 0., 0., 1.]);
+        self
+    }
+}
+
+/// A material determines the color and lighting properties of a mesh.
 pub struct Material {
+    pub(crate) has_emissive: bool,
     pub(crate) bind_group: wgpu::BindGroup,
     // textures and buffer stored to avoid dropping them
     _uniform_buf: wgpu::Buffer,
@@ -130,6 +146,7 @@ impl Material {
             label: Some("material uniforms"),
             contents: MaterialUniforms {
                 base_color: params.base_color.unwrap_or([1.; 4]),
+                emissive_color: params.emissive_color.unwrap_or([0.; 4]),
             }
             .as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -163,6 +180,7 @@ impl Material {
         });
 
         Self {
+            has_emissive: params.emissive_color.is_some(),
             bind_group,
             _uniform_buf: uniform_buf,
             _diffuse_tex: diffuse_tex,
@@ -174,6 +192,7 @@ impl Material {
         DEFAULT_MATERIAL.get_or_init(|| {
             Self::new(MaterialParams {
                 base_color: Some([1.; 4]),
+                emissive_color: None,
                 diffuse_tex: None,
                 normal_tex: None,
             })
@@ -190,6 +209,7 @@ impl Material {
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct MaterialUniforms {
     base_color: [f32; 4],
+    emissive_color: [f32; 4],
 }
 
 #[derive(Debug)]
@@ -241,8 +261,7 @@ impl<'a> TextureData<'a> {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
