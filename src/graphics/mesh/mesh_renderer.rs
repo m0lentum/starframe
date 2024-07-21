@@ -167,8 +167,8 @@ impl MeshRenderer {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
-                entry_point: "fs_light",
-                targets: &[],
+                entry_point: "fs_emissive",
+                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,

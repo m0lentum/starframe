@@ -87,7 +87,9 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::empty(),
+                    // needed for read-write storage textures,
+                    // TODO: come up with an alternative storage scheme for GI
+                    features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     limits: wgpu::Limits {
                         min_uniform_buffer_offset_alignment: 64,
                         ..Default::default()

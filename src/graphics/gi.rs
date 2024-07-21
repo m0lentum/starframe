@@ -5,15 +5,15 @@ use zerocopy::{AsBytes, FromBytes};
 use crate::math::uv;
 
 /// Distance between cascade 0 probes measured in screen pixels.
-///
-/// Currently this needs to be manually set to the same value as SPACING_C0 in the shader,
-/// once we update wgpu we could use pipeline-overridable constants instead
-const PROBE_INTERVAL: f32 = 4.;
+const C0_PROBE_INTERVAL: f32 = 4.;
+/// Length of the radiance interval measured by cascade 0 probes.
+/// This should be proportional to the diagonal
+/// of a square with side C0_PROBE_INTERVAL
+const C0_PROBE_RANGE: f32 = 4.;
 /// Workgroups are arranged in squares of this size.
 const TILE_SIZE: u32 = 16;
 
-/// Scaling factor of the light texture in a constant for now,
-/// TODO: make this configurable
+/// Scaling factor of the light texture relative to the screen.
 const LIGHT_TEX_SCALING: f32 = 0.5;
 
 pub(crate) struct GlobalIlluminationPipeline {
@@ -24,7 +24,6 @@ pub(crate) struct GlobalIlluminationPipeline {
     // compute pipeline for radiance cascades
     cascade_pl: wgpu::ComputePipeline,
     cascade_tex: wgpu::TextureView,
-    bilinear_samp: wgpu::Sampler,
     probe_count: [u32; 2],
     params_buf: wgpu::Buffer,
     cascade_bind_group_layout: wgpu::BindGroupLayout,
@@ -35,7 +34,12 @@ pub(crate) struct GlobalIlluminationPipeline {
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct CascadeParams {
     cascade_count: u32,
+    _pad0: u32,
     probe_count_c0: [u32; 2],
+    // spacing and range in the light texture's pixel space,
+    // not screen space
+    spacing_c0: f32,
+    range_c0: f32,
 }
 
 /// Resources that need to be resized when screen size changes
@@ -54,15 +58,6 @@ impl GlobalIlluminationPipeline {
             crate::Renderer::window().inner_size().into(),
             light_tex_scaling,
         );
-
-        // sampler with bilinear interpolation
-        // to make use of hardware interpolation in combining cascades
-        let bilinear_samp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("cascade sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
 
         use wgpu::util::DeviceExt;
         let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -84,24 +79,19 @@ impl GlobalIlluminationPipeline {
                         },
                         visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
                         count: None,
-                    },wgpu::BindGroupLayoutEntry {
+                    },
+                    wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: wgpu::BindingType::StorageTexture { 
+                            access: wgpu::StorageTextureAccess::ReadWrite,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            view_dimension: wgpu::TextureViewDimension::D2
                         },
                         visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        visibility: wgpu::ShaderStages::COMPUTE | wgpu::ShaderStages::FRAGMENT,
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: false },
                             view_dimension: wgpu::TextureViewDimension::D2,
@@ -113,12 +103,8 @@ impl GlobalIlluminationPipeline {
                 ],
             });
 
-        let cascade_bind_group = Self::create_cascade_bind_group(
-            &cascade_bind_group_layout,
-            &resizables,
-            &bilinear_samp,
-            &params_buf,
-        );
+        let cascade_bind_group =
+            Self::create_cascade_bind_group(&cascade_bind_group_layout, &resizables, &params_buf);
 
         let casc_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("global illumination"),
@@ -144,7 +130,6 @@ impl GlobalIlluminationPipeline {
             light_tex_scaling,
             cascade_pl,
             cascade_tex: resizables.cascade_tex,
-            bilinear_samp,
             params_buf,
             probe_count: resizables.params.probe_count_c0,
             cascade_bind_group_layout,
@@ -174,10 +159,10 @@ impl GlobalIlluminationPipeline {
         // compute needed probe and cascade count to get full texture dimensions
 
         let screen_diag = uv::Vec2::new(target_size.0 as f32, target_size.1 as f32).mag();
-        let cascade_count = (screen_diag / PROBE_INTERVAL).log(4.).ceil() as u32;
+        let cascade_count = (screen_diag / C0_PROBE_INTERVAL).log(4.).ceil() as u32;
 
-        let probe_count_x = (target_size.0 as f32 / PROBE_INTERVAL).floor() as u32;
-        let probe_count_y = (target_size.1 as f32 / PROBE_INTERVAL).floor() as u32;
+        let probe_count_x = (target_size.0 as f32 / C0_PROBE_INTERVAL).floor() as u32;
+        let probe_count_y = (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32;
 
         // cascade 0 spans two columns, the rest are packed two per column.
         // see radiance_cascades.wgsl for a picture
@@ -203,7 +188,10 @@ impl GlobalIlluminationPipeline {
 
         let params = CascadeParams {
             cascade_count,
+            _pad0: 0,
             probe_count_c0: [probe_count_x, probe_count_y],
+            spacing_c0: C0_PROBE_INTERVAL * LIGHT_TEX_SCALING,
+            range_c0: C0_PROBE_RANGE * LIGHT_TEX_SCALING,
         };
 
         ResizeResults {
@@ -216,7 +204,6 @@ impl GlobalIlluminationPipeline {
     fn create_cascade_bind_group(
         layout: &wgpu::BindGroupLayout,
         resizables: &ResizeResults,
-        samp: &wgpu::Sampler,
         params_buf: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         let device = crate::Renderer::device();
@@ -234,10 +221,6 @@ impl GlobalIlluminationPipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(samp),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
                     resource: wgpu::BindingResource::TextureView(&resizables.light_tex),
                 },
             ],
@@ -254,7 +237,6 @@ impl GlobalIlluminationPipeline {
         self.cascade_bind_group = Self::create_cascade_bind_group(
             &self.cascade_bind_group_layout,
             &res,
-            &self.bilinear_samp,
             &self.params_buf,
         );
         self.cascade_tex = res.cascade_tex;

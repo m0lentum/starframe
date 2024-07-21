@@ -69,6 +69,6 @@ fn fs_depth(in: VertexOutput) {
 // light fragment shader only looks at the emissive component of the material
 // (TODO: also allow emissive textures)
 @fragment
-fn fs_emissive(in: VertexOutput) -> vec4<f32> {
+fn fs_emissive(in: VertexOutput) -> @location(0) vec4<f32> {
     return material.emissive_color;
 }

@@ -1,26 +1,19 @@
 struct GlobalParams {
     level_count: u32,
     probe_count_c0: vec2<u32>,
+    // spacing between cascade 0 probes in screen pixels
+    spacing_c0: f32,
+    // length of the radiance interval measured by cascade 0 probes
+    // this should be proportional to the diagonal
+    // of a square with side spacing_c0
+    range_c0: f32,
 }
 @group(0) @binding(0)
 var<uniform> params: GlobalParams;
-
 @group(0) @binding(1)
 var cascade_tex: texture_storage_2d<rgba8unorm, read_write>;
-// sampler with bilinear interpolation for merging cascade levels
 @group(0) @binding(2)
-var cascade_samp: sampler;
-@group(0) @binding(3)
 var light_tex: texture_2d<f32>;
-
-// TODO: update wgpu to support pipeline overrides and make these constants use them
-
-// spacing between cascade 0 probes in screen pixels
-const SPACING_C0: f32 = 4.;
-// length of the radiance interval measured by cascade 0 probes
-// this should be proportional to the diagonal
-// of a square with side SPACING_C0
-const RANGE_C0: f32 = 4.;
 
 const TAU: f32 = 6.283185;
 
@@ -68,12 +61,12 @@ fn cascade_info(level: u32) -> CascadeInfo {
     // we use 4 rays for cascade 0 and pre-averaged rays for the rest,
     // hence cascade 1 also has 4 rays, cascade 2 has 16 etc.
     info.rays_per_probe = level_exp4;
-    info.linear_spacing = SPACING_C0 * f32(level_exp2);
+    info.linear_spacing = params.spacing_c0 * f32(level_exp2);
     // each range is 4 times larger than the previous,
     // and starts at the previous one's end,
     // hence the start distance is the sum of a geometric sequence
-    info.range_start = RANGE_C0 * (1. - f32(level_exp4)) / (1. - 4.);
-    info.range_length = RANGE_C0 * f32(level_exp4);
+    info.range_start = params.range_c0 * (1. - f32(level_exp4)) / (1. - 4.);
+    info.range_length = params.range_c0 * f32(level_exp4);
     info.tex_offset = cascade_offset(level);
 
     return info;
@@ -101,7 +94,8 @@ fn direction_info(cascade: CascadeInfo, texel_id: vec2<u32>) -> DirectionInfo {
     var info: DirectionInfo;
 
     info.dir_tile = texel_id / cascade.probe_count;
-    info.dir_idx = info.dir_tile.y * (cascade.rays_per_probe / 2u) + info.dir_tile.x;
+    // direction tiles are laid out in a square with side length 2^level
+    info.dir_idx = info.dir_tile.y * (1u << cascade.level) + info.dir_tile.x;
     info.probe_idx = texel_id % cascade.probe_count;
     info.probe_pos = (vec2<f32>(info.probe_idx) + vec2<f32>(0.5)) * cascade.linear_spacing;
     info.range_start = cascade.range_start;
@@ -135,79 +129,102 @@ fn get_ray(dir: DirectionInfo, subray_idx: u32) -> Ray {
 // raymarch on the depth and emissive textures in uv space
 // to find occluders and lights
 fn raymarch(ray: Ray) -> vec4<f32> {
-    // TODO: light texture is not directly in pixel space, scale range accordingly
     let screen_size = vec2<i32>(textureDimensions(light_tex));
 
     var t = 0.;
     var ray_pos = ray.start;
     var pixel_pos = vec2<i32>(ray_pos);
     let pixel_dir = vec2<i32>(sign(ray.dir));
-    loop {
-        // move to the next pixel intersected by the ray
-        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x >= 0));
-        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y >= 0));
-        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
-        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
-        if to_next_x < to_next_y {
-            t += to_next_x;
-            ray_pos += to_next_x * ray.dir;
-            pixel_pos += pixel_dir.x;
-        } else {
-            t += to_next_y;
-            ray_pos += to_next_y * ray.dir;
-            pixel_pos += pixel_dir.y;
-        }
-
+    // bounded loop as a failsafe to avoid hanging
+    // in case there's a bug that causes the raymarch to stop in place
+    for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
         if t > ray.range {
-            // out of range, return an alpha value of 1 
+            // out of range, return an alpha value of 0 
             // to indicate that this ray hit nothing and needs to merge with the above level
-            return vec4<f32>(0., 0., 0., 1.);
+            return vec4<f32>(0.);
         }
 
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
             // left the screen
             // TODO: return radiance from an environment map
-            return vec4<f32>(0.);
+            return vec4<f32>(0.5 * ray.dir + vec2<f32>(0.5), 0., 1.);
         }
 
         // TODO: handle case where we started inside a shadow caster
-        // (these should get light)
+        // (these should get light and only occlude things behind them)
         let radiance = textureLoad(light_tex, pixel_pos, 0);
         if radiance.a > 0. {
             // hit an occluder or emitter
-            // TODO: if 0 < a < 1, do volumetric accumulation instead of returning immediately
             return radiance;
+        }
+
+        // move to the next pixel intersected by the ray
+        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
+        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1));
+        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
+        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
+        if to_next_x < to_next_y {
+            t += to_next_x;
+            ray_pos += to_next_x * ray.dir;
+            pixel_pos.x += pixel_dir.x;
+        } else {
+            t += to_next_y;
+            ray_pos += to_next_y * ray.dir;
+            pixel_pos.y += pixel_dir.y;
         }
     }
 
-    // this is never reached but needed to make naga happy
-    return vec4<f32>(0., 0., 0., 1.);
+    return vec4<f32>(0.);
 }
 
 // find the rays pointing in the `dir_idx` direction
-// on the four N+1-probes nearest to the N-probe at `probe_pos`
-// and get the interpolated radiance using hardware filtering
+// on the four N+1-probes nearest to the N-probe at `dir.probe_idx`
+// and get the interpolated radiance
 fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo) -> vec4<f32> {
     let next_probe_count = cascade.probe_count / 2u;
     let next_casc_offset = cascade_offset(cascade.level + 1u);
-    let dir_area_offset = dir.dir_tile * next_probe_count;
-    let total_offset = vec2<f32>(next_casc_offset + dir_area_offset);
+    let dir_tile_offset = dir.dir_tile * next_probe_count;
+    let total_offset = next_casc_offset + dir_tile_offset;
 
-    // sampling coordinates for the next cascade level
-    // weighted by the relative position of the current probe
-    // (remember that the sampling coordinates for a pixel are at (0.5, 0.5)
-    // offset from the pixel's integer coordinates,
-    // hence the square we're in for e.g. probe (0, 0) is [0.5, 1.5] x [0.5, 1.5].
-    // this is why the (0.25, 0.25) vector being added has positive sign)
-    var interp_coords = vec2<f32>(dir.probe_idx) * 0.5 + vec2<f32>(0.25);
-    // clamp away from this direction tile's texture area edges
-    // to prevent spurious contribution from adjacent probes
-    interp_coords = clamp(vec2<f32>(0.5), vec2<f32>(next_probe_count) - vec2<f32>(0.5), interp_coords);
-    interp_coords += vec2<f32>(next_casc_offset);
-    let interp_coords_uv = interp_coords / vec2<f32>(textureDimensions(cascade_tex));
-    // TOTO storage textures can't be sampled,
-    // either use textureGather or convert to a multi-pass render pipeline
-    return textureSample(cascade_tex, cascade_samp, interp_coords_uv);
+    // storage textures can't be sampled,
+    // so we have to do the interpolation manually.
+    // an alternative would be to convert this whole shader to a fragment shader
+    // but set up a profiler first if you try that
+    // because there are tradeoffs that may well overshadow the gains from hardware interpolation
+
+    let tl_pos = total_offset + dir.probe_idx / 2u;
+    let tl = textureLoad(cascade_tex, tl_pos);
+    let tr = textureLoad(cascade_tex, tl_pos + vec2<u32>(1u, 0u));
+    let bl = textureLoad(cascade_tex, tl_pos + vec2<u32>(0u, 1u));
+    let br = textureLoad(cascade_tex, tl_pos + vec2<u32>(1u, 1u));
+
+    var br_weight: vec2<f32>;
+    // clamp the weights in case we're on the border
+    // to avoid spurious contribution from adjacent direction tiles
+    if dir.probe_idx.x == 0u {
+        br_weight.x = 1.;
+    } else if dir.probe_idx.x == cascade.probe_count.x - 1u {
+        br_weight.x = 0.;
+    } else {
+        // regular case where every other N-probe 
+        // is closer to the N+1-probe to its right
+        // and every other to its left
+        br_weight.x = select(0.75, 0.25, dir.probe_idx.x % 2u == 1u);
+    }
+    // same for y
+    if dir.probe_idx.y == 0u {
+        br_weight.y = 1.;
+    } else if dir.probe_idx.x == cascade.probe_count.y - 1u {
+        br_weight.y = 0.;
+    } else {
+        br_weight.y = select(0.75, 0.25, dir.probe_idx.y % 2u == 1u);
+    }
+
+    return mix(
+        mix(tl, tr, br_weight.x),
+        mix(bl, br, br_weight.x),
+        br_weight.y,
+    );
 }
 
 @compute
@@ -229,16 +246,19 @@ fn main(
 
     // run through each cascade in order, starting with the top
 
-    let top_cascade_idx = params.level_count - 1;
+    let top_cascade_idx = params.level_count - 1u;
     let top_cascade = cascade_info(top_cascade_idx);
     let top_dir = direction_info(top_cascade, texel_id);
+
+    // TODO: clip off the pixels around the cascade edge
+    // that don't actually correspond to a probe
+    // because of higher level probes not fitting evenly
 
     // pre-averaging of 4 rays for the top cascade 
     // (this one doesn't merge with rays of higher cascades)
     var ray_avg = vec4<f32>(0.);
     for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-        let ray_radiance = raymarch(get_ray(top_dir, subray_idx));
-        ray_avg += vec4<f32>(ray_radiance.rgb, 1. - ray_radiance.a);
+        ray_avg += raymarch(get_ray(top_dir, subray_idx));
     }
     ray_avg *= 0.25;
 
@@ -256,12 +276,10 @@ fn main(
         var ray_avg = vec4<f32>(0.);
         for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
             let ray_radiance = raymarch(get_ray(dir, subray_idx));
+            ray_avg += ray_radiance;
             if ray_radiance.a == 0. {
-                // ray hit something opaque, do not merge
-                ray_avg += vec4<f32>(ray_radiance.rgb, 1. - ray_radiance.a);
-            } else {
-                let next_casc = sample_next_cascade(cascade, dir);
-                ray_avg += ray_radiance + next_casc;
+                // ray didn't hit anything, merge with level above
+                ray_avg += sample_next_cascade(cascade, dir);
             }
         }
         ray_avg *= 0.25;
@@ -279,9 +297,9 @@ fn main(
     casc_0.level = 0u;
     casc_0.probe_count = params.probe_count_c0;
     casc_0.rays_per_probe = 4u;
-    casc_0.linear_spacing = SPACING_C0;
-    casc_0.range_start = 0u;
-    casc_0.range_length = RANGE_C0;
+    casc_0.linear_spacing = params.spacing_c0;
+    casc_0.range_start = 0.;
+    casc_0.range_length = params.range_c0;
     casc_0.tex_offset = vec2<u32>(0u);
 
     var dir_0: DirectionInfo;
@@ -301,10 +319,7 @@ fn main(
     for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
         var ray_radiance = raymarch(get_ray(dir_0, ray_idx));
         if ray_radiance.a == 0. {
-            ray_radiance = vec4<f32>(ray_radiance.rgb, 1. - ray_radiance.a);
-        } else {
-            let next_casc = sample_next_cascade(casc_0, dir_0);
-            ray_radiance += next_casc;
+            ray_radiance += sample_next_cascade(casc_0, dir_0);
         }
 
         // store each ray result in a different texel in position-major order
