@@ -180,10 +180,16 @@ fn raymarch(ray: Ray) -> vec4<f32> {
 // find the rays pointing in the `dir_idx` direction
 // on the four N+1-probes nearest to the N-probe at `dir.probe_idx`
 // and get the interpolated radiance
-fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo) -> vec4<f32> {
+fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
     let next_probe_count = cascade.probe_count / 2u;
     let next_casc_offset = cascade_offset(cascade.level + 1u);
-    let dir_tile_offset = dir.dir_tile * next_probe_count;
+    let next_tiles_per_row = 1u << (cascade.level + 1u);
+    let next_dir_idx = dir.dir_idx * 4u + subdir_idx;
+    let next_dir_tile = vec2<u32>(
+        next_dir_idx % next_tiles_per_row,
+        next_dir_idx / next_tiles_per_row,
+    );
+    let dir_tile_offset = next_dir_tile * next_probe_count;
     let total_offset = next_casc_offset + dir_tile_offset;
 
     // storage textures can't be sampled,
@@ -279,7 +285,7 @@ fn main(
             ray_avg += ray_radiance;
             if ray_radiance.a == 0. {
                 // ray didn't hit anything, merge with level above
-                ray_avg += sample_next_cascade(cascade, dir);
+                ray_avg += sample_next_cascade(cascade, dir, subray_idx);
             }
         }
         ray_avg *= 0.25;
@@ -319,7 +325,7 @@ fn main(
     for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
         var ray_radiance = raymarch(get_ray(dir_0, ray_idx));
         if ray_radiance.a == 0. {
-            ray_radiance += sample_next_cascade(casc_0, dir_0);
+            ray_radiance += sample_next_cascade(casc_0, dir_0, ray_idx);
         }
 
         // store each ray result in a different texel in position-major order
