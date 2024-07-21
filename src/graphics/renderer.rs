@@ -148,7 +148,7 @@ impl Renderer {
 
         let gi_pipeline = GlobalIlluminationPipeline::new();
         let light_man = light::LightManager::new();
-        let mesh_renderer = MeshRenderer::new(&light_man);
+        let mesh_renderer = MeshRenderer::new(&gi_pipeline);
         let skin_pl = SkinPipeline::new();
 
         Ok(Renderer {
@@ -566,7 +566,7 @@ impl<'a> Frame<'a> {
             );
 
             let mesh_rend = &mut self.renderer.mesh_renderer;
-            mesh_rend.draw_pass(&mut rpass, manager, camera, &self.renderer.light_man);
+            mesh_rend.draw_pass(&mut rpass, manager, camera, &self.renderer.gi_pipeline);
         }
     }
 

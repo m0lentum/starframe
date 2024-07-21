@@ -13,41 +13,15 @@ var<uniform> camera: CameraUniforms;
 
 // lights
 
-const MAX_LIGHTS: u32 = 1024u;
-const TILE_SIZE: u32 = 16u;
-
-struct DirectionalLight {
-    color: vec3<f32>,
-    direction: vec3<f32>,
+struct CascadeRenderParams {
+    probe_spacing: f32,
 }
-
-struct MainLights {
-    ambient_color: vec3<f32>,
-    dir_light_count: u32,
-    dir_lights: array<DirectionalLight>,
-}
-
-struct PointLight {
-    position: vec3<f32>,
-    color: vec3<f32>,
-    radius: f32,
-    attn_linear: f32,
-    attn_quadratic: f32,
-}
-
-struct PointLights {
-    count: u32,
-    tiles_x: u32,
-    tiles_y: u32,
-    lights: array<PointLight, MAX_LIGHTS>,
-}
-
 @group(1) @binding(0)
-var<storage> point_lights: PointLights;
+var<uniform> light_params: CascadeRenderParams;
 @group(1) @binding(1)
-var<storage, read_write> light_bins: array<i32>;
+var cascade_tex: texture_2d<f32>;
 @group(1) @binding(2)
-var<storage> main_lights: MainLights;
+var cascade_samp: sampler;
 
 // material
 
@@ -132,7 +106,7 @@ fn vs_main(
 fn fs_main(
     in: VertexOutput
 ) -> @location(0) vec4<f32> {
-    // color texture and normal map
+    // get the necessary parameters
 
     let diffuse_color = material.base_color * textureSample(t_diffuse, s_diffuse, in.tex_coords);
 
@@ -142,50 +116,27 @@ fn fs_main(
     let tex_normal = textureSample(t_normal, s_normal, in.tex_coords).xyz;
     let normal = tbn * normalize(tex_normal * 2. - 1.);
 
-    // directional lights
+    // look up the nearest radiance probe and compute lighting based on it
 
-    var dir_light_total = vec3<f32>(0.);
-    for (var li = 0u; li < main_lights.dir_light_count; li++) {
-        let dir_light = main_lights.dir_lights[li];
-        // dot with the negative light direction
-        // indicates how opposite to the light the normal is,
-        // and hence the strength of the diffuse light
-        let normal_dot_light = -dot(normal, dir_light.direction.xyz);
-        let diffuse_strength = max(normal_dot_light, 0.);
-        dir_light_total += diffuse_strength * dir_light.color;
-    }
+    let nearest_probe = round(in.clip_position.xy / light_params.probe_spacing);
+    let probe_center = 2. * nearest_probe + vec2<f32>(1.);
+    // map the (x,y) part of the normal to a square,
+    // then use its position in the square for bilinear interpolation
+    // to get the value corresponding to that direction in the probe
+    let normal_abs = abs(normal.xy);
+    let normal_sign = vec2<f32>(sign(normal.xy));
+    let normal_on_square = select(
+        vec2<f32>(1., normal_abs.y / normal_abs.x) * normal_sign,
+        vec2<f32>(normal_abs.x / normal_abs.y, 1.) * normal_sign,
+        normal_abs.x > normal_abs.y,
+    );
+    let normal_in_square = normal_on_square * length(normal.xy);
 
-    // point lights
+    let sample_pixel = probe_center + 0.5 * normal_in_square;
+    let sample_uv = sample_pixel / vec2<f32>(textureDimensions(cascade_tex));
+    let light_val = textureSample(cascade_tex, cascade_samp, sample_uv);
 
-    // get the pixel we're in from the screenspace coordinates
-    // and select the right tile based on it
-    let pixel = vec2<u32>(in.clip_position.xy);
-    let tile_id = pixel / TILE_SIZE;
-    let bin_idx = tile_id.y * point_lights.tiles_x + tile_id.x;
-    let bin_start = bin_idx * MAX_LIGHTS;
-
-    var point_light_total = vec3<f32>(0., 0., 0.);
-    for (var bi = 0u; bi < point_lights.count; bi++) {
-        let li = light_bins[bin_start + bi];
-        if li == -1 {
-            break;
-        }
-        let light = point_lights.lights[li];
-
-        let from_light = in.world_position - light.position;
-        let dist = length(from_light);
-        let attenuation = 1. / (1. + dist * light.attn_linear + dist * dist * light.attn_quadratic);
-
-        let light_dir = from_light / dist;
-        let normal_dot_light = -dot(normal, light_dir);
-
-        let light_strength = attenuation * max(normal_dot_light, 0.);
-        let light_contrib = light_strength * light.color;
-        point_light_total += light_contrib;
-    }
-
-    let light_total = main_lights.ambient_color + dir_light_total + point_light_total;
-    let final_color = vec4<f32>(light_total, 1.) * diffuse_color;
+    let final_color = vec4<f32>(light_val.rgb, 1.) * diffuse_color;
     return final_color;
 }
 

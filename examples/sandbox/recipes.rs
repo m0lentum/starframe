@@ -19,6 +19,7 @@ pub enum Recipe {
         #[serde(with = "sf::serde_pose")]
         pose: sf::Pose,
         colliders: Vec<sf::Collider>,
+        is_lit: bool,
     },
     Blockchain {
         width: f64,
@@ -128,6 +129,8 @@ fn spawn_block(game: &mut sf::Game, block: Block) -> sf::hecs::Entity {
         data: sf::MeshData::from(coll),
         ..Default::default()
     });
+    let mat = game.graphics.get_material_id("wall").unwrap();
+    game.graphics.set_mesh_material(mesh_id, mat);
 
     let entity = game.world.spawn((pose, coll_key, mesh_id));
 
@@ -279,12 +282,20 @@ impl Recipe {
                     spawn_body(game, solid);
                 }
             }
-            Recipe::GenericBody { pose, colliders } => {
+            Recipe::GenericBody {
+                pose,
+                colliders,
+                is_lit,
+            } => {
                 let (col, mat) = random_palette();
                 let solid = Solid {
                     pose: *pose,
                     colliders,
-                    material: Some(mat),
+                    material: if *is_lit {
+                        Some(mat)
+                    } else {
+                        game.graphics.get_material_id("wall")
+                    },
                     light_color: Some(col),
                 };
                 spawn_body(game, solid);

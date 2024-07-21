@@ -69,6 +69,7 @@ pub struct State {
     island_vis_active: bool,
     spawner_circle_r: f64,
     spawner_obj_count: usize,
+    spawner_is_lit: bool,
     time_scale: f64,
 }
 impl State {
@@ -109,6 +110,7 @@ impl State {
             island_vis_active: false,
             spawner_circle_r: 0.0,
             spawner_obj_count: 1,
+            spawner_is_lit: true,
             time_scale: 1.0,
         }
     }
@@ -154,6 +156,15 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
             )
         })
         .collect();
+
+    game.graphics.create_material(
+        sf::MaterialParams {
+            base_color: Some([1.; 4]),
+            ..Default::default()
+        }
+        .cast_shadows(),
+        Some("wall"),
+    );
 
     GeneratedAssets { player, palette }
 }
@@ -358,38 +369,10 @@ impl sf::GameState for State {
                     }
                 });
             }
+            ui.checkbox(&mut self.spawner_is_lit, "Lit");
 
             ui.separator();
-            ui.heading("Light");
-            ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.dir_light.color);
-                ui.label("Direct light color");
-            });
-            ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.ambient_light);
-                ui.label("Ambient light color");
-            });
-            ui.horizontal(|ui| {
-                if ui.button("Dim").clicked() {
-                    for channel in &mut self.dir_light.color {
-                        *channel *= 0.5;
-                    }
-                }
-                if ui.button("Brighten").clicked() {
-                    for channel in &mut self.dir_light.color {
-                        *channel *= 2.;
-                    }
-                }
-            });
-            ui.add(
-                egui::Slider::new(&mut self.dir_light.direction.x, -5.0..=5.0).text("Direction x"),
-            );
-            ui.add(
-                egui::Slider::new(&mut self.dir_light.direction.y, -5.0..=5.0).text("Direction y"),
-            );
-            ui.checkbox(&mut self.light_rotating, "Spin");
 
-            ui.separator();
             ui.heading("Other controls");
             ui.horizontal(|ui| {
                 match self.state {
@@ -479,6 +462,7 @@ impl sf::GameState for State {
                         circle_r: self.spawner_circle_r,
                     }
                     .into()],
+                    is_lit: self.spawner_is_lit,
                 }
                 .spawn(game, &self.gen_assets);
             }

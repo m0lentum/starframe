@@ -1,5 +1,6 @@
 use crate::{
     graphics::{
+        gi::GlobalIlluminationPipeline,
         light::LightManager,
         manager::MeshId,
         material::Material,
@@ -38,7 +39,7 @@ struct InstanceUniforms {
 }
 
 impl MeshRenderer {
-    pub(crate) fn new(light_man: &LightManager) -> Self {
+    pub(crate) fn new(gi_pl: &GlobalIlluminationPipeline) -> Self {
         let device = crate::Renderer::device();
 
         let depth_shader =
@@ -187,7 +188,7 @@ impl MeshRenderer {
             label: Some("mesh"),
             bind_group_layouts: &[
                 crate::Camera::bind_group_layout(),
-                &light_man.bind_group_layout,
+                &gi_pl.render_bind_group_layout,
                 Material::bind_group_layout(),
                 &instance_unif_bind_group_layout,
             ],
@@ -348,13 +349,13 @@ impl MeshRenderer {
         pass: &mut wgpu::RenderPass<'pass>,
         manager: &'pass mut GraphicsManager,
         camera: &'pass Camera,
-        light_man: &'pass LightManager,
+        gi_pl: &'pass GlobalIlluminationPipeline,
     ) {
         // full render in reverse z order for transparency
 
         pass.set_pipeline(&self.main_pipeline);
         pass.set_bind_group(0, &camera.bind_group, &[]);
-        pass.set_bind_group(1, &light_man.bind_group, &[]);
+        pass.set_bind_group(1, &gi_pl.render_bind_group, &[]);
 
         for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate().rev() {
             self.draw_mesh(pass, manager, idx, mesh_id, PassId::Main);

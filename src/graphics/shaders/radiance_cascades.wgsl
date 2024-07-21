@@ -147,7 +147,7 @@ fn raymarch(ray: Ray) -> vec4<f32> {
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
             // left the screen
             // TODO: return radiance from an environment map
-            return vec4<f32>(0.5 * ray.dir + vec2<f32>(0.5), 0., 1.);
+            return vec4<f32>(0.);
         }
 
         // TODO: handle case where we started inside a shadow caster
