@@ -50,6 +50,11 @@ struct InstanceUniforms {
 @group(3) @binding(0)
 var<uniform> instance: InstanceUniforms;
 
+const SQRT_2: f32 = 1.41421562;
+const PI: f32 = 3.14159265;
+const HALF_PI: f32 = 1.5707963;
+const PI_3_2: f32 = 4.71238898;
+
 //
 // vertex shader
 //
@@ -118,25 +123,40 @@ fn fs_main(
 
     // look up the nearest radiance probe and compute lighting based on it
 
-    let nearest_probe = round(in.clip_position.xy / light_params.probe_spacing);
-    let probe_center = 2. * nearest_probe + vec2<f32>(1.);
-    // map the (x,y) part of the normal to a square,
-    // then use its position in the square for bilinear interpolation
-    // to get the value corresponding to that direction in the probe
-    let normal_abs = abs(normal.xy);
-    let normal_sign = vec2<f32>(sign(normal.xy));
-    let normal_on_square = select(
-        vec2<f32>(1., normal_abs.y / normal_abs.x) * normal_sign,
-        vec2<f32>(normal_abs.x / normal_abs.y, 1.) * normal_sign,
-        normal_abs.x > normal_abs.y,
+    // remove the half-pixel in clipspace coordinates
+    let pixel_pos = in.clip_position.xy - vec2<f32>(0.5);
+    // +0.5 because probe positioning is offset from the corner by half a space
+    let nearest_probe = vec2<u32>(
+        round((pixel_pos / light_params.probe_spacing) + vec2<f32>(0.5))
     );
-    let normal_in_square = normal_on_square * length(normal.xy);
+    let probe_pixel = 2u * nearest_probe;
+    // read the light values in each of the probe's four quadrants
+    let br = textureLoad(cascade_tex, probe_pixel, 0);
+    let bl = textureLoad(cascade_tex, probe_pixel + vec2<u32>(1u, 0u), 0);
+    let tl = textureLoad(cascade_tex, probe_pixel + vec2<u32>(0u, 1u), 0);
+    let tr = textureLoad(cascade_tex, probe_pixel + vec2<u32>(1u, 1u), 0);
+    var radiances = array(tr, tl, bl, br);
+    // approximation of the normal's coverage of each sphere segment
+    // using the intersection point of the sphere and the plane defined by the normal
+    var directions = array(
+        vec3<f32>(SQRT_2, SQRT_2, 0.),
+        vec3<f32>(-SQRT_2, SQRT_2, 0.),
+        vec3<f32>(-SQRT_2, -SQRT_2, 0.),
+        vec3<f32>(SQRT_2, -SQRT_2, 0.),
+        vec3<f32>(SQRT_2, SQRT_2, 0.),
+    );
+    var radiance = vec3<f32>(0.);
+    for (var dir_idx = 0u; dir_idx < 4u; dir_idx++) {
+        let dir = directions[dir_idx];
+        let dir_normal = directions[dir_idx + 1u];
+        let rad = radiances[dir_idx];
 
-    let sample_pixel = probe_center + 0.5 * normal_in_square;
-    let sample_uv = sample_pixel / vec2<f32>(textureDimensions(cascade_tex));
-    let light_val = textureSample(cascade_tex, cascade_samp, sample_uv);
+        let plane_isect = normalize(cross(dir_normal, normal));
+        let angle = acos(plane_isect.z);
+        let dir_coverage = select(angle, PI - angle, normal.z > 0.) / PI;
+        radiance += dir_coverage * rad.rgb;
+    }
 
-    let final_color = vec4<f32>(light_val.rgb, 1.) * diffuse_color;
-    return final_color;
+    return vec4<f32>(radiance, 1.) * diffuse_color;
 }
 
