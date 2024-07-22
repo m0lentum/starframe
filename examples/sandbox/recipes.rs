@@ -45,6 +45,13 @@ pub enum Recipe {
         pose: sf::Pose,
         start_time: f32,
     },
+    BackgroundWall {
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+        depth: f32,
+    },
     BackgroundForest {
         mesh_count: usize,
         anim_count: usize,
@@ -490,6 +497,29 @@ impl Recipe {
                     }
                 }
                 game.physics.rope_set.insert(rope);
+            }
+            Recipe::BackgroundWall {
+                left,
+                top,
+                right,
+                bottom,
+                depth,
+            } => {
+                let mesh_id = game.graphics.create_mesh(sf::MeshParams {
+                    // TODO: ConvexMeshShape should take f32s
+                    data: sf::MeshData::from(sf::ConvexMeshShape::Rect {
+                        w: (right - left) as f64,
+                        h: (top - bottom) as f64,
+                    }),
+                    ..Default::default()
+                });
+
+                let pose = sf::PoseBuilder::new()
+                    .with_position([(right + left) / 2., (top + bottom) / 2.])
+                    .with_depth(*depth)
+                    .build();
+
+                game.world.spawn((mesh_id, pose));
             }
             Recipe::BackgroundTree { pose, start_time } => {
                 let mesh_id = game.graphics.get_mesh_id("library.tree_mesh").unwrap();
