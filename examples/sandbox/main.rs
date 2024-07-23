@@ -149,7 +149,9 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
             game.graphics.create_material(
                 sf::MaterialParams {
                     base_color: Some(col),
-                    emissive_color: Some(col),
+                    // more subdued light color so we don't immediately blow out into white
+                    // (TODO: HDR and tonemapping)
+                    emissive_color: Some(col.map(|c| c * 0.5)),
                     ..Default::default()
                 },
                 None,
