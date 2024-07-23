@@ -229,7 +229,16 @@ impl GlobalIlluminationPipeline {
         // compute needed probe and cascade count to get full texture dimensions
 
         let screen_diag = uv::Vec2::new(target_size.0 as f32, target_size.1 as f32).mag();
-        let cascade_count = (screen_diag / C0_PROBE_INTERVAL).log(4.).ceil() as u32;
+        // iterative computation for cascade count,
+        // the number needed is the minimum where a probe reaches all the way across the screen
+        let mut range = C0_PROBE_RANGE;
+        let mut cascade_count = 1;
+        while range < screen_diag {
+            // each probe's range starts at the previous one's
+            // and has a length of 4 times the previous
+            range += C0_PROBE_RANGE * (4u32.pow(cascade_count)) as f32;
+            cascade_count += 1;
+        }
 
         let probe_count_x = (target_size.0 as f32 / C0_PROBE_INTERVAL).floor() as u32;
         let probe_count_y = (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32;
