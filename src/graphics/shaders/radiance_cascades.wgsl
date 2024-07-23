@@ -78,6 +78,10 @@ struct DirectionInfo {
     dir_tile: vec2<u32>,
     // linearized index of the direction for computing the ray angle
     dir_idx: u32,
+    // some pixels on higher cascade levels may not actually correspond to a direction
+    // if the probe count doesn't divide evenly,
+    // this allows us to skip work on those pixels
+    valid: bool,
     // 2d index of the probe in the probe lattice
     probe_idx: vec2<u32>,
     // position of the probe in pixel space
@@ -95,7 +99,10 @@ fn direction_info(cascade: CascadeInfo, texel_id: vec2<u32>) -> DirectionInfo {
 
     info.dir_tile = texel_id / cascade.probe_count;
     // direction tiles are laid out in a square with side length 2^level
-    info.dir_idx = info.dir_tile.y * (1u << cascade.level) + info.dir_tile.x;
+    let tiles_per_row = (1u << cascade.level);
+    // check if the pixel is out of this cascade's range
+    info.valid = info.dir_tile.x < tiles_per_row && info.dir_tile.y < tiles_per_row;
+    info.dir_idx = info.dir_tile.y * tiles_per_row + info.dir_tile.x;
     info.probe_idx = texel_id % cascade.probe_count;
     info.probe_pos = (vec2<f32>(info.probe_idx) + vec2<f32>(0.5)) * cascade.linear_spacing;
     info.range_start = cascade.range_start;
@@ -256,19 +263,19 @@ fn main(
     let top_cascade = cascade_info(top_cascade_idx);
     let top_dir = direction_info(top_cascade, texel_id);
 
-    // TODO: clip off the pixels around the cascade edge
-    // that don't actually correspond to a probe
-    // because of higher level probes not fitting evenly
+    // some pixels on higher cascade levels may not actually correspond to a probe
+    // if the probe count doesn't divide evenly, skip work if we're one of those
+    if top_dir.valid {
+        // pre-averaging of 4 rays for the top cascade 
+        // (this one doesn't merge with rays of higher cascades)
+        var ray_avg = vec4<f32>(0.);
+        for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
+            ray_avg += raymarch(get_ray(top_dir, subray_idx));
+        }
+        ray_avg *= 0.25;
 
-    // pre-averaging of 4 rays for the top cascade 
-    // (this one doesn't merge with rays of higher cascades)
-    var ray_avg = vec4<f32>(0.);
-    for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-        ray_avg += raymarch(get_ray(top_dir, subray_idx));
+        textureStore(cascade_tex, top_cascade.tex_offset + texel_id, ray_avg);
     }
-    ray_avg *= 0.25;
-
-    textureStore(cascade_tex, top_cascade.tex_offset + texel_id, ray_avg);
 
     // make sure all threads have computed this cascade before moving to the next
     storageBarrier();
@@ -279,18 +286,20 @@ fn main(
         let cascade = cascade_info(cascade_idx);
         let dir = direction_info(cascade, texel_id);
 
-        var ray_avg = vec4<f32>(0.);
-        for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-            let ray_radiance = raymarch(get_ray(dir, subray_idx));
-            ray_avg += ray_radiance;
-            if ray_radiance.a == 0. {
-                // ray didn't hit anything, merge with level above
-                ray_avg += sample_next_cascade(cascade, dir, subray_idx);
+        if dir.valid {
+            var ray_avg = vec4<f32>(0.);
+            for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
+                let ray_radiance = raymarch(get_ray(dir, subray_idx));
+                ray_avg += ray_radiance;
+                if ray_radiance.a == 0. {
+                    // ray didn't hit anything, merge with level above
+                    ray_avg += sample_next_cascade(cascade, dir, subray_idx);
+                }
             }
-        }
-        ray_avg *= 0.25;
+            ray_avg *= 0.25;
 
-        textureStore(cascade_tex, cascade.tex_offset + texel_id, ray_avg);
+            textureStore(cascade_tex, cascade.tex_offset + texel_id, ray_avg);
+        }
 
         storageBarrier();
     }
