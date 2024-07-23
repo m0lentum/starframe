@@ -189,6 +189,12 @@ fn raymarch(ray: Ray) -> vec4<f32> {
 // and get the interpolated radiance
 fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
     let next_probe_count = cascade.probe_count / 2u;
+    // there's an extra row/column around the edges on the previous level,
+    // account for that in selecting the probe at the next level
+    let next_probe_idx = vec2<u32>(
+        select(0u, (dir.probe_idx.x - 1u) / 2u, dir.probe_idx.x != 0u),
+        select(0u, (dir.probe_idx.y - 1u) / 2u, dir.probe_idx.y != 0u),
+    );
     let next_casc_offset = cascade_offset(cascade.level + 1u);
     let next_tiles_per_row = 1u << (cascade.level + 1u);
     let next_dir_idx = dir.dir_idx * 4u + subdir_idx;
@@ -205,7 +211,7 @@ fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32
     // but set up a profiler first if you try that
     // because there are tradeoffs that may well overshadow the gains from hardware interpolation
 
-    let tl_pos = total_offset + dir.probe_idx / 2u;
+    let tl_pos = total_offset + next_probe_idx;
     let tl = textureLoad(cascade_tex, tl_pos);
     let tr = textureLoad(cascade_tex, tl_pos + vec2<u32>(1u, 0u));
     let bl = textureLoad(cascade_tex, tl_pos + vec2<u32>(0u, 1u));
@@ -214,23 +220,17 @@ fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32
     var br_weight: vec2<f32>;
     // clamp the weights in case we're on the border
     // to avoid spurious contribution from adjacent direction tiles
-    if dir.probe_idx.x == 0u {
-        br_weight.x = 1.;
-    } else if dir.probe_idx.x == cascade.probe_count.x - 1u {
-        br_weight.x = 0.;
-    } else {
-        // regular case where every other N-probe 
-        // is closer to the N+1-probe to its right
-        // and every other to its left
-        br_weight.x = select(0.75, 0.25, dir.probe_idx.x % 2u == 1u);
-    }
-    // same for y
-    if dir.probe_idx.y == 0u {
-        br_weight.y = 1.;
-    } else if dir.probe_idx.x == cascade.probe_count.y - 1u {
-        br_weight.y = 0.;
-    } else {
-        br_weight.y = select(0.75, 0.25, dir.probe_idx.y % 2u == 1u);
+    for (var axis = 0u; axis < 2u; axis++) {
+        if next_probe_idx[axis] == 0u {
+            br_weight[axis] = 1.;
+        } else if next_probe_idx[axis] >= next_probe_count[axis] - 1u {
+            br_weight[axis] = 0.;
+        } else {
+            // regular case where every other N-probe 
+            // is closer to the N+1-probe to its right
+            // and every other to its left
+            br_weight[axis] = select(0.75, 0.25, dir.probe_idx[axis] % 2u == 1u);
+        }
     }
 
     return mix(

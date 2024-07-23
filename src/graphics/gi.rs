@@ -54,6 +54,8 @@ struct CascadeParams {
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct RenderParams {
     probe_spacing: f32,
+    _pad: u32,
+    probe_count: [u32; 2],
 }
 
 /// Resources that need to be resized when screen size changes
@@ -242,6 +244,7 @@ impl GlobalIlluminationPipeline {
 
         let probe_count_x = (target_size.0 as f32 / C0_PROBE_INTERVAL).floor() as u32;
         let probe_count_y = (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32;
+        let probe_count = [probe_count_x, probe_count_y];
 
         // cascade 0 spans two columns, the rest are packed two per column.
         // see radiance_cascades.wgsl for a picture
@@ -268,7 +271,7 @@ impl GlobalIlluminationPipeline {
         let compute_params = CascadeParams {
             cascade_count,
             _pad0: 0,
-            probe_count_c0: [probe_count_x, probe_count_y],
+            probe_count_c0: probe_count,
             // note the scaling by the light texture size
             spacing_c0: C0_PROBE_INTERVAL * LIGHT_TEX_SCALING,
             range_c0: C0_PROBE_RANGE * LIGHT_TEX_SCALING,
@@ -277,6 +280,8 @@ impl GlobalIlluminationPipeline {
         let render_params = RenderParams {
             // this one uses the actual framebuffer so no light texture scaling
             probe_spacing: C0_PROBE_INTERVAL,
+            _pad: 0,
+            probe_count,
         };
 
         ResizeResults {

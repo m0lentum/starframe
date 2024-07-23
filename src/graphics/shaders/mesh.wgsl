@@ -15,6 +15,7 @@ var<uniform> camera: CameraUniforms;
 
 struct CascadeRenderParams {
     probe_spacing: f32,
+    probe_count: vec2<u32>,
 }
 @group(1) @binding(0)
 var<uniform> light_params: CascadeRenderParams;
@@ -126,8 +127,10 @@ fn fs_main(
     // remove the half-pixel in clipspace coordinates
     let pixel_pos = in.clip_position.xy - vec2<f32>(0.5);
     // +0.5 because probe positioning is offset from the corner by half a space
-    let nearest_probe = vec2<u32>(
-        round((pixel_pos / light_params.probe_spacing) + vec2<f32>(0.5))
+    let nearest_probe = min(
+        // clamp to probe count to avoid overshoot on the bottom and right edges
+        light_params.probe_count - vec2<u32>(1u),
+        vec2<u32>(round((pixel_pos / light_params.probe_spacing) + vec2<f32>(0.5))),
     );
     let probe_pixel = 2u * nearest_probe;
     // read the light values in each of the probe's four quadrants
