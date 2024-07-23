@@ -7,9 +7,9 @@ use crate::math::uv;
 /// Distance between cascade 0 probes measured in screen pixels.
 const C0_PROBE_INTERVAL: f32 = 2.;
 /// Length of the radiance interval measured by cascade 0 probes.
-/// This should be proportional to the diagonal
+/// This is half the diagonal
 /// of a square with side C0_PROBE_INTERVAL
-const C0_PROBE_RANGE: f32 = 2.8;
+const C0_PROBE_RANGE: f32 = std::f32::consts::SQRT_2;
 /// Workgroups are arranged in squares of this size.
 const TILE_SIZE: u32 = 16;
 
