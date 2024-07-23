@@ -1,5 +1,6 @@
 use std::mem::size_of;
 
+use wgpu::util::DeviceExt;
 use zerocopy::{AsBytes, FromBytes};
 
 use crate::math::uv;
@@ -21,32 +22,77 @@ pub(crate) struct GlobalIlluminationPipeline {
     pub(super) light_tex: wgpu::TextureView,
     // size of the light texture relative to the screen size
     light_tex_scaling: f32,
+    light_bind_group_layout: wgpu::BindGroupLayout,
+    light_bind_group: wgpu::BindGroup,
     // compute pipeline for radiance cascades
     cascade_pl: wgpu::ComputePipeline,
-    cascade_tex: wgpu::TextureView,
-    probe_count: [u32; 2],
-    compute_params_buf: wgpu::Buffer,
+    // separate texture for the final cascade
+    // because it's a different size from the rest
+    cascade_0_tex: wgpu::TextureView,
+    // rest of the cascades are done with alternating textures
+    cascade_texs: [wgpu::TextureView; 2],
+    cascade_bind_groups: CascadeBindGroups,
     cascade_bind_group_layout: wgpu::BindGroupLayout,
-    cascade_bind_group: wgpu::BindGroup,
+    cascade_count: usize,
+    probe_count: [u32; 2],
+    cascade_params_buf: wgpu::Buffer,
     // separate bind group for mesh rendering
-    // because it requires a different texture type and a sampler
     render_params_buf: wgpu::Buffer,
     bilinear_samp: wgpu::Sampler,
     pub(super) render_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) render_bind_group: wgpu::BindGroup,
 }
 
+struct CascadeBindGroups {
+    // bind groups for each ordering of textures (one read, one write)
+    intermediate: [wgpu::BindGroup; 2],
+    // two possible bind groups for the final cascade
+    final_: wgpu::BindGroup,
+}
+
 /// Parameters for the compute step
 #[repr(C)]
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct CascadeParams {
-    cascade_count: u32,
-    _pad0: u32,
-    probe_count_c0: [u32; 2],
+    level: u32,
+    level_count: u32,
+    probe_count: [u32; 2],
+    rays_per_probe: u32,
     // spacing and range in the light texture's pixel space,
     // not screen space
-    spacing_c0: f32,
-    range_c0: f32,
+    linear_spacing: f32,
+    range_start: f32,
+    range_length: f32,
+    // padding to reach the minimum dynamic offset alignment
+    _pad: [u32; 8],
+}
+
+impl CascadeParams {
+    /// Compute the parameters for a given cascade level.
+    ///
+    /// On each level, the number of probes is reduced by a factor of 4
+    /// (halved in both dimensions)
+    /// and the number of rays per probe is increased by a factor of 4.
+    fn for_level(level: u32, cascade_count: u32, probe_count_c0: [u32; 2]) -> Self {
+        let level_exp2 = 1 << level;
+        let level_exp4 = level_exp2 * level_exp2;
+        // note the scaling by the light texture size
+        let spacing_c0 = C0_PROBE_INTERVAL * LIGHT_TEX_SCALING;
+        let range_c0 = C0_PROBE_INTERVAL * LIGHT_TEX_SCALING;
+        CascadeParams {
+            level,
+            level_count: cascade_count,
+            probe_count: probe_count_c0.map(|c| c / level_exp2),
+            rays_per_probe: level_exp4,
+            linear_spacing: spacing_c0 * level_exp2 as f32,
+            // each range is 4 times larger than the previous,
+            // and starts at the previous one's end,
+            // hence the start distance is the sum of a geometric sequence
+            range_start: range_c0 * (1. - level_exp4 as f32) / (1. - 4.),
+            range_length: range_c0 * level_exp4 as f32,
+            _pad: [0; 8],
+        }
+    }
 }
 
 /// Parameters for the mesh renderer to use the cascade results
@@ -61,8 +107,9 @@ struct RenderParams {
 /// Resources that need to be resized when screen size changes
 struct ResizeResults {
     light_tex: wgpu::TextureView,
-    cascade_tex: wgpu::TextureView,
-    compute_params: CascadeParams,
+    cascade_0_tex: wgpu::TextureView,
+    cascade_texs: [wgpu::TextureView; 2],
+    cascade_params: Vec<CascadeParams>,
     render_params: RenderParams,
 }
 
@@ -77,9 +124,9 @@ impl GlobalIlluminationPipeline {
         );
 
         use wgpu::util::DeviceExt;
-        let compute_params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("cascade params"),
-            contents: resizables.compute_params.as_bytes(),
+        let cascade_params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("cascade compute params"),
+            contents: resizables.cascade_params.as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -96,6 +143,23 @@ impl GlobalIlluminationPipeline {
             ..Default::default()
         });
 
+        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("light texture for cascades"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    count: None,
+                },
+            ],
+        });
+        let light_bind_group = Self::create_light_bind_group(&light_bind_group_layout, &resizables.light_tex);
+
         let cascade_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("cascade"),
@@ -104,7 +168,7 @@ impl GlobalIlluminationPipeline {
                         binding: 0,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
+                            has_dynamic_offset: true,
                             min_binding_size: wgpu::BufferSize::new(size_of::<CascadeParams>() as _),
                         },
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -113,7 +177,7 @@ impl GlobalIlluminationPipeline {
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
                         ty: wgpu::BindingType::StorageTexture { 
-                            access: wgpu::StorageTextureAccess::ReadWrite,
+                            access: wgpu::StorageTextureAccess::ReadOnly,
                             format: wgpu::TextureFormat::Rgba8Unorm,
                             view_dimension: wgpu::TextureViewDimension::D2
                         },
@@ -122,10 +186,10 @@ impl GlobalIlluminationPipeline {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
+                        ty: wgpu::BindingType::StorageTexture { 
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            view_dimension: wgpu::TextureViewDimension::D2
                         },
                         visibility: wgpu::ShaderStages::COMPUTE,
                         count: None,
@@ -165,20 +229,20 @@ impl GlobalIlluminationPipeline {
             ],
         });
 
-        let cascade_bind_group =
-            Self::create_cascade_bind_group(&cascade_bind_group_layout, &resizables, &compute_params_buf);
+        let cascade_bind_groups =
+            Self::create_cascade_bind_groups(&cascade_bind_group_layout, &resizables, &cascade_params_buf);
         let render_bind_group = Self::create_render_bind_group(
             &render_bind_group_layout,
-            &resizables.cascade_tex,
+            &resizables.cascade_0_tex,
             &bilinear_samp,
             &render_params_buf
         );
 
         let casc_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("global illumination"),
+            label: Some("radiance cascades"),
             bind_group_layouts: &[
+                &light_bind_group_layout,
                 &cascade_bind_group_layout,
-                super::Renderer::depth_bind_group_layout(),
             ],
             push_constant_ranges: &[],
         });
@@ -187,21 +251,25 @@ impl GlobalIlluminationPipeline {
             device.create_shader_module(wgpu::include_wgsl!("./shaders/radiance_cascades.wgsl"));
 
         let cascade_pl = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("global illumination"),
+            label: Some("radiance cascades"),
             module: &casc_shader,
             entry_point: "main",
             layout: Some(&casc_pl_layout),
         });
 
         Self {
+            light_bind_group_layout,
+            light_bind_group,
             light_tex: resizables.light_tex,
             light_tex_scaling,
             cascade_pl,
-            cascade_tex: resizables.cascade_tex,
-            compute_params_buf,
-            probe_count: resizables.compute_params.probe_count_c0,
+            cascade_0_tex: resizables.cascade_0_tex,
+            cascade_texs: resizables.cascade_texs,
+            cascade_params_buf,
+            cascade_count: resizables.cascade_params.len(),
+            probe_count: resizables.cascade_params[0].probe_count,
             cascade_bind_group_layout,
-            cascade_bind_group,
+            cascade_bind_groups,
             render_params_buf,
             bilinear_samp,
             render_bind_group_layout,
@@ -242,40 +310,34 @@ impl GlobalIlluminationPipeline {
             cascade_count += 1;
         }
 
-        let probe_count_x = (target_size.0 as f32 / C0_PROBE_INTERVAL).floor() as u32;
-        let probe_count_y = (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32;
-        let probe_count = [probe_count_x, probe_count_y];
+        let probe_count = [
+            (target_size.0 as f32 / C0_PROBE_INTERVAL).floor() as u32,
+            (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32,
+        ];
 
-        // cascade 0 spans two columns, the rest are packed two per column.
-        // see radiance_cascades.wgsl for a picture
-        let tex_column_count = 2 + cascade_count / 2;
-        let width = tex_column_count * probe_count_x;
-        let height = 2 * probe_count_y;
-
-        let cascade_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("radiance cascades"),
-            dimension: wgpu::TextureDimension::D2,
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-            mip_level_count: 1,
-            sample_count: 1,
-        });
-        let cascade_tex = cascade_tex.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let compute_params = CascadeParams {
-            cascade_count,
-            _pad0: 0,
-            probe_count_c0: probe_count,
-            // note the scaling by the light texture size
-            spacing_c0: C0_PROBE_INTERVAL * LIGHT_TEX_SCALING,
-            range_c0: C0_PROBE_RANGE * LIGHT_TEX_SCALING,
+        let create_tex = |scaling: u32| {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("radiance cascades"),
+                dimension: wgpu::TextureDimension::D2,
+                size: wgpu::Extent3d {
+                    width: probe_count[0] * scaling,
+                    height: probe_count[1] * scaling,
+                    depth_or_array_layers: 1,
+                },
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+                mip_level_count: 1,
+                sample_count: 1,
+            });
+            tex.create_view(&wgpu::TextureViewDescriptor::default())
         };
+        let cascade_0_tex = create_tex(2);
+        let cascade_texs = [create_tex(1), create_tex(1)];
+
+        let cascade_params = (0..cascade_count).map(|level| {
+            CascadeParams::for_level(level, cascade_count, probe_count)
+        }).collect();
 
         let render_params = RenderParams {
             // this one uses the actual framebuffer so no light texture scaling
@@ -286,36 +348,70 @@ impl GlobalIlluminationPipeline {
 
         ResizeResults {
             light_tex,
-            cascade_tex,
-            compute_params,
+            cascade_0_tex,
+            cascade_texs,
+            cascade_params,
             render_params,
         }
     }
 
-    fn create_cascade_bind_group(
+    fn create_light_bind_group(
         layout: &wgpu::BindGroupLayout,
-        resizables: &ResizeResults,
-        params_buf: &wgpu::Buffer,
+        tex: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         let device = crate::Renderer::device();
         device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("cascade"),
+            label: Some("cascade light"),
             layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: params_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&resizables.cascade_tex),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&resizables.light_tex),
-                },
+                    resource: wgpu::BindingResource::TextureView(tex),
+                }
             ],
         })
+    }
+
+    fn create_cascade_bind_groups(
+        layout: &wgpu::BindGroupLayout,
+        resizables: &ResizeResults,
+        params_buf: &wgpu::Buffer,
+    ) -> CascadeBindGroups {
+        let device = crate::Renderer::device();
+
+        let create = |read: &wgpu::TextureView, write: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("cascade"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { 
+                            buffer: params_buf,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(size_of::<CascadeParams>() as u64),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(read),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(write),
+                    },
+                ],
+            })
+        };
+
+        CascadeBindGroups {
+            intermediate: [
+                create(&resizables.cascade_texs[0], &resizables.cascade_texs[1]),
+                create(&resizables.cascade_texs[1], &resizables.cascade_texs[0]),
+            ],
+            // cascade 1 always writes into the first texture
+            final_: create(&resizables.cascade_texs[0], &resizables.cascade_0_tex),
+        }
     }
 
     fn create_render_bind_group(
@@ -347,37 +443,60 @@ impl GlobalIlluminationPipeline {
 
     /// Recompute needed cascade and probe counts when window size changes.
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+        let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
 
         let res = Self::create_resizables(new_size.into(), self.light_tex_scaling);
-        queue.write_buffer(&self.compute_params_buf, 0, res.compute_params.as_bytes());
+        // make room in the params buffer if we need more cascades than before
+        if res.cascade_params.len() > self.cascade_count {
+            self.cascade_params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("cascade compute params"),
+                contents: res.cascade_params.as_bytes(),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+        } else {
+            queue.write_buffer(&self.cascade_params_buf, 0, res.cascade_params.as_bytes());
+        }
+        self.cascade_count = res.cascade_params.len();
         queue.write_buffer(&self.render_params_buf, 0, res.render_params.as_bytes());
-        self.probe_count = res.compute_params.probe_count_c0;
-        self.cascade_bind_group = Self::create_cascade_bind_group(
+
+        self.probe_count = res.cascade_params[0].probe_count;
+        self.cascade_bind_groups = Self::create_cascade_bind_groups(
             &self.cascade_bind_group_layout,
             &res,
-            &self.compute_params_buf,
+            &self.cascade_params_buf,
         );
         self.render_bind_group = Self::create_render_bind_group(
             &self.render_bind_group_layout,
-            &res.cascade_tex,
+            &res.cascade_0_tex,
             &self.bilinear_samp,
             &self.render_params_buf
         );
-        self.cascade_tex = res.cascade_tex;
+        self.cascade_0_tex = res.cascade_0_tex;
+        self.cascade_texs = res.cascade_texs;
+        self.light_bind_group = Self::create_light_bind_group(&self.light_bind_group_layout, &res.light_tex);
         self.light_tex = res.light_tex;
     }
 
     pub fn compute_gi<'pass>(
         &'pass self,
         pass: &mut wgpu::ComputePass<'pass>,
-        depth_bind_group: &'pass wgpu::BindGroup,
     ) {
         let tiles_x = (self.probe_count[0] as f32 / TILE_SIZE as f32).ceil() as u32;
         let tiles_y = (self.probe_count[1] as f32 / TILE_SIZE as f32).ceil() as u32;
         pass.set_pipeline(&self.cascade_pl);
-        pass.set_bind_group(0, &self.cascade_bind_group, &[]);
-        pass.set_bind_group(1, depth_bind_group, &[]);
+        pass.set_bind_group(0, &self.light_bind_group, &[]);
+        // cascades starting with the last
+        for casc_idx in (1..self.cascade_count).rev() {
+            pass.set_bind_group(
+                1,
+                &self.cascade_bind_groups.intermediate[casc_idx % 2],
+                &[(casc_idx * size_of::<CascadeParams>()) as u32]
+            );
+            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        }
+        // final cascade drawing to the special differently sized texture
+        pass.set_bind_group(1, &self.cascade_bind_groups.final_, &[0]);
         pass.dispatch_workgroups(tiles_x, tiles_y, 1);
     }
 }

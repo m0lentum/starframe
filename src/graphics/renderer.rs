@@ -41,8 +41,6 @@ pub struct Renderer {
     depth_view: wgpu::TextureView,
     emissive_tex: wgpu::Texture,
     emissive_view: wgpu::TextureView,
-    screen_samp: wgpu::Sampler,
-    depth_bind_group: wgpu::BindGroup,
 
     light_man: light::LightManager,
     gi_pipeline: GlobalIlluminationPipeline,
@@ -87,7 +85,7 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    // needed for read-write storage textures,
+                    // native-only feature needed for read-only storage textures,
                     // TODO: come up with an alternative storage scheme for GI
                     features: wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     limits: wgpu::Limits {
@@ -127,8 +125,6 @@ impl Renderer {
             .set(window)
             .map_err(|_| RendererInitError::AlreadyInitialized)?;
 
-        let device = Self::device();
-
         let msaa_tex = Self::create_msaa_texture(window_size);
         let msaa_view = msaa_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -136,15 +132,6 @@ impl Renderer {
         let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let emissive_tex = Self::create_emissive_texture(window_size);
         let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let screen_samp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("screen"),
-            // nearest-neighbor sampling should be sufficient for the raymarching in GI
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let depth_bind_group =
-            Self::create_depth_bind_group(&depth_view, &emissive_view, &screen_samp);
 
         let gi_pipeline = GlobalIlluminationPipeline::new();
         let light_man = light::LightManager::new();
@@ -160,8 +147,6 @@ impl Renderer {
             depth_view,
             emissive_tex,
             emissive_view,
-            screen_samp,
-            depth_bind_group,
             gi_pipeline,
             light_man,
             mesh_renderer,
@@ -217,8 +202,6 @@ impl Renderer {
             .emissive_tex
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.gi_pipeline.resize(new_size);
-        self.depth_bind_group =
-            Self::create_depth_bind_group(&self.depth_view, &self.emissive_view, &self.screen_samp);
         self.light_man.recreate_light_bins(new_size.into());
     }
 
@@ -310,33 +293,6 @@ impl Renderer {
                     },
                 ],
             })
-        })
-    }
-
-    fn create_depth_bind_group(
-        depth_view: &wgpu::TextureView,
-        emissive_view: &wgpu::TextureView,
-        screen_samp: &wgpu::Sampler,
-    ) -> wgpu::BindGroup {
-        let device = Self::device();
-        let layout = Self::depth_bind_group_layout();
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("depth"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(emissive_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(screen_samp),
-                },
-            ],
         })
     }
 
@@ -549,9 +505,7 @@ impl<'a> Frame<'a> {
                 timestamp_writes: None,
             });
 
-            self.renderer
-                .gi_pipeline
-                .compute_gi(&mut cpass, &self.renderer.depth_bind_group);
+            self.renderer.gi_pipeline.compute_gi(&mut cpass);
         }
 
         // final render

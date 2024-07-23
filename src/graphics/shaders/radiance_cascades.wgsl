@@ -1,76 +1,23 @@
-struct GlobalParams {
-    level_count: u32,
-    probe_count_c0: vec2<u32>,
-    // spacing between cascade 0 probes in screen pixels
-    spacing_c0: f32,
-    // length of the radiance interval measured by cascade 0 probes
-    // this should be proportional to the diagonal
-    // of a square with side spacing_c0
-    range_c0: f32,
-}
 @group(0) @binding(0)
-var<uniform> params: GlobalParams;
-@group(0) @binding(1)
-var cascade_tex: texture_storage_2d<rgba8unorm, read_write>;
-@group(0) @binding(2)
 var light_tex: texture_2d<f32>;
 
-const TAU: f32 = 6.283185;
-
-struct CascadeInfo {
+struct CascadeParams {
     level: u32,
+    level_count: u32,
     probe_count: vec2<u32>,
     rays_per_probe: u32,
     linear_spacing: f32,
     range_start: f32,
     range_length: f32,
-    tex_offset: vec2<u32>,
 }
+@group(1) @binding(0)
+var<uniform> cascade: CascadeParams;
+@group(1) @binding(1)
+var cascade_src: texture_storage_2d<rgba8unorm, read>;
+@group(1) @binding(2)
+var cascade_dst: texture_storage_2d<rgba8unorm, write>;
 
-// get the offset of a cascade's texture area.
-// cascade 0 is the size of 2x2 subsequent cascades;
-// 0 is laid out on the left side of the texture
-// and the rest to its right in stacks of two like this:
-// ____________________
-// |        | 1  | 3  |
-// |   0    |____|____|
-// |        | 2  | 4  |
-// |________|____|____|
-//
-// Note that this function only works for levels above 0,
-// level 0 has an offset of (0, 0)
-fn cascade_offset(level: u32) -> vec2<u32> {
-    let casc_size = params.probe_count_c0;
-    return vec2<u32>(
-        (2u + (level - 1u) / 2u) * casc_size.x,
-        ((level - 1u) % 2u) * casc_size.y,
-    );
-}
-
-// this only works if level > 0,
-// cascade 0 is treated as a special case with a different layout
-fn cascade_info(level: u32) -> CascadeInfo {
-    var info: CascadeInfo;
-
-    info.level = level;
-    let level_exp2 = 1u << level;
-    let level_exp4 = level_exp2 * level_exp2;
-    info.probe_count = params.probe_count_c0 / level_exp2;
-    // hardcoded scaling factor of 4x ray directions per cascade,
-    // this is important for hardware interpolation.
-    // we use 4 rays for cascade 0 and pre-averaged rays for the rest,
-    // hence cascade 1 also has 4 rays, cascade 2 has 16 etc.
-    info.rays_per_probe = level_exp4;
-    info.linear_spacing = params.spacing_c0 * f32(level_exp2);
-    // each range is 4 times larger than the previous,
-    // and starts at the previous one's end,
-    // hence the start distance is the sum of a geometric sequence
-    info.range_start = params.range_c0 * (1. - f32(level_exp4)) / (1. - 4.);
-    info.range_length = params.range_c0 * f32(level_exp4);
-    info.tex_offset = cascade_offset(level);
-
-    return info;
-}
+const TAU: f32 = 6.283185;
 
 // information about a direction corresponding to one texel in the cascade texture
 struct DirectionInfo {
@@ -94,7 +41,7 @@ struct DirectionInfo {
     angle_interval: f32,
 }
 
-fn direction_info(cascade: CascadeInfo, texel_id: vec2<u32>) -> DirectionInfo {
+fn direction_info(texel_id: vec2<u32>) -> DirectionInfo {
     var info: DirectionInfo;
 
     info.dir_tile = texel_id / cascade.probe_count;
@@ -187,7 +134,7 @@ fn raymarch(ray: Ray) -> vec4<f32> {
 // find the rays pointing in the `dir_idx` direction
 // on the four N+1-probes nearest to the N-probe at `dir.probe_idx`
 // and get the interpolated radiance
-fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
+fn sample_next_cascade(dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
     let next_probe_count = cascade.probe_count / 2u;
     // there's an extra row/column around the edges on the previous level,
     // account for that in selecting the probe at the next level
@@ -195,7 +142,6 @@ fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32
         select(0u, (dir.probe_idx.x - 1u) / 2u, dir.probe_idx.x != 0u),
         select(0u, (dir.probe_idx.y - 1u) / 2u, dir.probe_idx.y != 0u),
     );
-    let next_casc_offset = cascade_offset(cascade.level + 1u);
     let next_tiles_per_row = 1u << (cascade.level + 1u);
     let next_dir_idx = dir.dir_idx * 4u + subdir_idx;
     let next_dir_tile = vec2<u32>(
@@ -203,7 +149,6 @@ fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32
         next_dir_idx / next_tiles_per_row,
     );
     let dir_tile_offset = next_dir_tile * next_probe_count;
-    let total_offset = next_casc_offset + dir_tile_offset;
 
     // storage textures can't be sampled,
     // so we have to do the interpolation manually.
@@ -211,11 +156,11 @@ fn sample_next_cascade(cascade: CascadeInfo, dir: DirectionInfo, subdir_idx: u32
     // but set up a profiler first if you try that
     // because there are tradeoffs that may well overshadow the gains from hardware interpolation
 
-    let tl_pos = total_offset + next_probe_idx;
-    let tl = textureLoad(cascade_tex, tl_pos);
-    let tr = textureLoad(cascade_tex, tl_pos + vec2<u32>(1u, 0u));
-    let bl = textureLoad(cascade_tex, tl_pos + vec2<u32>(0u, 1u));
-    let br = textureLoad(cascade_tex, tl_pos + vec2<u32>(1u, 1u));
+    let tl_pos = dir_tile_offset + next_probe_idx;
+    let tl = textureLoad(cascade_src, tl_pos);
+    let tr = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 0u));
+    let bl = textureLoad(cascade_src, tl_pos + vec2<u32>(0u, 1u));
+    let br = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 1u));
 
     var br_weight: vec2<f32>;
     // clamp the weights in case we're on the border
@@ -250,96 +195,63 @@ fn main(
     // cascade 1 stores the same number of directions as cascade 0 (i.e. 4)
     // and a quarter the probe count, hence its size is exactly the probe count.
     // and subsequent cascades quarter the probe count and quadruple the direction count
-    let preavg_cascade_tex_size = params.probe_count_c0;
+    let cascade_tex_size = textureDimensions(cascade_src);
     // in case the cascade size isn't a multiple of workgroup size,
     // don't do work out of bounds
-    if texel_id.x >= preavg_cascade_tex_size.x || texel_id.y >= preavg_cascade_tex_size.y {
+    if texel_id.x >= cascade_tex_size.x || texel_id.y >= cascade_tex_size.y {
         return;
     }
 
-    // run through each cascade in order, starting with the top
+    let dir = direction_info(texel_id);
+    // pixel doesn't actually correspond to any direction
+    // due to probe counts rounding down when they don't divide evenly
+    if !dir.valid {
+        return;
+    }
 
-    let top_cascade_idx = params.level_count - 1u;
-    let top_cascade = cascade_info(top_cascade_idx);
-    let top_dir = direction_info(top_cascade, texel_id);
-
-    // some pixels on higher cascade levels may not actually correspond to a probe
-    // if the probe count doesn't divide evenly, skip work if we're one of those
-    if top_dir.valid {
-        // pre-averaging of 4 rays for the top cascade 
-        // (this one doesn't merge with rays of higher cascades)
+    // cascades above 0 are pre-averaged,
+    // 0 isn't because we need directional information for final lighting
+    if cascade.level > 0u {
         var ray_avg = vec4<f32>(0.);
         for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-            ray_avg += raymarch(get_ray(top_dir, subray_idx));
+            let ray_radiance = raymarch(get_ray(dir, subray_idx));
+            ray_avg += ray_radiance;
+            if ray_radiance.a == 0. && cascade.level < cascade.level_count - 1u {
+                // ray didn't hit anything, merge with level above
+                // (but only if there is a level above)
+                ray_avg += sample_next_cascade(dir, subray_idx);
+            }
         }
         ray_avg *= 0.25;
 
-        textureStore(cascade_tex, top_cascade.tex_offset + texel_id, ray_avg);
-    }
+        textureStore(cascade_dst, texel_id, ray_avg);
+    } else {
+        // cascade 0 has different requirements,
+        // construct a DirectionInfo manually so that we can use the same abstractions
+        var dir: DirectionInfo;
+        dir.dir_idx = 0u;
+        // for this one we store the values in position-major order instead of direction-major
+        // so that all four directions can be accessed with a single textureSample call.
+        // instead of texel_id directly corresponding to a pixel in the texture
+        // it corresponds to a 2x2 block of pixels that are part of one probe
+        dir.probe_idx = texel_id;
+        dir.probe_pos = (vec2<f32>(dir.probe_idx) + vec2<f32>(0.5)) * cascade.linear_spacing;
+        dir.range_start = 0.;
+        dir.range_length = cascade.range_length;
+        // set the angle interval to the full circle
+        // so we can reuse get_ray's subray logic to generate the rays
+        dir.angle_interval = TAU;
 
-    // make sure all threads have computed this cascade before moving to the next
-    storageBarrier();
-
-    // same process plus merging with the level above for all cascades besides 0
-
-    for (var cascade_idx = top_cascade_idx - 1u; cascade_idx > 0u; cascade_idx--) {
-        let cascade = cascade_info(cascade_idx);
-        let dir = direction_info(cascade, texel_id);
-
-        if dir.valid {
-            var ray_avg = vec4<f32>(0.);
-            for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-                let ray_radiance = raymarch(get_ray(dir, subray_idx));
-                ray_avg += ray_radiance;
-                if ray_radiance.a == 0. {
-                    // ray didn't hit anything, merge with level above
-                    ray_avg += sample_next_cascade(cascade, dir, subray_idx);
-                }
+        for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
+            var ray_radiance = raymarch(get_ray(dir, ray_idx));
+            if ray_radiance.a == 0. {
+                ray_radiance += sample_next_cascade(dir, ray_idx);
             }
-            ray_avg *= 0.25;
 
-            textureStore(cascade_tex, cascade.tex_offset + texel_id, ray_avg);
+            // store each ray result in a different texel in position-major order
+            let probe_offset = 2u * texel_id;
+            let target_texel = vec2<u32>(probe_offset.x + ray_idx % 2u, probe_offset.y + ray_idx / 2u);
+            textureStore(cascade_dst, target_texel, ray_radiance);
         }
-
-        storageBarrier();
-    }
-
-    // and finally, the 0th cascade which does not do pre-averaging
-    // and does merging with the above level.
-    // we also don't call cascade_info or dir_info because this cascade has a different layout
-
-    var casc_0: CascadeInfo;
-    casc_0.level = 0u;
-    casc_0.probe_count = params.probe_count_c0;
-    casc_0.rays_per_probe = 4u;
-    casc_0.linear_spacing = params.spacing_c0;
-    casc_0.range_start = 0.;
-    casc_0.range_length = params.range_c0;
-    casc_0.tex_offset = vec2<u32>(0u);
-
-    var dir_0: DirectionInfo;
-    dir_0.dir_idx = 0u;
-    // for this one we store the values in position-major order instead of direction-major
-    // so that all four directions can be accessed with a single textureSample call.
-    // instead of texel_id directly corresponding to a pixel in the texture
-    // it corresponds to a 2x2 block of pixels that are part of one probe
-    dir_0.probe_idx = texel_id;
-    dir_0.probe_pos = (vec2<f32>(dir_0.probe_idx) + vec2<f32>(0.5)) * casc_0.linear_spacing;
-    dir_0.range_start = 0.;
-    dir_0.range_length = casc_0.range_length;
-    // set the angle interval to the full circle
-    // so we can reuse get_ray's subray logic to generate the rays
-    dir_0.angle_interval = TAU;
-
-    for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
-        var ray_radiance = raymarch(get_ray(dir_0, ray_idx));
-        if ray_radiance.a == 0. {
-            ray_radiance += sample_next_cascade(casc_0, dir_0, ray_idx);
-        }
-
-        // store each ray result in a different texel in position-major order
-        let probe_offset = 2u * texel_id;
-        let target_texel = vec2<u32>(probe_offset.x + ray_idx % 2u, probe_offset.y + ray_idx / 2u);
-        textureStore(cascade_tex, target_texel, ray_radiance);
     }
 }
