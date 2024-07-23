@@ -38,7 +38,6 @@ pub(crate) struct GlobalIlluminationPipeline {
     cascade_params_buf: wgpu::Buffer,
     // separate bind group for mesh rendering
     render_params_buf: wgpu::Buffer,
-    bilinear_samp: wgpu::Sampler,
     pub(super) render_bind_group_layout: wgpu::BindGroupLayout,
     pub(super) render_bind_group: wgpu::BindGroup,
 }
@@ -136,13 +135,6 @@ impl GlobalIlluminationPipeline {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let bilinear_samp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("bilinear sampler for cascade rendering"),
-            min_filter: wgpu::FilterMode::Linear,
-            mag_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
         let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
             entries: &[
@@ -176,10 +168,10 @@ impl GlobalIlluminationPipeline {
                     },
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        ty: wgpu::BindingType::StorageTexture { 
-                            access: wgpu::StorageTextureAccess::ReadOnly,
-                            format: wgpu::TextureFormat::Rgba8Unorm,
-                            view_dimension: wgpu::TextureViewDimension::D2
+                        ty: wgpu::BindingType::Texture { 
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
                         },
                         visibility: wgpu::ShaderStages::COMPUTE,
                         count: None,
@@ -220,22 +212,18 @@ impl GlobalIlluminationPipeline {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    count: None,
-                },
             ],
         });
 
-        let cascade_bind_groups =
-            Self::create_cascade_bind_groups(&cascade_bind_group_layout, &resizables, &cascade_params_buf);
+        let cascade_bind_groups = Self::create_cascade_bind_groups(
+            &cascade_bind_group_layout,
+            &resizables,
+            &cascade_params_buf,
+        );
         let render_bind_group = Self::create_render_bind_group(
             &render_bind_group_layout,
             &resizables.cascade_0_tex,
-            &bilinear_samp,
-            &render_params_buf
+            &render_params_buf,
         );
 
         let casc_pl_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -271,7 +259,6 @@ impl GlobalIlluminationPipeline {
             cascade_bind_group_layout,
             cascade_bind_groups,
             render_params_buf,
-            bilinear_samp,
             render_bind_group_layout,
             render_bind_group,
         }
@@ -417,7 +404,6 @@ impl GlobalIlluminationPipeline {
     fn create_render_bind_group(
         layout: &wgpu::BindGroupLayout,
         cascade_tex: &wgpu::TextureView,
-        bilinear_samp: &wgpu::Sampler,
         params_buf: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         let device = crate::Renderer::device();
@@ -432,10 +418,6 @@ impl GlobalIlluminationPipeline {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(cascade_tex),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(bilinear_samp),
                 },
             ],
         })
@@ -469,8 +451,7 @@ impl GlobalIlluminationPipeline {
         self.render_bind_group = Self::create_render_bind_group(
             &self.render_bind_group_layout,
             &res.cascade_0_tex,
-            &self.bilinear_samp,
-            &self.render_params_buf
+            &self.render_params_buf,
         );
         self.cascade_0_tex = res.cascade_0_tex;
         self.cascade_texs = res.cascade_texs;

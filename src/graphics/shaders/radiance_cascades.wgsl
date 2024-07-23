@@ -13,7 +13,7 @@ struct CascadeParams {
 @group(1) @binding(0)
 var<uniform> cascade: CascadeParams;
 @group(1) @binding(1)
-var cascade_src: texture_storage_2d<rgba8unorm, read>;
+var cascade_src: texture_2d<f32>;
 @group(1) @binding(2)
 var cascade_dst: texture_storage_2d<rgba8unorm, write>;
 
@@ -157,10 +157,10 @@ fn sample_next_cascade(dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
     // because there are tradeoffs that may well overshadow the gains from hardware interpolation
 
     let tl_pos = dir_tile_offset + next_probe_idx;
-    let tl = textureLoad(cascade_src, tl_pos);
-    let tr = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 0u));
-    let bl = textureLoad(cascade_src, tl_pos + vec2<u32>(0u, 1u));
-    let br = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 1u));
+    let tl = textureLoad(cascade_src, tl_pos, 0);
+    let tr = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 0u), 0);
+    let bl = textureLoad(cascade_src, tl_pos + vec2<u32>(0u, 1u), 0);
+    let br = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 1u), 0);
 
     var br_weight: vec2<f32>;
     // clamp the weights in case we're on the border
