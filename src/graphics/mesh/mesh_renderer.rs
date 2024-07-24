@@ -1,7 +1,6 @@
 use crate::{
     graphics::{
         gi::GlobalIlluminationPipeline,
-        light::LightManager,
         manager::MeshId,
         material::Material,
         renderer::{DEFAULT_MULTISAMPLE_STATE, DEPTH_FORMAT, SWAPCHAIN_FORMAT},
@@ -188,7 +187,7 @@ impl MeshRenderer {
             label: Some("mesh"),
             bind_group_layouts: &[
                 crate::Camera::bind_group_layout(),
-                &gi_pl.render_bind_group_layout,
+                &gi_pl.bind_group_layouts.render,
                 Material::bind_group_layout(),
                 &instance_unif_bind_group_layout,
             ],
@@ -355,7 +354,7 @@ impl MeshRenderer {
 
         pass.set_pipeline(&self.main_pipeline);
         pass.set_bind_group(0, &camera.bind_group, &[]);
-        pass.set_bind_group(1, &gi_pl.render_bind_group, &[]);
+        pass.set_bind_group(1, &gi_pl.bind_groups.render, &[]);
 
         for (idx, (mesh_id, _)) in self.meshes_sorted.iter().enumerate().rev() {
             self.draw_mesh(pass, manager, idx, mesh_id, PassId::Main);
