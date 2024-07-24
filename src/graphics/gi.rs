@@ -575,6 +575,7 @@ impl GlobalIlluminationPipeline {
             queue.write_buffer(buf, 0, res.cascade_params.as_bytes());
         }
         self.cascade_count = res.cascade_params.len();
+        self.light_tex_size = res.light_tex_size;
         queue.write_buffer(&self.buffers.render_params, 0, res.render_params.as_bytes());
 
         self.probe_count = res.cascade_params[0].probe_count;

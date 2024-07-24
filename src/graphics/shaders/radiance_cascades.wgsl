@@ -1,7 +1,7 @@
 @group(0) @binding(0)
 var light_tex: texture_2d<f32>;
 @group(0) @binding(1)
-var sdf_tex: texture_2d<i32>;
+var sdf_tex: texture_2d<u32>;
 
 struct CascadeParams {
     level: u32,
@@ -94,15 +94,15 @@ fn raymarch(ray: Ray) -> vec4<f32> {
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
-        if t > ray.range {
-            // out of range, return an alpha value of 0 
-            // to indicate that this ray hit nothing and needs to merge with the above level
-            return vec4<f32>(0.);
-        }
-
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
             // left the screen
             // TODO: return radiance from an environment map
+            return vec4<f32>(0.);
+        }
+
+        if t > ray.range {
+            // out of range, return an alpha value of 0 
+            // to indicate that this ray hit nothing and needs to merge with the above level
             return vec4<f32>(0.);
         }
 
@@ -114,19 +114,28 @@ fn raymarch(ray: Ray) -> vec4<f32> {
             return radiance;
         }
 
-        // move to the next pixel intersected by the ray
-        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
-        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1));
-        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
-        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
-        if to_next_x < to_next_y {
-            t += to_next_x;
-            ray_pos += to_next_x * ray.dir;
-            pixel_pos.x += pixel_dir.x;
-        } else {
-            t += to_next_y;
-            ray_pos += to_next_y * ray.dir;
-            pixel_pos.y += pixel_dir.y;
+        // SDF tells us how many pixels we can cross at minimum
+        // before we reach another light value with alpha > 0
+        // (always move at least one pixel even if the sdf value is zero)
+        let sdf_val = max(1u, textureLoad(sdf_tex, pixel_pos, 0).r);
+        // just iterate across that many pixel crossings
+        // (there's probably a way to do this with some non-iterative formula
+        // but I'll figure that out later if I can be bothered to)
+        for (var i = 0u; i < sdf_val; i++) {
+            // move to the next pixel intersected by the ray
+            let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
+            let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1));
+            let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
+            let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
+            if to_next_x < to_next_y {
+                t += to_next_x;
+                ray_pos += to_next_x * ray.dir;
+                pixel_pos.x += pixel_dir.x;
+            } else {
+                t += to_next_y;
+                ray_pos += to_next_y * ray.dir;
+                pixel_pos.y += pixel_dir.y;
+            }
         }
     }
 
