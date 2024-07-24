@@ -139,25 +139,28 @@ fn fs_main(
     let tl = textureLoad(cascade_tex, probe_pixel + vec2<u32>(0u, 1u), 0);
     let tr = textureLoad(cascade_tex, probe_pixel + vec2<u32>(1u, 1u), 0);
     var radiances = array(tr, tl, bl, br);
-    // approximation of the normal's coverage of each sphere segment
-    // using the intersection point of the sphere and the plane defined by the normal
+    // each direction on the radiance probe covers a quarter segment of a 2-sphere,
+    // and diffuse lighting is an integral over a hemisphere
+    // centered on the surface normal.
+    // approximate the integral by computing where the hemisphere's bottom plane
+    // intersects with the vertical center planes of each probe quadrant
+    // (this is hard to explain without being able to draw a picture..)
     var directions = array(
         vec3<f32>(SQRT_2, SQRT_2, 0.),
         vec3<f32>(-SQRT_2, SQRT_2, 0.),
         vec3<f32>(-SQRT_2, -SQRT_2, 0.),
-        vec3<f32>(SQRT_2, -SQRT_2, 0.),
-        vec3<f32>(SQRT_2, SQRT_2, 0.),
     );
     var radiance = vec3<f32>(0.);
-    for (var dir_idx = 0u; dir_idx < 4u; dir_idx++) {
+    for (var dir_idx = 0u; dir_idx < 2u; dir_idx++) {
         let dir = directions[dir_idx];
         let dir_normal = directions[dir_idx + 1u];
         let rad = radiances[dir_idx];
+        let rad_opposite = radiances[dir_idx + 2u];
 
         let plane_isect = normalize(cross(dir_normal, normal));
         let angle = acos(plane_isect.z);
         let dir_coverage = select(angle, PI - angle, normal.z > 0.) / PI;
-        radiance += dir_coverage * rad.rgb;
+        radiance += dir_coverage * rad.rgb + (1. - dir_coverage) * rad_opposite.rgb;
     }
 
     return vec4<f32>(radiance, 1.) * diffuse_color;
