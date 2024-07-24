@@ -290,7 +290,7 @@ impl GlobalIlluminationPipeline {
         let int_tex = |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
             binding,
             ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Sint,
+                sample_type: wgpu::TextureSampleType::Uint,
                 view_dimension: wgpu::TextureViewDimension::D2,
                 multisampled: false,
             },
@@ -318,7 +318,7 @@ impl GlobalIlluminationPipeline {
                 uniform_buf(0, size_of::<JumpFloodParams>(), true, S::COMPUTE),
                 float_tex(1, S::COMPUTE),
                 int_tex(2, S::COMPUTE),
-                write_storage(3, wgpu::TextureFormat::Rg32Sint),
+                write_storage(3, wgpu::TextureFormat::R32Uint),
             ],
         });
 
@@ -483,7 +483,7 @@ impl GlobalIlluminationPipeline {
                 label: Some("jfa"),
                 dimension: wgpu::TextureDimension::D2,
                 size: light_tex_size,
-                format: wgpu::TextureFormat::Rg32Sint,
+                format: wgpu::TextureFormat::R32Uint,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
                 view_formats: &[],
                 mip_level_count: 1,
