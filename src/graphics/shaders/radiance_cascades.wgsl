@@ -1,5 +1,7 @@
 @group(0) @binding(0)
 var light_tex: texture_2d<f32>;
+@group(0) @binding(1)
+var sdf_tex: texture_2d<i32>;
 
 struct CascadeParams {
     level: u32,
@@ -188,9 +190,9 @@ fn sample_next_cascade(dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
 @compute
 @workgroup_size(16, 16)
 fn main(
-    @builtin(global_invocation_id) local_id: vec3<u32>,
+    @builtin(global_invocation_id) global_id: vec3<u32>,
 ) {
-    let texel_id = local_id.xy;
+    let texel_id = global_id.xy;
     // pre-averaged cascades (all but the 0th one) all have the same size:
     // cascade 1 stores the same number of directions as cascade 0 (i.e. 4)
     // and a quarter the probe count, hence its size is exactly the probe count.

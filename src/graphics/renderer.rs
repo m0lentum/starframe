@@ -503,6 +503,7 @@ impl<'a> Frame<'a> {
                 timestamp_writes: None,
             });
 
+            self.renderer.gi_pipeline.compute_sdf(&mut cpass);
             self.renderer.gi_pipeline.compute_gi(&mut cpass);
         }
 
