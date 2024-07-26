@@ -237,6 +237,7 @@ impl GlobalIlluminationPipeline {
             module: &mip_shader,
             entry_point: "main",
             layout: Some(&mip_layout),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         let casc_shader =
@@ -253,6 +254,7 @@ impl GlobalIlluminationPipeline {
             module: &casc_shader,
             entry_point: "main",
             layout: Some(&cascade_layout),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         let jfa_shader =
@@ -269,6 +271,7 @@ impl GlobalIlluminationPipeline {
             module: &jfa_shader,
             entry_point: "init",
             layout: Some(&jfa_layout),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         let jfa_iter = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -276,6 +279,7 @@ impl GlobalIlluminationPipeline {
             module: &jfa_shader,
             entry_point: "iter",
             layout: Some(&jfa_layout),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         let jfa_finish = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -283,6 +287,7 @@ impl GlobalIlluminationPipeline {
             module: &jfa_shader,
             entry_point: "finish",
             layout: Some(&jfa_layout),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
         Pipelines {

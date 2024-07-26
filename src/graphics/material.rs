@@ -250,6 +250,7 @@ impl<'a> TextureData<'a> {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             },
+            wgpu::util::TextureDataOrder::LayerMajor,
             self.pixels,
         );
 

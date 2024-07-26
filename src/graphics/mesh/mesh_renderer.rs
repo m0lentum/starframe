@@ -131,11 +131,13 @@ impl MeshRenderer {
                 module: &depth_shader,
                 entry_point: "vs_main",
                 buffers: &[vertex_buffers.clone()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
                 entry_point: "fs_depth",
                 targets: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -164,11 +166,13 @@ impl MeshRenderer {
                 module: &depth_shader,
                 entry_point: "vs_main",
                 buffers: &[vertex_buffers.clone()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
                 entry_point: "fs_emissive",
                 targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -200,6 +204,7 @@ impl MeshRenderer {
                 module: &main_shader,
                 entry_point: "vs_main",
                 buffers: &[vertex_buffers],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &main_shader,
@@ -209,6 +214,7 @@ impl MeshRenderer {
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::COLOR,
                 })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,

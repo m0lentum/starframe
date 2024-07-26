@@ -26,7 +26,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fps: 60,
         on_event: |state: &mut State, evt| {
             if let winit::event::Event::WindowEvent { event, .. } = evt {
-                let egui_resp = state.egui_state.on_window_event(&state.egui_context, event);
+                let egui_resp = state
+                    .egui_state
+                    .on_window_event(sf::Renderer::window(), event);
                 if egui_resp.consumed {
                     // TODO: don't propagate the event
                 }
@@ -59,9 +61,8 @@ pub struct State {
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     // egui stuff
-    egui_context: egui::Context,
     egui_state: egui_winit::State,
-    egui_renderer: egui_wgpu::renderer::Renderer,
+    egui_renderer: egui_wgpu::Renderer,
     last_egui_output: egui::FullOutput,
     // UI states
     bvh_vis_active: bool,
@@ -93,11 +94,16 @@ impl State {
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
-                reset_button: Some(sf::Key::R.into()),
+                reset_button: Some(sf::Key::KeyR.into()),
                 ..Default::default()
             },
-            egui_context,
-            egui_state: egui_winit::State::new(viewport_id, sf::Renderer::window(), None, None),
+            egui_state: egui_winit::State::new(
+                egui_context,
+                viewport_id,
+                sf::Renderer::window(),
+                None,
+                None,
+            ),
             egui_renderer: egui_wgpu::Renderer::new(
                 sf::Renderer::device(),
                 game.renderer.swapchain_format(),
@@ -305,13 +311,13 @@ impl sf::GameState for State {
         //
 
         let egui_input = self.egui_state.take_egui_input(sf::Renderer::window());
-        self.egui_context.begin_frame(egui_input);
+        self.egui_state.egui_ctx().begin_frame(egui_input);
 
         let mut exit = false;
         let mut reload = false;
         let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
-        egui::Window::new("Controls").show(&self.egui_context, |ui| {
+        egui::Window::new("Controls").show(self.egui_state.egui_ctx(), |ui| {
             ui.heading("Load a scene");
             ui.horizontal_wrapped(|ui| {
                 for scene_path in &self.scenes_available {
@@ -431,7 +437,7 @@ impl sf::GameState for State {
             self.scene.instantiate(game, &self.gen_assets);
         }
 
-        self.last_egui_output = self.egui_context.end_frame();
+        self.last_egui_output = self.egui_state.egui_ctx().end_frame();
 
         // mouse controls
 
@@ -475,7 +481,7 @@ impl sf::GameState for State {
             // Playing or stepping manually
             //
             (StateEnum::Playing, _) | (StateEnum::Paused, true) => {
-                if game.input.button(sf::Key::P.into()) {
+                if game.input.button(sf::Key::KeyP.into()) {
                     self.state = StateEnum::Paused;
                     return Some(());
                 }
@@ -490,7 +496,7 @@ impl sf::GameState for State {
             // Paused
             //
             (StateEnum::Paused, false) => {
-                if game.input.button(sf::Key::P.into()) {
+                if game.input.button(sf::Key::KeyP.into()) {
                     self.state = StateEnum::Playing;
                     return Some(());
                 }
@@ -541,13 +547,12 @@ impl sf::GameState for State {
 
         // egui
 
-        let paint_jobs = self.egui_context.tessellate(
+        let paint_jobs = self.egui_state.egui_ctx().tessellate(
             self.last_egui_output.shapes.clone(),
-            self.egui_context.pixels_per_point(),
+            self.egui_state.egui_ctx().pixels_per_point(),
         );
         self.egui_state.handle_platform_output(
             sf::Renderer::window(),
-            &self.egui_context,
             self.last_egui_output.platform_output.clone(),
         );
 
@@ -560,9 +565,9 @@ impl sf::GameState for State {
             self.egui_renderer.free_texture(tex_id);
         }
 
-        let screen_desc = egui_wgpu::renderer::ScreenDescriptor {
+        let screen_desc = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [window_size.width, window_size.height],
-            pixels_per_point: self.egui_context.pixels_per_point(),
+            pixels_per_point: self.egui_state.egui_ctx().pixels_per_point(),
         };
         self.egui_renderer.update_buffers(
             device,

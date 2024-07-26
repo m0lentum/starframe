@@ -97,7 +97,9 @@ pub struct Game {
 /// An error that occurred during in the initialization
 /// of a game window and renderer.
 #[derive(Debug, thiserror::Error)]
-pub enum GameInitError {
+pub enum GameError {
+    #[error("Error with winit event loop")]
+    EventLoopError(#[from] winit::error::EventLoopError),
     #[error("Failed to create a window")]
     WindowOSError(#[from] winit::error::OsError),
     #[error("Failed to initialize wgpu renderer")]
@@ -105,8 +107,8 @@ pub enum GameInitError {
 }
 
 impl Game {
-    pub fn run<State: GameState>(params: GameParams<State>) -> Result<(), GameInitError> {
-        let events: EventLoop<()> = EventLoop::new();
+    pub fn run<State: GameState>(params: GameParams<State>) -> Result<(), GameError> {
+        let events: EventLoop<()> = EventLoop::new()?;
         let window = params.window.build(&events)?;
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -146,7 +148,7 @@ impl Game {
         on_event: fn(&mut State, &Event<()>),
         events: EventLoop<()>,
         window: Window,
-    ) -> Result<(), RendererInitError> {
+    ) -> Result<(), GameError> {
         let _tracy_client = tracy_client::Client::start();
 
         //
@@ -176,13 +178,13 @@ impl Game {
 
         let mut frame_start_t = Instant::now();
         let mut acc = 0;
-        events.run(move |event, _, control_flow| {
+        events.run(move |event, elwt| {
             (on_event)(&mut state, &event);
 
-            *control_flow = ControlFlow::Poll;
+            elwt.set_control_flow(ControlFlow::Poll);
 
             match event {
-                Event::MainEventsCleared => {
+                Event::AboutToWait => {
                     // if vsynced, pretend frame timing is exact (see blog post mentioned above)
                     let mut dt_nanos = frame_start_t.elapsed().as_nanos();
                     if should_snap(dt_nanos, NANOS_120FPS) {
@@ -217,7 +219,7 @@ impl Game {
                             let _frame = tracy_client::non_continuous_frame!("tick");
 
                             if state.tick(&mut game).is_none() {
-                                *control_flow = ControlFlow::Exit;
+                                elwt.exit();
                                 return;
                             }
                             game.input.tick();
@@ -245,18 +247,20 @@ impl Game {
                                 + Duration::from_nanos(
                                     (target_frame_duration - SPIN_DURATION) as u64,
                                 );
-                            *control_flow = ControlFlow::WaitUntil(wait_until_t);
+                            elwt.set_control_flow(ControlFlow::WaitUntil(wait_until_t));
                         } else {
                             // we're at or almost at the next frame threshold,
                             // spin for accurate timing
-                            *control_flow = ControlFlow::Poll;
+                            elwt.set_control_flow(ControlFlow::Poll);
                         }
                     }
                 }
                 Event::WindowEvent { event, .. } => {
                     game.input.track_window_event(&event);
                     match event {
-                        WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                        WindowEvent::CloseRequested => {
+                            elwt.exit();
+                        }
                         WindowEvent::Resized(new_size) => {
                             game.renderer.resize_swap_chain(new_size);
                         }
@@ -265,7 +269,9 @@ impl Game {
                 }
                 _ => (),
             }
-        });
+        })?;
+
+        Ok(())
     }
 
     /// Step the game's physics world forward in time by a frame.

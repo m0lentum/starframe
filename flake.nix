@@ -46,6 +46,7 @@
                 concatStrings (intersperse ":" [
                   "${libX11}/lib"
                   "${libXcursor}/lib"
+                  "${pkgs.libxkbcommon}/lib"
                   "${libXxf86vm}/lib"
                   "${libXi}/lib"
                   "${libXrandr}/lib"

@@ -31,7 +31,7 @@ pub const DEFAULT_MULTISAMPLE_STATE: wgpu::MultisampleState = wgpu::MultisampleS
 
 /// A Renderer manages resources needed to draw graphics to the screen.
 pub struct Renderer {
-    surface: wgpu::Surface,
+    surface: wgpu::Surface<'static>,
     surface_config: wgpu::SurfaceConfiguration,
     window_scale_factor: f64,
 
@@ -56,6 +56,8 @@ pub struct Renderer {
 /// An error that occurred during renderer initialization.
 #[derive(thiserror::Error, Debug)]
 pub enum RendererInitError {
+    #[error("Failed to get a window handle")]
+    HandleError,
     #[error("Failed to create surface")]
     CreateSurfaceError(#[from] wgpu::CreateSurfaceError),
     #[error("Adapter request failed")]
@@ -71,7 +73,12 @@ impl Renderer {
     /// The [`Game`][crate::game::Game] API does this automatically.
     pub(crate) async fn init(window: winit::window::Window) -> Result<Self, RendererInitError> {
         let instance = wgpu::Instance::default();
-        let surface = unsafe { instance.create_surface(&window) }?;
+        let surface = unsafe {
+            instance.create_surface_unsafe(
+                wgpu::SurfaceTargetUnsafe::from_window(&window)
+                    .map_err(|_| RendererInitError::HandleError)?,
+            )?
+        };
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -85,8 +92,8 @@ impl Renderer {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    features: wgpu::Features::default(),
-                    limits: wgpu::Limits {
+                    required_features: wgpu::Features::default(),
+                    required_limits: wgpu::Limits {
                         min_uniform_buffer_offset_alignment: 64,
                         ..Default::default()
                     },
@@ -108,6 +115,7 @@ impl Renderer {
             present_mode: wgpu::PresentMode::AutoVsync,
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
+            desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &surface_config);
 
