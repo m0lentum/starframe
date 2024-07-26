@@ -17,6 +17,8 @@ const TILE_SIZE: u32 = 16;
 /// Scaling factor of the light texture relative to the screen.
 const LIGHT_TEX_SCALING: f32 = 0.5;
 
+const LIGHT_MIP_COUNT: usize = 6;
+
 /// Hardcoded pass count to simplify things for JFA,
 /// we don't need to cover the entire screen for it to be useful.
 /// Maximum distance we get from this is 2^(1-JFA_PASS_COUNT)
@@ -33,7 +35,14 @@ pub(crate) struct GlobalIlluminationPipeline {
     probe_count: [u32; 2],
 }
 
+//
+// gpu resources
+//
+
 struct Pipelines {
+    // generates a mip chain from the light texture
+    // that we use as a quadtree-like acceleration structure for raymarching
+    light_mip: wgpu::ComputePipeline,
     // jump flood algorithm to generate a distance field of the light texture
     jfa_init: wgpu::ComputePipeline,
     jfa_iter: wgpu::ComputePipeline,
@@ -45,6 +54,7 @@ struct Pipelines {
 pub(super) struct BindGroupLayouts {
     jfa: wgpu::BindGroupLayout,
     light: wgpu::BindGroupLayout,
+    light_mip: wgpu::BindGroupLayout,
     cascade: wgpu::BindGroupLayout,
     pub(super) render: wgpu::BindGroupLayout,
 }
@@ -53,7 +63,8 @@ pub(super) struct BindGroups {
     // bind groups for each ordering of textures (one read, one write)
     jfa: [wgpu::BindGroup; 2],
     // binds the light texture for the cascade compute step
-    light: wgpu::BindGroup,
+    light_full: wgpu::BindGroup,
+    light_mips: [wgpu::BindGroup; LIGHT_MIP_COUNT - 1],
     // back and forth bind groups like with jfa
     cascades: [wgpu::BindGroup; 2],
     final_cascade: wgpu::BindGroup,
@@ -63,7 +74,12 @@ pub(super) struct BindGroups {
 pub(super) struct Textures {
     jfa: [wgpu::TextureView; 2],
     // light emitters and occluders are drawn into this by MeshRenderer
-    pub(super) light: wgpu::TextureView,
+    // (one texture with LIGHT_MIP_COUNT mip levels,
+    // the rest of the levels are used to accelerate raymarching)
+    // this view has all the mip levels
+    light_full: wgpu::TextureView,
+    // and these are one mip level each, used to generate the mip chain
+    pub(super) light_mips: [wgpu::TextureView; LIGHT_MIP_COUNT],
     // final cascade is a different size from the others
     // because we keep direction information
     // instead of pre-averaging rays
@@ -85,6 +101,10 @@ struct ResizeResults {
     cascade_params: Vec<CascadeParams>,
     render_params: RenderParams,
 }
+
+//
+// gpu uniform types
+//
 
 /// Uniform parameters for JFA computation
 #[repr(C)]
@@ -203,6 +223,22 @@ impl GlobalIlluminationPipeline {
     fn create_pipelines(bg_layouts: &BindGroupLayouts) -> Pipelines {
         let device = crate::Renderer::device();
 
+        let mip_shader =
+            device.create_shader_module(wgpu::include_wgsl!("./shaders/mip_chain.wgsl"));
+
+        let mip_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("light mip"),
+            bind_group_layouts: &[&bg_layouts.light_mip],
+            push_constant_ranges: &[],
+        });
+
+        let light_mip = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("light mip"),
+            module: &mip_shader,
+            entry_point: "main",
+            layout: Some(&mip_layout),
+        });
+
         let casc_shader =
             device.create_shader_module(wgpu::include_wgsl!("./shaders/radiance_cascades.wgsl"));
 
@@ -250,6 +286,7 @@ impl GlobalIlluminationPipeline {
         });
 
         Pipelines {
+            light_mip,
             cascade,
             jfa_init,
             jfa_iter,
@@ -327,6 +364,14 @@ impl GlobalIlluminationPipeline {
             entries: &[float_tex(0, S::COMPUTE), int_tex(1, S::COMPUTE)],
         });
 
+        let light_mip = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("light mip"),
+            entries: &[
+                float_tex(0, S::COMPUTE),
+                write_storage(1, wgpu::TextureFormat::Rgba8Unorm),
+            ],
+        });
+
         let cascade = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cascade"),
             entries: &[
@@ -347,6 +392,7 @@ impl GlobalIlluminationPipeline {
         BindGroupLayouts {
             jfa,
             light,
+            light_mip,
             cascade,
             render,
         }
@@ -374,7 +420,7 @@ impl GlobalIlluminationPipeline {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&tex.light),
+                        resource: wgpu::BindingResource::TextureView(&tex.light_full),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -394,13 +440,30 @@ impl GlobalIlluminationPipeline {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&tex.light),
+                    resource: wgpu::BindingResource::TextureView(&tex.light_full),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&tex.jfa[0]),
                 },
             ],
+        });
+
+        let light_mips = std::array::from_fn(|mip_idx| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("light mip"),
+                layout: &layouts.light_mip,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&tex.light_mips[mip_idx]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&tex.light_mips[mip_idx + 1]),
+                    },
+                ],
+            })
         });
 
         let cascade = |read: &wgpu::TextureView, write: &wgpu::TextureView| {
@@ -445,7 +508,8 @@ impl GlobalIlluminationPipeline {
 
         BindGroups {
             jfa: [jfa(&tex.jfa[0], &tex.jfa[1]), jfa(&tex.jfa[1], &tex.jfa[0])],
-            light,
+            light_full: light,
+            light_mips,
             cascades: [
                 cascade(&tex.cascades[0], &tex.cascades[1]),
                 cascade(&tex.cascades[1], &tex.cascades[0]),
@@ -471,12 +535,21 @@ impl GlobalIlluminationPipeline {
             dimension: wgpu::TextureDimension::D2,
             size: light_tex_size,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING,
             view_formats: &[],
-            mip_level_count: 1,
+            mip_level_count: LIGHT_MIP_COUNT as u32,
             sample_count: 1,
         });
-        let light = light_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let light_mips = std::array::from_fn(|mip_idx| {
+            light_tex.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: mip_idx as u32,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        });
+        let light_full = light_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         let jfa_tex = || {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -547,7 +620,8 @@ impl GlobalIlluminationPipeline {
             light_tex_size: [light_tex_size.width, light_tex_size.height],
             textures: Textures {
                 jfa,
-                light,
+                light_full,
+                light_mips,
                 cascade_0,
                 cascades,
             },
@@ -584,6 +658,19 @@ impl GlobalIlluminationPipeline {
         self.textures = res.textures;
     }
 
+    pub fn compute_light_mips<'pass>(&'pass self, pass: &mut wgpu::ComputePass<'pass>) {
+        pass.set_pipeline(&self.pipelines.light_mip);
+        for mip_idx in 0..LIGHT_MIP_COUNT as u32 - 1 {
+            let tiles_x =
+                (self.light_tex_size[0] as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
+            let tiles_y =
+                (self.light_tex_size[1] as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
+
+            pass.set_bind_group(0, &self.bind_groups.light_mips[mip_idx as usize], &[]);
+            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        }
+    }
+
     pub fn compute_sdf<'pass>(&'pass self, pass: &mut wgpu::ComputePass<'pass>) {
         let tiles_x = (self.light_tex_size[0] as f32 / TILE_SIZE as f32).ceil() as u32;
         let tiles_y = (self.light_tex_size[1] as f32 / TILE_SIZE as f32).ceil() as u32;
@@ -614,7 +701,7 @@ impl GlobalIlluminationPipeline {
         let tiles_x = (self.probe_count[0] as f32 / TILE_SIZE as f32).ceil() as u32;
         let tiles_y = (self.probe_count[1] as f32 / TILE_SIZE as f32).ceil() as u32;
         pass.set_pipeline(&self.pipelines.cascade);
-        pass.set_bind_group(0, &self.bind_groups.light, &[]);
+        pass.set_bind_group(0, &self.bind_groups.light_full, &[]);
         // cascades starting with the last
         for casc_idx in (1..self.cascade_count).rev() {
             pass.set_bind_group(

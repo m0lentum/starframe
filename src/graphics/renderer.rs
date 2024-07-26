@@ -479,7 +479,7 @@ impl<'a> Frame<'a> {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("lights"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.renderer.gi_pipeline.textures.light,
+                    view: &self.renderer.gi_pipeline.textures.light_mips[0],
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -503,6 +503,7 @@ impl<'a> Frame<'a> {
                 timestamp_writes: None,
             });
 
+            self.renderer.gi_pipeline.compute_light_mips(&mut cpass);
             self.renderer.gi_pipeline.compute_sdf(&mut cpass);
             self.renderer.gi_pipeline.compute_gi(&mut cpass);
         }
