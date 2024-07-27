@@ -543,18 +543,9 @@ impl<'a> Frame<'a> {
         {
             let mut cpass = scope.scoped_compute_pass("compute global illumination", device);
 
-            {
-                let mut cpass = cpass.scope("light mip chain", device);
-                self.renderer.gi_pipeline.compute_light_mips(&mut cpass);
-            }
-            {
-                let mut cpass = cpass.scope("jump flood", device);
-                self.renderer.gi_pipeline.compute_sdf(&mut cpass);
-            }
-            {
-                let mut cpass = cpass.scope("radiance cascades", device);
-                self.renderer.gi_pipeline.compute_gi(&mut cpass);
-            }
+            self.renderer.gi_pipeline.compute_light_mips(&mut cpass);
+            self.renderer.gi_pipeline.compute_sdf(&mut cpass);
+            self.renderer.gi_pipeline.compute_gi(&mut cpass);
         }
 
         // final render

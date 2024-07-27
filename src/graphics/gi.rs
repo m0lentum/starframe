@@ -4,6 +4,7 @@ use wgpu::util::DeviceExt;
 use zerocopy::{AsBytes, FromBytes};
 
 use crate::math::uv;
+use wgpu_profiler as wp;
 
 /// Distance between cascade 0 probes measured in screen pixels.
 const C0_PROBE_INTERVAL: f32 = 2.;
@@ -663,9 +664,17 @@ impl GlobalIlluminationPipeline {
         self.textures = res.textures;
     }
 
-    pub fn compute_light_mips<'pass>(&'pass self, pass: &mut wgpu::ComputePass<'pass>) {
+    pub fn compute_light_mips<'pass>(
+        &'pass self,
+        pass: &mut wp::OwningScope<'_, wgpu::ComputePass<'pass>>,
+    ) {
+        let device = crate::Renderer::device();
+        let mut pass = pass.scope("light mip chain", device);
+
         pass.set_pipeline(&self.pipelines.light_mip);
         for mip_idx in 0..LIGHT_MIP_COUNT as u32 - 1 {
+            let mut pass = pass.scope(format!("mip level {mip_idx}"), device);
+
             let tiles_x =
                 (self.light_tex_size[0] as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
             let tiles_y =
@@ -676,7 +685,13 @@ impl GlobalIlluminationPipeline {
         }
     }
 
-    pub fn compute_sdf<'pass>(&'pass self, pass: &mut wgpu::ComputePass<'pass>) {
+    pub fn compute_sdf<'pass>(
+        &'pass self,
+        pass: &mut wp::OwningScope<'_, wgpu::ComputePass<'pass>>,
+    ) {
+        let device = crate::Renderer::device();
+        let mut pass = pass.scope("jump flood", device);
+
         let tiles_x = (self.light_tex_size[0] as f32 / TILE_SIZE as f32).ceil() as u32;
         let tiles_y = (self.light_tex_size[1] as f32 / TILE_SIZE as f32).ceil() as u32;
 
@@ -685,10 +700,14 @@ impl GlobalIlluminationPipeline {
         // because that's the one we bind to the cascade step;
         // select the starting bind group accordingly
         pass.set_bind_group(0, &self.bind_groups.jfa[JFA_PASS_COUNT % 2], &[0]);
-        pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        {
+            let mut pass = pass.scope("jfa init", device);
+            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        }
 
         pass.set_pipeline(&self.pipelines.jfa_iter);
         for iter_idx in (0..JFA_PASS_COUNT).rev() {
+            let mut pass = pass.scope(format!("jfa iteration {iter_idx}"), device);
             pass.set_bind_group(
                 0,
                 &self.bind_groups.jfa[iter_idx % 2],
@@ -699,16 +718,26 @@ impl GlobalIlluminationPipeline {
 
         pass.set_pipeline(&self.pipelines.jfa_finish);
         pass.set_bind_group(0, &self.bind_groups.jfa[1], &[0]);
-        pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        {
+            let mut pass = pass.scope("jfa final", device);
+            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        }
     }
 
-    pub fn compute_gi<'pass>(&'pass self, pass: &mut wgpu::ComputePass<'pass>) {
+    pub fn compute_gi<'pass>(
+        &'pass self,
+        pass: &mut wp::OwningScope<'_, wgpu::ComputePass<'pass>>,
+    ) {
+        let device = crate::Renderer::device();
+        let mut pass = pass.scope("radiance cascades", device);
+
         let tiles_x = (self.probe_count[0] as f32 / TILE_SIZE as f32).ceil() as u32;
         let tiles_y = (self.probe_count[1] as f32 / TILE_SIZE as f32).ceil() as u32;
         pass.set_pipeline(&self.pipelines.cascade);
         pass.set_bind_group(0, &self.bind_groups.light_full, &[]);
         // cascades starting with the last
         for casc_idx in (1..self.cascade_count).rev() {
+            let mut pass = pass.scope(format!("cascade {casc_idx}"), device);
             pass.set_bind_group(
                 1,
                 &self.bind_groups.cascades[casc_idx % 2],
@@ -716,8 +745,12 @@ impl GlobalIlluminationPipeline {
             );
             pass.dispatch_workgroups(tiles_x, tiles_y, 1);
         }
-        // final cascade drawing to the special differently sized texture
-        pass.set_bind_group(1, &self.bind_groups.final_cascade, &[0]);
-        pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+
+        {
+            let mut pass = pass.scope("cascade 0", device);
+            // final cascade drawing to the special differently sized texture
+            pass.set_bind_group(1, &self.bind_groups.final_cascade, &[0]);
+            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+        }
     }
 }
