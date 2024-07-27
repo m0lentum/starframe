@@ -6,12 +6,15 @@ use winit::event as ev;
 pub use ev::{ElementState, MouseButton};
 pub use winit::keyboard::KeyCode as Key;
 
+/// This must be at least the number of variants in `Key`
+const KEYCODE_COUNT: usize = 200;
+
 /// Tracks the state of input devices so that they can be queried from one place on demand.
 #[derive(Clone, Debug)]
 pub struct Input {
     // keyboard stored as an array addressed by `Key as usize`.
     // when updating winit, make sure this is as big as the enum!
-    keyboard: [AgedState; 163],
+    keyboard: [AgedState; KEYCODE_COUNT],
     mouse_buttons: MouseButtonState,
     cursor_pos: m::Vec2,
     // previous tick's cursor position to track movements for dragging and such
@@ -23,7 +26,7 @@ impl Input {
     #[inline]
     pub(crate) fn new() -> Self {
         Input {
-            keyboard: [AgedState::default(); 163],
+            keyboard: [AgedState::default(); KEYCODE_COUNT],
             mouse_buttons: Default::default(),
             cursor_pos: m::Vec2::zero(),
             prev_cursor_pos: None,
