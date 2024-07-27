@@ -18,11 +18,6 @@ const TILE_SIZE: u32 = 16;
 /// Scaling factor of the light texture relative to the screen.
 const LIGHT_TEX_SCALING: f32 = 0.5;
 
-/// Hardcoded pass count to simplify things for JFA,
-/// we don't need to cover the entire screen for it to be useful.
-/// Maximum distance we get from this is 2^(1-JFA_PASS_COUNT)
-const JFA_PASS_COUNT: usize = 8;
-
 pub(crate) struct GlobalIlluminationPipeline {
     pipelines: Pipelines,
     pub(super) textures: Textures,
@@ -42,16 +37,11 @@ struct Pipelines {
     // generates a mip chain from the light texture
     // that we use as a quadtree-like acceleration structure for raymarching
     light_mip: wgpu::ComputePipeline,
-    // jump flood algorithm to generate a distance field of the light texture
-    jfa_init: wgpu::ComputePipeline,
-    jfa_iter: wgpu::ComputePipeline,
-    jfa_finish: wgpu::ComputePipeline,
     // actual radiance cascade computation
     cascade: wgpu::ComputePipeline,
 }
 
 pub(super) struct BindGroupLayouts {
-    jfa: wgpu::BindGroupLayout,
     light: wgpu::BindGroupLayout,
     light_mip: wgpu::BindGroupLayout,
     cascade: wgpu::BindGroupLayout,
@@ -59,8 +49,6 @@ pub(super) struct BindGroupLayouts {
 }
 
 pub(super) struct BindGroups {
-    // bind groups for each ordering of textures (one read, one write)
-    jfa: [wgpu::BindGroup; 2],
     // binds the light texture for the cascade compute step
     light_full: wgpu::BindGroup,
     light_mips: Vec<wgpu::BindGroup>,
@@ -71,7 +59,6 @@ pub(super) struct BindGroups {
 }
 
 pub(super) struct Textures {
-    jfa: [wgpu::TextureView; 2],
     // light emitters and occluders are drawn into this by MeshRenderer
     // (one texture with LIGHT_MIP_COUNT mip levels,
     // the rest of the levels are used to accelerate raymarching)
@@ -88,7 +75,6 @@ pub(super) struct Textures {
 }
 
 struct Buffers {
-    jfa_params: wgpu::Buffer,
     cascade_params: wgpu::Buffer,
     render_params: wgpu::Buffer,
 }
@@ -104,15 +90,6 @@ struct ResizeResults {
 //
 // gpu uniform types
 //
-
-/// Uniform parameters for JFA computation
-#[repr(C)]
-#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
-struct JumpFloodParams {
-    iter_idx: u32,
-    // padding to reach the minimum dynamic offset alignment
-    _pad: [u32; 15],
-}
 
 /// Uniform parameters for the cascade computation
 #[repr(C)]
@@ -177,20 +154,8 @@ impl GlobalIlluminationPipeline {
         let resizables = Self::create_resizables(crate::Renderer::window().inner_size().into());
         let cascade_count = resizables.cascade_params.len();
 
-        let jfa_params: Vec<_> = (0..JFA_PASS_COUNT as u32)
-            .map(|iter_idx| JumpFloodParams {
-                iter_idx,
-                _pad: [0; 15],
-            })
-            .collect();
-
         use wgpu::util::DeviceExt;
         let buffers = Buffers {
-            jfa_params: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("cascade compute params"),
-                contents: jfa_params.as_bytes(),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }),
             cascade_params: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cascade compute params"),
                 contents: resizables.cascade_params.as_bytes(),
@@ -261,46 +226,7 @@ impl GlobalIlluminationPipeline {
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         });
 
-        let jfa_shader =
-            device.create_shader_module(wgpu::include_wgsl!("./shaders/jump_flood.wgsl"));
-
-        let jfa_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("jfa"),
-            bind_group_layouts: &[&bg_layouts.jfa],
-            push_constant_ranges: &[],
-        });
-
-        let jfa_init = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("jfa init"),
-            module: &jfa_shader,
-            entry_point: "init",
-            layout: Some(&jfa_layout),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        });
-
-        let jfa_iter = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("jfa iter"),
-            module: &jfa_shader,
-            entry_point: "iter",
-            layout: Some(&jfa_layout),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        });
-
-        let jfa_finish = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("jfa finish"),
-            module: &jfa_shader,
-            entry_point: "finish",
-            layout: Some(&jfa_layout),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        });
-
-        Pipelines {
-            light_mip,
-            cascade,
-            jfa_init,
-            jfa_iter,
-            jfa_finish,
-        }
+        Pipelines { light_mip, cascade }
     }
 
     fn create_bind_group_layouts() -> BindGroupLayouts {
@@ -333,17 +259,6 @@ impl GlobalIlluminationPipeline {
             count: None,
         };
 
-        let int_tex = |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
-            binding,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Uint,
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            visibility,
-            count: None,
-        };
-
         let write_storage =
             |binding: u32, format: wgpu::TextureFormat| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -357,16 +272,6 @@ impl GlobalIlluminationPipeline {
             };
 
         use wgpu::ShaderStages as S;
-
-        let jfa = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("cascade"),
-            entries: &[
-                uniform_buf(0, size_of::<JumpFloodParams>(), true, S::COMPUTE),
-                float_tex(1, S::COMPUTE),
-                int_tex(2, S::COMPUTE),
-                write_storage(3, wgpu::TextureFormat::R32Uint),
-            ],
-        });
 
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
@@ -399,7 +304,6 @@ impl GlobalIlluminationPipeline {
         });
 
         BindGroupLayouts {
-            jfa,
             light,
             light_mip,
             cascade,
@@ -414,35 +318,6 @@ impl GlobalIlluminationPipeline {
         buffers: &Buffers,
     ) -> BindGroups {
         let device = crate::Renderer::device();
-
-        let jfa = |read: &wgpu::TextureView, write: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("jfa"),
-                layout: &layouts.jfa,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &buffers.jfa_params,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(size_of::<JumpFloodParams>() as u64),
-                        }),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&tex.light_full),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(read),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(write),
-                    },
-                ],
-            })
-        };
 
         let light = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cascade light"),
@@ -515,7 +390,6 @@ impl GlobalIlluminationPipeline {
         });
 
         BindGroups {
-            jfa: [jfa(&tex.jfa[0], &tex.jfa[1]), jfa(&tex.jfa[1], &tex.jfa[0])],
             light_full: light,
             light_mips,
             cascades: [
@@ -537,21 +411,6 @@ impl GlobalIlluminationPipeline {
             height: (target_size.1 as f32 * LIGHT_TEX_SCALING) as u32,
             depth_or_array_layers: 1,
         };
-
-        let jfa_tex = || {
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("jfa"),
-                dimension: wgpu::TextureDimension::D2,
-                size: light_tex_size,
-                format: wgpu::TextureFormat::R32Uint,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
-                view_formats: &[],
-                mip_level_count: 1,
-                sample_count: 1,
-            });
-            tex.create_view(&wgpu::TextureViewDescriptor::default())
-        };
-        let jfa = [jfa_tex(), jfa_tex()];
 
         // compute needed probe and cascade count to get full texture dimensions
 
@@ -629,7 +488,6 @@ impl GlobalIlluminationPipeline {
         ResizeResults {
             light_tex_size: [light_tex_size.width, light_tex_size.height],
             textures: Textures {
-                jfa,
                 light_full,
                 light_mips,
                 cascade_0,
@@ -690,45 +548,6 @@ impl GlobalIlluminationPipeline {
                 (self.light_tex_size[1] as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
 
             pass.set_bind_group(0, &self.bind_groups.light_mips[mip_idx as usize], &[]);
-            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
-        }
-    }
-
-    pub fn compute_sdf<'pass>(
-        &'pass self,
-        pass: &mut wp::OwningScope<'_, wgpu::ComputePass<'pass>>,
-    ) {
-        let device = crate::Renderer::device();
-        let mut pass = pass.scope("jump flood", device);
-
-        let tiles_x = (self.light_tex_size[0] as f32 / TILE_SIZE as f32).ceil() as u32;
-        let tiles_y = (self.light_tex_size[1] as f32 / TILE_SIZE as f32).ceil() as u32;
-
-        pass.set_pipeline(&self.pipelines.jfa_init);
-        // we want the final distance values to be in the first jfa texture
-        // because that's the one we bind to the cascade step;
-        // select the starting bind group accordingly
-        pass.set_bind_group(0, &self.bind_groups.jfa[JFA_PASS_COUNT % 2], &[0]);
-        {
-            let mut pass = pass.scope("jfa init", device);
-            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
-        }
-
-        pass.set_pipeline(&self.pipelines.jfa_iter);
-        for iter_idx in (0..JFA_PASS_COUNT).rev() {
-            let mut pass = pass.scope(format!("jfa iteration {iter_idx}"), device);
-            pass.set_bind_group(
-                0,
-                &self.bind_groups.jfa[iter_idx % 2],
-                &[(iter_idx * size_of::<JumpFloodParams>()) as u32],
-            );
-            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
-        }
-
-        pass.set_pipeline(&self.pipelines.jfa_finish);
-        pass.set_bind_group(0, &self.bind_groups.jfa[1], &[0]);
-        {
-            let mut pass = pass.scope("jfa final", device);
             pass.dispatch_workgroups(tiles_x, tiles_y, 1);
         }
     }
