@@ -1,7 +1,5 @@
 @group(0) @binding(0)
 var light_tex: texture_2d<f32>;
-@group(0) @binding(1)
-var sdf_tex: texture_2d<u32>;
 
 struct CascadeParams {
     level: u32,
@@ -85,11 +83,14 @@ fn get_ray(dir: DirectionInfo, subray_idx: u32) -> Ray {
 // raymarch on the depth and emissive textures in uv space
 // to find occluders and lights
 fn raymarch(ray: Ray) -> vec4<f32> {
-    let screen_size = vec2<i32>(textureDimensions(light_tex));
+    // each cascade raymarches on the corresponding mip level to save work
+    var mip_level = i32(cascade.level);
+    var pixel_size = i32(1u << cascade.level);
+    var screen_size = vec2<i32>(textureDimensions(light_tex)) / pixel_size;
 
     var t = 0.;
     var ray_pos = ray.start;
-    var pixel_pos = vec2<i32>(ray_pos);
+    var pixel_pos = vec2<i32>(ray_pos) / pixel_size;
     let pixel_dir = vec2<i32>(sign(ray.dir));
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
@@ -106,36 +107,43 @@ fn raymarch(ray: Ray) -> vec4<f32> {
             return vec4<f32>(0.);
         }
 
-        // TODO: handle case where we started inside a shadow caster
-        // (these should get light and only occlude things behind them)
-        let radiance = textureLoad(light_tex, pixel_pos, 0);
+        let radiance = textureLoad(light_tex, pixel_pos, mip_level);
         if radiance.a > 0. {
-            // hit an occluder or emitter
-            return radiance;
+            // if this is the base level, we hit an emitter or occluder
+            if mip_level == 0 {
+                return radiance;
+            }
+
+            // otherwise, we're in a pixel where one the pixels on a lower mip level
+            // is an occluder or emitter; traverse to the next mip level to find it
+            mip_level -= 1;
+            // find which quadrant of the pixel we're in to get the right lower-mip pixel
+            let ray_in_pixel = (ray_pos - vec2<f32>(pixel_pos * pixel_size)) / f32(pixel_size);
+            pixel_pos *= 2;
+            if ray_in_pixel.x > 0.5 {
+                pixel_pos.x += 1;
+            }
+            if ray_in_pixel.y > 0.5 {
+                pixel_pos.y += 1;
+            }
+            pixel_size /= 2;
+            screen_size *= 2;
+            continue;
         }
 
-        // SDF tells us how many pixels we can cross at minimum
-        // before we reach another light value with alpha > 0
-        // (always move at least one pixel even if the sdf value is zero)
-        let sdf_val = max(1u, textureLoad(sdf_tex, pixel_pos, 0).r);
-        // just iterate across that many pixel crossings
-        // (there's probably a way to do this with some non-iterative formula
-        // but I'll figure that out later if I can be bothered to)
-        for (var i = 0u; i < sdf_val; i++) {
-            // move to the next pixel intersected by the ray
-            let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
-            let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1));
-            let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
-            let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
-            if to_next_x < to_next_y {
-                t += to_next_x;
-                ray_pos += to_next_x * ray.dir;
-                pixel_pos.x += pixel_dir.x;
-            } else {
-                t += to_next_y;
-                ray_pos += to_next_y * ray.dir;
-                pixel_pos.y += pixel_dir.y;
-            }
+        // move to the next pixel intersected by the ray
+        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1) * pixel_size);
+        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1) * pixel_size);
+        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
+        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
+        if to_next_x < to_next_y {
+            t += to_next_x;
+            ray_pos += to_next_x * ray.dir;
+            pixel_pos.x += pixel_dir.x;
+        } else {
+            t += to_next_y;
+            ray_pos += to_next_y * ray.dir;
+            pixel_pos.y += pixel_dir.y;
         }
     }
 

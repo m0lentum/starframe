@@ -544,7 +544,6 @@ impl<'a> Frame<'a> {
             let mut cpass = scope.scoped_compute_pass("compute global illumination", device);
 
             self.renderer.gi_pipeline.compute_light_mips(&mut cpass);
-            self.renderer.gi_pipeline.compute_sdf(&mut cpass);
             self.renderer.gi_pipeline.compute_gi(&mut cpass);
         }
 
