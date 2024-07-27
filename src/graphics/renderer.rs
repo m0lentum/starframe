@@ -673,7 +673,6 @@ impl<'a> Drop for Frame<'a> {
         let mut encoder = self.encoder.take().unwrap();
         self.renderer.profiler.resolve_queries(&mut encoder);
         queue.submit(Some(encoder.finish()));
-        self.renderer.profiler.end_frame().unwrap();
         self.surface.take().unwrap().present();
     }
 }

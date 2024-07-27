@@ -233,7 +233,12 @@ impl Game {
                             state.draw(&mut game, dt);
                         }
 
+                        game.renderer.profiler.end_frame().unwrap();
                         tracy_client::frame_mark();
+
+                        game.renderer.profiler.process_finished_frame(
+                            crate::Renderer::queue().get_timestamp_period(),
+                        );
 
                         let nanos_this_frame = frame_start_t.elapsed().as_nanos();
                         // acc represents drift from the perfect tick timing that we should correct by

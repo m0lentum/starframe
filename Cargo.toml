@@ -37,7 +37,7 @@ console_log = "0.1.2"
 default = ["serde-types", "gltf"]
 parallel = ["rayon"]
 serde-types = ["serde", "ultraviolet/serde", "winit/serde"]
-tracy = ["tracy-client/default", "tracy-client/ondemand"]
+tracy = ["tracy-client/enable", "tracy-client/ondemand"]
 
 [dev-dependencies]
 rand = "0.8.4"
