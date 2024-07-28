@@ -119,7 +119,7 @@ impl CascadeParams {
         let level_exp4 = level_exp2 * level_exp2;
         // note the scaling by the light texture size
         let spacing_c0 = C0_PROBE_INTERVAL * LIGHT_TEX_SCALING;
-        let range_c0 = C0_PROBE_INTERVAL * LIGHT_TEX_SCALING;
+        let range_c0 = C0_PROBE_RANGE * LIGHT_TEX_SCALING;
         CascadeParams {
             level,
             level_count: cascade_count,
