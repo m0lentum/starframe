@@ -88,6 +88,10 @@ fn raymarch(ray: Ray) -> vec4<f32> {
     var pixel_size = i32(1u << cascade.level);
     var screen_size = vec2<i32>(textureDimensions(light_tex)) / pixel_size;
 
+    // multiplicative factor accumulated from translucent materials
+    // starts at (1, 1, 1) letting all light through,
+    // and gets lower over time
+    var occlusion = vec3<f32>(1.);
     var t = 0.;
     var ray_pos = ray.start;
     var pixel_pos = vec2<i32>(ray_pos) / pixel_size;
@@ -97,38 +101,51 @@ fn raymarch(ray: Ray) -> vec4<f32> {
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
             // left the screen
+            // just treat the edge of the screen as a shadow for now,
             // TODO: return radiance from an environment map
-            return vec4<f32>(0.);
+            let rad = vec3<f32>(0.);
+            return vec4<f32>(saturate(occlusion) * rad, 1.);
         }
 
         if t > ray.range {
-            // out of range, return an alpha value of 0 
-            // to indicate that this ray hit nothing and needs to merge with the above level
-            return vec4<f32>(0.);
+            // out of range, return the amount of light that got occluded
+            // to merge with the above level
+            // (alpha value of 0 communicates this to the main function)
+            return vec4<f32>(occlusion, 0.);
         }
 
-        let radiance = textureLoad(light_tex, pixel_pos, mip_level);
-        if radiance.a > 0. {
+        let rad = textureLoad(light_tex, pixel_pos, mip_level);
+        if rad.a > 0. {
             // if this is the base level, we hit an emitter or occluder
             if mip_level == 0 {
-                return radiance;
+                if rad.a == 1. {
+                    // remove absorbed wavelengths
+                    return vec4<f32>(saturate(occlusion) * rad.rgb, 1.);
+                }
+                
+                // volumetric material, accumulate occlusion
+                // TODO: make the amount depend on the worldspace size of a pixel
+                occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a;
+                if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
+                    return vec4<f32>(0., 0., 0., 1.);
+                }
+            } else {
+                // otherwise, we're in a pixel where one the pixels on a lower mip level
+                // is an occluder or emitter; traverse to the next mip level to find it
+                mip_level -= 1;
+                // find which quadrant of the pixel we're in to get the right lower-mip pixel
+                let ray_in_pixel = (ray_pos - vec2<f32>(pixel_pos * pixel_size)) / f32(pixel_size);
+                pixel_pos *= 2;
+                if ray_in_pixel.x > 0.5 {
+                    pixel_pos.x += 1;
+                }
+                if ray_in_pixel.y > 0.5 {
+                    pixel_pos.y += 1;
+                }
+                pixel_size /= 2;
+                screen_size *= 2;
+                continue;
             }
-
-            // otherwise, we're in a pixel where one the pixels on a lower mip level
-            // is an occluder or emitter; traverse to the next mip level to find it
-            mip_level -= 1;
-            // find which quadrant of the pixel we're in to get the right lower-mip pixel
-            let ray_in_pixel = (ray_pos - vec2<f32>(pixel_pos * pixel_size)) / f32(pixel_size);
-            pixel_pos *= 2;
-            if ray_in_pixel.x > 0.5 {
-                pixel_pos.x += 1;
-            }
-            if ray_in_pixel.y > 0.5 {
-                pixel_pos.y += 1;
-            }
-            pixel_size /= 2;
-            screen_size *= 2;
-            continue;
         }
 
         // move to the next pixel intersected by the ray
@@ -233,13 +250,16 @@ fn main(
     if cascade.level > 0u {
         var ray_avg = vec4<f32>(0.);
         for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-            let ray_radiance = raymarch(get_ray(dir, subray_idx));
-            ray_avg += ray_radiance;
-            if ray_radiance.a == 0. && cascade.level < cascade.level_count - 1u {
-                // ray didn't hit anything, merge with level above
-                // (but only if there is a level above)
-                ray_avg += sample_next_cascade(dir, subray_idx);
+            var rad = raymarch(get_ray(dir, subray_idx));
+            if rad.a == 0. && cascade.level < cascade.level_count - 1u {
+                // ray didn't hit anything or only hit volumetric occlusion,
+                // merge with level above (but only if there is a level above)
+                let next = sample_next_cascade(dir, subray_idx);
+                rad = vec4<f32>(rad.rgb * next.rgb, 1.);
+            } else if rad.a == 0. {
+                rad = vec4<f32>(0., 0., 0., 1.);
             }
+            ray_avg += rad;
         }
         ray_avg *= 0.25;
 
@@ -262,15 +282,16 @@ fn main(
         dir.angle_interval = TAU;
 
         for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
-            var ray_radiance = raymarch(get_ray(dir, ray_idx));
-            if ray_radiance.a == 0. {
-                ray_radiance += sample_next_cascade(dir, ray_idx);
+            var rad = raymarch(get_ray(dir, ray_idx));
+            if rad.a == 0. {
+                let next = sample_next_cascade(dir, ray_idx);
+                rad = vec4<f32>(rad.rgb * next.rgb, 1.);
             }
 
             // store each ray result in a different texel in position-major order
             let probe_offset = 2u * texel_id;
             let target_texel = vec2<u32>(probe_offset.x + ray_idx % 2u, probe_offset.y + ray_idx / 2u);
-            textureStore(cascade_dst, target_texel, ray_radiance);
+            textureStore(cascade_dst, target_texel, rad);
         }
     }
 }

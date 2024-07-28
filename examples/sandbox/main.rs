@@ -134,7 +134,8 @@ const PALETTE_COLORS: [[f32; 4]; 6] = [
 
 pub struct GeneratedAssets {
     player: player::PlayerMeshes,
-    palette: Vec<sf::MaterialId>,
+    light_palette: Vec<sf::MaterialId>,
+    wall_palette: Vec<sf::MaterialId>,
 }
 
 /// Load assets referenced by name elsewhere.
@@ -149,7 +150,7 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
 
     let player = player::controller::upload_meshes(&mut game.graphics);
 
-    let palette = PALETTE_COLORS
+    let light_palette = PALETTE_COLORS
         .into_iter()
         .map(|col| {
             game.graphics.create_material(
@@ -157,7 +158,21 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
                     base_color: Some(col),
                     // more subdued light color so we don't immediately blow out into white
                     // (TODO: HDR and tonemapping)
-                    emissive_color: Some(col.map(|c| c * 0.5)),
+                    emissive_color: Some([col[0] * 0.5, col[1] * 0.5, col[2] * 0.5, 1.]),
+                    ..Default::default()
+                },
+                None,
+            )
+        })
+        .collect();
+
+    let wall_palette = PALETTE_COLORS
+        .into_iter()
+        .map(|col| {
+            game.graphics.create_material(
+                sf::MaterialParams {
+                    base_color: Some(col),
+                    emissive_color: Some([col[0], col[1], col[2], 0.1]),
                     ..Default::default()
                 },
                 None,
@@ -167,14 +182,17 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
 
     game.graphics.create_material(
         sf::MaterialParams {
-            base_color: Some([1.; 4]),
+            base_color: Some([0.5, 0.5, 0.5, 1.]),
             ..Default::default()
-        }
-        .cast_shadows(),
+        },
         Some("wall"),
     );
 
-    GeneratedAssets { player, palette }
+    GeneratedAssets {
+        player,
+        light_palette,
+        wall_palette,
+    }
 }
 
 //

@@ -233,9 +233,14 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
 impl Recipe {
     pub fn spawn(&self, game: &mut sf::Game, gen_assets: &super::GeneratedAssets) {
         let mut rng = rand::thread_rng();
-        let mut random_palette = || {
+        let mut random_palette = |is_lit: bool| {
             let idx = rng.gen_range(0..super::PALETTE_COLORS.len());
-            (super::PALETTE_COLORS[idx], gen_assets.palette[idx])
+            let mat = if is_lit {
+                gen_assets.light_palette[idx]
+            } else {
+                gen_assets.wall_palette[idx]
+            };
+            (super::PALETTE_COLORS[idx], mat)
         };
         match self {
             Recipe::Player(p_rec) => p_rec.spawn(game, gen_assets.player),
@@ -255,7 +260,7 @@ impl Recipe {
                         restitution_coef: *restitution,
                         ..Default::default()
                     });
-                let (col, mat) = random_palette();
+                let (col, mat) = random_palette(false);
                 let solid = Solid {
                     pose,
                     colliders: &mut [coll],
@@ -276,7 +281,7 @@ impl Recipe {
                 pose,
                 is_static,
             }) => {
-                let (col, mat) = random_palette();
+                let (col, mat) = random_palette(false);
                 let solid = Solid {
                     pose: (*pose).into(),
                     colliders: &mut [sf::Collider::new_capsule(*length, *radius)],
@@ -294,15 +299,11 @@ impl Recipe {
                 colliders,
                 is_lit,
             } => {
-                let (col, mat) = random_palette();
+                let (col, mat) = random_palette(*is_lit);
                 let solid = Solid {
                     pose: *pose,
                     colliders,
-                    material: if *is_lit {
-                        Some(mat)
-                    } else {
-                        game.graphics.get_material_id("wall")
-                    },
+                    material: Some(mat),
                     light_color: Some(col),
                 };
                 spawn_body(game, solid);
@@ -333,7 +334,7 @@ impl Recipe {
                     let orientation = (distance[0] / dist_norm).acos() * distance[1].signum();
 
                     let caps_full_length = dist_norm - spacing;
-                    let (col, mat) = random_palette();
+                    let (col, mat) = random_palette(false);
                     let capsule = spawn_body(
                         game,
                         Solid {
