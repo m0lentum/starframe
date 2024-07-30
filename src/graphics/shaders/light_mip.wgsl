@@ -22,6 +22,8 @@ fn main(
     let br = textureLoad(mip_src, src_top_left + vec2<u32>(1u, 1u), 0);
     let bl = textureLoad(mip_src, src_top_left + vec2<u32>(0u, 1u), 0);
     // select the value with the highest alpha for the next mip level
+    // (this ensures that if there's a light (alpha == 1.0),
+    // it's also interpreted as a light at a higher mip
     var max_alpha = tl;
     if tr.a > max_alpha.a {
         max_alpha = tr;
