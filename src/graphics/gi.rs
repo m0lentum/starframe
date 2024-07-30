@@ -28,7 +28,7 @@ pub(crate) struct GlobalIlluminationPipeline {
     pub(super) bind_group_layouts: BindGroupLayouts,
     pub(super) bind_groups: BindGroups,
     buffers: Buffers,
-    light_tex_size: [u32; 2],
+    light_tex_size: (u32, u32),
     cascade_count: usize,
     probe_count: [u32; 2],
 }
@@ -79,13 +79,14 @@ pub(super) struct Textures {
 }
 
 struct Buffers {
+    frame_params: wgpu::Buffer,
     cascade_params: wgpu::Buffer,
     render_params: wgpu::Buffer,
 }
 
 /// Resources that need to be resized when screen size changes
 struct ResizeResults {
-    light_tex_size: [u32; 2],
+    light_tex_size: (u32, u32),
     textures: Textures,
     cascade_params: Vec<CascadeParams>,
     render_params: RenderParams,
@@ -94,6 +95,12 @@ struct ResizeResults {
 //
 // gpu uniform types
 //
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
+struct FrameParams {
+    pixel_size_10cm: f32,
+}
 
 /// Uniform parameters for the cascade computation
 #[repr(C)]
@@ -160,6 +167,12 @@ impl GlobalIlluminationPipeline {
 
         use wgpu::util::DeviceExt;
         let buffers = Buffers {
+            frame_params: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("cascade per-frame params"),
+                size: size_of::<FrameParams>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
             cascade_params: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("cascade compute params"),
                 contents: resizables.cascade_params.as_bytes(),
@@ -279,7 +292,10 @@ impl GlobalIlluminationPipeline {
 
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
-            entries: &[float_tex(0, S::COMPUTE)],
+            entries: &[
+                float_tex(0, S::COMPUTE),
+                uniform_buf(1, size_of::<FrameParams>(), false, S::COMPUTE),
+            ],
         });
 
         let light_mip = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -326,10 +342,16 @@ impl GlobalIlluminationPipeline {
         let light = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cascade light"),
             layout: &layouts.light,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&tex.light_full),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&tex.light_full),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: buffers.frame_params.as_entire_binding(),
+                },
+            ],
         });
 
         let light_mips = (0..cascade_count - 1)
@@ -490,7 +512,7 @@ impl GlobalIlluminationPipeline {
         };
 
         ResizeResults {
-            light_tex_size: [light_tex_size.width, light_tex_size.height],
+            light_tex_size: (light_tex_size.width, light_tex_size.height),
             textures: Textures {
                 light_full,
                 light_mips,
@@ -547,9 +569,9 @@ impl GlobalIlluminationPipeline {
             let mut pass = pass.scope(format!("mip level {mip_idx}"), device);
 
             let tiles_x =
-                (self.light_tex_size[0] as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
+                (self.light_tex_size.0 as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
             let tiles_y =
-                (self.light_tex_size[1] as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
+                (self.light_tex_size.1 as f32 / ((mip_idx + 1) * TILE_SIZE) as f32).ceil() as u32;
 
             pass.set_bind_group(0, &self.bind_groups.light_mips[mip_idx as usize], &[]);
             pass.dispatch_workgroups(tiles_x, tiles_y, 1);
@@ -559,8 +581,16 @@ impl GlobalIlluminationPipeline {
     pub fn compute_gi<'pass>(
         &'pass self,
         pass: &mut wp::OwningScope<'_, wgpu::ComputePass<'pass>>,
+        camera: &crate::Camera,
     ) {
         let device = crate::Renderer::device();
+        let queue = crate::Renderer::queue();
+
+        let frame_params = FrameParams {
+            pixel_size_10cm: 10. / camera.pixels_per_world_unit(self.light_tex_size),
+        };
+        queue.write_buffer(&self.buffers.frame_params, 0, frame_params.as_bytes());
+
         let mut pass = pass.scope("radiance cascades", device);
 
         let tiles_x = (self.probe_count[0] as f32 / TILE_SIZE as f32).ceil() as u32;
