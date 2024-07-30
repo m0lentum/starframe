@@ -193,7 +193,7 @@ impl GlobalIlluminationPipeline {
         let device = crate::Renderer::device();
 
         let mip_shader =
-            device.create_shader_module(wgpu::include_wgsl!("./shaders/mip_chain.wgsl"));
+            device.create_shader_module(wgpu::include_wgsl!("./shaders/light_mip.wgsl"));
 
         let mip_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("light mip"),

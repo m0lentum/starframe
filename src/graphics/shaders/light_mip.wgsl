@@ -21,7 +21,17 @@ fn main(
     let tr = textureLoad(mip_src, src_top_left + vec2<u32>(1u, 0u), 0);
     let br = textureLoad(mip_src, src_top_left + vec2<u32>(1u, 1u), 0);
     let bl = textureLoad(mip_src, src_top_left + vec2<u32>(0u, 1u), 0);
-    let avg = 0.25 * (tl + tr + br + bl);
+    // select the value with the highest alpha for the next mip level
+    var max_alpha = tl;
+    if tr.a > max_alpha.a {
+        max_alpha = tr;
+    }
+    if br.a > max_alpha.a {
+        max_alpha = br;
+    }
+    if bl.a > max_alpha.a {
+        max_alpha = bl;
+    }
 
-    textureStore(mip_dst, dst_texel_id, avg);
+    textureStore(mip_dst, dst_texel_id, max_alpha);
 }

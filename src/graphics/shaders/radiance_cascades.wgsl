@@ -93,9 +93,10 @@ struct RayResult {
 fn raymarch(ray: Ray) -> RayResult {
     var out: RayResult;
 
-    // each cascade raymarches on the corresponding mip level to save work
-    var mip_level = i32(cascade.level);
-    var pixel_size = i32(1u << cascade.level);
+    // each cascade raymarches on the lowest mip level
+    // with sufficient resolution to meet its penumbra condition
+    var mip_level = i32(cascade.level) / 2;
+    var pixel_size = i32(1u << u32(mip_level));
     var screen_size = vec2<i32>(textureDimensions(light_tex)) / pixel_size;
 
     // multiplicative factor accumulated from translucent materials
@@ -128,39 +129,21 @@ fn raymarch(ray: Ray) -> RayResult {
 
         let rad = textureLoad(light_tex, pixel_pos, mip_level);
         if rad.a > 0. {
-            // if this is the base level, we hit an emitter or occluder
-            if mip_level == 0 {
-                if rad.a == 1. {
-                    // remove absorbed wavelengths
-                    out.value = saturate(occlusion) * rad.rgb;
-                    out.is_radiance = true;
-                    return out;
-                }
-                
-                // volumetric material, accumulate occlusion
-                // TODO: make the amount depend on the worldspace size of a pixel
-                occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a;
-                if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
-                    out.value = vec3<f32>(0.);
-                    out.is_radiance = true;
-                    return out;
-                }
-            } else {
-                // otherwise, we're in a pixel where one the pixels on a lower mip level
-                // is an occluder or emitter; traverse to the next mip level to find it
-                mip_level -= 1;
-                // find which quadrant of the pixel we're in to get the right lower-mip pixel
-                let ray_in_pixel = (ray_pos - vec2<f32>(pixel_pos * pixel_size)) / f32(pixel_size);
-                pixel_pos *= 2;
-                if ray_in_pixel.x > 0.5 {
-                    pixel_pos.x += 1;
-                }
-                if ray_in_pixel.y > 0.5 {
-                    pixel_pos.y += 1;
-                }
-                pixel_size /= 2;
-                screen_size *= 2;
-                continue;
+            // we hit an emitter or occluder
+            if rad.a == 1. {
+                // remove absorbed wavelengths
+                out.value = saturate(occlusion) * rad.rgb;
+                out.is_radiance = true;
+                return out;
+            }
+            
+            // volumetric material, accumulate occlusion
+            // TODO: make the amount depend on the worldspace size of a pixel
+            occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a * f32(pixel_size);
+            if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
+                out.value = vec3<f32>(0.);
+                out.is_radiance = true;
+                return out;
             }
         }
 
