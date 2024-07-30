@@ -80,9 +80,19 @@ fn get_ray(dir: DirectionInfo, subray_idx: u32) -> Ray {
     return ray;
 }
 
+struct RayResult {
+    value: vec3<f32>,
+    // if the ray didn't reach a light,
+    // the radiance value is interpreted
+    // as occlusion by a translucent material instead
+    is_radiance: bool,
+}
+
 // raymarch on the depth and emissive textures in uv space
 // to find occluders and lights
-fn raymarch(ray: Ray) -> vec4<f32> {
+fn raymarch(ray: Ray) -> RayResult {
+    var out: RayResult;
+
     // each cascade raymarches on the corresponding mip level to save work
     var mip_level = i32(cascade.level);
     var pixel_size = i32(1u << cascade.level);
@@ -103,15 +113,17 @@ fn raymarch(ray: Ray) -> vec4<f32> {
             // left the screen
             // just treat the edge of the screen as a shadow for now,
             // TODO: return radiance from an environment map
-            let rad = vec3<f32>(0.);
-            return vec4<f32>(saturate(occlusion) * rad, 1.);
+            out.value = vec3<f32>(0.);
+            out.is_radiance = true;
+            return out;
         }
 
         if t > ray.range {
             // out of range, return the amount of light that got occluded
             // to merge with the above level
-            // (alpha value of 0 communicates this to the main function)
-            return vec4<f32>(occlusion, 0.);
+            out.value = occlusion;
+            out.is_radiance = false;
+            return out;
         }
 
         let rad = textureLoad(light_tex, pixel_pos, mip_level);
@@ -120,14 +132,18 @@ fn raymarch(ray: Ray) -> vec4<f32> {
             if mip_level == 0 {
                 if rad.a == 1. {
                     // remove absorbed wavelengths
-                    return vec4<f32>(saturate(occlusion) * rad.rgb, 1.);
+                    out.value = saturate(occlusion) * rad.rgb;
+                    out.is_radiance = true;
+                    return out;
                 }
                 
                 // volumetric material, accumulate occlusion
                 // TODO: make the amount depend on the worldspace size of a pixel
                 occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a;
                 if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
-                    return vec4<f32>(0., 0., 0., 1.);
+                    out.value = vec3<f32>(0.);
+                    out.is_radiance = true;
+                    return out;
                 }
             } else {
                 // otherwise, we're in a pixel where one the pixels on a lower mip level
@@ -164,7 +180,7 @@ fn raymarch(ray: Ray) -> vec4<f32> {
         }
     }
 
-    return vec4<f32>(0.);
+    return out;
 }
 
 // find the rays pointing in the `dir_idx` direction
@@ -248,22 +264,20 @@ fn main(
     // cascades above 0 are pre-averaged,
     // 0 isn't because we need directional information for final lighting
     if cascade.level > 0u {
-        var ray_avg = vec4<f32>(0.);
+        var ray_avg = vec3<f32>(0.);
         for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
             var rad = raymarch(get_ray(dir, subray_idx));
-            if rad.a == 0. && cascade.level < cascade.level_count - 1u {
+            if !rad.is_radiance && cascade.level < cascade.level_count - 1u {
                 // ray didn't hit anything or only hit volumetric occlusion,
                 // merge with level above (but only if there is a level above)
                 let next = sample_next_cascade(dir, subray_idx);
-                rad = vec4<f32>(rad.rgb * next.rgb, 1.);
-            } else if rad.a == 0. {
-                rad = vec4<f32>(0., 0., 0., 1.);
+                rad.value = rad.value * next.rgb;
             }
-            ray_avg += rad;
+            ray_avg += rad.value;
         }
         ray_avg *= 0.25;
 
-        textureStore(cascade_dst, texel_id, ray_avg);
+        textureStore(cascade_dst, texel_id, vec4<f32>(ray_avg, 1.));
     } else {
         // cascade 0 has different requirements,
         // construct a DirectionInfo manually so that we can use the same abstractions
@@ -283,15 +297,15 @@ fn main(
 
         for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
             var rad = raymarch(get_ray(dir, ray_idx));
-            if rad.a == 0. {
+            if !rad.is_radiance {
                 let next = sample_next_cascade(dir, ray_idx);
-                rad = vec4<f32>(rad.rgb * next.rgb, 1.);
+                rad.value = rad.value * next.rgb;
             }
 
             // store each ray result in a different texel in position-major order
             let probe_offset = 2u * texel_id;
             let target_texel = vec2<u32>(probe_offset.x + ray_idx % 2u, probe_offset.y + ray_idx / 2u);
-            textureStore(cascade_dst, target_texel, rad);
+            textureStore(cascade_dst, target_texel, vec4<f32>(rad.value, 1.));
         }
     }
 }
