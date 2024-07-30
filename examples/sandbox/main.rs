@@ -135,7 +135,7 @@ const PALETTE_COLORS: [[f32; 4]; 6] = [
 pub struct GeneratedAssets {
     player: player::PlayerMeshes,
     light_palette: Vec<sf::MaterialId>,
-    wall_palette: Vec<sf::MaterialId>,
+    translucent_palette: Vec<sf::MaterialId>,
 }
 
 /// Load assets referenced by name elsewhere.
@@ -166,13 +166,13 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
         })
         .collect();
 
-    let wall_palette = PALETTE_COLORS
+    let translucent_palette = PALETTE_COLORS
         .into_iter()
         .map(|col| {
             game.graphics.create_material(
                 sf::MaterialParams {
                     base_color: Some(col),
-                    emissive_color: Some([col[0], col[1], col[2], 0.1]),
+                    emissive_color: Some([col[0], col[1], col[2], 0.25]),
                     ..Default::default()
                 },
                 None,
@@ -191,7 +191,7 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
     GeneratedAssets {
         player,
         light_palette,
-        wall_palette,
+        translucent_palette,
     }
 }
 

@@ -238,7 +238,7 @@ impl Recipe {
             let mat = if is_lit {
                 gen_assets.light_palette[idx]
             } else {
-                gen_assets.wall_palette[idx]
+                gen_assets.translucent_palette[idx]
             };
             (super::PALETTE_COLORS[idx], mat)
         };

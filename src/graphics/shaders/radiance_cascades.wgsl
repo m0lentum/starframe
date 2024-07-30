@@ -1,5 +1,19 @@
+struct FrameParams {
+    // size of a light texture pixel
+    // relative to a 10x10cm square in world space,
+    // used to keep absorption by translucent materials
+    // consistent with different screen sizes and zoom levels.
+    // 10x10cm chosen because it's a scale where a low alpha
+    // makes typically sized objects almost fully transparent
+    // and high alpha makes them almost fully opaque
+    // (TODO: allow user scaling of the size of this reference square)
+    pixel_size_10cm: f32,
+}
+
 @group(0) @binding(0)
 var light_tex: texture_2d<f32>;
+@group(0) @binding(1)
+var<uniform> frame: FrameParams;
 
 struct CascadeParams {
     level: u32,
@@ -171,31 +185,30 @@ fn raymarch(ray: Ray) -> RayResult {
             continue;
         }
 
-        if rad.a > 0. {
-            // volumetric material, accumulate occlusion
-            // TODO: make the amount depend on the worldspace size of a pixel
-            // and the exact ray increment taken instead of just a flat value per pixel
-            occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a * f32(pixel_size);
-            if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
-                out.value = vec3<f32>(0.);
-                out.is_radiance = true;
-                return out;
-            }
-        }
-
         // move to the next pixel intersected by the ray
+        var t_step: f32;
         let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1) * pixel_size);
         let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1) * pixel_size);
         let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
         let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
         if to_next_x < to_next_y {
-            t += to_next_x;
-            ray_pos += to_next_x * ray.dir;
+            t_step = to_next_x;
             pixel_pos.x += pixel_dir.x;
         } else {
-            t += to_next_y;
-            ray_pos += to_next_y * ray.dir;
+            t_step = to_next_y;
             pixel_pos.y += pixel_dir.y;
+        }
+        t += t_step;
+        ray_pos += t_step * ray.dir;
+
+        if rad.a > 0. {
+            // volumetric material, accumulate occlusion
+            occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a * f32(pixel_size) * frame.pixel_size_10cm;
+            if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
+                out.value = vec3<f32>(0.);
+                out.is_radiance = true;
+                return out;
+            }
         }
     }
 
