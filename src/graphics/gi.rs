@@ -16,7 +16,11 @@ const C0_PROBE_RANGE: f32 = std::f32::consts::SQRT_2;
 const TILE_SIZE: u32 = 16;
 
 /// Scaling factor of the light texture relative to the screen.
-const LIGHT_TEX_SCALING: f32 = 0.5;
+/// Surprisingly, setting this to 1 gives better performance than 0.5
+/// (perhaps something to do with mip levels aligning better? idk),
+/// as well as much less flickering.
+/// Might want to delete this constant entirely
+const LIGHT_TEX_SCALING: f32 = 1.;
 
 pub(crate) struct GlobalIlluminationPipeline {
     pipelines: Pipelines,
