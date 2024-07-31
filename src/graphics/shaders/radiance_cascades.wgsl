@@ -315,10 +315,6 @@ fn main(
         // construct a DirectionInfo manually so that we can use the same abstractions
         var dir: DirectionInfo;
         dir.dir_idx = 0u;
-        // for this one we store the values in position-major order instead of direction-major
-        // so that all four directions can be accessed with a single textureSample call.
-        // instead of texel_id directly corresponding to a pixel in the texture
-        // it corresponds to a 2x2 block of pixels that are part of one probe
         dir.probe_idx = texel_id;
         dir.probe_pos = (vec2<f32>(dir.probe_idx) + vec2<f32>(0.5)) * cascade.linear_spacing;
         dir.range_start = 0.;
@@ -334,9 +330,9 @@ fn main(
                 rad.value = rad.value * next.rgb;
             }
 
-            // store each ray result in a different texel in position-major order
-            let probe_offset = 2u * texel_id;
-            let target_texel = vec2<u32>(probe_offset.x + ray_idx % 2u, probe_offset.y + ray_idx / 2u);
+            // store each ray result in a different texel in direction-major order
+            let dir_tile = vec2<u32>(ray_idx % 2u, ray_idx / 2u) * cascade.probe_count;
+            let target_texel = dir_tile + texel_id;
             textureStore(cascade_dst, target_texel, vec4<f32>(rad.value, 1.));
         }
     }

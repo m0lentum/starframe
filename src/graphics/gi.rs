@@ -28,6 +28,10 @@ pub(crate) struct GlobalIlluminationPipeline {
     pub(super) bind_group_layouts: BindGroupLayouts,
     pub(super) bind_groups: BindGroups,
     buffers: Buffers,
+    // sampler for interpolating nearest probes during rendering
+    // (can't use it when combining cascades
+    // because sampling is not allowed in compute shaders)
+    bilinear_samp: wgpu::Sampler,
     light_tex_size: (u32, u32),
     cascade_count: usize,
     probe_count: [u32; 2],
@@ -165,6 +169,12 @@ impl GlobalIlluminationPipeline {
         let resizables = Self::create_resizables(crate::Renderer::window().inner_size().into());
         let cascade_count = resizables.cascade_params.len();
 
+        let bilinear_samp = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
         use wgpu::util::DeviceExt;
         let buffers = Buffers {
             frame_params: device.create_buffer(&wgpu::BufferDescriptor {
@@ -190,6 +200,7 @@ impl GlobalIlluminationPipeline {
             &bind_group_layouts,
             &resizables.textures,
             &buffers,
+            &bilinear_samp,
         );
 
         let pipelines = Self::create_pipelines(&bind_group_layouts);
@@ -200,6 +211,7 @@ impl GlobalIlluminationPipeline {
             bind_group_layouts,
             bind_groups,
             buffers,
+            bilinear_samp,
             light_tex_size: resizables.light_tex_size,
             cascade_count,
             probe_count: resizables.cascade_params[0].probe_count,
@@ -265,15 +277,17 @@ impl GlobalIlluminationPipeline {
             }
         };
 
-        let float_tex = |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
-            binding,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            visibility,
-            count: None,
+        let float_tex = |binding: u32, visibility: wgpu::ShaderStages, filterable: bool| {
+            wgpu::BindGroupLayoutEntry {
+                binding,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                visibility,
+                count: None,
+            }
         };
 
         let write_storage =
@@ -293,7 +307,7 @@ impl GlobalIlluminationPipeline {
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
             entries: &[
-                float_tex(0, S::COMPUTE),
+                float_tex(0, S::COMPUTE, false),
                 uniform_buf(1, size_of::<FrameParams>(), false, S::COMPUTE),
             ],
         });
@@ -301,7 +315,7 @@ impl GlobalIlluminationPipeline {
         let light_mip = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light mip"),
             entries: &[
-                float_tex(0, S::COMPUTE),
+                float_tex(0, S::COMPUTE, false),
                 write_storage(1, wgpu::TextureFormat::Rgba8Unorm),
             ],
         });
@@ -310,7 +324,7 @@ impl GlobalIlluminationPipeline {
             label: Some("cascade"),
             entries: &[
                 uniform_buf(0, size_of::<CascadeParams>(), true, S::COMPUTE),
-                float_tex(1, S::COMPUTE),
+                float_tex(1, S::COMPUTE, false),
                 write_storage(2, wgpu::TextureFormat::Rgba8Unorm),
             ],
         });
@@ -319,7 +333,13 @@ impl GlobalIlluminationPipeline {
             label: Some("cascade render"),
             entries: &[
                 uniform_buf(0, size_of::<RenderParams>(), false, S::FRAGMENT),
-                float_tex(1, wgpu::ShaderStages::FRAGMENT),
+                float_tex(1, wgpu::ShaderStages::FRAGMENT, true),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    visibility: S::FRAGMENT,
+                    count: None,
+                },
             ],
         });
 
@@ -336,6 +356,7 @@ impl GlobalIlluminationPipeline {
         layouts: &BindGroupLayouts,
         tex: &Textures,
         buffers: &Buffers,
+        bilinear_samp: &wgpu::Sampler,
     ) -> BindGroups {
         let device = crate::Renderer::device();
 
@@ -411,6 +432,10 @@ impl GlobalIlluminationPipeline {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&tex.cascade_0),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(bilinear_samp),
                 },
             ],
         });
@@ -552,6 +577,7 @@ impl GlobalIlluminationPipeline {
             &self.bind_group_layouts,
             &res.textures,
             &self.buffers,
+            &self.bilinear_samp,
         );
         self.textures = res.textures;
     }

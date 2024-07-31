@@ -126,18 +126,22 @@ fn fs_main(
 
     // remove the half-pixel in clipspace coordinates
     let pixel_pos = in.clip_position.xy - vec2<f32>(0.5);
-    // +0.5 because probe positioning is offset from the corner by half a space
-    let nearest_probe = min(
-        // clamp to probe count to avoid overshoot on the bottom and right edges
-        light_params.probe_count - vec2<u32>(1u),
-        vec2<u32>(round((pixel_pos / light_params.probe_spacing) - vec2<f32>(0.5))),
+    // -0.5 because probe positioning is offset from the corner by half a space
+    var pos_probespace = (pixel_pos / light_params.probe_spacing) - vec2<f32>(0.5);
+    // clamp to avoid interpolation getting values from adjacent tiles
+    pos_probespace = clamp(
+        vec2<f32>(0.5),
+        vec2<f32>(light_params.probe_count) - vec2<f32>(0.5),
+        pos_probespace,
     );
-    let probe_pixel = 2u * nearest_probe;
+    // directions are arranged into four tiles, each taking a (0.5, 0.5) chunk of uv space
+    let probe_uv = 0.5 * pos_probespace / vec2<f32>(light_params.probe_count);
     // read the light values in each of the probe's four quadrants
-    let br = textureLoad(cascade_tex, probe_pixel, 0);
-    let bl = textureLoad(cascade_tex, probe_pixel + vec2<u32>(1u, 0u), 0);
-    let tl = textureLoad(cascade_tex, probe_pixel + vec2<u32>(0u, 1u), 0);
-    let tr = textureLoad(cascade_tex, probe_pixel + vec2<u32>(1u, 1u), 0);
+    // using bilinear interpolation to average the four nearest probes
+    let br = textureSample(cascade_tex, cascade_samp, probe_uv);
+    let bl = textureSample(cascade_tex, cascade_samp, probe_uv + vec2<f32>(0.5, 0.));
+    let tl = textureSample(cascade_tex, cascade_samp, probe_uv + vec2<f32>(0., 0.5));
+    let tr = textureSample(cascade_tex, cascade_samp, probe_uv + vec2<f32>(0.5, 0.5));
     var radiances = array(tr, tl, bl, br);
     // each direction on the radiance probe covers a quarter segment of a 2-sphere,
     // and diffuse lighting is an integral over a hemisphere
