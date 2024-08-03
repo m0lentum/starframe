@@ -165,21 +165,16 @@ fn raymarch(ray: Ray) -> RayResult {
             return out;
         }
 
-        // move to the next pixel intersected by the ray
-        var t_step: f32;
+        // move to the next pixel intersected by the ray.
+        // simplifying assumption: we started at the center of a pixel 
+        // and move only in diagonal directions,
+        // hence being able to skip across corners instead of moving one axis at a time.
+        // this also reduces texture loads by a ~third which is nice for perf
         let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
-        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1));
-        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
-        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
-        if to_next_x < to_next_y {
-            t_step = to_next_x;
-            pixel_pos.x += pixel_dir.x;
-        } else {
-            t_step = to_next_y;
-            pixel_pos.y += pixel_dir.y;
-        }
+        let t_step = abs((x_threshold - ray_pos.x) / ray.dir.x);
         t += t_step;
         ray_pos += t_step * ray.dir;
+        pixel_pos += pixel_dir;
     }
 
     return out;
