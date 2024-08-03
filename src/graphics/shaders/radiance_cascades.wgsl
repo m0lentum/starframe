@@ -109,6 +109,14 @@ fn raymarch(ray: Ray) -> RayResult {
     // each cascade begins raymarching on its corresponding mip level
     // and only accesses lower mips if it finds a light or fully opaque shadow
     let initial_mip_level = i32(cascade.level);
+    // how far down the mip chain we need to traverse for sufficient precision
+    // depends on the cascade level.
+    // best quality is achieved by going all the way to 0,
+    // but this is a tradeoff in performance.
+    // going halfway down gives good quality,
+    // only causing flickering with very small lights
+    // (which would flicker anyway, to a lesser extent, even if going to 0)
+    let target_mip_level = initial_mip_level / 2;
     var mip_level = initial_mip_level;
     var pixel_size = i32(1u << u32(mip_level));
     var screen_size = vec2<i32>(textureDimensions(light_tex)) / pixel_size;
@@ -148,7 +156,7 @@ fn raymarch(ray: Ray) -> RayResult {
             // pixel contains an emitter or occluder,
             // traverse down the tree to the final mip level 
             // to alleviate flickering when small lights are moving
-            if mip_level == 0 {
+            if mip_level == target_mip_level {
                 // remove absorbed wavelengths
                 out.value = saturate(occlusion) * rad.rgb;
                 out.is_radiance = true;
