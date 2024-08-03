@@ -124,10 +124,8 @@ fn fs_main(
 
     // look up the nearest radiance probe and compute lighting based on it
 
-    // remove the half-pixel in clipspace coordinates
-    let pixel_pos = in.clip_position.xy - vec2<f32>(0.5);
     // -0.5 because probe positioning is offset from the corner by half a space
-    var pos_probespace = (pixel_pos / light_params.probe_spacing) - vec2<f32>(0.5);
+    var pos_probespace = (in.clip_position.xy / light_params.probe_spacing) - vec2<f32>(0.5);
     // clamp to avoid interpolation getting values from adjacent tiles
     pos_probespace = clamp(
         vec2<f32>(0.5),
