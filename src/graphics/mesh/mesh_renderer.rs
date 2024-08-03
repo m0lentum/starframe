@@ -151,7 +151,7 @@ impl MeshRenderer {
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState {
-                    constant: 1,
+                    constant: 2,
                     ..Default::default()
                 },
             }),
