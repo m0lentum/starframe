@@ -102,8 +102,7 @@ struct RayResult {
     is_radiance: bool,
 }
 
-// raymarch on the depth and emissive textures in uv space
-// to find occluders and lights
+// raymarch on the light texture to gather radiance
 fn raymarch(ray: Ray) -> RayResult {
     var out: RayResult;
 
@@ -293,47 +292,20 @@ fn main(
         return;
     }
 
-    // cascades above 0 are pre-averaged,
-    // 0 isn't because we need directional information for final lighting
-    if cascade.level > 0u {
-        var ray_avg = vec3<f32>(0.);
-        for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
-            var rad = raymarch(get_ray(dir, subray_idx));
-            if !rad.is_radiance && cascade.level < cascade.level_count - 1u {
-                // ray didn't hit anything or only hit volumetric occlusion,
-                // merge with level above (but only if there is a level above)
-                let next = sample_next_cascade(dir, subray_idx);
-                rad.value = rad.value * next.rgb;
-            }
-            ray_avg += rad.value;
+    // this wouldn't work as-is for cascade 0,
+    // but that part is done by the mesh shader
+    var ray_avg = vec3<f32>(0.);
+    for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
+        var rad = raymarch(get_ray(dir, subray_idx));
+        if !rad.is_radiance && cascade.level < cascade.level_count - 1u {
+            // ray didn't hit anything or only hit volumetric occlusion,
+            // merge with level above (but only if there is a level above)
+            let next = sample_next_cascade(dir, subray_idx);
+            rad.value = rad.value * next.rgb;
         }
-        ray_avg *= 0.25;
-
-        textureStore(cascade_dst, texel_id, vec4<f32>(ray_avg, 1.));
-    } else {
-        // cascade 0 has different requirements,
-        // construct a DirectionInfo manually so that we can use the same abstractions
-        var dir: DirectionInfo;
-        dir.dir_idx = 0u;
-        dir.probe_idx = texel_id;
-        dir.probe_pos = (vec2<f32>(dir.probe_idx) + vec2<f32>(0.5)) * cascade.linear_spacing;
-        dir.range_start = 0.;
-        dir.range_length = cascade.range_length;
-        // set the angle interval to the full circle
-        // so we can reuse get_ray's subray logic to generate the rays
-        dir.angle_interval = TAU;
-
-        for (var ray_idx = 0u; ray_idx < 4u; ray_idx++) {
-            var rad = raymarch(get_ray(dir, ray_idx));
-            if !rad.is_radiance {
-                let next = sample_next_cascade(dir, ray_idx);
-                rad.value = rad.value * next.rgb;
-            }
-
-            // store each ray result in a different texel in direction-major order
-            let dir_tile = vec2<u32>(ray_idx % 2u, ray_idx / 2u) * cascade.probe_count;
-            let target_texel = dir_tile + texel_id;
-            textureStore(cascade_dst, target_texel, vec4<f32>(rad.value, 1.));
-        }
+        ray_avg += rad.value;
     }
+    ray_avg *= 0.25;
+
+    textureStore(cascade_dst, texel_id, vec4<f32>(ray_avg, 1.));
 }

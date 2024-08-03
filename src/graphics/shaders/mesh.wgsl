@@ -15,13 +15,16 @@ var<uniform> camera: CameraUniforms;
 
 struct CascadeRenderParams {
     probe_spacing: f32,
+    probe_range: f32,
     probe_count: vec2<u32>,
 }
 @group(1) @binding(0)
 var<uniform> light_params: CascadeRenderParams;
 @group(1) @binding(1)
-var cascade_tex: texture_2d<f32>;
+var light_tex: texture_2d<f32>;
 @group(1) @binding(2)
+var cascade_tex: texture_2d<f32>;
+@group(1) @binding(3)
 var cascade_samp: sampler;
 
 // material
@@ -108,6 +111,80 @@ fn vs_main(
 // fragment shader
 //
 
+
+// the final radiance cascade is done during shading,
+// essentially placing a probe at each rendered pixel.
+// this increases quality and reduces memory requirements
+// but somewhat increases the cost of pixel shading.
+// this is a simplified version of the `raymarch` function in radiance_cascades.wgsl,
+// only raymarching on the 0th mip level
+// and ignoring translucent materials for simplicity,
+// assuming the drop in quality is minimal due to short range
+
+struct Ray {
+    start: vec2<f32>,
+    dir: vec2<f32>,
+    range: f32,
+}
+
+struct RayResult {
+    value: vec3<f32>,
+    is_radiance: bool,
+}
+
+fn raymarch(ray: Ray) -> RayResult {
+    var out: RayResult;
+
+    var screen_size = vec2<i32>(textureDimensions(light_tex));
+
+    var t = 0.;
+    var ray_pos = ray.start;
+    var pixel_pos = vec2<i32>(ray_pos);
+    let pixel_dir = vec2<i32>(sign(ray.dir));
+    // bounded loop as a failsafe to avoid hanging
+    // in case there's a bug that causes the raymarch to stop in place
+    for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
+        if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
+            // left the screen
+            // just treat the edge of the screen as a shadow for now,
+            // TODO: return radiance from an environment map
+            out.value = vec3<f32>(0.);
+            out.is_radiance = true;
+            return out;
+        }
+
+        if t > ray.range {
+            out.is_radiance = false;
+            return out;
+        }
+
+        let rad = textureLoad(light_tex, pixel_pos, 0);
+        if rad.a == 1. {
+            out.value = rad.rgb;
+            out.is_radiance = true;
+            return out;
+        }
+
+        // move to the next pixel intersected by the ray
+        var t_step: f32;
+        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
+        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1));
+        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
+        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
+        if to_next_x < to_next_y {
+            t_step = to_next_x;
+            pixel_pos.x += pixel_dir.x;
+        } else {
+            t_step = to_next_y;
+            pixel_pos.y += pixel_dir.y;
+        }
+        t += t_step;
+        ray_pos += t_step * ray.dir;
+    }
+
+    return out;
+}
+
 @fragment
 fn fs_main(
     in: VertexOutput
@@ -134,13 +211,35 @@ fn fs_main(
     );
     // directions are arranged into four tiles, each taking a (0.5, 0.5) chunk of uv space
     let probe_uv = 0.5 * pos_probespace / vec2<f32>(light_params.probe_count);
-    // read the light values in each of the probe's four quadrants
-    // using bilinear interpolation to average the four nearest probes
-    let br = textureSample(cascade_tex, cascade_samp, probe_uv);
-    let bl = textureSample(cascade_tex, cascade_samp, probe_uv + vec2<f32>(0.5, 0.));
-    let tl = textureSample(cascade_tex, cascade_samp, probe_uv + vec2<f32>(0., 0.5));
-    let tr = textureSample(cascade_tex, cascade_samp, probe_uv + vec2<f32>(0.5, 0.5));
-    var radiances = array(tr, tl, bl, br);
+
+    // directions and radiances in order tr, tl, bl, br
+    var ray_dirs = array(
+        vec2<f32>(SQRT_2, -SQRT_2),
+        vec2<f32>(-SQRT_2, -SQRT_2),
+        vec2<f32>(-SQRT_2, SQRT_2),
+        vec2<f32>(SQRT_2, SQRT_2),
+    );
+    // uv coordinates to add to probe_uv to sample the corresponding direction
+    var sample_offsets = array(
+        vec2<f32>(0.5, 0.5),
+        vec2<f32>(0., 0.5),
+        vec2<f32>(0.5, 0.),
+        vec2<f32>(0., 0.),
+    );
+    var radiances = array(vec3<f32>(0.), vec3<f32>(0.), vec3<f32>(0.), vec3<f32>(0.));
+    for (var i = 0u; i < 4u; i++) {
+        var ray: Ray;
+        ray.dir = ray_dirs[i];
+        ray.start = in.clip_position.xy;
+        ray.range = light_params.probe_range;
+        var rad = raymarch(ray);
+        if !rad.is_radiance {
+            let next = textureSample(cascade_tex, cascade_samp, probe_uv + sample_offsets[i]);
+            rad.value = next.rgb;
+        }
+        radiances[i] = rad.value;
+    }
+
     // each direction on the radiance probe covers a quarter segment of a 2-sphere,
     // and diffuse lighting is an integral over a hemisphere
     // centered on the surface normal.
@@ -162,7 +261,7 @@ fn fs_main(
         let plane_isect = normalize(cross(dir_normal, normal));
         let angle = acos(plane_isect.z);
         let dir_coverage = select(angle, PI - angle, normal.z > 0.) / PI;
-        radiance += dir_coverage * rad.rgb + (1. - dir_coverage) * rad_opposite.rgb;
+        radiance += dir_coverage * rad + (1. - dir_coverage) * rad_opposite;
     }
 
     return vec4<f32>(radiance, 1.) * diffuse_color;

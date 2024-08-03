@@ -9,20 +9,13 @@ use wgpu_profiler as wp;
 const CASCADE_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// Distance between cascade 0 probes measured in screen pixels.
-const C0_PROBE_INTERVAL: f32 = 2.;
+const C0_PROBE_INTERVAL: f32 = 4.;
 /// Length of the radiance interval measured by cascade 0 probes.
 /// This is half the diagonal
 /// of a square with side C0_PROBE_INTERVAL
-const C0_PROBE_RANGE: f32 = std::f32::consts::SQRT_2;
+const C0_PROBE_RANGE: f32 = 2. * std::f32::consts::SQRT_2;
 /// Workgroups are arranged in squares of this size.
 const TILE_SIZE: u32 = 16;
-
-/// Scaling factor of the light texture relative to the screen.
-/// Surprisingly, setting this to 1 gives better performance than 0.5
-/// (perhaps something to do with mip levels aligning better? idk),
-/// as well as much less flickering.
-/// Might want to delete this constant entirely
-const LIGHT_TEX_SCALING: f32 = 1.;
 
 pub(crate) struct GlobalIlluminationPipeline {
     pipelines: Pipelines,
@@ -62,9 +55,8 @@ pub(super) struct BindGroups {
     // binds the light texture for the cascade compute step
     light_full: wgpu::BindGroup,
     light_mips: Vec<wgpu::BindGroup>,
-    // back and forth bind groups like with jfa
+    // back and forth bind groups for cascades
     cascades: [wgpu::BindGroup; 2],
-    final_cascade: wgpu::BindGroup,
     pub(super) render: wgpu::BindGroup,
 }
 
@@ -76,10 +68,6 @@ pub(super) struct Textures {
     light_full: wgpu::TextureView,
     // and these are one mip level each, used to generate the mip chain
     pub(super) light_mips: Vec<wgpu::TextureView>,
-    // final cascade is a different size from the others
-    // because we keep direction information
-    // instead of pre-averaging rays
-    cascade_0: wgpu::TextureView,
     // other cascades alternate between two textures of the same size
     cascades: [wgpu::TextureView; 2],
 }
@@ -134,20 +122,17 @@ impl CascadeParams {
     fn for_level(level: u32, cascade_count: u32, probe_count_c0: [u32; 2]) -> Self {
         let level_exp2 = 1 << level;
         let level_exp4 = level_exp2 * level_exp2;
-        // note the scaling by the light texture size
-        let spacing_c0 = C0_PROBE_INTERVAL * LIGHT_TEX_SCALING;
-        let range_c0 = C0_PROBE_RANGE * LIGHT_TEX_SCALING;
         CascadeParams {
             level,
             level_count: cascade_count,
             probe_count: probe_count_c0.map(|c| c / level_exp2),
             rays_per_probe: level_exp4,
-            linear_spacing: spacing_c0 * level_exp2 as f32,
+            linear_spacing: C0_PROBE_INTERVAL * level_exp2 as f32,
             // each range is 4 times larger than the previous,
             // and starts at the previous one's end,
             // hence the start distance is the sum of a geometric sequence
-            range_start: range_c0 * (1. - level_exp4 as f32) / (1. - 4.),
-            range_length: range_c0 * level_exp4 as f32,
+            range_start: C0_PROBE_RANGE * (1. - level_exp4 as f32) / (1. - 4.),
+            range_length: C0_PROBE_RANGE * level_exp4 as f32,
             _pad: [0; 8],
         }
     }
@@ -158,7 +143,7 @@ impl CascadeParams {
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct RenderParams {
     probe_spacing: f32,
-    _pad: u32,
+    probe_range: f32,
     probe_count: [u32; 2],
 }
 
@@ -336,8 +321,9 @@ impl GlobalIlluminationPipeline {
             entries: &[
                 uniform_buf(0, size_of::<RenderParams>(), false, S::FRAGMENT),
                 float_tex(1, wgpu::ShaderStages::FRAGMENT, true),
+                float_tex(2, wgpu::ShaderStages::FRAGMENT, true),
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 3,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     visibility: S::FRAGMENT,
                     count: None,
@@ -433,10 +419,14 @@ impl GlobalIlluminationPipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&tex.cascade_0),
+                    resource: wgpu::BindingResource::TextureView(&tex.light_full),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&tex.cascades[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
                     resource: wgpu::BindingResource::Sampler(bilinear_samp),
                 },
             ],
@@ -449,9 +439,6 @@ impl GlobalIlluminationPipeline {
                 cascade(&tex.cascades[0], &tex.cascades[1]),
                 cascade(&tex.cascades[1], &tex.cascades[0]),
             ],
-            // cascade 1 always writes into the first texture
-            // so we only need one bind group for cascade 0
-            final_cascade: cascade(&tex.cascades[0], &tex.cascade_0),
             render,
         }
     }
@@ -460,8 +447,8 @@ impl GlobalIlluminationPipeline {
         let device = crate::Renderer::device();
 
         let light_tex_size = wgpu::Extent3d {
-            width: (target_size.0 as f32 * LIGHT_TEX_SCALING) as u32,
-            height: (target_size.1 as f32 * LIGHT_TEX_SCALING) as u32,
+            width: target_size.0,
+            height: target_size.1,
             depth_or_array_layers: 1,
         };
 
@@ -507,13 +494,13 @@ impl GlobalIlluminationPipeline {
             (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32,
         ];
 
-        let cascade_tex = |scaling: u32| {
+        let cascade_tex = || {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("radiance cascades"),
                 dimension: wgpu::TextureDimension::D2,
                 size: wgpu::Extent3d {
-                    width: probe_count[0] * scaling,
-                    height: probe_count[1] * scaling,
+                    width: probe_count[0],
+                    height: probe_count[1],
                     depth_or_array_layers: 1,
                 },
                 format: CASCADE_TEX_FMT,
@@ -524,17 +511,15 @@ impl GlobalIlluminationPipeline {
             });
             tex.create_view(&wgpu::TextureViewDescriptor::default())
         };
-        let cascade_0 = cascade_tex(2);
-        let cascades = [cascade_tex(1), cascade_tex(1)];
+        let cascades = [cascade_tex(), cascade_tex()];
 
         let cascade_params = (0..cascade_count)
             .map(|level| CascadeParams::for_level(level, cascade_count, probe_count))
             .collect();
 
         let render_params = RenderParams {
-            // this one uses the actual framebuffer so no light texture scaling
             probe_spacing: C0_PROBE_INTERVAL,
-            _pad: 0,
+            probe_range: C0_PROBE_RANGE,
             probe_count,
         };
 
@@ -543,7 +528,6 @@ impl GlobalIlluminationPipeline {
             textures: Textures {
                 light_full,
                 light_mips,
-                cascade_0,
                 cascades,
             },
             cascade_params,
@@ -633,13 +617,6 @@ impl GlobalIlluminationPipeline {
                 &self.bind_groups.cascades[casc_idx % 2],
                 &[(casc_idx * size_of::<CascadeParams>()) as u32],
             );
-            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
-        }
-
-        {
-            let mut pass = pass.scope("cascade 0", device);
-            // final cascade drawing to the special differently sized texture
-            pass.set_bind_group(1, &self.bind_groups.final_cascade, &[0]);
             pass.dispatch_workgroups(tiles_x, tiles_y, 1);
         }
     }
