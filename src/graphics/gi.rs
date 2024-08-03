@@ -6,6 +6,8 @@ use zerocopy::{AsBytes, FromBytes};
 use crate::math::uv;
 use wgpu_profiler as wp;
 
+const CASCADE_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 /// Distance between cascade 0 probes measured in screen pixels.
 const C0_PROBE_INTERVAL: f32 = 2.;
 /// Length of the radiance interval measured by cascade 0 probes.
@@ -325,7 +327,7 @@ impl GlobalIlluminationPipeline {
             entries: &[
                 uniform_buf(0, size_of::<CascadeParams>(), true, S::COMPUTE),
                 float_tex(1, S::COMPUTE, false),
-                write_storage(2, wgpu::TextureFormat::Rgba8Unorm),
+                write_storage(2, CASCADE_TEX_FMT),
             ],
         });
 
@@ -514,7 +516,7 @@ impl GlobalIlluminationPipeline {
                     height: probe_count[1] * scaling,
                     depth_or_array_layers: 1,
                 },
-                format: wgpu::TextureFormat::Rgba8Unorm,
+                format: CASCADE_TEX_FMT,
                 usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
                 mip_level_count: 1,

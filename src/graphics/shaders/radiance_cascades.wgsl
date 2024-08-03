@@ -29,7 +29,7 @@ var<uniform> cascade: CascadeParams;
 @group(1) @binding(1)
 var cascade_src: texture_2d<f32>;
 @group(1) @binding(2)
-var cascade_dst: texture_storage_2d<rgba8unorm, write>;
+var cascade_dst: texture_storage_2d<rgba16float, write>;
 
 const TAU: f32 = 6.283185;
 
