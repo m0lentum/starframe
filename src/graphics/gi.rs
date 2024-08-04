@@ -41,7 +41,7 @@ struct Pipelines {
     // that we use as a quadtree-like acceleration structure for raymarching
     light_mip: wgpu::ComputePipeline,
     // actual radiance cascade computation
-    cascade: wgpu::ComputePipeline,
+    cascade: wgpu::RenderPipeline,
 }
 
 pub(super) struct BindGroupLayouts {
@@ -234,12 +234,34 @@ impl GlobalIlluminationPipeline {
             push_constant_ranges: &[],
         });
 
-        let cascade = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let cascade = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("radiance cascades"),
-            module: &casc_shader,
-            entry_point: "main",
             layout: Some(&cascade_layout),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            vertex: wgpu::VertexState {
+                module: &casc_shader,
+                entry_point: "vs_main",
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &casc_shader,
+                entry_point: "fs_main",
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: CASCADE_TEX_FMT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::COLOR,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
         });
 
         Pipelines { light_mip, cascade }
@@ -277,6 +299,14 @@ impl GlobalIlluminationPipeline {
             }
         };
 
+        let filtering_sampler =
+            |binding: u32, visibility: wgpu::ShaderStages| wgpu::BindGroupLayoutEntry {
+                binding,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                visibility,
+                count: None,
+            };
+
         let write_storage =
             |binding: u32, format: wgpu::TextureFormat| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -294,8 +324,8 @@ impl GlobalIlluminationPipeline {
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
             entries: &[
-                float_tex(0, S::COMPUTE, false),
-                uniform_buf(1, size_of::<FrameParams>(), false, S::COMPUTE),
+                float_tex(0, S::FRAGMENT, false),
+                uniform_buf(1, size_of::<FrameParams>(), false, S::FRAGMENT),
             ],
         });
 
@@ -310,9 +340,9 @@ impl GlobalIlluminationPipeline {
         let cascade = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("cascade"),
             entries: &[
-                uniform_buf(0, size_of::<CascadeParams>(), true, S::COMPUTE),
-                float_tex(1, S::COMPUTE, false),
-                write_storage(2, CASCADE_TEX_FMT),
+                uniform_buf(0, size_of::<CascadeParams>(), true, S::FRAGMENT),
+                float_tex(1, S::FRAGMENT, true),
+                filtering_sampler(2, S::FRAGMENT),
             ],
         });
 
@@ -320,14 +350,9 @@ impl GlobalIlluminationPipeline {
             label: Some("cascade render"),
             entries: &[
                 uniform_buf(0, size_of::<RenderParams>(), false, S::FRAGMENT),
-                float_tex(1, wgpu::ShaderStages::FRAGMENT, true),
-                float_tex(2, wgpu::ShaderStages::FRAGMENT, true),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    visibility: S::FRAGMENT,
-                    count: None,
-                },
+                float_tex(1, S::FRAGMENT, true),
+                float_tex(2, S::FRAGMENT, true),
+                filtering_sampler(3, S::FRAGMENT),
             ],
         });
 
@@ -384,7 +409,7 @@ impl GlobalIlluminationPipeline {
             })
             .collect();
 
-        let cascade = |read: &wgpu::TextureView, write: &wgpu::TextureView| {
+        let cascade = |read: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("cascade"),
                 layout: &layouts.cascade,
@@ -403,7 +428,7 @@ impl GlobalIlluminationPipeline {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(write),
+                        resource: wgpu::BindingResource::Sampler(bilinear_samp),
                     },
                 ],
             })
@@ -435,10 +460,7 @@ impl GlobalIlluminationPipeline {
         BindGroups {
             light_full: light,
             light_mips,
-            cascades: [
-                cascade(&tex.cascades[0], &tex.cascades[1]),
-                cascade(&tex.cascades[1], &tex.cascades[0]),
-            ],
+            cascades: [cascade(&tex.cascades[0]), cascade(&tex.cascades[1])],
             render,
         }
     }
@@ -504,7 +526,8 @@ impl GlobalIlluminationPipeline {
                     depth_or_array_layers: 1,
                 },
                 format: CASCADE_TEX_FMT,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
                 mip_level_count: 1,
                 sample_count: 1,
@@ -590,34 +613,48 @@ impl GlobalIlluminationPipeline {
         }
     }
 
-    pub fn compute_gi<'pass>(
-        &'pass self,
-        pass: &mut wp::OwningScope<'_, wgpu::ComputePass<'pass>>,
+    pub fn compute_gi(
+        &self,
+        scope: &mut wp::Scope<'_, wgpu::CommandEncoder>,
         camera: &crate::Camera,
     ) {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
+
+        let mut scope = scope.scope("radiance cascades", device);
 
         let frame_params = FrameParams {
             pixel_size_10cm: 10. / camera.pixels_per_world_unit(self.light_tex_size),
         };
         queue.write_buffer(&self.buffers.frame_params, 0, frame_params.as_bytes());
 
-        let mut pass = pass.scope("radiance cascades", device);
-
-        let tiles_x = (self.probe_count[0] as f32 / TILE_SIZE as f32).ceil() as u32;
-        let tiles_y = (self.probe_count[1] as f32 / TILE_SIZE as f32).ceil() as u32;
-        pass.set_pipeline(&self.pipelines.cascade);
-        pass.set_bind_group(0, &self.bind_groups.light_full, &[]);
         // cascades starting with the last
         for casc_idx in (1..self.cascade_count).rev() {
-            let mut pass = pass.scope(format!("cascade {casc_idx}"), device);
+            let mut pass = scope.scoped_render_pass(
+                format!("cascade {casc_idx}"),
+                device,
+                wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &self.textures.cascades[(casc_idx + 1) % 2],
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                },
+            );
+
+            pass.set_pipeline(&self.pipelines.cascade);
+            pass.set_bind_group(0, &self.bind_groups.light_full, &[]);
             pass.set_bind_group(
                 1,
                 &self.bind_groups.cascades[casc_idx % 2],
                 &[(casc_idx * size_of::<CascadeParams>()) as u32],
             );
-            pass.dispatch_workgroups(tiles_x, tiles_y, 1);
+            pass.draw(0..3, 0..1);
         }
     }
 }

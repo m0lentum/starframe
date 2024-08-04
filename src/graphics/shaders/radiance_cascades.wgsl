@@ -29,7 +29,7 @@ var<uniform> cascade: CascadeParams;
 @group(1) @binding(1)
 var cascade_src: texture_2d<f32>;
 @group(1) @binding(2)
-var cascade_dst: texture_storage_2d<rgba16float, write>;
+var bilinear_samp: sampler;
 
 const TAU: f32 = 6.283185;
 
@@ -227,77 +227,63 @@ fn raymarch(ray: Ray) -> RayResult {
 // and get the interpolated radiance
 fn sample_next_cascade(dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
     let next_probe_count = cascade.probe_count / 2u;
-    // there's an extra row/column around the edges on the previous level,
-    // account for that in selecting the probe at the next level
-    let next_probe_idx = vec2<u32>(
-        select(0u, (dir.probe_idx.x - 1u) / 2u, dir.probe_idx.x != 0u),
-        select(0u, (dir.probe_idx.y - 1u) / 2u, dir.probe_idx.y != 0u),
-    );
     let next_tiles_per_row = 1u << (cascade.level + 1u);
     let next_dir_idx = dir.dir_idx * 4u + subdir_idx;
     let next_dir_tile = vec2<u32>(
         next_dir_idx % next_tiles_per_row,
         next_dir_idx / next_tiles_per_row,
     );
-    let dir_tile_offset = next_dir_tile * next_probe_count;
+    let dir_tile_offset = vec2<f32>(next_dir_tile * next_probe_count);
 
-    // storage textures can't be sampled,
-    // so we have to do the interpolation manually.
-    // an alternative would be to convert this whole shader to a fragment shader
-    // but set up a profiler first if you try that
-    // because there are tradeoffs that may well overshadow the gains from hardware interpolation
-
-    let tl_pos = dir_tile_offset + next_probe_idx;
-    let tl = textureLoad(cascade_src, tl_pos, 0);
-    let tr = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 0u), 0);
-    let bl = textureLoad(cascade_src, tl_pos + vec2<u32>(0u, 1u), 0);
-    let br = textureLoad(cascade_src, tl_pos + vec2<u32>(1u, 1u), 0);
-
-    var br_weight: vec2<f32>;
-    // clamp the weights in case we're on the border
-    // to avoid spurious contribution from adjacent direction tiles
-    for (var axis = 0u; axis < 2u; axis++) {
-        if next_probe_idx[axis] == 0u {
-            br_weight[axis] = 1.;
-        } else if next_probe_idx[axis] >= next_probe_count[axis] - 1u {
-            br_weight[axis] = 0.;
-        } else {
-            // regular case where every other N-probe 
-            // is closer to the N+1-probe to its right
-            // and every other to its left
-            br_weight[axis] = select(0.75, 0.25, dir.probe_idx[axis] % 2u == 1u);
-        }
-    }
-
-    return mix(
-        mix(tl, tr, br_weight.x),
-        mix(bl, br, br_weight.x),
-        br_weight.y,
+    // +0.5 because probe positioning is offset from the corner by half a space
+    var pos_probespace = vec2<f32>(dir.probe_idx) + vec2<f32>(0.5);
+    // uv position within the direction tile on the next cascade
+    // is just the position in this tile halved
+    pos_probespace *= 0.5;
+    // clamp to avoid interpolation getting values from adjacent tiles
+    pos_probespace = clamp(
+        vec2<f32>(0.5),
+        vec2<f32>(cascade.probe_count / 2u) - vec2<f32>(0.5),
+        pos_probespace,
     );
+
+    let probe_uv = (dir_tile_offset + pos_probespace) / vec2<f32>(textureDimensions(cascade_src));
+    // sampling with hardware interpolation gets all four probes' contributions in one call
+    return textureSample(cascade_src, bilinear_samp, probe_uv);
 }
 
-@compute
-@workgroup_size(16, 16)
-fn main(
-    @builtin(global_invocation_id) global_id: vec3<u32>,
-) {
-    let texel_id = global_id.xy;
-    // pre-averaged cascades (all but the 0th one) all have the same size:
-    // cascade 1 stores the same number of directions as cascade 0 (i.e. 4)
-    // and a quarter the probe count, hence its size is exactly the probe count.
-    // and subsequent cascades quarter the probe count and quadruple the direction count
-    let cascade_tex_size = textureDimensions(cascade_src);
-    // in case the cascade size isn't a multiple of workgroup size,
-    // don't do work out of bounds
-    if texel_id.x >= cascade_tex_size.x || texel_id.y >= cascade_tex_size.y {
-        return;
-    }
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+// vertex shader draws a single full-screen triangle using just vertex indices
+// source: https://www.saschawillems.de/blog/2016/08/13/vulkan-tutorial-on-rendering-a-fullscreen-quad-without-buffers/
+// (y flipped for wgpu)
+@vertex
+fn vs_main(
+    @builtin(vertex_index) vert_idx: u32,
+) -> VertexOutput {
+    var out: VertexOutput;
+
+    out.uv = vec2<f32>(f32((vert_idx << 1u) & 2u), f32(vert_idx & 2u));
+    out.position = vec4<f32>(out.uv.x * 2.0 - 1.0, out.uv.y * -2.0 + 1.0, 0.0, 1.0);
+
+    return out;
+}
+
+@fragment
+fn fs_main(
+    in: VertexOutput
+) -> @location(0) vec4<f32> {
+    let texel_id = vec2<u32>(in.position.xy);
 
     let dir = direction_info(texel_id);
     // pixel doesn't actually correspond to any direction
     // due to probe counts rounding down when they don't divide evenly
     if !dir.valid {
-        return;
+        return vec4<f32>(0.);
     }
 
     // this wouldn't work as-is for cascade 0,
@@ -315,5 +301,5 @@ fn main(
     }
     ray_avg *= 0.25;
 
-    textureStore(cascade_dst, texel_id, vec4<f32>(ray_avg, 1.));
+    return vec4<f32>(ray_avg, 1.);
 }
