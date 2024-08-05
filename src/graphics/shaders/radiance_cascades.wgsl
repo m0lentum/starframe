@@ -146,7 +146,7 @@ fn raymarch(ray: Ray) -> RayResult {
         if t > ray.range {
             // out of range, return the amount of light that got occluded
             // to merge with the above level
-            out.value = occlusion;
+            out.value = saturate(occlusion);
             out.is_radiance = false;
             return out;
         }
