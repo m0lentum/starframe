@@ -6,18 +6,40 @@ use zerocopy::{AsBytes, FromBytes};
 use crate::math::uv;
 use wgpu_profiler as wp;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightingQualityConfig {
+    /// Distance between light probes measured in screenspace pixels.
+    /// Lower is better quality and more expensive.
+    pub probe_interval: f32,
+}
+
+impl LightingQualityConfig {
+    pub const ULTRA: Self = Self { probe_interval: 1. };
+    pub const HIGH: Self = Self { probe_interval: 2. };
+    pub const MEDIUM: Self = Self { probe_interval: 4. };
+    pub const LOW: Self = Self { probe_interval: 8. };
+
+    // Get the range of a c0 probe, which is half the diagonal of a square between probes
+    #[inline]
+    fn probe_range(self) -> f32 {
+        (2. * self.probe_interval).sqrt()
+    }
+}
+
+impl Default for LightingQualityConfig {
+    fn default() -> Self {
+        Self::HIGH
+    }
+}
+
 const CASCADE_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
-/// Distance between cascade 0 probes measured in screen pixels.
-const C0_PROBE_INTERVAL: f32 = 4.;
-/// Length of the radiance interval measured by cascade 0 probes.
-/// This is half the diagonal
-/// of a square with side C0_PROBE_INTERVAL
-const C0_PROBE_RANGE: f32 = 2. * std::f32::consts::SQRT_2;
-/// Workgroups are arranged in squares of this size.
+/// Workgroups for compute shaders are arranged in squares of this size.
 const TILE_SIZE: u32 = 16;
 
 pub(crate) struct GlobalIlluminationPipeline {
+    quality_conf: LightingQualityConfig,
+
     pipelines: Pipelines,
     pub(super) textures: Textures,
     pub(super) bind_group_layouts: BindGroupLayouts,
@@ -28,6 +50,7 @@ pub(crate) struct GlobalIlluminationPipeline {
     // because sampling is not allowed in compute shaders)
     bilinear_samp: wgpu::Sampler,
     light_tex_size: (u32, u32),
+    last_screen_size: winit::dpi::PhysicalSize<u32>,
     cascade_count: usize,
     probe_count: [u32; 2],
 }
@@ -119,7 +142,15 @@ impl CascadeParams {
     /// On each level, the number of probes is reduced by a factor of 4
     /// (halved in both dimensions)
     /// and the number of rays per probe is increased by a factor of 4.
-    fn for_level(level: u32, cascade_count: u32, probe_count_c0: [u32; 2]) -> Self {
+    fn for_level(
+        level: u32,
+        cascade_count: u32,
+        probe_count_c0: [u32; 2],
+        config: LightingQualityConfig,
+    ) -> Self {
+        let spacing_c0 = config.probe_interval;
+        let range_c0 = config.probe_range();
+
         let level_exp2 = 1 << level;
         let level_exp4 = level_exp2 * level_exp2;
         CascadeParams {
@@ -127,12 +158,12 @@ impl CascadeParams {
             level_count: cascade_count,
             probe_count: probe_count_c0.map(|c| c / level_exp2),
             rays_per_probe: level_exp4,
-            linear_spacing: C0_PROBE_INTERVAL * level_exp2 as f32,
+            linear_spacing: spacing_c0 * level_exp2 as f32,
             // each range is 4 times larger than the previous,
             // and starts at the previous one's end,
             // hence the start distance is the sum of a geometric sequence
-            range_start: C0_PROBE_RANGE * (1. - level_exp4 as f32) / (1. - 4.),
-            range_length: C0_PROBE_RANGE * level_exp4 as f32,
+            range_start: range_c0 * (1. - level_exp4 as f32) / (1. - 4.),
+            range_length: range_c0 * level_exp4 as f32,
             _pad: [0; 8],
         }
     }
@@ -148,12 +179,13 @@ struct RenderParams {
 }
 
 impl GlobalIlluminationPipeline {
-    pub fn new() -> Self {
+    pub fn new(quality_conf: LightingQualityConfig) -> Self {
         let device = crate::Renderer::device();
 
         let bind_group_layouts = Self::create_bind_group_layouts();
 
-        let resizables = Self::create_resizables(crate::Renderer::window().inner_size().into());
+        let window_size = crate::Renderer::window().inner_size();
+        let resizables = Self::create_resizables(window_size.into(), quality_conf);
         let cascade_count = resizables.cascade_params.len();
 
         let bilinear_samp = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -193,6 +225,7 @@ impl GlobalIlluminationPipeline {
         let pipelines = Self::create_pipelines(&bind_group_layouts);
 
         Self {
+            quality_conf,
             pipelines,
             textures: resizables.textures,
             bind_group_layouts,
@@ -200,6 +233,7 @@ impl GlobalIlluminationPipeline {
             buffers,
             bilinear_samp,
             light_tex_size: resizables.light_tex_size,
+            last_screen_size: window_size,
             cascade_count,
             probe_count: resizables.cascade_params[0].probe_count,
         }
@@ -465,7 +499,7 @@ impl GlobalIlluminationPipeline {
         }
     }
 
-    fn create_resizables(target_size: (u32, u32)) -> ResizeResults {
+    fn create_resizables(target_size: (u32, u32), config: LightingQualityConfig) -> ResizeResults {
         let device = crate::Renderer::device();
 
         let light_tex_size = wgpu::Extent3d {
@@ -479,12 +513,13 @@ impl GlobalIlluminationPipeline {
         let screen_diag = uv::Vec2::new(target_size.0 as f32, target_size.1 as f32).mag();
         // iterative computation for cascade count,
         // the number needed is the minimum where a probe reaches all the way across the screen
-        let mut range = C0_PROBE_RANGE;
+        let range_c0 = config.probe_range();
+        let mut range = range_c0;
         let mut cascade_count = 1;
         while range < screen_diag {
             // each probe's range starts at the previous one's
             // and has a length of 4 times the previous
-            range += C0_PROBE_RANGE * (4u32.pow(cascade_count)) as f32;
+            range += range_c0 * (4u32.pow(cascade_count)) as f32;
             cascade_count += 1;
         }
 
@@ -512,8 +547,8 @@ impl GlobalIlluminationPipeline {
         let light_full = light_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         let probe_count = [
-            (target_size.0 as f32 / C0_PROBE_INTERVAL).floor() as u32,
-            (target_size.1 as f32 / C0_PROBE_INTERVAL).floor() as u32,
+            (target_size.0 as f32 / config.probe_interval).floor() as u32,
+            (target_size.1 as f32 / config.probe_interval).floor() as u32,
         ];
 
         let cascade_tex = || {
@@ -537,12 +572,12 @@ impl GlobalIlluminationPipeline {
         let cascades = [cascade_tex(), cascade_tex()];
 
         let cascade_params = (0..cascade_count)
-            .map(|level| CascadeParams::for_level(level, cascade_count, probe_count))
+            .map(|level| CascadeParams::for_level(level, cascade_count, probe_count, config))
             .collect();
 
         let render_params = RenderParams {
-            probe_spacing: C0_PROBE_INTERVAL,
-            probe_range: C0_PROBE_RANGE,
+            probe_spacing: config.probe_interval,
+            probe_range: range_c0,
             probe_count,
         };
 
@@ -563,7 +598,7 @@ impl GlobalIlluminationPipeline {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
 
-        let res = Self::create_resizables(new_size.into());
+        let res = Self::create_resizables(new_size.into(), self.quality_conf);
         // make room in the params buffer if we need more cascades than before
         if res.cascade_params.len() > self.cascade_count {
             self.buffers.cascade_params =
@@ -589,6 +624,16 @@ impl GlobalIlluminationPipeline {
             &self.bilinear_samp,
         );
         self.textures = res.textures;
+
+        self.last_screen_size = new_size;
+    }
+
+    pub fn set_quality(&mut self, conf: LightingQualityConfig) {
+        let needs_resize = self.quality_conf != conf;
+        self.quality_conf = conf;
+        if needs_resize {
+            self.resize(self.last_screen_size);
+        }
     }
 
     pub fn compute_light_mips<'pass>(

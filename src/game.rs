@@ -56,6 +56,11 @@ pub struct GameParams<State: GameState> {
     pub window: WindowBuilder,
     pub fps: u32,
     pub on_event: fn(&mut State, &Event<()>),
+    /// Initial configuration for lighting quality.
+    ///
+    /// This can be changed later with
+    /// [Renderer::set_lighting_quality][crate::Renderer::set_lighting_quality].
+    pub lighting_quality_config: crate::LightingQualityConfig,
 }
 
 impl<State: GameState> Default for GameParams<State> {
@@ -69,6 +74,7 @@ impl<State: GameState> Default for GameParams<State> {
                 }),
             fps: 60,
             on_event: |_, _| {},
+            lighting_quality_config: crate::LightingQualityConfig::default(),
         }
     }
 }
@@ -117,6 +123,7 @@ impl Game {
                 params.on_event,
                 events,
                 window,
+                params.lighting_quality_config,
             ))?;
         }
         #[cfg(target_arch = "wasm32")]
@@ -138,6 +145,7 @@ impl Game {
                 params.on_event,
                 events,
                 window,
+                params.lighting_quality_config,
             ))?;
         }
         Ok(())
@@ -148,6 +156,7 @@ impl Game {
         on_event: fn(&mut State, &Event<()>),
         events: EventLoop<()>,
         window: Window,
+        lighting_conf: crate::LightingQualityConfig,
     ) -> Result<(), GameError> {
         let _tracy_client = tracy_client::Client::start();
 
@@ -155,7 +164,7 @@ impl Game {
         // init
         //
 
-        let renderer = crate::Renderer::init(window).await?;
+        let renderer = crate::Renderer::init(window, lighting_conf).await?;
 
         let mut game = Game {
             input: crate::Input::new(),

@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        lighting_quality_config: sf::LightingQualityConfig::default(),
     })?;
 
     Ok(())
@@ -56,6 +57,7 @@ pub struct State {
     // graphics
     camera: sf::Camera,
     ambient_light: [f32; 3],
+    light_quality: sf::LightingQualityConfig,
     dir_light: sf::DirectionalLight,
     light_rotating: bool,
     gen_assets: GeneratedAssets,
@@ -86,6 +88,7 @@ impl State {
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
             ambient_light: [0.0686, 0.0875, 0.0918],
+            light_quality: sf::LightingQualityConfig::default(),
             dir_light: sf::DirectionalLight {
                 color: [0.7, 0.65, 0.4],
                 direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
@@ -335,6 +338,7 @@ impl sf::GameState for State {
         let mut reload = false;
         let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
+        let mut light_quality = self.light_quality;
         egui::Window::new("Controls").show(self.egui_state.egui_ctx(), |ui| {
             ui.heading("Load a scene");
             ui.horizontal_wrapped(|ui| {
@@ -398,6 +402,23 @@ impl sf::GameState for State {
             ui.checkbox(&mut self.spawner_is_lit, "Lit");
 
             ui.separator();
+            ui.heading("Lighting quality");
+            ui.horizontal(|ui| {
+                ui.radio_value(
+                    &mut light_quality,
+                    sf::LightingQualityConfig::ULTRA,
+                    "Ultra",
+                );
+                ui.radio_value(&mut light_quality, sf::LightingQualityConfig::HIGH, "High");
+                ui.radio_value(
+                    &mut light_quality,
+                    sf::LightingQualityConfig::MEDIUM,
+                    "Medium",
+                );
+                ui.radio_value(&mut light_quality, sf::LightingQualityConfig::LOW, "Low");
+            });
+
+            ui.separator();
 
             ui.heading("Other controls");
             ui.horizontal(|ui| {
@@ -453,6 +474,11 @@ impl sf::GameState for State {
             game.clear_state();
             self.gen_assets = load_common_assets(game);
             self.scene.instantiate(game, &self.gen_assets);
+        }
+
+        if light_quality != self.light_quality {
+            game.renderer.set_lighting_quality(light_quality);
+            self.light_quality = light_quality;
         }
 
         self.last_egui_output = self.egui_state.egui_ctx().end_frame();

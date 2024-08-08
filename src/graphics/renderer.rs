@@ -1,6 +1,5 @@
 use super::{
-    gi::GlobalIlluminationPipeline,
-    light,
+    gi, light,
     line_renderer::LineRenderer,
     mesh::{skin::SkinPipeline, MeshRenderer},
 };
@@ -45,7 +44,7 @@ pub struct Renderer {
     emissive_view: wgpu::TextureView,
 
     light_man: light::LightManager,
-    gi_pipeline: GlobalIlluminationPipeline,
+    gi_pipeline: gi::GlobalIlluminationPipeline,
     mesh_renderer: MeshRenderer,
     skin_pl: SkinPipeline,
     // rendering subsystems that aren't always used in lazily initialized Options
@@ -76,7 +75,10 @@ pub enum RendererInitError {
 impl Renderer {
     /// Create a Renderer.
     /// The [`Game`][crate::game::Game] API does this automatically.
-    pub(crate) async fn init(window: winit::window::Window) -> Result<Self, RendererInitError> {
+    pub(crate) async fn init(
+        window: winit::window::Window,
+        lighting_quality: gi::LightingQualityConfig,
+    ) -> Result<Self, RendererInitError> {
         let instance = wgpu::Instance::default();
         let surface = unsafe {
             instance.create_surface_unsafe(
@@ -165,7 +167,7 @@ impl Renderer {
         let emissive_tex = Self::create_emissive_texture(window_size);
         let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let gi_pipeline = GlobalIlluminationPipeline::new();
+        let gi_pipeline = gi::GlobalIlluminationPipeline::new(lighting_quality);
         let light_man = light::LightManager::new();
         let mesh_renderer = MeshRenderer::new(&gi_pipeline);
         let skin_pl = SkinPipeline::new();
@@ -362,6 +364,12 @@ impl Renderer {
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }
+    }
+
+    /// Change lighting quality parameters at runtime.
+    #[inline]
+    pub fn set_lighting_quality(&mut self, conf: gi::LightingQualityConfig) {
+        self.gi_pipeline.set_quality(conf);
     }
 
     /// Start drawing a frame.
