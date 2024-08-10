@@ -211,13 +211,16 @@ fn fs_main(
     // -0.5 because probe positioning is offset from the corner by half a space
     var pos_probespace = (in.clip_position.xy / light_params.probe_spacing) - vec2<f32>(0.5);
     // clamp to avoid interpolation getting values from adjacent tiles
+    // (different clamp values from radiance_cascades.wgsl due to
+    // multiplying by 0.5 at a different time)
+    let br_edge = light_params.probe_count - vec2<u32>(1u);
     pos_probespace = clamp(
-        vec2<f32>(0.5),
-        vec2<f32>(light_params.probe_count) - vec2<f32>(0.5),
         pos_probespace,
+        vec2<f32>(1.),
+        vec2<f32>(br_edge) - vec2<f32>(1.),
     );
     // directions are arranged into four tiles, each taking a (0.5, 0.5) chunk of uv space
-    let probe_uv = 0.5 * pos_probespace / vec2<f32>(light_params.probe_count);
+    let probe_uv = 0.5 * pos_probespace / vec2<f32>(textureDimensions(cascade_tex));
 
     // directions and radiances in order tr, tl, bl, br
     var ray_dirs = array(

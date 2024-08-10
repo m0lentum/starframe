@@ -235,16 +235,18 @@ fn sample_next_cascade(dir: DirectionInfo, subdir_idx: u32) -> vec4<f32> {
     );
     let dir_tile_offset = vec2<f32>(next_dir_tile * next_probe_count);
 
-    // +0.5 because probe positioning is offset from the corner by half a space
+    // +0.5 because this position is relative to the top left corner of the screen
+    // and probe positioning is offset from the corner by half a space
     var pos_probespace = vec2<f32>(dir.probe_idx) + vec2<f32>(0.5);
-    // uv position within the direction tile on the next cascade
-    // is just the position in this tile halved
+    // pixel position within the tile on the next cascade
+    // is just this position halved
     pos_probespace *= 0.5;
     // clamp to avoid interpolation getting values from adjacent tiles
+    let br_edge = next_probe_count - vec2<u32>(1u);
     pos_probespace = clamp(
-        vec2<f32>(0.5),
-        vec2<f32>(cascade.probe_count / 2u) - vec2<f32>(0.5),
         pos_probespace,
+        vec2<f32>(0.5),
+        vec2<f32>(br_edge) - vec2<f32>(0.5),
     );
 
     let probe_uv = (dir_tile_offset + pos_probespace) / vec2<f32>(textureDimensions(cascade_src));
