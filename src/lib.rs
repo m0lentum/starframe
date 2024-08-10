@@ -1,5 +1,5 @@
 pub mod game;
-pub use game::{Game, GameParams, GameState};
+pub use game::{Game, GameParams, GameState, GraphicsConfig};
 
 pub mod input;
 pub use input::{AxisQuery, Button, ButtonQuery, Input, Key, MouseButton};

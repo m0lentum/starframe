@@ -23,7 +23,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     sf::Game::run(sf::GameParams {
         window,
-        fps: 60,
         on_event: |state: &mut State, evt| {
             if let winit::event::Event::WindowEvent { event, .. } = evt {
                 let egui_resp = state
@@ -34,7 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
-        lighting_quality_config: sf::LightingQualityConfig::default(),
+        graphics: sf::GraphicsConfig {
+            fps: 60,
+            use_vsync: std::env::var("NO_VSYNC").is_err(),
+            lighting_quality: sf::LightingQualityConfig::default(),
+        },
     })?;
 
     Ok(())
@@ -340,6 +343,11 @@ impl sf::GameState for State {
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
         let mut light_quality = self.light_quality;
         egui::Window::new("Controls").show(self.egui_state.egui_ctx(), |ui| {
+            let framerate = game.get_framerate();
+            ui.label(format!("{framerate:.1} ms/frame"));
+
+            ui.separator();
+
             ui.heading("Load a scene");
             ui.horizontal_wrapped(|ui| {
                 for scene_path in &self.scenes_available {

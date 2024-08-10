@@ -1,6 +1,8 @@
-//! Tools for creating a window and starting a managed game loop.
+//! Tools for creating a windw and starting a managed game loop.
 
-use instant::{Duration, Instant};
+use std::collections::VecDeque;
+
+use instant::Instant;
 
 use winit::{
     event::{Event, WindowEvent},
@@ -24,10 +26,8 @@ const SNAP_THRESHOLD: u128 = 200_000;
 
 const MAX_ACC_VALUE: u128 = 1_000_000_000 / 8;
 
-// use winit's ControlFlow::WaitUntil to wait for the next frame,
-// but schedule it to SPIN_DURATION before the actual frame time.
-// spin the rest of the time for accurate timing.
-const SPIN_DURATION: u128 = 200_000;
+/// How many frames to store for the moving average frame time
+const STORED_FRAME_TIME_COUNT: usize = 10;
 
 fn should_snap(dt: u128, target: u128) -> bool {
     if dt < target {
@@ -52,15 +52,18 @@ pub trait GameState: Sized + 'static {
     fn draw(&mut self, game: &mut Game, dt: f32);
 }
 
+#[derive(Clone, Debug)]
 pub struct GameParams<State: GameState> {
     pub window: WindowBuilder,
-    pub fps: u32,
     pub on_event: fn(&mut State, &Event<()>),
-    /// Initial configuration for lighting quality.
-    ///
-    /// This can be changed later with
-    /// [Renderer::set_lighting_quality][crate::Renderer::set_lighting_quality].
-    pub lighting_quality_config: crate::LightingQualityConfig,
+    pub graphics: GraphicsConfig,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GraphicsConfig {
+    pub fps: u32,
+    pub use_vsync: bool,
+    pub lighting_quality: crate::LightingQualityConfig,
 }
 
 impl<State: GameState> Default for GameParams<State> {
@@ -72,9 +75,18 @@ impl<State: GameState> Default for GameParams<State> {
                     width: 1280.0,
                     height: 720.0,
                 }),
-            fps: 60,
             on_event: |_, _| {},
-            lighting_quality_config: crate::LightingQualityConfig::default(),
+            graphics: GraphicsConfig::default(),
+        }
+    }
+}
+
+impl Default for GraphicsConfig {
+    fn default() -> Self {
+        Self {
+            fps: 60,
+            use_vsync: true,
+            lighting_quality: crate::LightingQualityConfig::default(),
         }
     }
 }
@@ -98,6 +110,8 @@ pub struct Game {
     pub dt_fixed: f64,
     /// Duration of a frame in nanoseconds.
     nanos_per_frame: u128,
+    /// Durations of the last N frames to allow displaying a moving average frame time.
+    last_frame_times: VecDeque<f32>,
 }
 
 /// An error that occurred during in the initialization
@@ -119,11 +133,10 @@ impl Game {
         #[cfg(not(target_arch = "wasm32"))]
         {
             futures::executor::block_on(Self::run_async(
-                params.fps,
                 params.on_event,
                 events,
                 window,
-                params.lighting_quality_config,
+                params.graphics,
             ))?;
         }
         #[cfg(target_arch = "wasm32")]
@@ -152,11 +165,10 @@ impl Game {
     }
 
     async fn run_async<State: GameState>(
-        fps: u32,
         on_event: fn(&mut State, &Event<()>),
         events: EventLoop<()>,
         window: Window,
-        lighting_conf: crate::LightingQualityConfig,
+        graphics_conf: GraphicsConfig,
     ) -> Result<(), GameError> {
         let _tracy_client = tracy_client::Client::start();
 
@@ -164,7 +176,7 @@ impl Game {
         // init
         //
 
-        let renderer = crate::Renderer::init(window, lighting_conf).await?;
+        let renderer = crate::Renderer::init(window, graphics_conf).await?;
 
         let mut game = Game {
             input: crate::Input::new(),
@@ -176,8 +188,11 @@ impl Game {
                 crate::CollisionMaskMatrix::default(),
             ),
             hecs_sync: HecsSyncManager::new_autosync(crate::HecsSyncOptions::both_ways()),
-            nanos_per_frame: 1_000_000_000 / u128::from(fps),
-            dt_fixed: 1.0 / fps as f64,
+            nanos_per_frame: 1_000_000_000 / u128::from(graphics_conf.fps),
+            dt_fixed: 1.0 / graphics_conf.fps as f64,
+            last_frame_times: [1. / graphics_conf.fps as f32; STORED_FRAME_TIME_COUNT]
+                .into_iter()
+                .collect(),
         };
         let mut state = State::init(&mut game);
 
@@ -186,7 +201,9 @@ impl Game {
         //
 
         let mut frame_start_t = Instant::now();
-        let mut acc = 0;
+        // begin the frame time accumulator at nanos_per_frame
+        // to cause one frame to be simulated before first draw
+        let mut acc = game.nanos_per_frame;
         events.run(move |event, elwt| {
             (on_event)(&mut state, &event);
 
@@ -195,7 +212,8 @@ impl Game {
             match event {
                 Event::AboutToWait => {
                     // if vsynced, pretend frame timing is exact (see blog post mentioned above)
-                    let mut dt_nanos = frame_start_t.elapsed().as_nanos();
+                    let dt = frame_start_t.elapsed();
+                    let mut dt_nanos = dt.as_nanos();
                     if should_snap(dt_nanos, NANOS_120FPS) {
                         dt_nanos = NANOS_120FPS;
                         acc = 0;
@@ -213,61 +231,45 @@ impl Game {
                         acc = 0;
                     }
 
-                    // if we're going too fast just wait, otherwise run as many ticks
-                    // as have been passed since last update and draw once
-                    if dt_nanos >= game.nanos_per_frame - acc {
-                        frame_start_t = Instant::now();
+                    acc += dt_nanos;
+                    frame_start_t = Instant::now();
 
-                        acc += dt_nanos;
-                        // limit acc to prevent spiral of death
-                        if acc > MAX_ACC_VALUE {
-                            acc = MAX_ACC_VALUE;
-                        }
-
-                        while acc >= game.nanos_per_frame {
-                            let _frame = tracy_client::non_continuous_frame!("tick");
-
-                            if state.tick(&mut game).is_none() {
-                                elwt.exit();
-                                return;
-                            }
-                            game.input.tick();
-                            acc -= game.nanos_per_frame;
-                        }
-
-                        {
-                            let _draw_span = tracy_client::span!("draw");
-
-                            let dt = game.dt_fixed as f32;
-                            state.draw(&mut game, dt);
-                        }
-
-                        game.renderer.profiler.end_frame().unwrap();
-                        tracy_client::frame_mark();
-
-                        game.renderer.profiler.process_finished_frame(
-                            crate::Renderer::queue().get_timestamp_period(),
-                        );
-
-                        let nanos_this_frame = frame_start_t.elapsed().as_nanos();
-                        // acc represents drift from the perfect tick timing that we should correct by
-                        let target_frame_duration = game.nanos_per_frame - acc;
-                        // sleep till next frame if we have time to kill
-                        if nanos_this_frame < target_frame_duration
-                            && target_frame_duration > SPIN_DURATION
-                            && nanos_this_frame < target_frame_duration - SPIN_DURATION
-                        {
-                            let wait_until_t = frame_start_t
-                                + Duration::from_nanos(
-                                    (target_frame_duration - SPIN_DURATION) as u64,
-                                );
-                            elwt.set_control_flow(ControlFlow::WaitUntil(wait_until_t));
-                        } else {
-                            // we're at or almost at the next frame threshold,
-                            // spin for accurate timing
-                            elwt.set_control_flow(ControlFlow::Poll);
-                        }
+                    // limit acc to prevent spiral of death
+                    if acc > MAX_ACC_VALUE {
+                        acc = MAX_ACC_VALUE;
                     }
+
+                    // run gameplay ticks at a constant rate
+
+                    while acc >= game.nanos_per_frame {
+                        let _frame = tracy_client::non_continuous_frame!("tick");
+
+                        if state.tick(&mut game).is_none() {
+                            elwt.exit();
+                            return;
+                        }
+                        game.input.tick();
+                        acc -= game.nanos_per_frame;
+                    }
+
+                    // draw as fast as we can
+
+                    let dt_secs = dt.as_secs_f32();
+                    {
+                        let _draw_span = tracy_client::span!("draw");
+
+                        state.draw(&mut game, dt_secs);
+                    }
+
+                    game.last_frame_times.pop_front();
+                    game.last_frame_times.push_back(dt_secs);
+
+                    game.renderer.profiler.end_frame().unwrap();
+                    tracy_client::frame_mark();
+
+                    game.renderer
+                        .profiler
+                        .process_finished_frame(crate::Renderer::queue().get_timestamp_period());
                 }
                 Event::WindowEvent { event, .. } => {
                     game.input.track_window_event(&event);
@@ -307,5 +309,11 @@ impl Game {
         self.world.clear();
         self.physics.clear();
         self.hecs_sync.clear();
+    }
+
+    /// Get the average recent framerate as ms/frame.
+    pub fn get_framerate(&self) -> f32 {
+        1000. * self.last_frame_times.iter().fold(0., |acc, x| acc + x)
+            / self.last_frame_times.len() as f32
     }
 }

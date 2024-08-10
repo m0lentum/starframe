@@ -77,7 +77,7 @@ impl Renderer {
     /// The [`Game`][crate::game::Game] API does this automatically.
     pub(crate) async fn init(
         window: winit::window::Window,
-        lighting_quality: gi::LightingQualityConfig,
+        config: crate::GraphicsConfig,
     ) -> Result<Self, RendererInitError> {
         let instance = wgpu::Instance::default();
         let surface = unsafe {
@@ -124,7 +124,11 @@ impl Renderer {
             format: SWAPCHAIN_FORMAT,
             width: window_size.width,
             height: window_size.height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: if config.use_vsync {
+                wgpu::PresentMode::AutoVsync
+            } else {
+                wgpu::PresentMode::AutoNoVsync
+            },
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
@@ -167,7 +171,7 @@ impl Renderer {
         let emissive_tex = Self::create_emissive_texture(window_size);
         let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let gi_pipeline = gi::GlobalIlluminationPipeline::new(lighting_quality);
+        let gi_pipeline = gi::GlobalIlluminationPipeline::new(config.lighting_quality);
         let light_man = light::LightManager::new();
         let mesh_renderer = MeshRenderer::new(&gi_pipeline);
         let skin_pl = SkinPipeline::new();
