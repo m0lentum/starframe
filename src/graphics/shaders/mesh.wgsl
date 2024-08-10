@@ -17,6 +17,10 @@ struct CascadeRenderParams {
     probe_spacing: f32,
     probe_range: f32,
     probe_count: vec2<u32>,
+    // quality option to skip the cascade 0 raymarch done in this shader,
+    // improving performance at the cost of worse looking light edges.
+    // actually a bool but using that type here breaks alignment
+    skip_raymarch: u32,
 }
 @group(1) @binding(0)
 var<uniform> light_params: CascadeRenderParams;
@@ -227,12 +231,16 @@ fn fs_main(
         ray.dir = ray_dirs[i];
         ray.start = in.clip_position.xy;
         ray.range = light_params.probe_range;
-        var rad = raymarch(ray);
-        if !rad.is_radiance {
-            let next = textureSample(cascade_tex, cascade_samp, probe_uv + sample_offsets[i]);
-            rad.value = next.rgb;
+        if light_params.skip_raymarch != 0u {
+            radiances[i] = textureSample(cascade_tex, cascade_samp, probe_uv + sample_offsets[i]).rgb;
+        } else {
+            var rad = raymarch(ray);
+            if !rad.is_radiance {
+                let next = textureSample(cascade_tex, cascade_samp, probe_uv + sample_offsets[i]);
+                rad.value = next.rgb;
+            }
+            radiances[i] = rad.value;
         }
-        radiances[i] = rad.value;
     }
 
     // each direction on the radiance probe covers a quarter segment of a 2-sphere,

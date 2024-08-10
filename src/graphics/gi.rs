@@ -11,13 +11,35 @@ pub struct LightingQualityConfig {
     /// Distance between light probes measured in screenspace pixels.
     /// Lower is better quality and more expensive.
     pub probe_interval: f32,
+    /// Whether or not to run raymarching for the final cascade.
+    /// Significantly reduces quality around light emitter edges
+    /// but improves performance especially when probe spacing is high.
+    /// Mainly useful for squeezing out a bit of extra performance
+    /// on extremely low settings.
+    pub skip_final_cascade: bool,
 }
 
 impl LightingQualityConfig {
-    pub const ULTRA: Self = Self { probe_interval: 1. };
-    pub const HIGH: Self = Self { probe_interval: 2. };
-    pub const MEDIUM: Self = Self { probe_interval: 4. };
-    pub const LOW: Self = Self { probe_interval: 8. };
+    pub const ULTRA: Self = Self {
+        probe_interval: 1.,
+        skip_final_cascade: false,
+    };
+    pub const HIGH: Self = Self {
+        probe_interval: 2.,
+        skip_final_cascade: false,
+    };
+    pub const MEDIUM: Self = Self {
+        probe_interval: 4.,
+        skip_final_cascade: false,
+    };
+    pub const LOW: Self = Self {
+        probe_interval: 6.,
+        skip_final_cascade: false,
+    };
+    pub const LOWEST: Self = Self {
+        probe_interval: 8.,
+        skip_final_cascade: true,
+    };
 
     // Get the range of a c0 probe, which is half the diagonal of a square between probes
     #[inline]
@@ -176,6 +198,10 @@ struct RenderParams {
     probe_spacing: f32,
     probe_range: f32,
     probe_count: [u32; 2],
+    // this is actually a bool
+    // but that doesn't work with AsBytes/FromBytes
+    skip_raymarch: u32,
+    _pad: u32,
 }
 
 impl GlobalIlluminationPipeline {
@@ -579,6 +605,8 @@ impl GlobalIlluminationPipeline {
             probe_spacing: config.probe_interval,
             probe_range: range_c0,
             probe_count,
+            skip_raymarch: config.skip_final_cascade as u32,
+            _pad: 0,
         };
 
         ResizeResults {

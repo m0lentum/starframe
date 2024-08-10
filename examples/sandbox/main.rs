@@ -424,6 +424,11 @@ impl sf::GameState for State {
                     "Medium",
                 );
                 ui.radio_value(&mut light_quality, sf::LightingQualityConfig::LOW, "Low");
+                ui.radio_value(
+                    &mut light_quality,
+                    sf::LightingQualityConfig::LOWEST,
+                    "Lowest",
+                );
             });
 
             ui.separator();
