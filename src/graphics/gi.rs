@@ -6,6 +6,9 @@ use zerocopy::{AsBytes, FromBytes};
 use crate::math::uv;
 use wgpu_profiler as wp;
 
+pub(crate) mod environment_map;
+pub use environment_map::EnvironmentMap;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightingQualityConfig {
     /// Distance between light probes measured in screenspace pixels.
@@ -61,6 +64,7 @@ const TILE_SIZE: u32 = 16;
 
 pub(crate) struct GlobalIlluminationPipeline {
     quality_conf: LightingQualityConfig,
+    pub(super) env_map: EnvironmentMap,
 
     pipelines: Pipelines,
     pub(super) textures: Textures,
@@ -240,18 +244,22 @@ impl GlobalIlluminationPipeline {
             }),
         };
 
+        let env_map = EnvironmentMap::default();
+
         let bind_groups = Self::create_bind_groups(
             cascade_count,
             &bind_group_layouts,
             &resizables.textures,
             &buffers,
             &bilinear_samp,
+            &env_map,
         );
 
         let pipelines = Self::create_pipelines(&bind_group_layouts);
 
         Self {
             quality_conf,
+            env_map,
             pipelines,
             textures: resizables.textures,
             bind_group_layouts,
@@ -413,6 +421,12 @@ impl GlobalIlluminationPipeline {
                 float_tex(1, S::FRAGMENT, true),
                 float_tex(2, S::FRAGMENT, true),
                 filtering_sampler(3, S::FRAGMENT),
+                uniform_buf(
+                    4,
+                    size_of::<environment_map::RenderData>(),
+                    false,
+                    S::FRAGMENT,
+                ),
             ],
         });
 
@@ -430,6 +444,7 @@ impl GlobalIlluminationPipeline {
         tex: &Textures,
         buffers: &Buffers,
         bilinear_samp: &wgpu::Sampler,
+        env_map: &EnvironmentMap,
     ) -> BindGroups {
         let device = crate::Renderer::device();
 
@@ -513,6 +528,10 @@ impl GlobalIlluminationPipeline {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(bilinear_samp),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: env_map.render_buf.as_entire_binding(),
                 },
             ],
         });
@@ -650,6 +669,7 @@ impl GlobalIlluminationPipeline {
             &res.textures,
             &self.buffers,
             &self.bilinear_samp,
+            &self.env_map,
         );
         self.textures = res.textures;
 

@@ -90,7 +90,7 @@ impl State {
             state: StateEnum::Playing,
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
-            ambient_light: [0.0686, 0.0875, 0.0918],
+            ambient_light: [0.005, 0.007, 0.008],
             light_quality: sf::LightingQualityConfig::default(),
             dir_light: sf::DirectionalLight {
                 color: [0.7, 0.65, 0.4],
@@ -410,7 +410,8 @@ impl sf::GameState for State {
             ui.checkbox(&mut self.spawner_is_lit, "Lit");
 
             ui.separator();
-            ui.heading("Lighting quality");
+            ui.heading("Lighting");
+
             ui.horizontal(|ui| {
                 ui.radio_value(
                     &mut light_quality,
@@ -429,6 +430,11 @@ impl sf::GameState for State {
                     sf::LightingQualityConfig::LOWEST,
                     "Lowest",
                 );
+            });
+
+            ui.horizontal(|ui| {
+                ui.color_edit_button_rgb(&mut self.ambient_light);
+                ui.label("Ambient light color");
             });
 
             ui.separator();
@@ -582,10 +588,10 @@ impl sf::GameState for State {
 
         // scene rendering
 
-        let mut frame = game.renderer.begin_frame();
+        game.renderer.set_ambient_light(self.ambient_light);
 
+        let mut frame = game.renderer.begin_frame();
         frame.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
-        frame.set_ambient_light(self.ambient_light);
         // main sunlight
         frame.push_directional_light(self.dir_light);
         // fill light based on the ambient color

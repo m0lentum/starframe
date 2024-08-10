@@ -31,10 +31,18 @@ var cascade_tex: texture_2d<f32>;
 @group(1) @binding(3)
 var cascade_samp: sampler;
 
+struct Environment {
+    ambient_light: vec3<f32>,
+}
+@group(1) @binding(4)
+var<uniform> environment: Environment;
+
 // material
 
 struct MaterialUniforms {
     base_color: vec4<f32>,
+    // unlike PBR, the emissive color does nothing at the mesh shading stage.
+    // it's used beforehand in the global illumination instead
     emissive_color: vec4<f32>,
 }
 
@@ -254,7 +262,7 @@ fn fs_main(
         vec3<f32>(-SQRT_2, SQRT_2, 0.),
         vec3<f32>(-SQRT_2, -SQRT_2, 0.),
     );
-    var radiance = vec3<f32>(0.);
+    var radiance = environment.ambient_light;
     for (var dir_idx = 0u; dir_idx < 2u; dir_idx++) {
         let dir = directions[dir_idx];
         let dir_normal = directions[dir_idx + 1u];

@@ -376,6 +376,13 @@ impl Renderer {
         self.gi_pipeline.set_quality(conf);
     }
 
+    /// Set the ambient light color of the scene.
+    /// This is light that is applied everywhere regardless of surface direction.
+    #[inline]
+    pub fn set_ambient_light(&mut self, color: [f32; 3]) {
+        self.gi_pipeline.env_map.set_ambient_light(color);
+    }
+
     /// Start drawing a frame.
     #[inline]
     pub fn begin_frame(&mut self) -> Frame<'_> {
@@ -420,8 +427,7 @@ pub struct Frame<'a> {
 
 impl<'a> Frame<'a> {
     /// Set the color the framebuffer will be cleared with
-    /// when the shading is executed (i.e. on [`finish`][Self::finish]).
-    /// Black by default.
+    /// when the shading is executed. Black by default.
     pub fn set_clear_color(&mut self, color: [f32; 4]) {
         self.clear_color = Some(wgpu::Color {
             r: color[0] as f64,
@@ -486,6 +492,8 @@ impl<'a> Frame<'a> {
         let point_lights = std::mem::take(&mut self.point_lights);
         self.renderer.light_man.write_main_lights(main_lights);
         self.renderer.light_man.write_point_lights(point_lights);
+
+        self.renderer.gi_pipeline.env_map.bake();
 
         // compute skins
 
