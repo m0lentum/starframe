@@ -13,6 +13,8 @@ struct FrameParams {
 @group(0) @binding(0)
 var light_tex: texture_2d<f32>;
 @group(0) @binding(1)
+var env_map: texture_1d<f32>;
+@group(0) @binding(2)
 var<uniform> frame: FrameParams;
 
 struct CascadeParams {
@@ -78,6 +80,9 @@ struct Ray {
     start: vec2<f32>,
     dir: vec2<f32>,
     range: f32,
+    // angle from the x axis normalized to the range [0, 1],
+    // for sampling the environment map
+    angle_normalized: f32,
 }
 
 // generate one of four rays to cast in a range around the direction defined by `dir`
@@ -90,6 +95,7 @@ fn get_ray(dir: DirectionInfo, subray_idx: u32) -> Ray {
     ray.dir = vec2<f32>(cos(ray_angle), sin(ray_angle));
     ray.start = dir.probe_pos + dir.range_start * ray.dir;
     ray.range = dir.range_length;
+    ray.angle_normalized = ray_angle / TAU;
 
     return ray;
 }
@@ -135,10 +141,9 @@ fn raymarch(ray: Ray) -> RayResult {
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
-            // left the screen
-            // just treat the edge of the screen as a shadow for now,
-            // TODO: return radiance from an environment map
-            out.value = vec3<f32>(0.);
+            // left the screen, get light value from the environment map
+            let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
+            out.value = saturate(occlusion) * env_light;
             out.is_radiance = true;
             return out;
         }

@@ -376,11 +376,10 @@ impl Renderer {
         self.gi_pipeline.set_quality(conf);
     }
 
-    /// Set the ambient light color of the scene.
-    /// This is light that is applied everywhere regardless of surface direction.
+    /// Set the environment map for lighting.
     #[inline]
-    pub fn set_ambient_light(&mut self, color: [f32; 3]) {
-        self.gi_pipeline.env_map.set_ambient_light(color);
+    pub fn set_environment_map(&mut self, params: &crate::EnvironmentMap) {
+        self.gi_pipeline.env_map.bake(params);
     }
 
     /// Start drawing a frame.
@@ -437,41 +436,6 @@ impl<'a> Frame<'a> {
         });
     }
 
-    /// Set the ambient light color of the scene.
-    /// This is light that is applied everywhere regardless of surface direction.
-    #[inline]
-    pub fn set_ambient_light(&mut self, light_color: [f32; 3]) {
-        self.ambient_color = light_color;
-    }
-
-    /// Add a directional light.
-    #[inline]
-    pub fn push_directional_light(&mut self, light: crate::DirectionalLight) {
-        self.dir_lights.push(light);
-    }
-
-    /// Add directional lights from an iterator.
-    #[inline]
-    pub fn extend_directional_lights(
-        &mut self,
-        lights: impl Iterator<Item = crate::DirectionalLight>,
-    ) {
-        self.dir_lights.extend(lights);
-    }
-
-    /// Add a point light.
-    #[inline]
-    pub fn push_point_light(&mut self, light: crate::PointLight) {
-        self.point_lights.push(light::GpuPointLight::from(light));
-    }
-
-    /// Add point lights from an iterator.
-    #[inline]
-    pub fn extend_point_lights(&mut self, lights: impl Iterator<Item = crate::PointLight>) {
-        self.point_lights
-            .extend(lights.map(light::GpuPointLight::from));
-    }
-
     /// Draw all meshes in the world.
     pub fn draw_meshes(
         &mut self,
@@ -492,8 +456,6 @@ impl<'a> Frame<'a> {
         let point_lights = std::mem::take(&mut self.point_lights);
         self.renderer.light_man.write_main_lights(main_lights);
         self.renderer.light_man.write_point_lights(point_lights);
-
-        self.renderer.gi_pipeline.env_map.bake();
 
         // compute skins
 

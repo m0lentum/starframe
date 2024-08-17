@@ -59,10 +59,8 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     // graphics
     camera: sf::Camera,
-    ambient_light: [f32; 3],
+    env_map: sf::EnvironmentMap,
     light_quality: sf::LightingQualityConfig,
-    dir_light: sf::DirectionalLight,
-    light_rotating: bool,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     // egui stuff
@@ -90,13 +88,19 @@ impl State {
             state: StateEnum::Playing,
             mouse_grabber: MouseGrabber::new(),
             camera: sf::Camera::default(),
-            ambient_light: [0.005, 0.007, 0.008],
-            light_quality: sf::LightingQualityConfig::default(),
-            dir_light: sf::DirectionalLight {
-                color: [0.7, 0.65, 0.4],
-                direction: sf::uv::Vec3::new(-1.0, -3.0, 2.0),
+            // default environment map simulates a soft moonlight
+            // so that dynamic lights inside of the scene look bright
+            env_map: sf::EnvironmentMap {
+                ambient: [0.005, 0.007, 0.008],
+                horizon: [0.005, 0.011, 0.012],
+                zenith: [0.006, 0.011, 0.017],
+                ground: [0.010, 0.007, 0.006],
+                lights: vec![sf::DirectionalLight {
+                    direction: sf::Vec2::new(-0.2, -1.),
+                    color: [0.075, 0.089, 0.090],
+                }],
             },
-            light_rotating: false,
+            light_quality: sf::LightingQualityConfig::default(),
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
@@ -433,9 +437,35 @@ impl sf::GameState for State {
             });
 
             ui.horizontal(|ui| {
-                ui.color_edit_button_rgb(&mut self.ambient_light);
-                ui.label("Ambient light color");
+                ui.vertical(|ui| {
+                    ui.label("Ambient");
+                    ui.color_edit_button_rgb(&mut self.env_map.ambient);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Sun");
+                    ui.color_edit_button_rgb(&mut self.env_map.lights[0].color);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Zenith");
+                    ui.color_edit_button_rgb(&mut self.env_map.zenith);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Horizon");
+                    ui.color_edit_button_rgb(&mut self.env_map.horizon);
+                });
+                ui.vertical(|ui| {
+                    ui.label("Ground");
+                    ui.color_edit_button_rgb(&mut self.env_map.ground);
+                });
             });
+            ui.add(
+                egui::Slider::new(&mut self.env_map.lights[0].direction.x, -1.0..=1.0)
+                    .text("Sun direction x"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.env_map.lights[0].direction.y, -1.0..=1.0)
+                    .text("Sun direction y"),
+            );
 
             ui.separator();
 
@@ -582,31 +612,13 @@ impl sf::GameState for State {
             game.graphics.update_animations(dt);
         }
 
-        if self.light_rotating {
-            sf::uv::Rotor3::from_rotation_xy(0.02).rotate_vec(&mut self.dir_light.direction);
-        }
+        game.renderer.set_environment_map(&self.env_map);
 
         // scene rendering
 
-        game.renderer.set_ambient_light(self.ambient_light);
-
         let mut frame = game.renderer.begin_frame();
         frame.set_clear_color([0.00802, 0.0137, 0.02732, 1.]);
-        // main sunlight
-        frame.push_directional_light(self.dir_light);
-        // fill light based on the ambient color
-        frame.push_directional_light(sf::DirectionalLight {
-            color: self.ambient_light.map(|channel| channel * 0.5),
-            direction: sf::Vec3::new(
-                -self.dir_light.direction.x,
-                -self.dir_light.direction.y,
-                self.dir_light.direction.z,
-            ),
-        });
-        frame.extend_point_lights(sf::PointLight::gather_from_world(&mut game.world));
         frame.draw_meshes(&mut game.graphics, &mut game.world, &self.camera);
-
-        // forward pass
 
         // egui
 

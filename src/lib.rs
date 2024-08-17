@@ -12,11 +12,14 @@ pub use math::{uv, Angle, DVec2, PhysicsPose, Pose, PoseBuilder, Rotor2, Rotor3,
 pub mod graphics;
 pub use graphics::{
     camera::{Camera, MouseDragCameraController},
-    gi::LightingQualityConfig,
+    gi::{
+        environment_map::{DirectionalLight, EnvironmentMap},
+        LightingQualityConfig,
+    },
     material::{Material, MaterialParams, Texture, TextureData},
     mesh::{ConvexMeshShape, Mesh, MeshData, MeshParams, Skin},
-    AnimationId, Animator, DirectionalLight, GraphicsManager, LineStrip, LineVertex, MaterialId,
-    MeshId, MeshVertex, PointLight, Renderer,
+    AnimationId, Animator, GraphicsManager, LineStrip, LineVertex, MaterialId, MeshId, MeshVertex,
+    PointLight, Renderer,
 };
 
 pub mod physics;

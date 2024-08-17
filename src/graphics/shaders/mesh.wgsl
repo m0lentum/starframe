@@ -33,6 +33,7 @@ var cascade_samp: sampler;
 
 struct Environment {
     ambient_light: vec3<f32>,
+    // TODO: directional lights
 }
 @group(1) @binding(4)
 var<uniform> environment: Environment;

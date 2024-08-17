@@ -7,7 +7,7 @@ use crate::math::uv;
 use wgpu_profiler as wp;
 
 pub(crate) mod environment_map;
-pub use environment_map::EnvironmentMap;
+pub use environment_map::EnvironmentMapData;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightingQualityConfig {
@@ -64,7 +64,7 @@ const TILE_SIZE: u32 = 16;
 
 pub(crate) struct GlobalIlluminationPipeline {
     quality_conf: LightingQualityConfig,
-    pub(super) env_map: EnvironmentMap,
+    pub(super) env_map: EnvironmentMapData,
 
     pipelines: Pipelines,
     pub(super) textures: Textures,
@@ -244,7 +244,7 @@ impl GlobalIlluminationPipeline {
             }),
         };
 
-        let env_map = EnvironmentMap::default();
+        let env_map = EnvironmentMapData::default();
 
         let bind_groups = Self::create_bind_groups(
             cascade_count,
@@ -354,12 +354,15 @@ impl GlobalIlluminationPipeline {
             }
         };
 
-        let float_tex = |binding: u32, visibility: wgpu::ShaderStages, filterable: bool| {
+        let float_tex = |binding: u32,
+                         visibility: wgpu::ShaderStages,
+                         filterable: bool,
+                         view_dimension: wgpu::TextureViewDimension| {
             wgpu::BindGroupLayoutEntry {
                 binding,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable },
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                    view_dimension,
                     multisampled: false,
                 },
                 visibility,
@@ -388,19 +391,21 @@ impl GlobalIlluminationPipeline {
             };
 
         use wgpu::ShaderStages as S;
+        use wgpu::TextureViewDimension as D;
 
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
             entries: &[
-                float_tex(0, S::FRAGMENT, false),
-                uniform_buf(1, size_of::<FrameParams>(), false, S::FRAGMENT),
+                float_tex(0, S::FRAGMENT, false, D::D2),
+                float_tex(1, S::FRAGMENT, true, D::D1),
+                uniform_buf(2, size_of::<FrameParams>(), false, S::FRAGMENT),
             ],
         });
 
         let light_mip = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light mip"),
             entries: &[
-                float_tex(0, S::COMPUTE, false),
+                float_tex(0, S::COMPUTE, false, D::D2),
                 write_storage(1, wgpu::TextureFormat::Rgba8Unorm),
             ],
         });
@@ -409,7 +414,7 @@ impl GlobalIlluminationPipeline {
             label: Some("cascade"),
             entries: &[
                 uniform_buf(0, size_of::<CascadeParams>(), true, S::FRAGMENT),
-                float_tex(1, S::FRAGMENT, true),
+                float_tex(1, S::FRAGMENT, true, D::D2),
                 filtering_sampler(2, S::FRAGMENT),
             ],
         });
@@ -418,8 +423,8 @@ impl GlobalIlluminationPipeline {
             label: Some("cascade render"),
             entries: &[
                 uniform_buf(0, size_of::<RenderParams>(), false, S::FRAGMENT),
-                float_tex(1, S::FRAGMENT, true),
-                float_tex(2, S::FRAGMENT, true),
+                float_tex(1, S::FRAGMENT, true, D::D2),
+                float_tex(2, S::FRAGMENT, true, D::D2),
                 filtering_sampler(3, S::FRAGMENT),
                 uniform_buf(
                     4,
@@ -444,7 +449,7 @@ impl GlobalIlluminationPipeline {
         tex: &Textures,
         buffers: &Buffers,
         bilinear_samp: &wgpu::Sampler,
-        env_map: &EnvironmentMap,
+        env_map: &EnvironmentMapData,
     ) -> BindGroups {
         let device = crate::Renderer::device();
 
@@ -458,6 +463,10 @@ impl GlobalIlluminationPipeline {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&env_map.map_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
                     resource: buffers.frame_params.as_entire_binding(),
                 },
             ],
