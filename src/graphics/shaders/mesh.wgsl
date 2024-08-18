@@ -276,7 +276,17 @@ fn fs_main(
         let plane_isect = normalize(cross(dir_normal, normal));
         let angle = acos(plane_isect.z);
         let dir_coverage = select(angle, PI - angle, normal.z > 0.) / PI;
-        radiance += dir_coverage * rad + (1. - dir_coverage) * rad_opposite;
+        let opposite_coverage = 1. - dir_coverage;
+        // modify the coverage with a smoothstep to create a stronger effect.
+        // this is completely nonphysical (but then again trying to fit 3D normals
+        // into a 2D lighting system is pretty nonphysical to begin with)
+        // and still does not match what a directional light in the xy plane would look like
+        // (since that would have a cutoff at normal.z = 1,
+        // whereas this one still has an effect past that),
+        // but looks pretty good
+        let dir_weight = smoothstep(0.25, 1., dir_coverage);
+        let opposite_weight = smoothstep(0.25, 1., opposite_coverage);
+        radiance += dir_weight * rad + opposite_weight * rad_opposite;
     }
 
     return vec4<f32>(radiance, 1.) * diffuse_color;
