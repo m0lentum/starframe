@@ -267,6 +267,7 @@ fn fs_main(
         vec3<f32>(-SQRT_2, -SQRT_2, 0.),
     );
     var radiance = environment.ambient_light;
+    var total_weight = 0.;
     for (var dir_idx = 0u; dir_idx < 2u; dir_idx++) {
         let dir = directions[dir_idx];
         let dir_normal = directions[dir_idx + 1u];
@@ -287,7 +288,13 @@ fn fs_main(
         let dir_weight = smoothstep(0.25, 1., dir_coverage);
         let opposite_weight = smoothstep(0.25, 1., opposite_coverage);
         radiance += dir_weight * rad + opposite_weight * rad_opposite;
+        total_weight += dir_weight + opposite_weight;
     }
+    // divide by the combined weight of all directions.
+    // this is motivated by the idea that
+    // if there's white light coming from all directions,
+    // regardless of the normal we should get exactly (1, 1, 1) radiance
+    radiance /= total_weight;
 
     return vec4<f32>(radiance, 1.) * diffuse_color;
 }
