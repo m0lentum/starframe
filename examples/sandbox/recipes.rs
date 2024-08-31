@@ -453,6 +453,8 @@ impl Recipe {
                     }),
                     ..Default::default()
                 });
+                let rope_mat = game.graphics.get_material_id("wall").unwrap();
+                game.graphics.set_mesh_material(mesh_id, rope_mat);
                 for particle in &rope.particles {
                     let mesh_ent = game.world.spawn((sf::Pose::default(), mesh_id, *particle));
                     game.hecs_sync.register_body(

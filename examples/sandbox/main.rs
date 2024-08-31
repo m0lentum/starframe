@@ -193,6 +193,7 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
     game.graphics.create_material(
         sf::MaterialParams {
             base_color: Some([0.5, 0.5, 0.5, 1.]),
+            emissive_color: Some([0.5, 0.5, 0.5, 0.1]),
             ..Default::default()
         },
         Some("wall"),
