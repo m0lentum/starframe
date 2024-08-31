@@ -3,6 +3,7 @@
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
+use itertools::izip;
 use rand::{distributions as distr, distributions::Distribution};
 
 use starframe as sf;
@@ -47,6 +48,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 // Types
 //
 
+/// smooth interpolation between environment map presets, just for fun
+#[derive(Clone)]
+enum EnvironmentMapState {
+    Static(sf::EnvironmentMap),
+    Interpolating {
+        start: sf::EnvironmentMap,
+        end: sf::EnvironmentMap,
+        t: f32,
+    },
+}
+
 pub enum StateEnum {
     Playing,
     Paused,
@@ -59,7 +71,7 @@ pub struct State {
     mouse_grabber: MouseGrabber,
     // graphics
     camera: sf::Camera,
-    env_map: sf::EnvironmentMap,
+    env_map: EnvironmentMapState,
     light_quality: sf::LightingQualityConfig,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
@@ -90,16 +102,7 @@ impl State {
             camera: sf::Camera::default(),
             // default environment map simulates a soft moonlight
             // so that dynamic lights inside of the scene look bright
-            env_map: sf::EnvironmentMap {
-                ambient: [0.005, 0.007, 0.008],
-                horizon: [0.005, 0.011, 0.012],
-                zenith: [0.006, 0.011, 0.017],
-                ground: [0.010, 0.007, 0.006],
-                lights: vec![sf::DirectionalLight {
-                    direction: sf::Vec2::new(-0.2, -1.),
-                    color: [0.075, 0.089, 0.090],
-                }],
-            },
+            env_map: EnvironmentMapState::Static(sf::EnvironmentMap::preset_night()),
             light_quality: sf::LightingQualityConfig::default(),
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
@@ -347,6 +350,12 @@ impl sf::GameState for State {
         let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
         let mut light_quality = self.light_quality;
+        let current_env_map = match &self.env_map {
+            EnvironmentMapState::Static(m) => m,
+            EnvironmentMapState::Interpolating { end, .. } => end,
+        };
+        let mut next_env_map = current_env_map.clone();
+
         egui::Window::new("Controls").show(self.egui_state.egui_ctx(), |ui| {
             let framerate = game.get_framerate();
             ui.label(format!("{framerate:.1} ms/frame"));
@@ -438,33 +447,46 @@ impl sf::GameState for State {
             });
 
             ui.horizontal(|ui| {
+                ui.label("Presets");
+                if ui.button("night").clicked() {
+                    next_env_map = sf::EnvironmentMap::preset_night();
+                }
+                if ui.button("sunset").clicked() {
+                    next_env_map = sf::EnvironmentMap::preset_sunset();
+                }
+                if ui.button("day").clicked() {
+                    next_env_map = sf::EnvironmentMap::preset_day();
+                }
+            });
+
+            ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label("Ambient");
-                    ui.color_edit_button_rgb(&mut self.env_map.ambient);
+                    ui.color_edit_button_rgb(&mut next_env_map.ambient);
                 });
                 ui.vertical(|ui| {
                     ui.label("Sun");
-                    ui.color_edit_button_rgb(&mut self.env_map.lights[0].color);
+                    ui.color_edit_button_rgb(&mut next_env_map.lights[0].color);
                 });
                 ui.vertical(|ui| {
                     ui.label("Zenith");
-                    ui.color_edit_button_rgb(&mut self.env_map.zenith);
+                    ui.color_edit_button_rgb(&mut next_env_map.zenith);
                 });
                 ui.vertical(|ui| {
                     ui.label("Horizon");
-                    ui.color_edit_button_rgb(&mut self.env_map.horizon);
+                    ui.color_edit_button_rgb(&mut next_env_map.horizon);
                 });
                 ui.vertical(|ui| {
                     ui.label("Ground");
-                    ui.color_edit_button_rgb(&mut self.env_map.ground);
+                    ui.color_edit_button_rgb(&mut next_env_map.ground);
                 });
             });
             ui.add(
-                egui::Slider::new(&mut self.env_map.lights[0].direction.x, -1.0..=1.0)
+                egui::Slider::new(&mut next_env_map.lights[0].direction.x, -1.0..=1.0)
                     .text("Sun direction x"),
             );
             ui.add(
-                egui::Slider::new(&mut self.env_map.lights[0].direction.y, -1.0..=1.0)
+                egui::Slider::new(&mut next_env_map.lights[0].direction.y, -1.0..=1.0)
                     .text("Sun direction y"),
             );
 
@@ -529,6 +551,14 @@ impl sf::GameState for State {
         if light_quality != self.light_quality {
             game.renderer.set_lighting_quality(light_quality);
             self.light_quality = light_quality;
+        }
+
+        if next_env_map != *current_env_map {
+            self.env_map = EnvironmentMapState::Interpolating {
+                start: current_env_map.clone(),
+                end: next_env_map,
+                t: 0.,
+            };
         }
 
         self.last_egui_output = self.egui_state.egui_ctx().end_frame();
@@ -613,7 +643,39 @@ impl sf::GameState for State {
             game.graphics.update_animations(dt);
         }
 
-        game.renderer.set_environment_map(&self.env_map);
+        if let EnvironmentMapState::Interpolating { t, end, .. } = &mut self.env_map {
+            *t += dt;
+            if *t >= 1. {
+                self.env_map = EnvironmentMapState::Static(end.clone());
+            }
+        }
+
+        let env_map = match &self.env_map {
+            EnvironmentMapState::Static(m) => m.clone(),
+            EnvironmentMapState::Interpolating { start, end, t } => {
+                fn smoothstep(t: f32) -> f32 {
+                    t * t * (3.0 - 2.0 * t)
+                }
+                let t = smoothstep(*t);
+                let lerp_color = |start: [f32; 3], end: [f32; 3]| -> [f32; 3] {
+                    std::array::from_fn(|i| (1. - t) * start[i] + t * end[i])
+                };
+                sf::EnvironmentMap {
+                    ambient: lerp_color(start.ambient, end.ambient),
+                    horizon: lerp_color(start.horizon, end.horizon),
+                    zenith: lerp_color(start.zenith, end.zenith),
+                    ground: lerp_color(start.ground, end.ground),
+                    lights: izip!(&start.lights, &end.lights)
+                        .map(|(s, e)| sf::DirectionalLight {
+                            color: lerp_color(s.color, e.color),
+                            direction: (1. - t) * s.direction + t * e.direction,
+                        })
+                        .collect(),
+                }
+            }
+        };
+
+        game.renderer.set_environment_map(&env_map);
 
         // scene rendering
 

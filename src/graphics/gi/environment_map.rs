@@ -38,6 +38,50 @@ pub struct EnvironmentMap {
     pub lights: Vec<DirectionalLight>,
 }
 
+impl EnvironmentMap {
+    /// Example set of values for a moonlit night scenario.
+    pub fn preset_night() -> Self {
+        Self {
+            ambient: [0.005, 0.007, 0.008],
+            horizon: [0.005, 0.011, 0.012],
+            zenith: [0.006, 0.011, 0.017],
+            ground: [0.010, 0.007, 0.006],
+            lights: vec![DirectionalLight {
+                direction: uv::Vec2::new(-0.2, -1.).normalized(),
+                color: [0.075, 0.089, 0.090],
+            }],
+        }
+    }
+
+    /// Example set of values for a daytime scenario.
+    pub fn preset_day() -> Self {
+        Self {
+            ambient: [0.008, 0.012, 0.014],
+            horizon: [0.096, 0.297, 0.331],
+            zenith: [0.032, 0.125, 0.236],
+            ground: [0.026, 0.017, 0.014],
+            lights: vec![DirectionalLight {
+                direction: uv::Vec2::new(0.2, -1.).normalized(),
+                color: [0.876, 0.829, 0.705],
+            }],
+        }
+    }
+
+    /// Example set of values for a sunset scenario.
+    pub fn preset_sunset() -> Self {
+        Self {
+            ambient: [0.009, 0.013, 0.015],
+            horizon: [0.206, 0.231, 0.129],
+            zenith: [0.077, 0.264, 0.272],
+            ground: [0.023, 0.013, 0.009],
+            lights: vec![DirectionalLight {
+                direction: uv::Vec2::new(0.7, -0.35).normalized(),
+                color: [0.798, 0.370, 0.063],
+            }],
+        }
+    }
+}
+
 /// Map definining additional lighting from off-screen sources.
 pub struct EnvironmentMapData {
     // buffer containing the ambient color and directional lights for shading
