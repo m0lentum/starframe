@@ -91,7 +91,12 @@ fn get_ray(dir: DirectionInfo, subray_idx: u32) -> Ray {
 
     // hardcoded 4 subrays per direction
     let actual_ray_idx = 4u * dir.dir_idx + subray_idx;
-    let ray_angle = (f32(actual_ray_idx) + 0.5) * dir.angle_interval / 4.;
+    // ray angle is offset from the canonical RC angles by 45 degrees
+    // in order to align the quadrants of cascade 0 with the coordinate axes,
+    // which creates more interesting results with our sky model
+    // (with the default angles the contributions from the horizon and zenith
+    // get averaged out, leaving no directional variation in apparent sky color)
+    let ray_angle = (f32(actual_ray_idx) + 0.5) * dir.angle_interval / 4. - TAU / 8.;
     ray.dir = vec2<f32>(cos(ray_angle), sin(ray_angle));
     ray.start = dir.probe_pos + dir.range_start * ray.dir;
     ray.range = dir.range_length;

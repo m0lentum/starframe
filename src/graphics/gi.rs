@@ -221,6 +221,10 @@ impl GlobalIlluminationPipeline {
         let bilinear_samp = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            // repeating address mode so we can have negative ray angles and not worry about it
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             ..Default::default()
         });
 

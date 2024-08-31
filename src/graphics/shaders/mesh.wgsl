@@ -154,15 +154,16 @@ fn raymarch(ray: Ray) -> RayResult {
     var ray_pos = ray.start;
     var pixel_pos = vec2<i32>(ray_pos);
     let pixel_dir = vec2<i32>(sign(ray.dir));
+    // we only raymarch in axis-aligned directions,
+    // so we can simplify things further by only considering that axis in step calculations
+    let axis = select(0u, 1u, pixel_dir.x == 0);
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
-            // left the screen
-            // just treat the edge of the screen as a shadow for now,
-            // TODO: return radiance from an environment map
-            out.value = vec3<f32>(0.);
-            out.is_radiance = true;
+            // left the screen. rather than sampling the environment map,
+            // assume the surrounding probes have already done that
+            out.is_radiance = false;
             return out;
         }
 
@@ -180,11 +181,9 @@ fn raymarch(ray: Ray) -> RayResult {
 
         // move to the next pixel intersected by the ray.
         // simplifying assumption: we started at the center of a pixel 
-        // and move only in diagonal directions,
-        // hence being able to skip across corners instead of moving one axis at a time.
-        // this also reduces texture loads by a ~third which is nice for perf
-        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1));
-        let t_step = abs((x_threshold - ray_pos.x) / ray.dir.x);
+        // and move only in axis-aligned directions.
+        let threshold = f32(select(pixel_pos[axis], pixel_pos[axis] + 1, pixel_dir[axis] == 1));
+        let t_step = abs((threshold - ray_pos[axis]) / ray.dir[axis]);
         t += t_step;
         ray_pos += t_step * ray.dir;
         pixel_pos += pixel_dir;
@@ -223,19 +222,19 @@ fn fs_main(
     // directions are arranged into four tiles, each taking a (0.5, 0.5) chunk of uv space
     let probe_uv = 0.5 * pos_probespace / vec2<f32>(textureDimensions(cascade_tex));
 
-    // directions and radiances in order tr, tl, bl, br
+    // directions and radiances in order r, t, l, b
     var ray_dirs = array(
-        vec2<f32>(SQRT_2, -SQRT_2),
-        vec2<f32>(-SQRT_2, -SQRT_2),
-        vec2<f32>(-SQRT_2, SQRT_2),
-        vec2<f32>(SQRT_2, SQRT_2),
+        vec2<f32>(1., 0.),
+        vec2<f32>(0., -1.),
+        vec2<f32>(-1., 0.),
+        vec2<f32>(0., 1.),
     );
     // uv coordinates to add to probe_uv to sample the corresponding direction
     var sample_offsets = array(
+        vec2<f32>(0., 0.),
         vec2<f32>(0.5, 0.5),
         vec2<f32>(0., 0.5),
         vec2<f32>(0.5, 0.),
-        vec2<f32>(0., 0.),
     );
     var radiances = array(vec3<f32>(0.), vec3<f32>(0.), vec3<f32>(0.), vec3<f32>(0.));
     for (var i = 0u; i < 4u; i++) {
@@ -262,11 +261,11 @@ fn fs_main(
     // intersects with the vertical center planes of each probe quadrant
     // (this is hard to explain without being able to draw a picture..)
     var directions = array(
-        vec3<f32>(SQRT_2, SQRT_2, 0.),
-        vec3<f32>(-SQRT_2, SQRT_2, 0.),
-        vec3<f32>(-SQRT_2, -SQRT_2, 0.),
+        vec3<f32>(1., 0., 0.),
+        vec3<f32>(0., 1., 0.),
+        vec3<f32>(-1., 0., 0.),
     );
-    var radiance = environment.ambient_light;
+    var irradiance = environment.ambient_light;
     var total_weight = 0.;
     for (var dir_idx = 0u; dir_idx < 2u; dir_idx++) {
         let dir = directions[dir_idx];
@@ -287,15 +286,15 @@ fn fs_main(
         // but looks pretty good
         let dir_weight = smoothstep(0.25, 1., dir_coverage);
         let opposite_weight = smoothstep(0.25, 1., opposite_coverage);
-        radiance += dir_weight * rad + opposite_weight * rad_opposite;
+        irradiance += dir_weight * rad + opposite_weight * rad_opposite;
         total_weight += dir_weight + opposite_weight;
     }
     // divide by the combined weight of all directions.
     // this is motivated by the idea that
     // if there's white light coming from all directions,
-    // regardless of the normal we should get exactly (1, 1, 1) radiance
-    radiance /= total_weight;
+    // regardless of the normal we should get exactly (1, 1, 1) irradiance
+    irradiance /= total_weight;
 
-    return vec4<f32>(radiance, 1.) * diffuse_color;
+    return vec4<f32>(irradiance, 1.) * diffuse_color;
 }
 
