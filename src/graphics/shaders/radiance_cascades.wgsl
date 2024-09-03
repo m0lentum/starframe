@@ -153,14 +153,6 @@ fn raymarch(ray: Ray) -> RayResult {
             return out;
         }
 
-        if t > ray.range {
-            // out of range, return the amount of light that got occluded
-            // to merge with the above level
-            out.value = saturate(occlusion);
-            out.is_radiance = false;
-            return out;
-        }
-
         let rad = textureLoad(light_tex, pixel_pos, mip_level);
         if rad.a == 1. {
             // pixel contains an emitter or occluder,
@@ -215,17 +207,31 @@ fn raymarch(ray: Ray) -> RayResult {
             t_step = to_next_y;
             pixel_pos.y += pixel_dir.y;
         }
+        // check for range end here
+        // to get an accurate value of t_step for occlusion
+        var range_overrun = false;
+        if t_step > ray.range - t {
+            t_step = ray.range - t;
+            range_overrun = true;
+        }
         t += t_step;
         ray_pos += t_step * ray.dir;
 
         if rad.a > 0. {
             // volumetric material, accumulate occlusion
-            occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a * f32(pixel_size) * frame.pixel_size_10cm;
+            occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a * t_step * frame.pixel_size_10cm;
             if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
                 out.value = vec3<f32>(0.);
                 out.is_radiance = true;
                 return out;
             }
+        }
+
+        if range_overrun {
+            // return the occlusion value for merging with the above level
+            out.value = saturate(occlusion);
+            out.is_radiance = false;
+            return out;
         }
     }
 
