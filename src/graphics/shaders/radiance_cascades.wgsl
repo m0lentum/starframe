@@ -34,6 +34,7 @@ var cascade_src: texture_2d<f32>;
 var bilinear_samp: sampler;
 
 const TAU: f32 = 6.283185;
+const EPS: f32 = 1e-5;
 
 // information about a direction corresponding to one texel in the cascade texture
 struct DirectionInfo {
@@ -106,96 +107,49 @@ fn get_ray(dir: DirectionInfo, subray_idx: u32) -> Ray {
 }
 
 struct RayResult {
-    value: vec3<f32>,
-    // if the ray didn't reach a light,
-    // the radiance value is interpreted
-    // as occlusion by a translucent material instead
-    is_radiance: bool,
+    radiance: vec3<f32>,
+    transparency: vec3<f32>,
 }
 
 // raymarch on the light texture to gather radiance
 fn raymarch(ray: Ray) -> RayResult {
     var out: RayResult;
 
-    // each cascade begins raymarching on its corresponding mip level
-    // and only accesses lower mips if it finds a light or fully opaque shadow
-    let initial_mip_level = i32(cascade.level);
-    // how far down the mip chain we need to traverse for sufficient precision
-    // depends on the cascade level.
-    // best quality is achieved by going all the way to 0,
-    // but this is a tradeoff in performance.
-    // going halfway down gives good quality,
-    // only causing flickering with very small lights
-    // (which would flicker anyway, to a lesser extent, even if going to 0)
-    let target_mip_level = initial_mip_level / 2;
-    var mip_level = initial_mip_level;
+    // each cascade raymarches on its corresponding mip level
+    // to significantly reduce work at a relatively low cost to quality
+    let mip_level = i32(cascade.level);
     var pixel_size = i32(1u << u32(mip_level));
     var screen_size = vec2<i32>(textureDimensions(light_tex)) / pixel_size;
 
     // multiplicative factor accumulated from translucent materials
     // starts at (1, 1, 1) letting all light through,
     // and gets lower over time
-    var occlusion = vec3<f32>(1.);
+    out.transparency = vec3<f32>(1.);
+    // radiance is accumulated over time from emissive materials
+    out.radiance = vec3<f32>(0.);
+    // ray state
     var t = 0.;
+    var t_step = 0.;
     var ray_pos = ray.start;
     var pixel_pos = vec2<i32>(ray_pos) / pixel_size;
     let pixel_dir = vec2<i32>(sign(ray.dir));
-    // pixel that we were in on the previous level if we've gone down the mip tree
-    var upper_pixel = vec2<i32>(-1);
+    var prev_tex_val = textureLoad(light_tex, pixel_pos, mip_level);
+    var prev_rad = prev_tex_val.rgb * prev_tex_val.a;
+    // TODO: have transparency and emission come from different textures
+    var prev_absorb = prev_tex_val.a * vec3<f32>(1.);
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
         if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
             // left the screen, get light value from the environment map
             let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
-            out.value = saturate(occlusion) * env_light;
-            out.is_radiance = true;
+            out.radiance += out.transparency * env_light;
             return out;
         }
 
-        let rad = textureLoad(light_tex, pixel_pos, mip_level);
-        if rad.a == 1. {
-            // pixel contains an emitter or occluder,
-            // traverse down the tree to the final mip level 
-            // to alleviate flickering when small lights are moving
-            if mip_level == target_mip_level {
-                // remove absorbed wavelengths
-                out.value = saturate(occlusion) * rad.rgb;
-                out.is_radiance = true;
-                return out;
-            } else {
-                // we're in a pixel where one the pixels on a lower mip level
-                // is an occluder or emitter; traverse to the next mip level to find it
-                mip_level -= 1;
-                upper_pixel = pixel_pos;
-                // find which quadrant of the pixel we're in to get the right lower-mip pixel
-                let ray_in_pixel = (ray_pos - vec2<f32>(pixel_pos * pixel_size)) / f32(pixel_size);
-                pixel_pos *= 2;
-                if ray_in_pixel.x > 0.5 {
-                    pixel_pos.x += 1;
-                }
-                if ray_in_pixel.y > 0.5 {
-                    pixel_pos.y += 1;
-                }
-                pixel_size /= 2;
-                screen_size *= 2;
-                continue;
-            }
-        }
-
-        // traverse back up the tree if we've gone down to look for a light pixel and missed
-        let curr_upper = pixel_pos / 2;
-        if mip_level < initial_mip_level && (curr_upper.x != upper_pixel.x || curr_upper.y != upper_pixel.y) {
-            mip_level += 1;
-            upper_pixel /= 2;
-            pixel_pos /= 2;
-            pixel_size *= 2;
-            screen_size /= 2;
-            continue;
-        }
+        let tex_val = textureLoad(light_tex, pixel_pos, mip_level);
 
         // move to the next pixel intersected by the ray
-        var t_step: f32;
         let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1) * pixel_size);
         let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1) * pixel_size);
         let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
@@ -207,30 +161,29 @@ fn raymarch(ray: Ray) -> RayResult {
             t_step = to_next_y;
             pixel_pos.y += pixel_dir.y;
         }
-        // check for range end here
-        // to get an accurate value of t_step for occlusion
-        var range_overrun = false;
-        if t_step > ray.range - t {
-            t_step = ray.range - t;
-            range_overrun = true;
-        }
         t += t_step;
         ray_pos += t_step * ray.dir;
 
-        if rad.a > 0. {
-            // volumetric material, accumulate occlusion
-            occlusion -= (vec3<f32>(1.) - rad.rgb) * rad.a * t_step * frame.pixel_size_10cm;
-            if occlusion.r <= 0. && occlusion.g <= 0. && occlusion.b <= 0. {
-                out.value = vec3<f32>(0.);
-                out.is_radiance = true;
-                return out;
-            }
+        // check for range end here
+        // to get an accurate value of t_step on the final step
+        if t_step > ray.range - t {
+            t_step = ray.range - t;
         }
 
-        if range_overrun {
-            // return the occlusion value for merging with the above level
-            out.value = saturate(occlusion);
-            out.is_radiance = false;
+        let rad = tex_val.a * tex_val.rgb;
+        let scaled_step = t_step * frame.pixel_size_10cm;
+        let absorb = tex_val.a * vec3<f32>(1.);
+
+        let step_transp = exp(-scaled_step * absorb);
+        let step_rad = scaled_step * rad;
+        out.radiance += step_rad * out.transparency;
+        out.transparency = out.transparency * step_transp;
+
+        if t >= ray.range {
+            return out;
+        }
+
+        if out.transparency.r < EPS && out.transparency.g < EPS && out.transparency.b < EPS {
             return out;
         }
     }
@@ -309,13 +262,14 @@ fn fs_main(
     var ray_avg = vec3<f32>(0.);
     for (var subray_idx = 0u; subray_idx < 4u; subray_idx++) {
         var rad = raymarch(get_ray(dir, subray_idx));
-        if !rad.is_radiance && cascade.level < cascade.level_count - 1u {
+        let is_opaque = rad.transparency.r < EPS && rad.transparency.g < EPS && rad.transparency.b < EPS;
+        if !is_opaque && cascade.level < cascade.level_count - 1u {
             // ray didn't hit anything or only hit volumetric occlusion,
             // merge with level above (but only if there is a level above)
             let next = sample_next_cascade(dir, subray_idx);
-            rad.value = rad.value * next.rgb;
+            rad.radiance += rad.transparency * next.rgb;
         }
-        ray_avg += rad.value;
+        ray_avg += rad.radiance;
     }
     ray_avg *= 0.25;
 

@@ -185,7 +185,7 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
             game.graphics.create_material(
                 sf::MaterialParams {
                     base_color: Some(col),
-                    emissive_color: Some([col[0], col[1], col[2], 0.75]),
+                    emissive_color: Some([col[0], col[1], col[2], 0.25]),
                     ..Default::default()
                 },
                 None,
@@ -196,7 +196,7 @@ fn load_common_assets(game: &mut sf::Game) -> GeneratedAssets {
     game.graphics.create_material(
         sf::MaterialParams {
             base_color: Some([0.5, 0.5, 0.5, 1.]),
-            emissive_color: Some([0.5, 0.5, 0.5, 0.1]),
+            emissive_color: Some([0., 0., 0., 0.1]),
             ..Default::default()
         },
         Some("wall"),
@@ -456,6 +456,16 @@ impl sf::GameState for State {
                 }
                 if ui.button("day").clicked() {
                     next_env_map = sf::EnvironmentMap::preset_day();
+                }
+                if ui.button("none").clicked() {
+                    next_env_map = sf::EnvironmentMap {
+                        // add a light with zero so that interpolation still works
+                        lights: vec![sf::DirectionalLight {
+                            color: [0.; 3],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    };
                 }
             });
 
