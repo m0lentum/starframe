@@ -502,14 +502,25 @@ impl<'a> Frame<'a> {
                 device,
                 wgpu::RenderPassDescriptor {
                     label: Some("lights"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.renderer.gi_pipeline.textures.light_mips[0],
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.renderer.gi_pipeline.textures.light_emission,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.renderer.gi_pipeline.textures.light_attenuation,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                // clear with a color that corresponds to a fully transparent material
+                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
                     depth_stencil_attachment: None,
                     occlusion_query_set: None,
                     timestamp_writes: None,

@@ -1,17 +1,12 @@
 struct FrameParams {
-    // size of a light texture pixel
-    // relative to a 10x10cm square in world space,
+    // size of a light texture pixel in worldspace units
     // used to keep absorption by translucent materials
     // consistent with different screen sizes and zoom levels.
-    // 10x10cm chosen because it's a scale where a low alpha
-    // makes typically sized objects almost fully transparent
-    // and high alpha makes them almost fully opaque
-    // (TODO: allow user scaling of the size of this reference square)
-    pixel_size_10cm: f32,
+    pixel_size_world: f32,
 }
 
 @group(0) @binding(0)
-var light_tex: texture_2d<f32>;
+var light_tex: texture_2d_array<f32>;
 @group(0) @binding(1)
 var env_map: texture_1d<f32>;
 @group(0) @binding(2)
@@ -111,6 +106,30 @@ struct RayResult {
     transparency: vec3<f32>,
 }
 
+// take a sample of the emission texture.
+// automatically applies alpha, since it isn't used anywhere afterwards.
+fn sample_emission(uv: vec2<f32>, mip_level: f32) -> vec3<f32> {
+    let val = textureSampleLevel(
+        light_tex,
+        bilinear_samp,
+        uv,
+        0,
+        mip_level,
+    );
+    return val.rgb * val.a;
+}
+
+// take a sample of the attenuation texture.
+fn sample_attenuation(uv: vec2<f32>, mip_level: f32) -> vec4<f32> {
+    return textureSampleLevel(
+        light_tex,
+        bilinear_samp,
+        uv,
+        1,
+        mip_level,
+    );
+}
+
 // raymarch on the light texture to gather radiance
 fn raymarch(ray: Ray) -> RayResult {
     var out: RayResult;
@@ -118,8 +137,8 @@ fn raymarch(ray: Ray) -> RayResult {
     // each cascade raymarches on its corresponding mip level
     // to significantly reduce work at a relatively low cost to quality
     let mip_level = f32(cascade.level);
-    var pixel_size = i32(1u << u32(mip_level));
-    var screen_size = vec2<f32>(textureDimensions(light_tex));
+    let pixel_size = i32(1u << u32(mip_level));
+    let screen_size = vec2<f32>(textureDimensions(light_tex));
 
     // multiplicative factor accumulated from translucent materials
     // starts at (1, 1, 1) letting all light through,
@@ -136,15 +155,9 @@ fn raymarch(ray: Ray) -> RayResult {
     // and turns out to be more performant as well
     var t_step = f32(pixel_size);
     var ray_pos = ray.start;
-    var prev_tex_val = textureSampleLevel(
-        light_tex,
-        bilinear_samp,
-        ray_pos / screen_size,
-        mip_level,
-    );
-    var prev_rad = prev_tex_val.rgb * prev_tex_val.a;
-    // TODO: have transparency and emission come from different textures
-    var prev_absorb = prev_tex_val.a * vec3<f32>(1.);
+    let uv = ray_pos / screen_size;
+    var prev_rad = sample_emission(uv, mip_level);
+    var prev_attn = sample_attenuation(uv, mip_level);
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
@@ -170,30 +183,33 @@ fn raymarch(ray: Ray) -> RayResult {
             return out;
         }
 
-        let tex_val = textureSampleLevel(
-            light_tex,
-            bilinear_samp,
-            ray_pos / screen_size,
-            mip_level,
-        );
-        let next_rad = tex_val.a * tex_val.rgb;
-        let scaled_step = t_step * frame.pixel_size_10cm;
-        let next_absorb = tex_val.a * vec3<f32>(1.);
+        let uv = ray_pos / screen_size;
+        let next_rad = sample_emission(uv, mip_level);
+        let next_attn = sample_attenuation(uv, mip_level);
+        let step_world = t_step * frame.pixel_size_world;
 
         // trapezoidal rule approximation for the transparency and radiance
         // encountered along this step.
-        // source for the formulas:
-        // Hege, H., Höllerer, T., & Stalling, D. (1993).
-        // Volume Rendering - Mathematical Formulas and Algorithmic Aspects,
-        // section 3.1
-        let step_transp = exp(-0.5 * scaled_step * (next_absorb + prev_absorb));
-        let step_rad = 0.5 * scaled_step * (prev_rad * step_transp + next_rad);
+        // sources for the formulas:
+        // - Hege, H., Höllerer, T., & Stalling, D. (1993).
+        // Volume Rendering - Mathematical Formulas and Algorithmic Aspects, section 3.1;
+        // - glTF volume extension spec
+        // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_materials_volume
+        let approx_attn = 0.5 * (next_attn + prev_attn);
+        // alpha channel stores the mean free path
+        let mfp = approx_attn.a;
+        let step_transp = select(
+            vec3<f32>(0.),
+            // this one is c^(x/d) from the glTF spec
+            pow(approx_attn.rgb, vec3<f32>(step_world / mfp)),
+            mfp > 0.,
+        );
+        let step_rad = 0.5 * step_world * (prev_rad * step_transp + next_rad);
         out.radiance += step_rad * out.transparency;
         out.transparency = out.transparency * step_transp;
 
-        prev_tex_val = tex_val;
         prev_rad = next_rad;
-        prev_absorb = next_absorb;
+        prev_attn = next_attn;
 
         if range_overrun {
             return out;

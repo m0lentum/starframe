@@ -25,11 +25,11 @@ struct CascadeRenderParams {
 @group(1) @binding(0)
 var<uniform> light_params: CascadeRenderParams;
 @group(1) @binding(1)
-var light_tex: texture_2d<f32>;
+var light_tex: texture_2d_array<f32>;
 @group(1) @binding(2)
 var cascade_tex: texture_2d<f32>;
 @group(1) @binding(3)
-var cascade_samp: sampler;
+var bilinear_samp: sampler;
 
 struct Environment {
     ambient_light: vec3<f32>,
@@ -71,6 +71,7 @@ const SQRT_2: f32 = 1.41421562;
 const PI: f32 = 3.14159265;
 const HALF_PI: f32 = 1.5707963;
 const PI_3_2: f32 = 4.71238898;
+const EPS: f32 = 1e-5;
 
 //
 // vertex shader
@@ -141,52 +142,98 @@ struct Ray {
 }
 
 struct RayResult {
-    value: vec3<f32>,
-    is_radiance: bool,
+    radiance: vec3<f32>,
+    transparency: vec3<f32>,
 }
 
+// take a sample of the emission texture.
+// automatically applies alpha, since it isn't used anywhere afterwards.
+fn sample_emission(uv: vec2<f32>, mip_level: f32) -> vec3<f32> {
+    let val = textureSampleLevel(
+        light_tex,
+        bilinear_samp,
+        uv,
+        0,
+        mip_level,
+    );
+    return val.rgb * val.a;
+}
+
+// take a sample of the attenuation texture.
+fn sample_attenuation(uv: vec2<f32>, mip_level: f32) -> vec4<f32> {
+    return textureSampleLevel(
+        light_tex,
+        bilinear_samp,
+        uv,
+        1,
+        mip_level,
+    );
+}
+
+// raymarch on the light texture to gather radiance.
+// this is copy-pasted from radiance_cascades.wgsl,
+// see that file for a version with comments.
+// TODO: share shader code using naga_oil
 fn raymarch(ray: Ray) -> RayResult {
     var out: RayResult;
 
-    var screen_size = vec2<i32>(textureDimensions(light_tex));
+    let mip_level = 0.;
+    let pixel_size = 1.;
+    let screen_size = vec2<f32>(textureDimensions(light_tex));
+
+    out.transparency = vec3<f32>(1.);
+    out.radiance = vec3<f32>(0.);
 
     var t = 0.;
+    var t_step = f32(pixel_size);
     var ray_pos = ray.start;
-    var pixel_pos = vec2<i32>(ray_pos);
-    let pixel_dir = vec2<i32>(sign(ray.dir));
-    // we only raymarch in axis-aligned directions,
-    // so we can simplify things further by only considering that axis in step calculations
-    let axis = select(0u, 1u, pixel_dir.x == 0);
-    // bounded loop as a failsafe to avoid hanging
-    // in case there's a bug that causes the raymarch to stop in place
+    let uv = ray_pos / screen_size;
+    var prev_rad = sample_emission(uv, mip_level);
+    var prev_attn = sample_attenuation(uv, mip_level);
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
-        if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
-            // left the screen. rather than sampling the environment map,
-            // assume the surrounding probes have already done that
-            out.is_radiance = false;
-            return out;
+        var range_overrun = false;
+        if t_step > ray.range - t {
+            t_step = ray.range - t;
+            range_overrun = true;
         }
 
-        if t > ray.range {
-            out.is_radiance = false;
-            return out;
-        }
-
-        let rad = textureLoad(light_tex, pixel_pos, 0);
-        if rad.a == 1. {
-            out.value = rad.rgb;
-            out.is_radiance = true;
-            return out;
-        }
-
-        // move to the next pixel intersected by the ray.
-        // simplifying assumption: we started at the center of a pixel 
-        // and move only in axis-aligned directions.
-        let threshold = f32(select(pixel_pos[axis], pixel_pos[axis] + 1, pixel_dir[axis] == 1));
-        let t_step = abs((threshold - ray_pos[axis]) / ray.dir[axis]);
         t += t_step;
         ray_pos += t_step * ray.dir;
-        pixel_pos += pixel_dir;
+
+        if ray_pos.x < 0 || ray_pos.x >= screen_size.x || ray_pos.y < 0 || ray_pos.y >= screen_size.y {
+            // TODO bind the environment map
+            // let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
+            // out.radiance += out.transparency * env_light;
+            // out.transparency = vec3<f32>(0.);
+            return out;
+        }
+
+        let uv = ray_pos / screen_size;
+        let next_rad = sample_emission(uv, mip_level);
+        let next_attn = sample_attenuation(uv, mip_level);
+        let step_world = t_step * 0.1;
+
+        let approx_attn = 0.5 * (next_attn + prev_attn);
+        let mfp = approx_attn.a;
+        let step_transp = select(
+            vec3<f32>(0.),
+            pow(approx_attn.rgb, vec3<f32>(step_world / mfp)),
+            mfp > 0.,
+        );
+        let step_rad = 0.5 * step_world * (prev_rad * step_transp + next_rad);
+        out.radiance += step_rad * out.transparency;
+        out.transparency = out.transparency * step_transp;
+
+        prev_rad = next_rad;
+        prev_attn = next_attn;
+
+        if range_overrun {
+            return out;
+        }
+
+        if out.transparency.r < EPS && out.transparency.g < EPS && out.transparency.b < EPS {
+            return out;
+        }
     }
 
     return out;
@@ -243,14 +290,15 @@ fn fs_main(
         ray.start = in.clip_position.xy;
         ray.range = light_params.probe_range;
         if light_params.skip_raymarch != 0u {
-            radiances[i] = textureSample(cascade_tex, cascade_samp, probe_uv + sample_offsets[i]).rgb;
+            radiances[i] = textureSample(cascade_tex, bilinear_samp, probe_uv + sample_offsets[i]).rgb;
         } else {
             var rad = raymarch(ray);
-            if !rad.is_radiance {
-                let next = textureSample(cascade_tex, cascade_samp, probe_uv + sample_offsets[i]);
-                rad.value = next.rgb;
+            let is_opaque = rad.transparency.r < EPS && rad.transparency.g < EPS && rad.transparency.b < EPS;
+            if !is_opaque {
+                let next = textureSample(cascade_tex, bilinear_samp, probe_uv + sample_offsets[i]);
+                rad.radiance = next.rgb;
             }
-            radiances[i] = rad.value;
+            radiances[i] = rad.radiance;
         }
     }
 

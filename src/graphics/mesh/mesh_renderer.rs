@@ -171,7 +171,10 @@ impl MeshRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
                 entry_point: "fs_emissive",
-                targets: &[Some(wgpu::TextureFormat::Rgba8Unorm.into())],
+                targets: &[
+                    Some(wgpu::TextureFormat::Rgba8Unorm.into()),
+                    Some(wgpu::TextureFormat::Rgba8Unorm.into()),
+                ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -380,7 +383,7 @@ impl MeshRenderer {
         };
 
         let material = manager.get_mesh_material(mesh_id);
-        if matches!(pass_id, PassId::Emissive) && !material.has_emissive {
+        if matches!(pass_id, PassId::Emissive) && !material.participates_in_lighting {
             return;
         }
 

@@ -110,6 +110,10 @@ pub fn load_material<'doc>(
     MaterialParams {
         base_color,
         emissive_color,
+        // TODO: figure out where to put attenuation properties of the material.
+        // the gltf volume extension is cool
+        // but I need this to be a texture which it doesn't have
+        attenuation: None,
         diffuse_tex,
         normal_tex,
     }

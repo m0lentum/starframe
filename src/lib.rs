@@ -16,7 +16,7 @@ pub use graphics::{
         environment_map::{DirectionalLight, EnvironmentMap},
         LightingQualityConfig,
     },
-    material::{Material, MaterialParams, Texture, TextureData},
+    material::{AttenuationParams, Material, MaterialParams, Texture, TextureData},
     mesh::{ConvexMeshShape, Mesh, MeshData, MeshParams, Skin},
     AnimationId, Animator, GraphicsManager, LineStrip, LineVertex, MaterialId, MeshId, MeshVertex,
     PointLight, Renderer,

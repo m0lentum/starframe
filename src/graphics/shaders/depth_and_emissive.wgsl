@@ -15,6 +15,7 @@ var<uniform> camera: CameraUniforms;
 struct MaterialUniforms {
     base_color: vec4<f32>,
     emissive_color: vec4<f32>,
+    attenuation: vec4<f32>,
 }
 
 @group(1) @binding(0)
@@ -66,9 +67,19 @@ fn fs_depth(in: VertexOutput) {
     }
 }
 
+struct LightOutput {
+    @location(0) emission: vec4<f32>,
+    @location(1) attenuation: vec4<f32>,
+}
+
 // light fragment shader only looks at the emissive component of the material
 // (TODO: also allow emissive textures)
 @fragment
-fn fs_emissive(in: VertexOutput) -> @location(0) vec4<f32> {
-    return material.emissive_color;
+fn fs_emissive(in: VertexOutput) -> LightOutput {
+    var out: LightOutput;
+
+    out.emission = material.emissive_color;
+    out.attenuation = material.attenuation;
+
+    return out;
 }

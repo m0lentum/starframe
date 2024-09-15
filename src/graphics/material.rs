@@ -105,25 +105,29 @@ impl MaterialResources {
 pub struct MaterialParams<'a> {
     pub base_color: Option<[f32; 4]>,
     pub emissive_color: Option<[f32; 4]>,
+    pub attenuation: Option<AttenuationParams>,
     pub diffuse_tex: Option<TextureData<'a>>,
     pub normal_tex: Option<TextureData<'a>>,
 }
 
-impl<'a> MaterialParams<'a> {
-    /// Set the material to cast shadows.
-    ///
-    /// This sets emissive color to opaque black,
-    /// which means the material can't both cast shadows and emit light.
-    #[inline]
-    pub fn cast_shadows(mut self) -> Self {
-        self.emissive_color = Some([0., 0., 0., 1.]);
-        self
+#[derive(Clone, Copy, Debug)]
+pub struct AttenuationParams {
+    pub color: [f32; 3],
+    pub distance: f32,
+}
+
+impl Default for AttenuationParams {
+    fn default() -> Self {
+        Self {
+            color: [1.; 3],
+            distance: f32::INFINITY,
+        }
     }
 }
 
 /// A material determines the color and lighting properties of a mesh.
 pub struct Material {
-    pub(crate) has_emissive: bool,
+    pub(crate) participates_in_lighting: bool,
     pub(crate) bind_group: wgpu::BindGroup,
     // textures and buffer stored to avoid dropping them
     _uniform_buf: wgpu::Buffer,
@@ -147,6 +151,8 @@ impl Material {
             contents: MaterialUniforms {
                 base_color: params.base_color.unwrap_or([1.; 4]),
                 emissive_color: params.emissive_color.unwrap_or([0.; 4]),
+                attenuation_color: params.attenuation.unwrap_or_default().color,
+                attenuation_distance: params.attenuation.unwrap_or_default().distance,
             }
             .as_bytes(),
             usage: wgpu::BufferUsages::UNIFORM,
@@ -180,7 +186,8 @@ impl Material {
         });
 
         Self {
-            has_emissive: params.emissive_color.is_some(),
+            participates_in_lighting: params.emissive_color.is_some()
+                || params.attenuation.is_some(),
             bind_group,
             _uniform_buf: uniform_buf,
             _diffuse_tex: diffuse_tex,
@@ -193,6 +200,7 @@ impl Material {
             Self::new(MaterialParams {
                 base_color: Some([1.; 4]),
                 emissive_color: None,
+                attenuation: None,
                 diffuse_tex: None,
                 normal_tex: None,
             })
@@ -210,6 +218,8 @@ impl Material {
 struct MaterialUniforms {
     base_color: [f32; 4],
     emissive_color: [f32; 4],
+    attenuation_color: [f32; 3],
+    attenuation_distance: f32,
 }
 
 #[derive(Debug)]

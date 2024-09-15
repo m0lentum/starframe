@@ -117,6 +117,10 @@ pub(super) struct Textures {
     light_full: wgpu::TextureView,
     // and these are one mip level each, used to generate the mip chain
     pub(super) light_mips: Vec<wgpu::TextureView>,
+    // emission and attenuation layers of light_full
+    // separated to be used as render targets
+    pub(super) light_emission: wgpu::TextureView,
+    pub(super) light_attenuation: wgpu::TextureView,
     // other cascades alternate between two textures of the same size
     cascades: [wgpu::TextureView; 2],
 }
@@ -142,7 +146,7 @@ struct ResizeResults {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, AsBytes, FromBytes)]
 struct FrameParams {
-    pixel_size_10cm: f32,
+    pixel_size_world: f32,
 }
 
 /// Uniform parameters for the cascade computation
@@ -382,25 +386,13 @@ impl GlobalIlluminationPipeline {
                 count: None,
             };
 
-        let write_storage =
-            |binding: u32, format: wgpu::TextureFormat| wgpu::BindGroupLayoutEntry {
-                binding,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                visibility: wgpu::ShaderStages::COMPUTE,
-                count: None,
-            };
-
         use wgpu::ShaderStages as S;
         use wgpu::TextureViewDimension as D;
 
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
             entries: &[
-                float_tex(0, S::FRAGMENT, true, D::D2),
+                float_tex(0, S::FRAGMENT, true, D::D2Array),
                 float_tex(1, S::FRAGMENT, true, D::D1),
                 uniform_buf(2, size_of::<FrameParams>(), false, S::FRAGMENT),
             ],
@@ -409,8 +401,17 @@ impl GlobalIlluminationPipeline {
         let light_mip = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light mip"),
             entries: &[
-                float_tex(0, S::COMPUTE, false, D::D2),
-                write_storage(1, wgpu::TextureFormat::Rgba8Unorm),
+                float_tex(0, S::COMPUTE, false, D::D2Array),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                    },
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    count: None,
+                },
             ],
         });
 
@@ -427,7 +428,9 @@ impl GlobalIlluminationPipeline {
             label: Some("cascade render"),
             entries: &[
                 uniform_buf(0, size_of::<RenderParams>(), false, S::FRAGMENT),
-                float_tex(1, S::FRAGMENT, true, D::D2),
+                // light texture
+                float_tex(1, S::FRAGMENT, true, D::D2Array),
+                // cascade texture
                 float_tex(2, S::FRAGMENT, true, D::D2),
                 filtering_sampler(3, S::FRAGMENT),
                 uniform_buf(
@@ -563,7 +566,8 @@ impl GlobalIlluminationPipeline {
         let light_tex_size = wgpu::Extent3d {
             width: target_size.0,
             height: target_size.1,
-            depth_or_array_layers: 1,
+            // two layers, one for emission and one for absorption
+            depth_or_array_layers: 2,
         };
 
         // compute needed probe and cascade count to get full texture dimensions
@@ -603,6 +607,17 @@ impl GlobalIlluminationPipeline {
             })
             .collect();
         let light_full = light_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // separate views for emission and absorption needed for rendering materials into them
+        let [light_emission, light_absorption] = std::array::from_fn(|i| {
+            light_tex.create_view(&wgpu::TextureViewDescriptor {
+                base_array_layer: i as u32,
+                array_layer_count: Some(1),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        });
 
         let probe_count = [
             (target_size.0 as f32 / config.probe_interval).floor() as u32,
@@ -645,6 +660,8 @@ impl GlobalIlluminationPipeline {
             light_tex_size: (light_tex_size.width, light_tex_size.height),
             textures: Textures {
                 light_full,
+                light_emission,
+                light_attenuation: light_absorption,
                 light_mips,
                 cascades,
             },
@@ -730,7 +747,7 @@ impl GlobalIlluminationPipeline {
         let mut scope = scope.scope("radiance cascades", device);
 
         let frame_params = FrameParams {
-            pixel_size_10cm: 10. / camera.pixels_per_world_unit(self.light_tex_size),
+            pixel_size_world: 1. / camera.pixels_per_world_unit(self.light_tex_size),
         };
         queue.write_buffer(&self.buffers.frame_params, 0, frame_params.as_bytes());
 
