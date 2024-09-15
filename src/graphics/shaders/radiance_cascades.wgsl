@@ -163,6 +163,10 @@ fn raymarch(ray: Ray) -> RayResult {
             // left the screen, get light value from the environment map
             let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
             out.radiance += out.transparency * env_light;
+            // this is treated as a fully opaque light source,
+            // otherwise we'd get stacking effects
+            // when rays from different cascades reach the edge
+            out.transparency = vec3<f32>(0.);
             return out;
         }
 
