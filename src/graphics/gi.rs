@@ -400,7 +400,7 @@ impl GlobalIlluminationPipeline {
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("light texture for cascades"),
             entries: &[
-                float_tex(0, S::FRAGMENT, false, D::D2),
+                float_tex(0, S::FRAGMENT, true, D::D2),
                 float_tex(1, S::FRAGMENT, true, D::D1),
                 uniform_buf(2, size_of::<FrameParams>(), false, S::FRAGMENT),
             ],

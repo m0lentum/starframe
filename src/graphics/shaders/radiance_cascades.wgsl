@@ -117,9 +117,9 @@ fn raymarch(ray: Ray) -> RayResult {
 
     // each cascade raymarches on its corresponding mip level
     // to significantly reduce work at a relatively low cost to quality
-    let mip_level = i32(cascade.level);
+    let mip_level = f32(cascade.level);
     var pixel_size = i32(1u << u32(mip_level));
-    var screen_size = vec2<i32>(textureDimensions(light_tex)) / pixel_size;
+    var screen_size = vec2<f32>(textureDimensions(light_tex));
 
     // multiplicative factor accumulated from translucent materials
     // starts at (1, 1, 1) letting all light through,
@@ -129,50 +129,59 @@ fn raymarch(ray: Ray) -> RayResult {
     out.radiance = vec3<f32>(0.);
     // ray state
     var t = 0.;
-    var t_step = 0.;
+    // step at a constant rate of 1 pixel width per step,
+    // using bilinear sampling on the light texture.
+    // this gives better quality to volumetrics
+    // than manually visiting each pixel along the ray
+    // and turns out to be more performant as well
+    var t_step = f32(pixel_size);
     var ray_pos = ray.start;
-    var pixel_pos = vec2<i32>(ray_pos) / pixel_size;
-    let pixel_dir = vec2<i32>(sign(ray.dir));
-    var prev_tex_val = textureLoad(light_tex, pixel_pos, mip_level);
+    var prev_tex_val = textureSampleLevel(
+        light_tex,
+        bilinear_samp,
+        ray_pos / screen_size,
+        mip_level,
+    );
     var prev_rad = prev_tex_val.rgb * prev_tex_val.a;
     // TODO: have transparency and emission come from different textures
     var prev_absorb = prev_tex_val.a * vec3<f32>(1.);
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
-        // move to the next pixel intersected by the ray
-        let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1) * pixel_size);
-        let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1) * pixel_size);
-        let to_next_x = abs((x_threshold - ray_pos.x) / ray.dir.x);
-        let to_next_y = abs((y_threshold - ray_pos.y) / ray.dir.y);
-        if to_next_x < to_next_y {
-            t_step = to_next_x;
-            pixel_pos.x += pixel_dir.x;
-        } else {
-            t_step = to_next_y;
-            pixel_pos.y += pixel_dir.y;
+        // check for range end here
+        // to get an accurate value of t_step for the final step
+        var range_overrun = false;
+        if t_step > ray.range - t {
+            t_step = ray.range - t;
+            range_overrun = true;
         }
+
         t += t_step;
         ray_pos += t_step * ray.dir;
 
-        if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
+        if ray_pos.x < 0 || ray_pos.x >= screen_size.x || ray_pos.y < 0 || ray_pos.y >= screen_size.y {
             // left the screen, get light value from the environment map
             let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
             out.radiance += out.transparency * env_light;
             return out;
         }
 
-        // check for range end here
-        // to get an accurate value of t_step for the final step
-        if t_step > ray.range - t {
-            t_step = ray.range - t;
-        }
-
-        let tex_val = textureLoad(light_tex, pixel_pos, mip_level);
+        let tex_val = textureSampleLevel(
+            light_tex,
+            bilinear_samp,
+            ray_pos / screen_size,
+            mip_level,
+        );
         let next_rad = tex_val.a * tex_val.rgb;
         let scaled_step = t_step * frame.pixel_size_10cm;
         let next_absorb = tex_val.a * vec3<f32>(1.);
 
+        // trapezoidal rule approximation for the transparency and radiance
+        // encountered along this step.
+        // source for the formulas:
+        // Hege, H., Höllerer, T., & Stalling, D. (1993).
+        // Volume Rendering - Mathematical Formulas and Algorithmic Aspects,
+        // section 3.1
         let step_transp = exp(-0.5 * scaled_step * (next_absorb + prev_absorb));
         let step_rad = 0.5 * scaled_step * (prev_rad * step_transp + next_rad);
         out.radiance += step_rad * out.transparency;
@@ -182,7 +191,7 @@ fn raymarch(ray: Ray) -> RayResult {
         prev_rad = next_rad;
         prev_absorb = next_absorb;
 
-        if t >= ray.range {
+        if range_overrun {
             return out;
         }
 
