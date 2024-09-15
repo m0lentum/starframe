@@ -140,15 +140,6 @@ fn raymarch(ray: Ray) -> RayResult {
     // bounded loop as a failsafe to avoid hanging
     // in case there's a bug that causes the raymarch to stop in place
     for (var loop_idx = 0u; loop_idx < 10000u; loop_idx++) {
-        if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
-            // left the screen, get light value from the environment map
-            let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
-            out.radiance += out.transparency * env_light;
-            return out;
-        }
-
-        let tex_val = textureLoad(light_tex, pixel_pos, mip_level);
-
         // move to the next pixel intersected by the ray
         let x_threshold = f32(select(pixel_pos.x, pixel_pos.x + 1, pixel_dir.x == 1) * pixel_size);
         let y_threshold = f32(select(pixel_pos.y, pixel_pos.y + 1, pixel_dir.y == 1) * pixel_size);
@@ -164,20 +155,32 @@ fn raymarch(ray: Ray) -> RayResult {
         t += t_step;
         ray_pos += t_step * ray.dir;
 
+        if pixel_pos.x < 0 || pixel_pos.x >= screen_size.x || pixel_pos.y < 0 || pixel_pos.y >= screen_size.y {
+            // left the screen, get light value from the environment map
+            let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
+            out.radiance += out.transparency * env_light;
+            return out;
+        }
+
         // check for range end here
-        // to get an accurate value of t_step on the final step
+        // to get an accurate value of t_step for the final step
         if t_step > ray.range - t {
             t_step = ray.range - t;
         }
 
-        let rad = tex_val.a * tex_val.rgb;
+        let tex_val = textureLoad(light_tex, pixel_pos, mip_level);
+        let next_rad = tex_val.a * tex_val.rgb;
         let scaled_step = t_step * frame.pixel_size_10cm;
-        let absorb = tex_val.a * vec3<f32>(1.);
+        let next_absorb = tex_val.a * vec3<f32>(1.);
 
-        let step_transp = exp(-scaled_step * absorb);
-        let step_rad = scaled_step * rad;
+        let step_transp = exp(-0.5 * scaled_step * (next_absorb + prev_absorb));
+        let step_rad = 0.5 * scaled_step * (prev_rad * step_transp + next_rad);
         out.radiance += step_rad * out.transparency;
         out.transparency = out.transparency * step_transp;
+
+        prev_tex_val = tex_val;
+        prev_rad = next_rad;
+        prev_absorb = next_absorb;
 
         if t >= ray.range {
             return out;
