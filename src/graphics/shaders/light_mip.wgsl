@@ -22,7 +22,13 @@ fn main(
         let tr = textureLoad(mip_src, src_top_left + vec2<u32>(1u, 0u), layer, 0);
         let br = textureLoad(mip_src, src_top_left + vec2<u32>(1u, 1u), layer, 0);
         let bl = textureLoad(mip_src, src_top_left + vec2<u32>(0u, 1u), layer, 0);
-        let avg = 0.25 * (tl + tr + br + bl);
+        var avg = 0.25 * (tl + tr + br + bl);
+
+        if layer == 1u {
+            // for attenuation, average on the opacity (inverse of attenuation distance)
+            // which is a linearly varying property
+            avg.a = 1. / (0.25 / tl.a + 0.25 / tr.a + 0.25 / br.a + 0.25 / bl.a);
+        }
 
         textureStore(mip_dst, dst_texel_id, layer, avg);
     }
