@@ -1,6 +1,6 @@
 use crate::{
     graphics::{
-        gi::GlobalIlluminationPipeline,
+        gi::{GlobalIlluminationPipeline, LIGHT_TEX_FMT},
         manager::MeshId,
         material::Material,
         renderer::{DEFAULT_MULTISAMPLE_STATE, DEPTH_FORMAT, SWAPCHAIN_FORMAT},
@@ -171,10 +171,7 @@ impl MeshRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
                 entry_point: "fs_emissive",
-                targets: &[
-                    Some(wgpu::TextureFormat::Rgba8Unorm.into()),
-                    Some(wgpu::TextureFormat::Rgba8Unorm.into()),
-                ],
+                targets: &[Some(LIGHT_TEX_FMT.into()), Some(LIGHT_TEX_FMT.into())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {

@@ -57,7 +57,8 @@ impl Default for LightingQualityConfig {
     }
 }
 
-const CASCADE_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub(crate) const CASCADE_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub(crate) const LIGHT_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Workgroups for compute shaders are arranged in squares of this size.
 const TILE_SIZE: u32 = 16;
@@ -406,7 +407,7 @@ impl GlobalIlluminationPipeline {
                     binding: 1,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        format: LIGHT_TEX_FMT,
                         view_dimension: wgpu::TextureViewDimension::D2Array,
                     },
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -589,7 +590,7 @@ impl GlobalIlluminationPipeline {
             label: Some("lights"),
             dimension: wgpu::TextureDimension::D2,
             size: light_tex_size,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: LIGHT_TEX_FMT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::STORAGE_BINDING,

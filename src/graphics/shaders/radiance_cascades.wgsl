@@ -196,13 +196,11 @@ fn raymarch(ray: Ray) -> RayResult {
         // - glTF volume extension spec
         // https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_materials_volume
         let approx_attn = 0.5 * (next_attn + prev_attn);
-        // alpha channel stores the mean free path
-        let mfp = approx_attn.a;
         let step_transp = select(
             vec3<f32>(0.),
             // this one is c^(x/d) from the glTF spec
-            pow(approx_attn.rgb, vec3<f32>(step_world / mfp)),
-            mfp > 0.,
+            pow(approx_attn.rgb, vec3<f32>(step_world / approx_attn.a)),
+            approx_attn.a > 0.,
         );
         let step_rad = 0.5 * step_world * (prev_rad * step_transp + next_rad);
         out.radiance += step_rad * out.transparency;

@@ -103,16 +103,29 @@ impl MaterialResources {
 /// Creation parameters for a material.
 #[derive(Debug, Clone, Default)]
 pub struct MaterialParams<'a> {
+    /// A constant diffuse color.
+    ///
+    /// If this and `diffuse_tex` are both set,
+    /// the texture values are multiplied by this value.
     pub base_color: Option<[f32; 4]>,
+    /// Amount of light emitted by the material per unit of distance.
     pub emissive_color: Option<[f32; 4]>,
+    /// Parameters for how the material absorbs light.
     pub attenuation: Option<AttenuationParams>,
+    /// Texture data for the diffuse color.
     pub diffuse_tex: Option<TextureData<'a>>,
+    /// Texture data for the normal map.
     pub normal_tex: Option<TextureData<'a>>,
 }
 
+/// Parameters controlling how a material absorbs light.
 #[derive(Clone, Copy, Debug)]
 pub struct AttenuationParams {
+    /// Color that white light will become
+    /// after moving through a `distance`-sized unit of the material.
     pub color: [f32; 3],
+    /// Distance within the material that it takes
+    /// for white light to turn into `self.color`.
     pub distance: f32,
 }
 
@@ -120,7 +133,7 @@ impl Default for AttenuationParams {
     fn default() -> Self {
         Self {
             color: [1.; 3],
-            distance: f32::INFINITY,
+            distance: 1.,
         }
     }
 }
