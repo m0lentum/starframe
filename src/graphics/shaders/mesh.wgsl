@@ -201,10 +201,9 @@ fn raymarch(ray: Ray) -> RayResult {
         ray_pos += t_step * ray.dir;
 
         if ray_pos.x < 0 || ray_pos.x >= screen_size.x || ray_pos.y < 0 || ray_pos.y >= screen_size.y {
-            // TODO bind the environment map
-            // let env_light = textureSample(env_map, bilinear_samp, ray.angle_normalized).rgb;
-            // out.radiance += out.transparency * env_light;
-            // out.transparency = vec3<f32>(0.);
+            // left the screen.
+            // skip the environment map here because the cascade range is very short,
+            // assuming the upper cascade has sampled it already
             return out;
         }
 
@@ -296,7 +295,7 @@ fn fs_main(
             let is_opaque = rad.transparency.r < EPS && rad.transparency.g < EPS && rad.transparency.b < EPS;
             if !is_opaque {
                 let next = textureSample(cascade_tex, bilinear_samp, probe_uv + sample_offsets[i]);
-                rad.radiance = next.rgb;
+                rad.radiance += rad.transparency * next.rgb;
             }
             radiances[i] = rad.radiance;
         }
