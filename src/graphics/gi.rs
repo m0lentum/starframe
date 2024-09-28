@@ -14,8 +14,15 @@ pub struct LightingQualityConfig {
     /// Distance between light probes measured in screenspace pixels.
     /// Lower is better quality and more expensive.
     pub probe_interval: f32,
+    /// Number added to the mip level that raymarching is performed at.
+    /// Positive numbers reduce sharpness of edges while improving performance,
+    /// and negative numbers do the opposite.
+    ///
+    /// A value of 1.0 gives a significant performance boost
+    /// while values higher than that don't have much of a further effect.
+    pub mip_bias: f32,
     /// Whether or not to run raymarching for the final cascade.
-    /// Significantly reduces quality around light emitter edges
+    /// Significantly reduces quality around edges
     /// but improves performance especially when probe spacing is high.
     /// Mainly useful for squeezing out a bit of extra performance
     /// on extremely low settings.
@@ -25,22 +32,27 @@ pub struct LightingQualityConfig {
 impl LightingQualityConfig {
     pub const ULTRA: Self = Self {
         probe_interval: 1.,
+        mip_bias: 0.,
         skip_final_cascade: false,
     };
     pub const HIGH: Self = Self {
         probe_interval: 2.,
+        mip_bias: 0.,
         skip_final_cascade: false,
     };
     pub const MEDIUM: Self = Self {
-        probe_interval: 4.,
+        probe_interval: 2.,
+        mip_bias: 1.,
         skip_final_cascade: false,
     };
     pub const LOW: Self = Self {
-        probe_interval: 6.,
+        probe_interval: 4.,
+        mip_bias: 1.,
         skip_final_cascade: false,
     };
     pub const LOWEST: Self = Self {
         probe_interval: 8.,
+        mip_bias: 2.,
         skip_final_cascade: true,
     };
 
@@ -157,6 +169,7 @@ struct CascadeParams {
     level: u32,
     level_count: u32,
     probe_count: [u32; 2],
+    mip_bias: f32,
     rays_per_probe: u32,
     // spacing and range in the light texture's pixel space,
     // not screen space
@@ -164,7 +177,7 @@ struct CascadeParams {
     range_start: f32,
     range_length: f32,
     // padding to reach the minimum dynamic offset alignment
-    _pad: [u32; 8],
+    _pad: [u32; 7],
 }
 
 impl CascadeParams {
@@ -188,6 +201,7 @@ impl CascadeParams {
             level,
             level_count: cascade_count,
             probe_count: probe_count_c0.map(|c| c / level_exp2),
+            mip_bias: config.mip_bias,
             rays_per_probe: level_exp4,
             linear_spacing: spacing_c0 * level_exp2 as f32,
             // each range is 4 times larger than the previous,
@@ -195,7 +209,7 @@ impl CascadeParams {
             // hence the start distance is the sum of a geometric sequence
             range_start: range_c0 * (1. - level_exp4 as f32) / (1. - 4.),
             range_length: range_c0 * level_exp4 as f32,
-            _pad: [0; 8],
+            _pad: [0; 7],
         }
     }
 }
@@ -207,10 +221,10 @@ struct RenderParams {
     probe_spacing: f32,
     probe_range: f32,
     probe_count: [u32; 2],
+    mip_bias: f32,
     // this is actually a bool
     // but that doesn't work with AsBytes/FromBytes
     skip_raymarch: u32,
-    _pad: u32,
 }
 
 impl GlobalIlluminationPipeline {
@@ -653,8 +667,8 @@ impl GlobalIlluminationPipeline {
             probe_spacing: config.probe_interval,
             probe_range: range_c0,
             probe_count,
+            mip_bias: config.mip_bias,
             skip_raymarch: config.skip_final_cascade as u32,
-            _pad: 0,
         };
 
         ResizeResults {

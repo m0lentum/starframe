@@ -16,6 +16,10 @@ struct CascadeParams {
     level: u32,
     level_count: u32,
     probe_count: vec2<u32>,
+    // number to add to the raymarched mip level
+    // relative to the cascade level,
+    // for perfomance/quality reasons
+    mip_bias: f32,
     rays_per_probe: u32,
     linear_spacing: f32,
     range_start: f32,
@@ -136,8 +140,9 @@ fn raymarch(ray: Ray) -> RayResult {
 
     // each cascade raymarches on its corresponding mip level
     // to significantly reduce work at a relatively low cost to quality
-    let mip_level = f32(cascade.level);
-    let pixel_size = i32(1u << u32(mip_level));
+    let max_mip = f32(cascade.level_count - 1u);
+    let mip_level = clamp(f32(cascade.level) + cascade.mip_bias, 0., max_mip);
+    let pixel_size = exp2(mip_level);
     let screen_size = vec2<f32>(textureDimensions(light_tex));
 
     // multiplicative factor accumulated from translucent materials
@@ -153,7 +158,7 @@ fn raymarch(ray: Ray) -> RayResult {
     // this gives better quality to volumetrics
     // than manually visiting each pixel along the ray
     // and turns out to be more performant as well
-    var t_step = f32(pixel_size);
+    var t_step = pixel_size;
     var ray_pos = ray.start;
     let uv = ray_pos / screen_size;
     var prev_rad = sample_emission(uv, mip_level);

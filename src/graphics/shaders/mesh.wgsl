@@ -17,6 +17,7 @@ struct CascadeRenderParams {
     probe_spacing: f32,
     probe_range: f32,
     probe_count: vec2<u32>,
+    mip_bias: f32,
     // quality option to skip the cascade 0 raymarch done in this shader,
     // improving performance at the cost of worse looking light edges.
     // actually a bool but using that type here breaks alignment
@@ -177,15 +178,15 @@ fn sample_attenuation(uv: vec2<f32>, mip_level: f32) -> vec4<f32> {
 fn raymarch(ray: Ray) -> RayResult {
     var out: RayResult;
 
-    let mip_level = 0.;
-    let pixel_size = 1.;
+    let mip_level = max(0., light_params.mip_bias);
+    let pixel_size = exp2(mip_level);
     let screen_size = vec2<f32>(textureDimensions(light_tex));
 
     out.transparency = vec3<f32>(1.);
     out.radiance = vec3<f32>(0.);
 
     var t = 0.;
-    var t_step = f32(pixel_size);
+    var t_step = pixel_size;
     var ray_pos = ray.start;
     let uv = ray_pos / screen_size;
     var prev_rad = sample_emission(uv, mip_level);

@@ -453,6 +453,11 @@ impl sf::GameState for State {
                     "Lowest",
                 );
             });
+            ui.add(
+                egui::Slider::new(&mut light_quality.mip_bias, -1.0..=3.0)
+                    .step_by(0.5)
+                    .text("Mip bias"),
+            );
 
             ui.horizontal(|ui| {
                 ui.label("Presets");
