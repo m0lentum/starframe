@@ -22,12 +22,12 @@ impl MouseGrabber {
             match self.constraint {
                 Some(handle) => {
                     if let Some(constr) = physics.constraint_set.get_mut(handle) {
-                        constr.offsets[1] = target_point.conv_p();
+                        constr.offsets[1] = target_point.to_precision();
                     }
                 }
                 None => {
                     let Some(body_key) = physics
-                        .query_point(target_point.conv_p())
+                        .query_point(target_point.to_precision())
                         .find_map(|(_, b)| b)
                     else {
                         return;
@@ -36,8 +36,8 @@ impl MouseGrabber {
                         return;
                     };
                     let constr = sf::ConstraintBuilder::new(body_key)
-                        .with_origin(body.pose.inversed() * target_point.conv_p())
-                        .with_target_origin(target_point.conv_p())
+                        .with_origin(body.pose.inversed() * target_point.to_precision())
+                        .with_target_origin(target_point.to_precision())
                         .with_compliance(0.01)
                         .with_linear_damping(10.0)
                         .with_angular_damping(0.5)

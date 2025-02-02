@@ -224,7 +224,7 @@ impl MeshData {
 
                     if shape.circle_r == 0.0 {
                         // just a polygon, all we need are the ends of the edges
-                        vertices.push(next_edge.edge.start.conv_p());
+                        vertices.push(next_edge.edge.start.to_precision());
                     } else {
                         // rounded polygon, generate circle caps offset from the vertex
                         let angle_btw_edges = prev_edge.normal.dot(*next_edge.normal).acos() as f32;
@@ -234,11 +234,11 @@ impl MeshData {
                         let angle_increment =
                             m::Rotor2::from_angle(angle_btw_edges / num_increments);
 
-                        let mut curr_offset = (shape.circle_r * *prev_edge.normal).conv_p();
-                        vertices.push(next_edge.edge.start.conv_p() + curr_offset);
+                        let mut curr_offset = (shape.circle_r * *prev_edge.normal).to_precision();
+                        vertices.push(next_edge.edge.start.to_precision() + curr_offset);
                         for _ in 0..(num_increments as usize) {
                             curr_offset = angle_increment * curr_offset;
-                            vertices.push(next_edge.edge.start.conv_p() + curr_offset);
+                            vertices.push(next_edge.edge.start.to_precision() + curr_offset);
                         }
                     }
                     prev_edge = next_edge;

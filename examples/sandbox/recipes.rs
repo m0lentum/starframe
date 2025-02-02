@@ -318,7 +318,7 @@ impl Recipe {
                         game,
                         Solid {
                             pose: sf::PoseBuilder::new()
-                                .with_position(center.conv_p())
+                                .with_position(center.to_precision())
                                 .with_rotation(sf::Angle::Rad(orientation as f32))
                                 .into(),
                             colliders: &mut [sf::Collider::new_capsule(
@@ -413,8 +413,10 @@ impl Recipe {
                 let b1 = game.world.query_one_mut::<&sf::BodyKey>(b1).copied();
                 let b2 = spawn_block(game, *block2);
                 let b2 = game.world.query_one_mut::<&sf::BodyKey>(b2).copied();
-                let rope_end_1 = (block1.pose.build() * sf::DVec2::from(offset1).conv_p()).conv_p();
-                let rope_end_2 = (block2.pose.build() * sf::DVec2::from(offset2).conv_p()).conv_p();
+                let rope_end_1 =
+                    (block1.pose.build() * sf::DVec2::from(offset1).to_precision()).to_precision();
+                let rope_end_2 =
+                    (block2.pose.build() * sf::DVec2::from(offset2).to_precision()).to_precision();
                 let rope = sf::Rope::spawn_line(
                     sf::RopeParameters {
                         ..Default::default()

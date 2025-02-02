@@ -2,10 +2,6 @@
 
 use std::f32::consts::PI;
 
-// public APIs using 3D single-length floats.
-// physics uses f64 math internally, but we don't expose that to the user
-// to keep physics and graphics APIs compatible
-
 pub use ultraviolet as uv;
 pub use uv::{Bivec2, Bivec3, DBivec2, DRotor2, DVec2, Rotor2, Rotor3, Vec2, Vec3};
 
@@ -412,20 +408,34 @@ pub fn unit_right_normal(u: UnitDVec2) -> UnitDVec2 {
 pub trait ConvertPrecision {
     type Target;
 
-    fn conv_p(&self) -> Self::Target;
+    fn to_precision(&self) -> Self::Target;
 }
 
 impl ConvertPrecision for uv::DVec2 {
     type Target = uv::Vec2;
 
-    fn conv_p(&self) -> Self::Target {
+    fn to_precision(&self) -> Self::Target {
         uv::Vec2::new(self.x as f32, self.y as f32)
     }
 }
 impl ConvertPrecision for uv::Vec2 {
     type Target = uv::DVec2;
 
-    fn conv_p(&self) -> Self::Target {
+    fn to_precision(&self) -> Self::Target {
         uv::DVec2::new(self.x as f64, self.y as f64)
+    }
+}
+
+impl ConvertPrecision for Pose {
+    type Target = PhysicsPose;
+
+    fn to_precision(&self) -> Self::Target {
+        PhysicsPose::new(
+            DVec2::new(self.translation.x as f64, self.translation.y as f64),
+            DRotor2::new(
+                self.rotation.s as f64,
+                DBivec2::new(self.rotation.bv.xy as f64),
+            ),
+        )
     }
 }

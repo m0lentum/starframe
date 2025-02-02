@@ -168,7 +168,10 @@ pub mod controller {
                 let b_body = sf::Body::new_dynamic_const_mass(b_coll.info(), 1.0).with_velocity(
                     sf::Velocity {
                         angular: 0.0,
-                        linear: state.facing.orient_vec(sf::Vec2::new(20.0, 0.1)).conv_p(),
+                        linear: state
+                            .facing
+                            .orient_vec(sf::Vec2::new(20.0, 0.1))
+                            .to_precision(),
                     },
                 );
                 let b_body_key = game.physics.entity_set.insert_body(b_body);
