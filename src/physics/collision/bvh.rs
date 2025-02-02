@@ -208,18 +208,17 @@ impl Bvh {
         }
     }
 
-    pub fn sweep_aabb(&mut self, box_half_size: f64, ray: Ray, max_t: f64) -> AABBSweep<'_> {
+    pub fn sweep_aabb(&mut self, box_half_size: f64, ray: Ray) -> AABBSweep<'_> {
         AABBSweep {
             ray,
             box_half_size,
-            max_t,
             stack: &mut self.shared_ray_stack,
             nodes: &self.nodes,
             next_node: if self.nodes.is_empty() {
                 None
             } else if self.nodes.len() == 1 {
                 ray_aabb(ray, self.nodes[0].aabb.padded(box_half_size)).and_then(|t| {
-                    if t <= max_t {
+                    if t <= ray.length {
                         Some(RayStackEntry { node_idx: 0, t })
                     } else {
                         None
@@ -402,7 +401,6 @@ pub struct AABBSweep<'a> {
     // params
     ray: Ray,
     box_half_size: f64,
-    max_t: f64,
     // state
     stack: &'a mut RayStack,
     nodes: &'a [Node],
@@ -440,12 +438,12 @@ impl Iterator for AABBSweep<'_> {
                                 (t_r, right, t_l, left)
                             };
 
-                            if closer_t >= self.max_t {
+                            if closer_t >= self.ray.length {
                                 // reached end of ray, go back in the stack
                                 self.next_node = self.stack.pop();
                                 continue;
                             }
-                            if farther_t < self.max_t {
+                            if farther_t < self.ray.length {
                                 // both children are along the ray, stack the farther one
                                 // to return to later
                                 self.stack.push(farther_idx, farther_t);
@@ -464,7 +462,7 @@ impl Iterator for AABBSweep<'_> {
                             }
                         }
                         (Some(t_l), None) => {
-                            if t_l >= self.max_t {
+                            if t_l >= self.ray.length {
                                 self.next_node = self.stack.pop();
                                 continue;
                             }
@@ -480,7 +478,7 @@ impl Iterator for AABBSweep<'_> {
                             }
                         }
                         (None, Some(t_r)) => {
-                            if t_r >= self.max_t {
+                            if t_r >= self.ray.length {
                                 self.next_node = self.stack.pop();
                                 continue;
                             }

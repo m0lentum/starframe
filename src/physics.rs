@@ -1252,8 +1252,8 @@ impl PhysicsWorld {
     /// If you need to also know if the ray starts inside something, use
     /// [`query_point_body`][Self::query_point_body] in addition to this.
     #[inline]
-    pub fn raycast(&mut self, ray: Ray, max_distance: f64) -> Option<CastHit> {
-        self.spherecast(0.0, ray, max_distance)
+    pub fn raycast(&mut self, ray: Ray) -> Option<CastHit> {
+        self.spherecast(0.0, ray)
     }
 
     /// Find the first solid collider intersected by a sphere when swept along the given ray.
@@ -1263,15 +1263,14 @@ impl PhysicsWorld {
     /// through an object that's up close. I'm not sure what the cleanest way to handle this
     /// is (TODO think about this), but for now you can use [`query_shape`][Self::query_shape]
     /// with a circle, similarly to how you would check a point when raycasting.
-    pub fn spherecast(&mut self, radius: f64, ray: Ray, max_distance: f64) -> Option<CastHit> {
+    pub fn spherecast(&mut self, radius: f64, ray: Ray) -> Option<CastHit> {
         // BVH traversal returns colliders in spatial order by their AABBs,
         // but this may not return the actual closest thing first if there are
         // small things near something large and diagonal.
         // we need to keep traversing the BVH until we get something farther than currently found t
         let mut closest_hit: Option<CastHit> = None;
-        for leaf in self.bvh.sweep_aabb(radius, ray, max_distance) {
-            if leaf.t >= max_distance || matches!(closest_hit, Some(closest) if leaf.t >= closest.t)
-            {
+        for leaf in self.bvh.sweep_aabb(radius, ray) {
+            if leaf.t >= ray.length || matches!(closest_hit, Some(closest) if leaf.t >= closest.t) {
                 return closest_hit;
             }
 
@@ -1293,7 +1292,7 @@ impl PhysicsWorld {
             };
 
             let hit = match collision::query::spherecast_collider(ray, radius, pose, *coll) {
-                Some(hit) if hit.t <= max_distance => hit,
+                Some(hit) if hit.t <= ray.length => hit,
                 _ => continue,
             };
             let already_found_closer = matches!(closest_hit, Some(closest) if closest.t <= hit.t);

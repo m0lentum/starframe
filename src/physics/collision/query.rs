@@ -32,6 +32,7 @@ pub fn point_collider_bool(point: uv::DVec2, pose: PhysicsPose, coll: Collider) 
 pub struct Ray {
     pub start: uv::DVec2,
     pub dir: UnitDVec2,
+    pub length: f64,
 }
 impl std::ops::Mul<Ray> for PhysicsPose {
     type Output = Ray;
@@ -40,6 +41,7 @@ impl std::ops::Mul<Ray> for PhysicsPose {
         Ray {
             start: self * rhs.start,
             dir: self.rotation * rhs.dir,
+            length: rhs.length,
         }
     }
 }
@@ -55,6 +57,7 @@ impl Ray {
         Self {
             start: uv::DVec2::new(self.start.x, -self.start.y),
             dir: UnitDVec2::new_unchecked(uv::DVec2::new(self.dir.x, -self.dir.y)),
+            length: self.length,
         }
     }
 
@@ -63,6 +66,7 @@ impl Ray {
         Self {
             start: uv::DVec2::new(-self.start.x, self.start.y),
             dir: UnitDVec2::new_unchecked(uv::DVec2::new(-self.dir.x, self.dir.y)),
+            length: self.length,
         }
     }
 }
@@ -91,6 +95,10 @@ pub fn ray_aabb(ray: Ray, aabb: AABB) -> Option<f64> {
             return None;
         }
     }
+    if t_enter > ray.length {
+        return None;
+    }
+
     Some(t_enter)
 }
 
@@ -297,14 +305,17 @@ fn ray_circle(ray: Ray, circ_pos: uv::DVec2, r: f64) -> Option<CastHit> {
         return None;
     }
     let t = -b - discr.sqrt();
-    if t >= 0.0 {
-        let point = ray.point_at_t(t);
-        let normal = UnitDVec2::new_normalize(point - circ_pos);
-        Some(CastHit { t, normal, point })
-    } else {
+    if t < 0. {
         // ray started inside the circle, we consider that a miss here
-        None
+        return None;
     }
+    if t > ray.length {
+        return None;
+    }
+
+    let point = ray.point_at_t(t);
+    let normal = UnitDVec2::new_normalize(point - circ_pos);
+    Some(CastHit { t, normal, point })
 }
 
 #[cfg(test)]
@@ -321,6 +332,7 @@ mod tests {
             Ray {
                 start: uv::DVec2::zero(),
                 dir: UnitDVec2::unit_y(),
+                length: f64::MAX,
             },
             uv::DVec2::new(0.0, 2.0),
             1.0,
@@ -330,6 +342,7 @@ mod tests {
             Ray {
                 start: uv::DVec2::zero(),
                 dir: UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0)),
+                length: f64::MAX,
             },
             uv::DVec2::new(0.0, 2.0),
             1.0,
@@ -362,6 +375,7 @@ mod tests {
         let mut ray = Ray {
             start: uv::DVec2::new(0.0, -2.0),
             dir: UnitDVec2::unit_y(),
+            length: f64::MAX,
         };
         should_hit(ray, 1.0);
         ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
@@ -399,6 +413,7 @@ mod tests {
         let mut ray = Ray {
             start: uv::DVec2::new(0.0, -2.0),
             dir: UnitDVec2::unit_y(),
+            length: f64::MAX,
         };
         should_hit(ray, 1.0);
         ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
@@ -440,6 +455,7 @@ mod tests {
         let mut ray = Ray {
             start: uv::DVec2::new(0.0, -3.0),
             dir: UnitDVec2::unit_y(),
+            length: f64::MAX,
         };
         should_hit(ray, 1.0);
         ray.dir = UnitDVec2::new_normalize(uv::DVec2::new(1.0, 1.0));
@@ -476,6 +492,7 @@ mod tests {
                 // this could be more robustly tested with fuzzing but I can't be bothered
                 start: uv::DVec2::zero(),
                 dir: UnitDVec2::unit_x(),
+                length: f64::MAX,
             };
             let mut angle = 0.0;
             while angle < 2.0 * std::f64::consts::TAU {
