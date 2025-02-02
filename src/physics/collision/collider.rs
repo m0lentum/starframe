@@ -921,6 +921,16 @@ impl Default for PhysicsMaterial {
 }
 
 impl PhysicsMaterial {
+    /// Preset for a material that doesn't experience friction and doesn't bounce.
+    /// Commonly used for game characters.
+    pub fn frictionless_unelastic() -> Self {
+        Self {
+            static_friction_coef: None,
+            dynamic_friction_coef: None,
+            restitution_coef: 0.,
+        }
+    }
+
     /// Get the static friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.
