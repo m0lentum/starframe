@@ -269,8 +269,9 @@ impl GraphicsManager {
                 // and need a working test case
                 // so I'll leave fixing that to another commit
                 let root_transform = node_poses[root_joint.index()].into_homogeneous_matrix();
-                let loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
+                let mut loaded_skin = gltf_import::load_skin(&bufs, gltf_skin, root_transform);
                 // evaluate the initial joint matrices in case this skin is used without animation
+                loaded_skin.update_global_poses();
                 loaded_skin.evaluate_joint_matrices();
                 self.skins.insert(loaded_skin)
             })
