@@ -171,7 +171,16 @@ impl MeshRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &depth_shader,
                 entry_point: "fs_emissive",
-                targets: &[Some(LIGHT_TEX_FMT.into()), Some(LIGHT_TEX_FMT.into())],
+                targets: &[
+                    // alpha blending for lights
+                    // because they're overlaid on top of previous frame's reflected light
+                    Some(wgpu::ColorTargetState {
+                        format: LIGHT_TEX_FMT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                    Some(LIGHT_TEX_FMT.into()),
+                ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
@@ -209,11 +218,20 @@ impl MeshRenderer {
             fragment: Some(wgpu::FragmentState {
                 module: &main_shader,
                 entry_point: "fs_main",
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: SWAPCHAIN_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::COLOR,
-                })],
+                targets: &[
+                    Some(wgpu::ColorTargetState {
+                        format: SWAPCHAIN_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::COLOR,
+                    }),
+                    // secondary target to write lighting results into
+                    // for next frame's reflected light
+                    Some(wgpu::ColorTargetState {
+                        format: LIGHT_TEX_FMT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {

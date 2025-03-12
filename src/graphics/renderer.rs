@@ -165,7 +165,7 @@ impl Renderer {
         let emissive_tex = Self::create_emissive_texture(window_size);
         let emissive_view = emissive_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let gi_pipeline = gi::GlobalIlluminationPipeline::new(config.lighting_quality);
+        let gi_pipeline = gi::GlobalIlluminationPipeline::new(config.lighting);
         let mesh_renderer = MeshRenderer::new(&gi_pipeline);
         let skin_pl = SkinPipeline::new();
 
@@ -324,10 +324,19 @@ impl Renderer {
         }
     }
 
+    /// Change lighting configuration at runtime.
+    #[inline]
+    pub fn set_lighting_config(&mut self, conf: gi::LightingConfig) {
+        self.gi_pipeline.set_config(conf);
+    }
+
     /// Change lighting quality parameters at runtime.
     #[inline]
-    pub fn set_lighting_quality(&mut self, conf: gi::LightingQualityConfig) {
-        self.gi_pipeline.set_quality(conf);
+    pub fn set_lighting_quality(&mut self, quality: gi::LightingQualityConfig) {
+        self.gi_pipeline.set_config(gi::LightingConfig {
+            quality,
+            ..self.gi_pipeline.config
+        });
     }
 
     /// Set the environment map for lighting.
@@ -434,6 +443,27 @@ impl Frame<'_> {
         // render light emitters and occluders
 
         {
+            // seed the light texture with last frame's reflected light
+            scope.copy_texture_to_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &self.renderer.gi_pipeline.textures.reflected_light_tex,
+                    mip_level: 0,
+                    aspect: wgpu::TextureAspect::All,
+                    origin: wgpu::Origin3d::ZERO,
+                },
+                wgpu::ImageCopyTexture {
+                    texture: &self.renderer.gi_pipeline.textures.light_tex,
+                    mip_level: 0,
+                    aspect: wgpu::TextureAspect::All,
+                    origin: wgpu::Origin3d::ZERO,
+                },
+                wgpu::Extent3d {
+                    width: self.renderer.gi_pipeline.textures.light_tex.width(),
+                    height: self.renderer.gi_pipeline.textures.light_tex.height(),
+                    depth_or_array_layers: 1,
+                },
+            );
+
             let mut rpass = scope.scoped_render_pass(
                 "render lights",
                 device,
@@ -444,7 +474,7 @@ impl Frame<'_> {
                             view: &self.renderer.gi_pipeline.textures.light_emission,
                             resolve_target: None,
                             ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                load: wgpu::LoadOp::Load,
                                 store: wgpu::StoreOp::Store,
                             },
                         }),
@@ -485,11 +515,23 @@ impl Frame<'_> {
                 device,
                 wgpu::RenderPassDescriptor {
                     label: None,
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &self.renderer.msaa_view,
-                        resolve_target: Some(&self.target_view),
-                        ops: Self::ops(self.clear_color.take()),
-                    })],
+                    color_attachments: &[
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.renderer.msaa_view,
+                            resolve_target: Some(&self.target_view),
+                            ops: Self::ops(self.clear_color.take()),
+                        }),
+                        // color is also rendered into the light emission texture
+                        // to be used as next frame's reflected light
+                        Some(wgpu::RenderPassColorAttachment {
+                            view: &self.renderer.gi_pipeline.textures.reflected_light,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        }),
+                    ],
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &self.renderer.depth_view,
                         depth_ops: Some(wgpu::Operations {

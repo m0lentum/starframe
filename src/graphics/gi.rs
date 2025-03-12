@@ -9,6 +9,32 @@ use wgpu_profiler as wp;
 pub(crate) mod environment_map;
 pub use environment_map::EnvironmentMapData;
 
+use super::renderer::MSAA_SAMPLES;
+
+/// Configuration pertaining to lighting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightingConfig {
+    /// Quality settings.
+    pub quality: LightingQualityConfig,
+    /// How much of the light in the scene is fed back into next frame's lighting.
+    /// Must be between 0 and 1; 0.05 by default.
+    ///
+    /// An ideal value depends on the contents of your scene.
+    /// Setting this too high will cause lights
+    /// to feed back into themselves and get blown out;
+    /// a low value will make the effect subtle and hard to notice.
+    pub reflection_strength: f32,
+}
+
+impl Default for LightingConfig {
+    fn default() -> Self {
+        Self {
+            quality: LightingQualityConfig::default(),
+            reflection_strength: 0.05,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LightingQualityConfig {
     /// Distance between light probes measured in screenspace pixels.
@@ -76,7 +102,7 @@ pub(crate) const LIGHT_TEX_FMT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8
 const TILE_SIZE: u32 = 16;
 
 pub(crate) struct GlobalIlluminationPipeline {
-    quality_conf: LightingQualityConfig,
+    pub(super) config: LightingConfig,
     pub(super) env_map: EnvironmentMapData,
 
     pipelines: Pipelines,
@@ -128,12 +154,18 @@ pub(super) struct Textures {
     // the rest of the levels are used to accelerate raymarching)
     // this view has all the mip levels
     light_full: wgpu::TextureView,
+    pub(super) light_tex: wgpu::Texture,
     // and these are one mip level each, used to generate the mip chain
     pub(super) light_mips: Vec<wgpu::TextureView>,
     // emission and attenuation layers of light_full
     // separated to be used as render targets
     pub(super) light_emission: wgpu::TextureView,
     pub(super) light_attenuation: wgpu::TextureView,
+    // render target to draw lighting results for reflected light
+    // (this needs to be a separate texture from `light_tex`
+    // because it needs to be multisampled)
+    pub(super) reflected_light_tex: wgpu::Texture,
+    pub(super) reflected_light: wgpu::TextureView,
     // other cascades alternate between two textures of the same size
     cascades: [wgpu::TextureView; 2],
 }
@@ -225,16 +257,18 @@ struct RenderParams {
     // this is actually a bool
     // but that doesn't work with AsBytes/FromBytes
     skip_raymarch: u32,
+    reflection_strength: f32,
+    _pad: u32,
 }
 
 impl GlobalIlluminationPipeline {
-    pub fn new(quality_conf: LightingQualityConfig) -> Self {
+    pub fn new(config: LightingConfig) -> Self {
         let device = crate::Renderer::device();
 
         let bind_group_layouts = Self::create_bind_group_layouts();
 
         let window_size = crate::Renderer::window().inner_size();
-        let resizables = Self::create_resizables(window_size.into(), quality_conf);
+        let resizables = Self::create_resizables(window_size.into(), config);
         let cascade_count = resizables.cascade_params.len();
 
         let bilinear_samp = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -281,7 +315,7 @@ impl GlobalIlluminationPipeline {
         let pipelines = Self::create_pipelines(&bind_group_layouts);
 
         Self {
-            quality_conf,
+            config,
             env_map,
             pipelines,
             textures: resizables.textures,
@@ -575,7 +609,7 @@ impl GlobalIlluminationPipeline {
         }
     }
 
-    fn create_resizables(target_size: (u32, u32), config: LightingQualityConfig) -> ResizeResults {
+    fn create_resizables(target_size: (u32, u32), config: LightingConfig) -> ResizeResults {
         let device = crate::Renderer::device();
 
         let light_tex_size = wgpu::Extent3d {
@@ -590,7 +624,7 @@ impl GlobalIlluminationPipeline {
         let screen_diag = uv::Vec2::new(target_size.0 as f32, target_size.1 as f32).mag();
         // iterative computation for cascade count,
         // the number needed is the minimum where a probe reaches all the way across the screen
-        let range_c0 = config.probe_range();
+        let range_c0 = config.quality.probe_range();
         let mut range = range_c0;
         let mut cascade_count = 1;
         while range < screen_diag {
@@ -606,6 +640,7 @@ impl GlobalIlluminationPipeline {
             size: light_tex_size,
             format: LIGHT_TEX_FMT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::STORAGE_BINDING,
             view_formats: &[],
@@ -623,7 +658,7 @@ impl GlobalIlluminationPipeline {
             .collect();
         let light_full = light_tex.create_view(&wgpu::TextureViewDescriptor::default());
         // separate views for emission and absorption needed for rendering materials into them
-        let [light_emission, light_absorption] = std::array::from_fn(|i| {
+        let [light_emission, light_attenuation] = std::array::from_fn(|i| {
             light_tex.create_view(&wgpu::TextureViewDescriptor {
                 base_array_layer: i as u32,
                 array_layer_count: Some(1),
@@ -634,9 +669,26 @@ impl GlobalIlluminationPipeline {
             })
         });
 
+        // texture for rendering last frame's lighting results
+        let reflected_light_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("reflected light"),
+            dimension: wgpu::TextureDimension::D2,
+            size: wgpu::Extent3d {
+                depth_or_array_layers: 1,
+                ..light_tex_size
+            },
+            format: LIGHT_TEX_FMT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+            mip_level_count: 1,
+            sample_count: MSAA_SAMPLES,
+        });
+        let reflected_light =
+            reflected_light_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
         let probe_count = [
-            (target_size.0 as f32 / config.probe_interval).floor() as u32,
-            (target_size.1 as f32 / config.probe_interval).floor() as u32,
+            (target_size.0 as f32 / config.quality.probe_interval).floor() as u32,
+            (target_size.1 as f32 / config.quality.probe_interval).floor() as u32,
         ];
 
         let cascade_tex = || {
@@ -660,24 +712,31 @@ impl GlobalIlluminationPipeline {
         let cascades = [cascade_tex(), cascade_tex()];
 
         let cascade_params = (0..cascade_count)
-            .map(|level| CascadeParams::for_level(level, cascade_count, probe_count, config))
+            .map(|level| {
+                CascadeParams::for_level(level, cascade_count, probe_count, config.quality)
+            })
             .collect();
 
         let render_params = RenderParams {
-            probe_spacing: config.probe_interval,
+            probe_spacing: config.quality.probe_interval,
             probe_range: range_c0,
             probe_count,
-            mip_bias: config.mip_bias,
-            skip_raymarch: config.skip_final_cascade as u32,
+            mip_bias: config.quality.mip_bias,
+            skip_raymarch: config.quality.skip_final_cascade as u32,
+            reflection_strength: config.reflection_strength,
+            _pad: 0,
         };
 
         ResizeResults {
             light_tex_size: (light_tex_size.width, light_tex_size.height),
             textures: Textures {
+                light_tex,
                 light_full,
                 light_emission,
-                light_attenuation: light_absorption,
+                light_attenuation,
                 light_mips,
+                reflected_light,
+                reflected_light_tex,
                 cascades,
             },
             cascade_params,
@@ -690,7 +749,7 @@ impl GlobalIlluminationPipeline {
         let device = crate::Renderer::device();
         let queue = crate::Renderer::queue();
 
-        let res = Self::create_resizables(new_size.into(), self.quality_conf);
+        let res = Self::create_resizables(new_size.into(), self.config);
         // make room in the params buffer if we need more cascades than before
         if res.cascade_params.len() > self.cascade_count {
             self.buffers.cascade_params =
@@ -721,9 +780,9 @@ impl GlobalIlluminationPipeline {
         self.last_screen_size = new_size;
     }
 
-    pub fn set_quality(&mut self, conf: LightingQualityConfig) {
-        let needs_resize = self.quality_conf != conf;
-        self.quality_conf = conf;
+    pub fn set_config(&mut self, conf: LightingConfig) {
+        let needs_resize = self.config != conf;
+        self.config = conf;
         if needs_resize {
             self.resize(self.last_screen_size);
         }

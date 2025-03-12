@@ -22,6 +22,7 @@ struct CascadeRenderParams {
     // improving performance at the cost of worse looking light edges.
     // actually a bool but using that type here breaks alignment
     skip_raymarch: u32,
+    reflection_strength: f32,
 }
 @group(1) @binding(0)
 var<uniform> light_params: CascadeRenderParams;
@@ -239,10 +240,15 @@ fn raymarch(ray: Ray) -> RayResult {
     return out;
 }
 
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) reflected_light: vec4<f32>,
+}
+
 @fragment
-fn fs_main(
-    in: VertexOutput
-) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FragmentOutput {
+    var out: FragmentOutput;
+
     // get the necessary parameters
 
     let diffuse_color = material.base_color * textureSample(t_diffuse, s_diffuse, in.tex_coords);
@@ -343,6 +349,9 @@ fn fs_main(
     // regardless of the normal we should get exactly (1, 1, 1) irradiance
     irradiance /= total_weight;
 
-    return vec4<f32>(irradiance, 1.) * diffuse_color;
+    out.color = vec4<f32>(irradiance, 1.) * diffuse_color;
+    out.reflected_light = vec4<f32>(light_params.reflection_strength * out.color.rgb, diffuse_color.a);
+
+    return out;
 }
 

@@ -14,7 +14,7 @@ pub use graphics::{
     camera::{Camera, MouseDragCameraController},
     gi::{
         environment_map::{DirectionalLight, EnvironmentMap},
-        LightingQualityConfig,
+        LightingConfig, LightingQualityConfig,
     },
     material::{AttenuationParams, Material, MaterialParams, Texture, TextureData},
     mesh::{ConvexMeshShape, Mesh, MeshData, MeshParams, Skin},

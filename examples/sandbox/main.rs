@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         graphics: sf::GraphicsConfig {
             fps: 60,
             use_vsync: std::env::var("NO_VSYNC").is_err(),
-            lighting_quality: sf::LightingQualityConfig::default(),
+            lighting: sf::LightingConfig::default(),
         },
     })?;
 
@@ -72,7 +72,7 @@ pub struct State {
     // graphics
     camera: sf::Camera,
     env_map: EnvironmentMapState,
-    light_quality: sf::LightingQualityConfig,
+    light_conf: sf::LightingConfig,
     gen_assets: GeneratedAssets,
     camera_ctl: sf::MouseDragCameraController,
     // egui stuff
@@ -100,7 +100,7 @@ impl State {
             // default environment map simulates a soft moonlight
             // so that dynamic lights inside of the scene look bright
             env_map: EnvironmentMapState::Static(sf::EnvironmentMap::preset_night()),
-            light_quality: sf::LightingQualityConfig::default(),
+            light_conf: sf::LightingConfig::default(),
             gen_assets,
             camera_ctl: sf::MouseDragCameraController {
                 activate_button: sf::MouseButton::Middle.into(),
@@ -343,7 +343,7 @@ impl sf::GameState for State {
         let mut reload = false;
         let mut step_one = false;
         let mut shape_to_spawn: Option<sf::ColliderPolygon> = None;
-        let mut light_quality = self.light_quality;
+        let mut light_conf = self.light_conf;
         let current_env_map = match &self.env_map {
             EnvironmentMapState::Static(m) => m,
             EnvironmentMapState::Interpolating { end, .. } => end,
@@ -422,27 +422,40 @@ impl sf::GameState for State {
 
             ui.horizontal(|ui| {
                 ui.radio_value(
-                    &mut light_quality,
+                    &mut light_conf.quality,
                     sf::LightingQualityConfig::ULTRA,
                     "Ultra",
                 );
-                ui.radio_value(&mut light_quality, sf::LightingQualityConfig::HIGH, "High");
                 ui.radio_value(
-                    &mut light_quality,
+                    &mut light_conf.quality,
+                    sf::LightingQualityConfig::HIGH,
+                    "High",
+                );
+                ui.radio_value(
+                    &mut light_conf.quality,
                     sf::LightingQualityConfig::MEDIUM,
                     "Medium",
                 );
-                ui.radio_value(&mut light_quality, sf::LightingQualityConfig::LOW, "Low");
                 ui.radio_value(
-                    &mut light_quality,
+                    &mut light_conf.quality,
+                    sf::LightingQualityConfig::LOW,
+                    "Low",
+                );
+                ui.radio_value(
+                    &mut light_conf.quality,
                     sf::LightingQualityConfig::LOWEST,
                     "Lowest",
                 );
             });
             ui.add(
-                egui::Slider::new(&mut light_quality.mip_bias, -1.0..=3.0)
+                egui::Slider::new(&mut light_conf.quality.mip_bias, -1.0..=3.0)
                     .step_by(0.5)
                     .text("Mip bias"),
+            );
+            ui.add(
+                egui::Slider::new(&mut light_conf.reflection_strength, 0.0..=0.1)
+                    .step_by(0.01)
+                    .text("Reflection strength"),
             );
 
             ui.horizontal(|ui| {
@@ -549,9 +562,9 @@ impl sf::GameState for State {
             self.scene.instantiate(game, &self.gen_assets);
         }
 
-        if light_quality != self.light_quality {
-            game.renderer.set_lighting_quality(light_quality);
-            self.light_quality = light_quality;
+        if light_conf != self.light_conf {
+            game.renderer.set_lighting_config(light_conf);
+            self.light_conf = light_conf;
         }
 
         if next_env_map != *current_env_map {

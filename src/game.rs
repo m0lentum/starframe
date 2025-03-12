@@ -63,7 +63,7 @@ pub struct GameParams<State: GameState> {
 pub struct GraphicsConfig {
     pub fps: u32,
     pub use_vsync: bool,
-    pub lighting_quality: crate::LightingQualityConfig,
+    pub lighting: crate::LightingConfig,
 }
 
 impl<State: GameState> Default for GameParams<State> {
@@ -86,7 +86,7 @@ impl Default for GraphicsConfig {
         Self {
             fps: 60,
             use_vsync: true,
-            lighting_quality: crate::LightingQualityConfig::default(),
+            lighting: crate::LightingConfig::default(),
         }
     }
 }

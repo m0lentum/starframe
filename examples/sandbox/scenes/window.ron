@@ -1,0 +1,35 @@
+(
+    spawn_zone: ( min: (x: -8, y: 0), max: (x: -5, y: 5) ),
+    // scene to showcase indirect lighting reaching through a window into a box
+    recipes: [
+	BackgroundWall(left: -2, top: 3, right: 8, bottom: -5, depth: 10),
+	// floor
+        Block ((
+            width: 30, height: 1, pose: ( position: (0, -5) ), is_static: true,
+        )),
+	// ceiling
+        Block ((
+            width: 10, height: 1, pose: ( position: (3, 3) ), is_static: true,
+        )),
+	// side walls
+        Block ((
+            width: 1, height: 9, pose: ( position: (8, -1) ), is_static: true,
+        )),
+        Block ((
+            width: 1, height: 3.5, pose: ( position: (-2, 1.75) ), is_static: true,
+        )),
+        Block ((
+            width: 1, height: 3.5, pose: ( position: (-2, -3.75) ), is_static: true,
+        )),
+	// blocks blocking the window initially
+	Block ((
+	    width: 1, height: 1, pose: ( position: (-2, -1.5 ) ),
+	)),
+	Block ((
+	    width: 1, height: 1, pose: ( position: (-2, -0.5 ) ),
+	)),
+        BackgroundTree (
+            pose: ( position: (-7, -1), depth: 1.0 ), start_time: 0,
+        ),
+    ]
+)
