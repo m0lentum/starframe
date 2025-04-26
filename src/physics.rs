@@ -238,6 +238,7 @@ struct WorkingBuffers {
     coll_pair_keys: Vec<[ColliderKey; 2]>,
     contacts: Vec<ContactResult>,
     last_contacts: Vec<ContactResult>,
+    contact_angles: Vec<uv::DRotor2>,
     contact_lambdas: Vec<f64>,
 }
 struct SortedIndices {
@@ -291,6 +292,7 @@ impl Default for WorkingBuffers {
             coll_pair_keys: Vec::new(),
             contacts: Vec::new(),
             last_contacts: Vec::new(),
+            contact_angles: Vec::new(),
             contact_lambdas: Vec::new(),
         }
     }
@@ -881,6 +883,9 @@ impl PhysicsWorld {
         bufs.last_contacts.clear();
         bufs.last_contacts
             .resize(bufs.sorted_coll_pairs.len(), ContactResult::Zero);
+        bufs.contact_angles.clear();
+        bufs.contact_angles
+            .resize(bufs.sorted_coll_pairs.len(), uv::DRotor2::identity());
         // store contact forces for friction purposes
         bufs.contact_lambdas.clear();
         bufs.contact_lambdas
@@ -966,6 +971,7 @@ impl PhysicsWorld {
         let mut coll_pairs_s = bufs.sorted_coll_pairs.as_mut_slice();
         let mut contacts_s = bufs.contacts.as_mut_slice();
         let mut last_contacts_s = bufs.last_contacts.as_mut_slice();
+        let mut cont_angles_s = bufs.contact_angles.as_mut_slice();
         let mut cont_lambda_s = bufs.contact_lambdas.as_mut_slice();
 
         let mut island_start_idx = 0;
@@ -1034,6 +1040,8 @@ impl PhysicsWorld {
             contacts_s = contacts_rest;
             let (last_contacts, last_conts_rest) = last_contacts_s.split_at_mut(pair_count);
             last_contacts_s = last_conts_rest;
+            let (contact_angles, cont_angles_rest) = cont_angles_s.split_at_mut(pair_count);
+            cont_angles_s = cont_angles_rest;
             let (contact_lambdas, cont_l_rest) = cont_lambda_s.split_at_mut(pair_count);
             cont_lambda_s = cont_l_rest;
 
@@ -1057,6 +1065,7 @@ impl PhysicsWorld {
                 coll_pairs,
                 contacts,
                 last_contacts,
+                contact_angles,
                 contact_lambdas,
             });
 

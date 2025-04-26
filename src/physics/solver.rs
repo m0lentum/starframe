@@ -32,6 +32,10 @@ pub struct DataView<'a> {
     pub coll_pairs: &'a [[ColliderKey; 2]],
     pub contacts: &'a mut [ContactResult],
     pub last_contacts: &'a mut [ContactResult],
+    /// angles between contacting bodies
+    /// stored to check when we need to redo collision detection
+    /// (when there's little relative rotation it's fine to reuse contacts)
+    pub contact_angles: &'a mut [uv::DRotor2],
     pub contact_lambdas: &'a mut [f64],
 }
 
@@ -275,10 +279,11 @@ fn solve_constraints(data: &mut DataView<'_>) {
 fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
     let _span = tracy_client::span!("solve contacts");
 
-    for (coll_keys, contact, last_contact, lambda_n) in izip!(
+    for (coll_keys, contact, last_contact, last_angle, lambda_n) in izip!(
         data.coll_pairs,
         &mut *data.contacts,
         &mut *data.last_contacts,
+        &mut *data.contact_angles,
         &mut *data.contact_lambdas
     ) {
         let bodies: [Option<usize>; 2] = map_pair(coll_keys, |c| {
@@ -299,20 +304,34 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
             Some(bi) => data.bodies[bi].pose * colls[i].pose,
             None => colls[i].pose,
         });
+        let relative_angle = poses_worldspace[0].rotation.reversed() * poses_worldspace[1].rotation;
 
-        // check for collision
-        *contact = collision::shape_shape::intersection_check(
-            poses_worldspace,
-            [colls[0].shape, colls[1].shape],
-        )
-        .map(|mut cont| {
-            // transform contact to local space of bodies if attached
-            cont.offsets = map_pair(&[0, 1], |&i| match bodies[i] {
-                Some(_) => colls[i].pose * cont.offsets[i],
-                None => cont.offsets[i],
+        // check for collision.
+        // here we hold on to the first nonempty contact found during the frame
+        // instead of redoing collision detection for each substep,
+        // which turns out to be quite stable
+        // (for everything except static friction which we don't support anymore).
+        // this can cause rotating things to stick in unnatural ways,
+        // so we check if the angle has changed too much since the contact occurred.
+        if matches!(contact, ContactResult::Zero)
+            // empirically chosen angle limit that seems to prevent any macro-scale artifacts
+            || (relative_angle - *last_angle).mag_sq() > 10e-6
+        {
+            *contact = collision::shape_shape::intersection_check(
+                poses_worldspace,
+                [colls[0].shape, colls[1].shape],
+            )
+            .map(|mut cont| {
+                // transform contact to local space of bodies if attached
+                cont.offsets = map_pair(&[0, 1], |&i| match bodies[i] {
+                    Some(_) => colls[i].pose * cont.offsets[i],
+                    None => cont.offsets[i],
+                });
+                cont
             });
-            cont
-        });
+
+            *last_angle = relative_angle;
+        }
         // mark latest contact that wasn't zero;
         // this will be available to be queried by the user later
         if !matches!(contact, ContactResult::Zero) {
