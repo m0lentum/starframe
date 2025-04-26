@@ -361,18 +361,15 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
             }
         }
 
-        let materials = match (colls[0].ty, colls[1].ty) {
-            (ColliderType::Solid(m0), ColliderType::Solid(m1)) => [m0, m1],
+        if !matches!(
+            (colls[0].ty, colls[1].ty),
+            (ColliderType::Solid(_), ColliderType::Solid(_)),
+        ) {
             // one of the colliders was a trigger, no physics response
-            _ => {
-                continue;
-            }
+            continue;
         };
 
         for contact in contact.iter() {
-            // tangent for static friction
-            let tangent = left_normal(*contact.normal);
-
             // gather variables into a struct because they're different
             // for static and dynamic bodies and this lets us get them in one match
             struct WorkingVars {
@@ -382,10 +379,6 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                 offset_worldspace: uv::DVec2,
                 offset_wedge_normal: f64,
                 eff_inv_mass_n: f64,
-                // for friction
-                offset_worldspace_old: uv::DVec2,
-                offset_wedge_tan: f64,
-                eff_inv_mass_tan: f64,
             }
             let vars = map_pair(&[0, 1], |&i| {
                 match bodies[i] {
@@ -396,9 +389,6 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                             offset_worldspace,
                             offset_wedge_normal: 0.0,
                             eff_inv_mass_n: 0.0,
-                            offset_worldspace_old: offset_worldspace,
-                            offset_wedge_tan: 0.0,
-                            eff_inv_mass_tan: 0.0,
                         }
                     }
                     Some(bi) => {
@@ -408,15 +398,11 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                         // contact was transformed into the body's local space
                         let offset_rotated = data.bodies[bi].pose.rotation * contact.offsets[i];
                         let offset_wedge_normal = offset_rotated.wedge(*contact.normal).xy;
-                        let offset_wedge_tan = offset_rotated.wedge(tangent).xy;
 
                         WorkingVars {
                             offset_worldspace: data.bodies[bi].pose * contact.offsets[i],
                             offset_wedge_normal,
                             eff_inv_mass_n: im + (offset_wedge_normal.powi(2) * imi),
-                            offset_worldspace_old: data.old_poses[bi] * contact.offsets[i],
-                            offset_wedge_tan,
-                            eff_inv_mass_tan: im + (offset_wedge_tan.powi(2) * imi),
                         }
                     }
                 }
@@ -449,41 +435,6 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
                 p.prepend_rotation(uv::DRotor2::from_angle(
                     -imi * *lambda_n * vars[1].offset_wedge_normal,
                 ));
-            }
-
-            // static friction
-
-            if let Some(friction_coef) = materials[0].static_friction_with(&materials[1]) {
-                let offset_diff_motion = (vars[0].offset_worldspace
-                    - vars[0].offset_worldspace_old)
-                    - (vars[1].offset_worldspace - vars[1].offset_worldspace_old);
-                let motion_along_tan = offset_diff_motion.dot(tangent);
-
-                let max_coulomb_dx = *lambda_n * friction_coef;
-
-                let lambda_t =
-                    -motion_along_tan / (vars[0].eff_inv_mass_tan + vars[1].eff_inv_mass_tan);
-
-                if lambda_t < max_coulomb_dx {
-                    if let Some(bi) = bodies[0] {
-                        let im = data.bodies[bi].mass.inv();
-                        let imi = data.bodies[bi].moment_of_inertia.inv();
-                        let p = &mut data.bodies[bi].pose;
-                        p.append_translation(im * lambda_t * tangent);
-                        p.prepend_rotation(uv::DRotor2::from_angle(
-                            imi * lambda_t * vars[0].offset_wedge_tan,
-                        ));
-                    }
-                    if let Some(bi) = bodies[1] {
-                        let im = data.bodies[bi].mass.inv();
-                        let imi = data.bodies[bi].moment_of_inertia.inv();
-                        let p = &mut data.bodies[bi].pose;
-                        p.append_translation(-im * lambda_t * tangent);
-                        p.prepend_rotation(uv::DRotor2::from_angle(
-                            -imi * lambda_t * vars[1].offset_wedge_tan,
-                        ));
-                    }
-                }
             }
         }
     }
@@ -578,13 +529,13 @@ fn contact_velocity_step(data: &mut DataView<'_>, entity_set: &EntitySet) {
             // dynamic friction
 
             let tangent = left_normal(*contact.normal);
-            let delta_tan_vel = match materials[0].dynamic_friction_with(&materials[1]) {
-                Some(friction_coef) => {
-                    let tangent_vel = relative_vel_at_p.dot(tangent);
-                    let max_coulomb_dv = data.inv_dt * *lambda_n * friction_coef;
-                    tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum()
-                }
-                None => 0.0,
+            let friction_coef = materials[0].friction_with(&materials[1]);
+            let delta_tan_vel = if friction_coef == 0. {
+                0.
+            } else {
+                let tangent_vel = relative_vel_at_p.dot(tangent);
+                let max_coulomb_dv = data.inv_dt * *lambda_n * friction_coef;
+                tangent_vel.abs().min(max_coulomb_dv.abs()) * -tangent_vel.signum()
             };
 
             // apply impulse

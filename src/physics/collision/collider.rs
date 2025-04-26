@@ -895,27 +895,31 @@ impl ColliderPolygon {
 /// Determines how the surface of a collider affects collisions.
 ///
 /// Using a simplified friction model where each material has its own friction
-/// coefficients (rather than the realistic model where every pair of materials
+/// coefficient (rather than the realistic model where every pair of materials
 /// would have its own coefficients).
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde-types", serde(default))]
 pub struct PhysicsMaterial {
-    /// Coefficient of static friction.
-    /// Set to None to opt out of static friction.
-    pub static_friction_coef: Option<f64>,
-    /// Coefficient of dynamic friction.
-    /// Set to None to opt out of dynamic friction.
-    pub dynamic_friction_coef: Option<f64>,
+    /// Coefficient of (dynamic) friction.
+    /// Range: 0..inf, default: 1.
+    ///
+    /// A higher value means more friction;
+    /// set to zero for a completely frictionless material.
+    pub friction_coef: f64,
+    /// Coefficient of restitution.
+    /// Range: 0..=1, default: 0.
+    ///
+    /// Determines how strongly the body bounces when colliding with something;
+    /// a value of 1.0 means a completely elastic collision (preserves all speed).
     pub restitution_coef: f64,
 }
 
 impl Default for PhysicsMaterial {
     fn default() -> Self {
         PhysicsMaterial {
-            static_friction_coef: Some(1.6),
-            dynamic_friction_coef: Some(1.5),
-            restitution_coef: 0.0,
+            friction_coef: 1.,
+            restitution_coef: 0.,
         }
     }
 }
@@ -925,29 +929,20 @@ impl PhysicsMaterial {
     /// Commonly used for game characters.
     pub fn frictionless_unelastic() -> Self {
         Self {
-            static_friction_coef: None,
-            dynamic_friction_coef: None,
+            friction_coef: 0.,
             restitution_coef: 0.,
-        }
-    }
-
-    /// Get the static friction coefficient between this material and another.
-    ///
-    /// It is computed as the average between the two materials' friction coefficients.
-    pub fn static_friction_with(&self, other: &Self) -> Option<f64> {
-        match (self.static_friction_coef, other.static_friction_coef) {
-            (Some(mine), Some(theirs)) => Some((mine + theirs) / 2.0),
-            _ => None,
         }
     }
 
     /// Get the dynamic friction coefficient between this material and another.
     ///
     /// It is computed as the average between the two materials' friction coefficients.
-    pub fn dynamic_friction_with(&self, other: &Self) -> Option<f64> {
-        match (self.dynamic_friction_coef, other.dynamic_friction_coef) {
-            (Some(mine), Some(theirs)) => Some((mine + theirs) / 2.0),
-            _ => None,
+    pub fn friction_with(&self, other: &Self) -> f64 {
+        // special case for frictionless bodies
+        if self.friction_coef == 0. || other.friction_coef == 0. {
+            0.
+        } else {
+            (self.friction_coef + other.friction_coef) / 2.
         }
     }
 

@@ -57,11 +57,8 @@ impl PlayerRecipe {
 }
 
 fn player_collider() -> sf::Collider {
-    sf::Collider::new_capsule(LENGTH, R).with_material(sf::PhysicsMaterial {
-        static_friction_coef: None,
-        dynamic_friction_coef: None,
-        restitution_coef: 0.0,
-    })
+    sf::Collider::new_capsule(LENGTH, R)
+        .with_material(sf::PhysicsMaterial::frictionless_unelastic())
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -32,11 +32,7 @@ impl Default for RopeParameters {
             bending_max_angle: Angle::Deg(30.0).rad() as f64,
             bending_compliance: 0.2,
             damping: 20.0,
-            material: PhysicsMaterial {
-                static_friction_coef: None,
-                dynamic_friction_coef: Some(1.5),
-                restitution_coef: 0.0,
-            },
+            material: PhysicsMaterial::default(),
             particle_mass: 0.02,
         }
     }
