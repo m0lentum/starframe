@@ -5,7 +5,7 @@ use crate::{math as m, Camera};
 use winit::dpi::PhysicalPosition;
 use winit::event as ev;
 
-pub use ev::{ElementState, MouseButton};
+pub use ev::MouseButton;
 pub use winit::keyboard::KeyCode as Key;
 
 /// This must be at least the number of variants in `Key`
@@ -55,8 +55,15 @@ impl Input {
     #[inline]
     pub fn button(&self, q: ButtonQuery) -> bool {
         let AgedState { state, age } = self.get_button_state(q.button);
-        if state != q.state {
-            return false;
+        use ButtonState::*;
+        match (q.pressed, state) {
+            // the button is considered pressed here
+            // also if it was pressed and then released within the same tick
+            (true, Released) => return false,
+            // similarly it's considered released also in the cases
+            // where both states have been observed during the tick
+            (false, Pressed) => return false,
+            _ => {}
         }
         if age < q.min_age || age > q.max_age {
             return false;
@@ -75,8 +82,8 @@ impl Input {
             self.get_button_state(q.pos_btn).state,
             self.get_button_state(q.neg_btn).state,
         ) {
-            (ElementState::Pressed, _) => 1.0,
-            (_, ElementState::Pressed) => -1.0,
+            (ButtonState::Pressed, _) => 1.0,
+            (_, ButtonState::Pressed) => -1.0,
             _ => 0.0,
         }
     }
@@ -117,12 +124,12 @@ impl Input {
 
     /// Get the state of a keyboard key along with the number of frames since it last changed.
     #[inline]
-    pub fn get_key_state(&self, key: Key) -> AgedState {
+    fn get_key_state(&self, key: Key) -> AgedState {
         self.keyboard[key as usize]
     }
 
     #[inline]
-    pub fn get_mouse_button_state(&self, mb: MouseButton) -> AgedState {
+    fn get_mouse_button_state(&self, mb: MouseButton) -> AgedState {
         *self
             .mouse_buttons
             .get(mb)
@@ -130,7 +137,7 @@ impl Input {
     }
 
     #[inline]
-    pub fn get_button_state(&self, btn: Button) -> AgedState {
+    fn get_button_state(&self, btn: Button) -> AgedState {
         match btn {
             Button::Keyboard(key) => self.get_key_state(key),
             Button::Mouse(mb) => self.get_mouse_button_state(mb),
@@ -147,17 +154,23 @@ impl Input {
     /// Calling is handled internally by [`Game`][crate::game::Game].
     #[inline]
     pub(crate) fn tick(&mut self) {
-        for state in &mut self.keyboard {
+        for state in itertools::chain!(
+            &mut self.keyboard,
+            [
+                &mut self.mouse_buttons.left,
+                &mut self.mouse_buttons.middle,
+                &mut self.mouse_buttons.right,
+                &mut self.mouse_buttons.forward,
+                &mut self.mouse_buttons.back,
+            ],
+            self.mouse_buttons.other.values_mut()
+        ) {
             state.age += 1;
-        }
-
-        self.mouse_buttons.left.age += 1;
-        self.mouse_buttons.middle.age += 1;
-        self.mouse_buttons.right.age += 1;
-        self.mouse_buttons.forward.age += 1;
-        self.mouse_buttons.back.age += 1;
-        for btn in self.mouse_buttons.other.values_mut() {
-            btn.age += 1;
+            state.state = match state.state {
+                ButtonState::PressedAndReleased => ButtonState::Released,
+                ButtonState::ReleasedAndPressed => ButtonState::Pressed,
+                s => s,
+            };
         }
 
         self.scroll_delta = 0.0;
@@ -167,11 +180,13 @@ impl Input {
     /// Track the effect of a keyboard event.
     #[inline]
     pub(crate) fn track_keyboard(&mut self, evt: &ev::KeyEvent) {
+        // skip repeat events,
+        // these mess with the logic for handling sub-frame inputs
+        if evt.repeat {
+            return;
+        }
         if let winit::keyboard::PhysicalKey::Code(code) = evt.physical_key {
-            let cached_key = &mut self.keyboard[code as usize];
-            if evt.state != cached_key.state {
-                *cached_key = AgedState::new(evt.state);
-            }
+            self.keyboard[code as usize].update(evt.state);
         }
     }
 
@@ -190,8 +205,8 @@ impl Input {
 
     /// Track a mouse button event.
     #[inline]
-    fn track_mouse_button(&mut self, button: ev::MouseButton, new_state: ElementState) {
-        *self.mouse_buttons.get_mut(button) = AgedState::new(new_state);
+    fn track_mouse_button(&mut self, button: ev::MouseButton, new_state: ev::ElementState) {
+        self.mouse_buttons.get_mut(button).update(new_state);
     }
 
     #[inline]
@@ -242,8 +257,11 @@ impl From<MouseButton> for Button {
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub struct ButtonQuery {
     pub button: Button,
-    pub state: ElementState,
+    /// True if querying for a pressed button, false if for a released button.
+    pub pressed: bool,
+    /// Minimum number of ticks the state has been held.
     pub min_age: usize,
+    /// Maximum number of ticks the state has been held.
     pub max_age: usize,
 }
 
@@ -278,7 +296,7 @@ impl ButtonQuery {
     pub fn kb(key: Key) -> Self {
         Self {
             button: Button::Keyboard(key),
-            state: ElementState::Pressed,
+            pressed: true,
             min_age: 0,
             max_age: 0,
         }
@@ -292,7 +310,7 @@ impl ButtonQuery {
     pub fn mouse(btn: MouseButton) -> Self {
         Self {
             button: Button::Mouse(btn),
-            state: ElementState::Pressed,
+            pressed: true,
             min_age: 0,
             max_age: 0,
         }
@@ -310,7 +328,7 @@ impl ButtonQuery {
     /// ```
     #[inline]
     pub fn released(mut self) -> Self {
-        self.state = ElementState::Released;
+        self.pressed = false;
         self
     }
 
@@ -394,23 +412,64 @@ pub struct AxisQuery {
 // state types
 //
 
+/// State of a button
+/// accounting for cases where it's pressed and released within one tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
+pub enum ButtonState {
+    Pressed,
+    Released,
+    PressedAndReleased,
+    ReleasedAndPressed,
+}
+
 /// The state of a button (keyboard key or mouse button)
 /// and time in number of ticks since last state change.
 #[derive(Clone, Copy, Debug)]
 pub struct AgedState {
-    pub state: ElementState,
+    pub state: ButtonState,
     pub age: usize,
 }
 
 impl AgedState {
-    pub fn new(state: ElementState) -> Self {
+    fn new(state: ButtonState) -> Self {
         AgedState { state, age: 0 }
+    }
+
+    /// Respond to a state change,
+    /// accounting for situations where the state changes multiple times in a frame.
+    fn update(&mut self, new_state: ev::ElementState) {
+        if self.age == 0 {
+            match (self.state, new_state) {
+                (
+                    ButtonState::Pressed | ButtonState::ReleasedAndPressed,
+                    ev::ElementState::Released,
+                ) => {
+                    self.state = ButtonState::PressedAndReleased;
+                    return;
+                }
+                (
+                    ButtonState::Released | ButtonState::PressedAndReleased,
+                    ev::ElementState::Pressed,
+                ) => {
+                    self.state = ButtonState::ReleasedAndPressed;
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        self.state = match new_state {
+            ev::ElementState::Pressed => ButtonState::Pressed,
+            ev::ElementState::Released => ButtonState::Released,
+        };
+        self.age = 0;
     }
 }
 
 impl Default for AgedState {
     fn default() -> Self {
-        Self::new(ElementState::Released)
+        Self::new(ButtonState::Released)
     }
 }
 
