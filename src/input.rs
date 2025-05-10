@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{math as m, Camera};
 
 use winit::dpi::PhysicalPosition;
@@ -152,6 +154,11 @@ impl Input {
         self.mouse_buttons.left.age += 1;
         self.mouse_buttons.middle.age += 1;
         self.mouse_buttons.right.age += 1;
+        self.mouse_buttons.forward.age += 1;
+        self.mouse_buttons.back.age += 1;
+        for btn in self.mouse_buttons.other.values_mut() {
+            btn.age += 1;
+        }
 
         self.scroll_delta = 0.0;
         self.prev_cursor_pos = Some(self.cursor_pos);
@@ -184,9 +191,7 @@ impl Input {
     /// Track a mouse button event.
     #[inline]
     fn track_mouse_button(&mut self, button: ev::MouseButton, new_state: ElementState) {
-        if let Some(s) = self.mouse_buttons.get_mut(button) {
-            *s = AgedState::new(new_state);
-        }
+        *self.mouse_buttons.get_mut(button) = AgedState::new(new_state);
     }
 
     #[inline]
@@ -232,7 +237,7 @@ impl From<MouseButton> for Button {
 }
 
 /// A query for matching against the state of a button.
-/// See [InputCache::button][`self::InputCache::button] for usage.
+/// See [Input::button] for usage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-types", derive(serde::Deserialize, serde::Serialize))]
 pub struct ButtonQuery {
@@ -411,36 +416,38 @@ impl Default for AgedState {
 
 // Mouse
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct MouseButtonState {
     left: AgedState,
     middle: AgedState,
     right: AgedState,
+    back: AgedState,
+    forward: AgedState,
+    other: HashMap<u16, AgedState>,
 }
 
 impl MouseButtonState {
-    pub fn get(&self, button: MouseButton) -> Option<&AgedState> {
+    fn get(&self, button: MouseButton) -> Option<&AgedState> {
         use MouseButton as MB;
         match button {
             MB::Left => Some(&self.left),
             MB::Middle => Some(&self.middle),
             MB::Right => Some(&self.right),
-            // TODO: track back and forward buttons too
-            MB::Forward => None,
-            MB::Back => None,
-            MB::Other(_) => None,
+            MB::Forward => Some(&self.forward),
+            MB::Back => Some(&self.back),
+            MB::Other(id) => self.other.get(&id),
         }
     }
 
-    pub fn get_mut(&mut self, button: MouseButton) -> Option<&mut AgedState> {
+    fn get_mut(&mut self, button: MouseButton) -> &mut AgedState {
         use MouseButton as MB;
         match button {
-            MB::Left => Some(&mut self.left),
-            MB::Middle => Some(&mut self.middle),
-            MB::Right => Some(&mut self.right),
-            MB::Forward => None,
-            MB::Back => None,
-            MB::Other(_) => None,
+            MB::Left => &mut self.left,
+            MB::Middle => &mut self.middle,
+            MB::Right => &mut self.right,
+            MB::Forward => &mut self.forward,
+            MB::Back => &mut self.back,
+            MB::Other(id) => self.other.entry(id).or_default(),
         }
     }
 }
