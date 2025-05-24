@@ -355,7 +355,7 @@ fn any_any(poses: [PhysicsPose; 2], shapes: [ColliderShape; 2]) -> ContactResult
 /// Closest point to a query point on the boundary of a polygon,
 /// plus whether the query point is inside the polygon or not.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct ClosestBoundaryPoint {
+pub(crate) struct ClosestBoundaryPoint {
     pub pt: uv::DVec2,
     pub is_interior: bool,
 }

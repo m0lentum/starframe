@@ -81,6 +81,7 @@ pub struct State {
     last_egui_output: egui::FullOutput,
     // UI states
     spawner_circle_r: f64,
+    spawner_poly_points: usize,
     spawner_obj_count: usize,
     spawner_is_lit: bool,
     time_scale: f64,
@@ -122,6 +123,7 @@ impl State {
             ),
             last_egui_output: Default::default(),
             spawner_circle_r: 0.0,
+            spawner_poly_points: 5,
             spawner_obj_count: 1,
             spawner_is_lit: true,
             time_scale: 1.0,
@@ -385,21 +387,22 @@ impl sf::GameState for State {
                     .text("Number of objects to spawn"),
             );
             ui.add(egui::Slider::new(&mut self.spawner_circle_r, 0.0..=1.0).text("Radius"));
+            ui.add(
+                egui::Slider::new(&mut self.spawner_poly_points, 3..=8)
+                    .text("Polygon points")
+                    .clamp_to_range(false),
+            );
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Triangle").clicked() {
-                    shape_to_spawn = Some(sf::ColliderPolygon::Triangle {
-                        outer_r: distr::Uniform::from(0.5..0.8).sample(&mut rng),
-                    });
-                }
                 if ui.button("Rect").clicked() {
                     shape_to_spawn = Some(sf::ColliderPolygon::Rect {
                         hw: distr::Uniform::from(0.4..0.6).sample(&mut rng),
                         hh: distr::Uniform::from(0.3..0.5).sample(&mut rng),
                     });
                 }
-                if ui.button("Hexagon").clicked() {
-                    shape_to_spawn = Some(sf::ColliderPolygon::Hexagon {
-                        outer_r: distr::Uniform::from(0.4..0.7).sample(&mut rng),
+                if ui.button("Regular").clicked() {
+                    shape_to_spawn = Some(sf::ColliderPolygon::Regular {
+                        points: self.spawner_poly_points,
+                        r: distr::Uniform::from(0.4..0.7).sample(&mut rng),
                     });
                 }
             });

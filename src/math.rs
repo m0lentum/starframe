@@ -387,20 +387,20 @@ pub mod serde_physics_pose {
 //
 
 #[inline]
-pub fn left_normal(v: uv::DVec2) -> uv::DVec2 {
+pub const fn left_normal(v: uv::DVec2) -> uv::DVec2 {
     uv::DVec2::new(-v.y, v.x)
 }
 #[inline]
-pub fn right_normal(v: uv::DVec2) -> uv::DVec2 {
+pub const fn right_normal(v: uv::DVec2) -> uv::DVec2 {
     uv::DVec2::new(v.y, -v.x)
 }
 #[inline]
-pub fn unit_left_normal(u: UnitDVec2) -> UnitDVec2 {
-    UnitDVec2::new_unchecked(left_normal(*u))
+pub const fn unit_left_normal(u: UnitDVec2) -> UnitDVec2 {
+    UnitDVec2::new_unchecked(left_normal(u.0))
 }
 #[inline]
-pub fn unit_right_normal(u: UnitDVec2) -> UnitDVec2 {
-    UnitDVec2::new_unchecked(right_normal(*u))
+pub const fn unit_right_normal(u: UnitDVec2) -> UnitDVec2 {
+    UnitDVec2::new_unchecked(right_normal(u.0))
 }
 
 /// Trait facilitating conversions between f64 types (for physics)

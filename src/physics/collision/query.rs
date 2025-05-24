@@ -21,7 +21,7 @@ pub fn point_collider_bool(point: uv::DVec2, pose: PhysicsPose, coll: Collider) 
         }
         // this will probably be what I do for all other polygons,
         // but keeping the match explicit so I have to look here every time and think about it
-        poly @ ColliderPolygon::Triangle { .. } | poly @ ColliderPolygon::Hexagon { .. } => {
+        poly @ ColliderPolygon::Regular { .. }  => {
             let closest = poly.closest_boundary_point(p_wrt_c);
             closest.is_interior || (closest.pt - p_wrt_c).mag_sq() < r * r
         }
