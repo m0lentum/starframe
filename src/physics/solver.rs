@@ -309,13 +309,13 @@ fn solve_contacts(data: &mut DataView<'_>, entity_set: &EntitySet) {
         // check for collision.
         // here we hold on to the first nonempty contact found during the frame
         // instead of redoing collision detection for each substep,
-        // which turns out to be quite stable
-        // (for everything except static friction which we don't support anymore).
-        // this can cause rotating things to stick in unnatural ways,
-        // so we check if the angle has changed too much since the contact occurred.
+        // but this is only valid when the angle has changed very little,
+        // otherwise we get weird sticky friction on fast-rotating things
+        // and annoying oscillations on edge-to-edge contacts
+        // that happen to hit a pattern where each contact rotates it a bit too much
         if matches!(contact, ContactResult::Zero)
-            // empirically chosen angle limit that seems to prevent any macro-scale artifacts
-            || (relative_angle - *last_angle).mag_sq() > 10e-6
+            // empirically chosen angle limit that seems to prevent any macro-scale artifacts.
+            || (relative_angle - *last_angle).mag_sq() > 10e-8
         {
             *contact = collision::shape_shape::intersection_check(
                 poses_worldspace,
