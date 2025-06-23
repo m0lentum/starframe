@@ -1,11 +1,13 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/release-24.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/release-25.05";
     nixpkgs-23-11.url = "github:NixOS/nixpkgs/release-23.11";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     wgsl-analyzer.url = "github:wgsl-analyzer/wgsl-analyzer";
-    wgsl-analyzer.inputs.nixpkgs.follows = "nixpkgs";
+    # wgsl-analyzer needs its own nixpkgs-unstable as of 25.05
+    # wgsl-analyzer.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, ... }@inputs:
@@ -54,7 +56,7 @@
                   "${libXi}/lib"
                   "${libXrandr}/lib"
                   "${pkgs.vulkan-loader}/lib"
-                  "${pkgs.stdenv.cc.cc.lib}/lib64"
+                  "${pkgs.stdenv.cc.cc.lib}/lib"
                 ]);
             };
       });
