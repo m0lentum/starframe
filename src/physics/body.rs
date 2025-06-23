@@ -7,8 +7,8 @@ use crate::math::PhysicsPose;
 pub struct Body {
     pub pose: PhysicsPose,
     pub velocity: Velocity,
-    pub mass: Mass,
-    pub moment_of_inertia: Mass,
+    pub mass: f64,
+    pub moment_of_inertia: f64,
     pub ignores_gravity: bool,
 }
 
@@ -24,8 +24,8 @@ impl Body {
         Self {
             pose: PhysicsPose::default(),
             velocity: Velocity::default(),
-            mass: Mass::from(mass),
-            moment_of_inertia: Mass::Infinite,
+            mass,
+            moment_of_inertia: f64::INFINITY,
             ignores_gravity: false,
         }
     }
@@ -38,8 +38,8 @@ impl Body {
         Self {
             pose: PhysicsPose::default(),
             velocity: Velocity::default(),
-            mass: Mass::from(mass),
-            moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
+            mass,
+            moment_of_inertia: coll_info.second_moment_of_area * density,
             ignores_gravity: false,
         }
     }
@@ -51,8 +51,8 @@ impl Body {
         Self {
             pose: PhysicsPose::default(),
             velocity: Velocity::default(),
-            mass: Mass::from(mass),
-            moment_of_inertia: Mass::from(coll_info.second_moment_of_area * density),
+            mass,
+            moment_of_inertia: coll_info.second_moment_of_area * density,
             ignores_gravity: false,
         }
     }
@@ -62,8 +62,8 @@ impl Body {
         Self {
             pose: PhysicsPose::default(),
             velocity: Velocity::default(),
-            mass: Mass::Infinite,
-            moment_of_inertia: Mass::Infinite,
+            mass: f64::INFINITY,
+            moment_of_inertia: f64::INFINITY,
             ignores_gravity: false,
         }
     }
@@ -90,40 +90,6 @@ impl Body {
     /// effect on it.
     #[inline]
     pub fn sees_forces(&self) -> bool {
-        !matches!(
-            (self.mass, self.moment_of_inertia),
-            (Mass::Infinite, Mass::Infinite)
-        )
-    }
-}
-
-/// Mass or moment of inertia of a body, which can be infinite.
-///
-/// This stores both a mass value and its inverse, because calculating inverse mass
-/// is expensive and needed a lot in physics calculations.
-#[derive(Clone, Copy, Debug)]
-pub enum Mass {
-    Finite { mass: f64, inverse: f64 },
-    Infinite,
-}
-
-impl From<f64> for Mass {
-    #[inline]
-    fn from(mass: f64) -> Self {
-        Mass::Finite {
-            mass,
-            inverse: 1.0 / mass,
-        }
-    }
-}
-
-impl Mass {
-    /// Get the inverse of the mass, which is zero if the mass is infinite.
-    #[inline]
-    pub fn inv(&self) -> f64 {
-        match self {
-            Mass::Finite { inverse, .. } => *inverse,
-            Mass::Infinite => 0.0,
-        }
+        self.mass.is_finite() || self.moment_of_inertia.is_finite()
     }
 }

@@ -1,6 +1,6 @@
 (
     recipes: [
-        Player ((  position: (-7, -4.5) )),
+        // Player ((  position: (-7, -4.5) )),
         // "curtain"
         Blockchain (
             width: 0.2,
@@ -10,59 +10,45 @@
                 (3.0, 2.5),
                 (3.0, 2.0),
                 (3.0, 1.5),
-                (3.0, 1.0),
-                (3.0, 0.5),
-                (3.0, 0.0),
-                (3.0, -0.5),
-                (3.0, -1.0),
+                // (3.0, 1.0),
+                // (3.0, 0.5),
+                // (3.0, 0.0),
+                // (3.0, -0.5),
+                // (3.0, -1.0),
             ],
             anchored_start: true,
             anchored_end: false,
         ),
         // stack of blocks
-        Block (( pose: ( position: (-3, 3.0) ))),
-        Block (( pose: ( position: (-3, 2.0) ))),
-        Block (( pose: ( position: (-3, 1.0) ))),
-        Block (( pose: ( position: (-3, -0.0) ))),
-        Block (( pose: ( position: (-3, -1.0) ))),
-        Block (( pose: ( position: (-3, -2.0) ))),
-        Block (( pose: ( position: (-3, -3.0) ))),
-        Block (( pose: ( position: (-3, -4.0) ))),
+        // Block (( pose: ( position: (-3, 3.0) ))),
+        // Block (( pose: ( position: (-3, 2.0) ))),
+        // Block (( pose: ( position: (-3, 1.0) ))),
+        // Block (( pose: ( position: (-3, -0.0) ))),
+        // Block (( pose: ( position: (-3, -1.0) ))),
+        // Block (( pose: ( position: (-3, -2.0) ))),
+        // Block (( pose: ( position: (-3, -3.0) ))),
+        // Block (( pose: ( position: (-3, -4.0) ))),
         // ramp to test static friction
-        Block ((
-            width: 8, height: 0.2, pose: ( position: ( 6.5, -0 ), rotation: Deg(20) ), is_static: true,
-        )),
-        // "bridge" down from the ramp
-        Blockchain (
-            width: 0.2,
-            spacing: 0.1,
-            links: [
-                (2.6, -1.5),
-                (1.6, -1.9),
-                (0.6, -2.4),
-                (-0.4, -2.9),
-                (-1.4, -3.4),
-            ],
-            anchored_start: true,
-            anchored_end: true,
-        ),
-        Block (( pose: ( position: (5, 0.2), rotation: Deg(20) ))),
-        Ball (( radius: 0.4, position: ( 7, 1 ) )),
-        Ball (( radius: 0.5, position: ( 8, 1.5 ) )),
-        Ball (( radius: 0.6, position: ( 9, 2 ) )),
-        // walls
-        Block (( 
-            width: 20, height: 0.2, pose: ( position: (0, 5) ), is_static: true,
-        )),
-        Block ((
-            width: 20, height: 0.2, pose: ( position: (0, -5) ), is_static: true,
-        )),
-        Block ((
-            width: 0.2, height: 10, pose: ( position: (10, 0) ), is_static: true,
-        )),
-        Block ((
-            width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
-        )),
+        // Block ((
+        //     width: 8, height: 0.2, pose: ( position: ( 6.5, -0 ), rotation: Deg(20) ), is_static: true,
+        // )),
+        // Block (( pose: ( position: (5, 0.2), rotation: Deg(20) ))),
+        // Ball (( radius: 0.4, position: ( 7, 1 ) )),
+        // Ball (( radius: 0.5, position: ( 8, 1.5 ) )),
+        // Ball (( radius: 0.6, position: ( 9, 2 ) )),
+        // // walls
+        // Block (( 
+        //     width: 20, height: 0.2, pose: ( position: (0, 5) ), is_static: true,
+        // )),
+        // Block ((
+        //     width: 20, height: 0.2, pose: ( position: (0, -5) ), is_static: true,
+        // )),
+        // Block ((
+        //     width: 0.2, height: 10, pose: ( position: (10, 0) ), is_static: true,
+        // )),
+        // Block ((
+        //     width: 0.2, height: 10, pose: ( position: (-10, 0) ), is_static: true,
+        // )),
 	BackgroundWall(left: -15, top: 10, right: 15, bottom: -10, depth: 1),
     ]
 )

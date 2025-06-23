@@ -439,3 +439,19 @@ impl ConvertPrecision for Pose {
         )
     }
 }
+
+//
+// physics utils
+//
+
+// Compute the 3x3 matrix x^Tx from row vector x.
+// This doesn't seem too useful in public APIs, just exposed to crate
+pub(crate) fn symmetric_product_3(x: uv::DVec3) -> uv::DMat3 {
+    let xx = x.x * x.x;
+    let xy = x.x * x.y;
+    let xz = x.x * x.z;
+    let yy = x.y * x.y;
+    let yz = x.y * x.z;
+    let zz = x.z * x.z;
+    uv::DMat3::from([[xx, xy, xz], [xy, yy, yz], [xz, yz, zz]])
+}

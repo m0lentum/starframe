@@ -332,18 +332,25 @@ impl Recipe {
                     if let Some((prev_block, prev_block_offset)) = prev_block {
                         game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(capsule)
-                                .with_target(prev_block)
-                                .with_origin(sf::DVec2::new(-caps_length_half - half_spacing, 0.0))
-                                .with_target_origin(sf::DVec2::new(prev_block_offset, 0.0))
+                                .add_body(prev_block)
                                 .with_compliance(0.015)
-                                .build_attachment(),
+                                .build(sf::ConstraintType::Attachment {
+                                    offsets: [
+                                        sf::DVec2::new(-caps_length_half - half_spacing, 0.0),
+                                        sf::DVec2::new(prev_block_offset, 0.0),
+                                    ],
+                                }),
                         );
                     } else if *anchored_start {
                         game.physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(capsule)
-                                .with_origin(sf::DVec2::new(-caps_length_half - half_spacing, 0.0))
-                                .with_target_origin(link1)
-                                .build_attachment(),
+                            sf::ConstraintBuilder::new(capsule).build(
+                                sf::ConstraintType::Attachment {
+                                    offsets: [
+                                        sf::DVec2::new(-caps_length_half - half_spacing, 0.0),
+                                        link1,
+                                    ],
+                                },
+                            ),
                         );
                     }
                     prev_block = Some((capsule, caps_length_half + half_spacing));
@@ -352,16 +359,18 @@ impl Recipe {
                 if *anchored_end {
                     let (prev_block, prev_block_offset) = prev_block.unwrap();
                     game.physics.constraint_set.insert(
-                        sf::ConstraintBuilder::new(prev_block)
-                            .with_origin(sf::DVec2::new(prev_block_offset + (spacing / 2.0), 0.0))
-                            .with_target_origin(
-                                links
-                                    .iter()
-                                    .map(|p| sf::DVec2::new(p[0], p[1]))
-                                    .last()
-                                    .unwrap(),
-                            )
-                            .build_attachment(),
+                        sf::ConstraintBuilder::new(prev_block).build(
+                            sf::ConstraintType::Attachment {
+                                offsets: [
+                                    sf::DVec2::new(prev_block_offset + (spacing / 2.0), 0.0),
+                                    links
+                                        .iter()
+                                        .map(|p| sf::DVec2::new(p[0], p[1]))
+                                        .last()
+                                        .unwrap(),
+                                ],
+                            },
+                        ),
                     );
                 }
             }
@@ -397,10 +406,13 @@ impl Recipe {
                 let b2 = *game.world.query_one_mut::<&sf::BodyKey>(b2).unwrap();
                 game.physics.constraint_set.insert(
                     sf::ConstraintBuilder::new(b1)
-                        .with_target(b2)
+                        .add_body(b2)
                         .with_compliance(*compliance)
                         .with_linear_damping(0.0)
-                        .build_distance(*target_length),
+                        .build(sf::ConstraintType::Distance {
+                            distance: *target_length,
+                            offsets: Default::default(),
+                        }),
                 );
             }
             Recipe::RopeConnectedBlocks {
@@ -449,16 +461,19 @@ impl Recipe {
                     Ok(b1) => {
                         game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(first_particle.body)
-                                .with_target(b1)
-                                .with_target_origin(offset1.into())
-                                .build_attachment(),
+                                .add_body(b1)
+                                .build(sf::ConstraintType::Attachment {
+                                    offsets: [sf::DVec2::zero(), offset1.into()],
+                                }),
                         );
                     }
                     Err(_) => {
                         game.physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(first_particle.body)
-                                .with_target_origin(rope_end_1)
-                                .build_attachment(),
+                            sf::ConstraintBuilder::new(first_particle.body).build(
+                                sf::ConstraintType::Attachment {
+                                    offsets: [sf::DVec2::zero(), rope_end_1],
+                                },
+                            ),
                         );
                     }
                 }
@@ -466,16 +481,19 @@ impl Recipe {
                     Ok(b2) => {
                         game.physics.constraint_set.insert(
                             sf::ConstraintBuilder::new(last_particle.body)
-                                .with_target(b2)
-                                .with_target_origin(offset2.into())
-                                .build_attachment(),
+                                .add_body(b2)
+                                .build(sf::ConstraintType::Attachment {
+                                    offsets: [sf::DVec2::zero(), offset2.into()],
+                                }),
                         );
                     }
                     Err(_) => {
                         game.physics.constraint_set.insert(
-                            sf::ConstraintBuilder::new(last_particle.body)
-                                .with_target_origin(rope_end_2)
-                                .build_attachment(),
+                            sf::ConstraintBuilder::new(last_particle.body).build(
+                                sf::ConstraintType::Attachment {
+                                    offsets: [sf::DVec2::zero(), rope_end_2],
+                                },
+                            ),
                         );
                     }
                 }

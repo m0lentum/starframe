@@ -15,13 +15,14 @@ pub use collision::{
 };
 
 pub(super) mod constraint;
-pub use constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType};
+use constraint::ConstraintTargets;
+pub use constraint::{Constraint, ConstraintBuilder, ConstraintType};
 
 pub mod forcefield;
 pub use forcefield::ForceField;
 
 pub(super) mod body;
-pub use body::{Body, ColliderInfo, Mass};
+pub use body::{Body, ColliderInfo};
 
 mod rope;
 pub use rope::{Rope, RopeKey, RopeParameters, RopeSet};
@@ -203,6 +204,7 @@ impl From<IslandId> for SleepingIsland {
 
 /// Cached buffers to avoid allocating a bunch of memory every frame.
 /// Explanations in `tick` where populated
+#[derive(Default)]
 struct WorkingBuffers {
     // indices sorted by island for efficient island graph formation
     // without individual Vecs for each island.
@@ -216,10 +218,14 @@ struct WorkingBuffers {
 
     // constraints collected into a vec so they can be indexed
     // without iterating a slotmap
-    user_constraints: Vec<Constraint>,
+    constraints: Vec<Constraint>,
     sorted_constraints: Vec<Constraint>,
-    sorted_rope_views: Vec<solver::RopeView>,
+    constraint_stiffnesses: Vec<f64>,
+    constraint_lagrange_mults: Vec<f64>,
+
     sorted_coll_pairs: Vec<[ColliderKey; 2]>,
+    contact_stiffnesses: Vec<f64>,
+    contact_lagrange_mults: Vec<f64>,
 
     // bodies, sorted in island order
     bodies: Vec<Body>,
@@ -230,6 +236,7 @@ struct WorkingBuffers {
     rope_lateral_corrections: Vec<Option<uv::DVec2>>,
 
     old_poses: Vec<PhysicsPose>,
+    inertial_poses: Vec<PhysicsPose>,
     pre_contact_poses: Vec<PhysicsPose>,
     old_velocities: Vec<Velocity>,
     ext_f_accelerations: Vec<uv::DVec2>,
@@ -241,6 +248,8 @@ struct WorkingBuffers {
     contact_angles: Vec<uv::DRotor2>,
     contact_lambdas: Vec<f64>,
 }
+
+#[derive(Default)]
 struct SortedIndices {
     bodies: Vec<usize>,
     ropes: Vec<usize>,
@@ -248,58 +257,11 @@ struct SortedIndices {
     coll_pairs: Vec<usize>,
 }
 impl SortedIndices {
-    fn new() -> Self {
-        Self {
-            bodies: Vec::new(),
-            ropes: Vec::new(),
-            constraints: Vec::new(),
-            coll_pairs: Vec::new(),
-        }
-    }
     fn clear(&mut self) {
         self.bodies.clear();
         self.ropes.clear();
         self.constraints.clear();
         self.coll_pairs.clear();
-    }
-}
-impl Default for WorkingBuffers {
-    fn default() -> Self {
-        Self {
-            sorted_first_pass: SortedIndices::new(),
-            sorted_second_pass: SortedIndices::new(),
-            island_assigned: Vec::new(),
-            islands: Vec::new(),
-            island_group_sizes: Vec::new(),
-
-            user_constraints: Vec::new(),
-            sorted_constraints: Vec::new(),
-            sorted_rope_views: Vec::new(),
-            sorted_coll_pairs: Vec::new(),
-
-            bodies: Vec::new(),
-            body_order: Vec::new(),
-            rope_next_particles: Vec::new(),
-            rope_prev_particles: Vec::new(),
-            rope_lateral_corrections: Vec::new(),
-
-            old_poses: Vec::new(),
-            pre_contact_poses: Vec::new(),
-            old_velocities: Vec::new(),
-            ext_f_accelerations: Vec::new(),
-
-            constraint_body_pairs: Vec::new(),
-            coll_pair_keys: Vec::new(),
-            contacts: Vec::new(),
-            last_contacts: Vec::new(),
-            contact_angles: Vec::new(),
-            contact_lambdas: Vec::new(),
-        }
-    }
-}
-impl WorkingBuffers {
-    fn new() -> Self {
-        Self::default()
     }
 }
 
@@ -312,11 +274,24 @@ impl WorkingBuffers {
 /// Start with `Default::default()` and adjust as needed.
 #[derive(Clone, Copy, Debug)]
 pub struct TuningConstants {
-    /// The number of substeps per frame.
+    /// The number of solver iterations per frame.
     ///
-    /// Higher is more expensive and, up to a point, more accurate.
-    /// At a certain point floating point inaccuracy will begin to create significant error.
-    pub substeps: usize,
+    /// Higher is more expensive and more accurate.
+    pub iterations: usize,
+    /// Stiffness value to start AVBD iterations.
+    pub min_stiffness: f64,
+    /// Maximum stiffness.
+    pub max_stiffness: f64,
+    /// Maximum Lagrange multiplier on a force.
+    pub max_lambda: f64,
+    /// Rate of increasing stiffness between iterations, β in the AVDB paper.
+    /// Range: `[0, )`.
+    pub stiffness_growth_coef: f64,
+    /// Proportion of a hard constraint's value removed from subsequent iterations,
+    /// α in the AVDB paper.
+    /// Range: [0, 1], 1 lets constraints remain violated,
+    /// 0 makes potentially explosive corrections.
+    pub regularization_rate: f64,
     /// Maximum velocity of a body to be considered at rest.
     pub sleep_vel_threshold: f64,
     /// Number of frames (not substeps) before an island where every body is at rest
@@ -340,8 +315,13 @@ pub struct TuningConstants {
 impl Default for TuningConstants {
     fn default() -> Self {
         Self {
-            substeps: 10,
+            iterations: 5,
             sleep_vel_threshold: 0.001,
+            min_stiffness: 10.,
+            max_stiffness: 1e5,
+            max_lambda: 1e4,
+            stiffness_growth_coef: 1000.,
+            regularization_rate: 0.95,
             fall_asleep_frames: 10,
             max_expected_acceleration: 10.0,
             #[cfg(feature = "parallel")]
@@ -379,7 +359,7 @@ impl PhysicsWorld {
                 nodes: Vec::new(),
             },
             sleeping_islands: Vec::new(),
-            working_bufs: WorkingBuffers::new(),
+            working_bufs: WorkingBuffers::default(),
             contacts: Vec::new(),
         }
     }
@@ -401,36 +381,24 @@ impl PhysicsWorld {
         self.entity_set.remove_orphan_colliders();
         self.rope_set.remove_dead_particles(&mut self.entity_set);
 
-        // time scaling is done by adjusting both dt and actual substep count executed.
-        // trying to keep dt as close to constant as possible to avoid any nasty inconsistencies
-        let substeps;
-        let dt;
-        match time_scale {
-            None => {
-                substeps = self.consts.substeps;
-                dt = frame_dt / substeps as f64;
-            }
-            Some(scale) => {
-                substeps = (scale * self.consts.substeps as f64).ceil() as usize;
-                // dt here must be such that `dt * substeps == time_scale * frame_dt
-                dt = scale * frame_dt / substeps as f64;
-            }
-        }
-        let inv_dt = 1.0 / dt;
-        let inv_dt_sq = inv_dt * inv_dt;
+        let dt = frame_dt * time_scale.unwrap_or(1.);
 
         let bufs = &mut self.working_bufs;
 
         // remove constraints where one or both participating bodies have been destroyed
         self.constraint_set.constraints.retain(|_, c| {
-            self.entity_set.get_body(c.owner).is_some()
-                && c.target
-                    .map(|t| self.entity_set.get_body(t).is_some())
-                    .unwrap_or(true)
+            c.target
+                .iter()
+                .all(|body| self.entity_set.get_body(body).is_some())
         });
-        bufs.user_constraints.clear();
-        bufs.user_constraints
-            .extend(self.constraint_set.constraints.iter().map(|(_, v)| v));
+        // TODO: probably shouldn't be cloning constraints here
+        bufs.constraints.clear();
+        bufs.constraints.extend(
+            self.constraint_set
+                .constraints
+                .iter()
+                .map(|(_, v)| v.clone()),
+        );
 
         //
         // Prepare the spatial index
@@ -491,54 +459,34 @@ impl PhysicsWorld {
         self.constraint_graph
             .resize(self.entity_set.body_slot_count);
 
-        // rope constraints
-        for (rope_key, rope) in self.rope_set.ropes.iter() {
-            let rope_slot = rope_key.slot() as usize;
-            let mut iter = rope.particles.iter().peekable();
-            while let Some(particle) = iter.next() {
-                if let Some(&next_particle) = iter.peek() {
+        // constraints
+
+        for (constr_idx, constr) in bufs.constraints.iter().enumerate() {
+            for (instance_idx, body_key) in constr.target.iter().enumerate() {
+                if !matches!(constr.target, ConstraintTargets::Single(_)) {
+                    for other_body_key in constr.target.iter().filter(|other| *other != body_key) {
+                        self.constraint_graph.insert(
+                            body_key.0.slot() as usize,
+                            ConstraintGraphEdge::Constraint {
+                                other_body_idx: Some(other_body_key.0.slot() as usize),
+                                constr_idx,
+                                instance_idx,
+                            },
+                        );
+                    }
+                } else {
                     self.constraint_graph.insert(
-                        particle.body.0.slot() as usize,
-                        Edge::Rope {
-                            body_idx: next_particle.body.0.slot() as usize,
-                            rope_slot,
-                        },
-                    );
-                    self.constraint_graph.insert(
-                        next_particle.body.0.slot() as usize,
-                        Edge::Rope {
-                            body_idx: particle.body.0.slot() as usize,
-                            rope_slot,
+                        body_key.0.slot() as usize,
+                        ConstraintGraphEdge::Constraint {
+                            other_body_idx: None,
+                            constr_idx,
+                            instance_idx,
                         },
                     );
                 }
             }
         }
-        // custom constraints
-        for (constr_idx, constr) in bufs.user_constraints.iter().enumerate() {
-            match constr.target {
-                Some(target) => {
-                    self.constraint_graph.insert(
-                        constr.owner.0.slot() as usize,
-                        Edge::Constraint {
-                            body_idx: target.0.slot() as usize,
-                            constr_idx,
-                        },
-                    );
-                    self.constraint_graph.insert(
-                        target.0.slot() as usize,
-                        Edge::Constraint {
-                            body_idx: constr.owner.0.slot() as usize,
-                            constr_idx,
-                        },
-                    );
-                }
-                None => self.constraint_graph.insert(
-                    constr.owner.0.slot() as usize,
-                    Edge::StaticConstraint { constr_idx },
-                ),
-            }
-        }
+
         // potential contacts from spatial index.
         // this doesn't necessarily cull as much as actually checking collisions,
         // but that would require redoing this every substep which would be costly.
@@ -557,26 +505,40 @@ impl PhysicsWorld {
                     }
                     self.constraint_graph.insert(
                         b1,
-                        Edge::Contact {
-                            body_idx: b2,
+                        ConstraintGraphEdge::Contact {
+                            other_body_idx: Some(b2),
                             pair_idx,
+                            instance_idx: 0,
                         },
                     );
                     self.constraint_graph.insert(
                         b2,
-                        Edge::Contact {
-                            body_idx: b1,
+                        ConstraintGraphEdge::Contact {
+                            other_body_idx: Some(b1),
                             pair_idx,
+                            instance_idx: 1,
                         },
                     );
                 }
                 [Some(b1), None] => {
-                    self.constraint_graph
-                        .insert(b1, Edge::StaticContact { pair_idx });
+                    self.constraint_graph.insert(
+                        b1,
+                        ConstraintGraphEdge::Contact {
+                            other_body_idx: None,
+                            pair_idx,
+                            instance_idx: 0,
+                        },
+                    );
                 }
                 [None, Some(b2)] => {
-                    self.constraint_graph
-                        .insert(b2, Edge::StaticContact { pair_idx });
+                    self.constraint_graph.insert(
+                        b2,
+                        ConstraintGraphEdge::Contact {
+                            other_body_idx: None,
+                            pair_idx,
+                            instance_idx: 1,
+                        },
+                    );
                 }
                 [None, None] => {}
             }
@@ -609,70 +571,49 @@ impl PhysicsWorld {
             bufs.island_assigned[root_body_idx] = true;
             bufs.sorted_first_pass.bodies.push(root_body_idx);
             island.body_count += 1;
-            for edge in constraint_graph.iter(root_body_idx) {
+            for edge in constraint_graph.body_iter(root_body_idx) {
                 match edge {
-                    Edge::Rope {
-                        body_idx,
-                        rope_slot: rope_node_idx,
-                    } => {
-                        // sleeping causes problems with current rope implementation
-                        // (indices are collected into buffers in a way that breaks with sleeping).
-                        // this could be fixed but ropes are so unlikely to stop moving anyway
-                        // that I'd rather just save some checking work and never even try to put them to sleep.
-                        island.can_sleep = false;
-                        if !bufs.sorted_first_pass.ropes
-                            [island.rope_range_start..island.rope_range_start + island.rope_count]
-                            .iter()
-                            .any(|&idx| idx == *rope_node_idx)
-                        {
-                            bufs.sorted_first_pass.ropes.push(*rope_node_idx);
-                            island.rope_count += 1;
-                        }
-
-                        // add 1 to root_body_idx so that we never get zero from this
-                        // (which would essentially allow a constraint to be added
-                        // to the island without changing its identity,
-                        // causing bugs in the vicinity of body index 0)
-                        island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
-                        search(*body_idx, island, constraint_graph, bufs);
-                    }
-                    Edge::Constraint {
-                        body_idx,
+                    ConstraintGraphEdge::Constraint {
+                        other_body_idx,
                         constr_idx,
+                        ..
                     } => {
-                        bufs.sorted_first_pass.constraints.push(*constr_idx);
+                        bufs.sorted_first_pass.constraints.push(constr_idx);
                         island.constr_count += 1;
 
-                        if !bufs.user_constraints[*constr_idx].can_sleep {
+                        if !bufs.constraints[constr_idx].can_sleep {
                             island.can_sleep = false;
                         }
-                        island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
-                        search(*body_idx, island, constraint_graph, bufs);
-                    }
-                    Edge::Contact { body_idx, pair_idx } => {
-                        bufs.sorted_first_pass.coll_pairs.push(*pair_idx);
-                        island.pair_count += 1;
+                        if let Some(other_idx) = other_body_idx {
+                            // add 1 to root_body_idx so that we never get zero from this
+                            // (which would essentially allow a constraint to be added
+                            // to the island without changing its identity,
+                            // causing bugs in the vicinity of body index 0)
+                            island.id.edge_sum += (root_body_idx + 1) * (other_idx + 1);
 
-                        island.id.edge_sum += (root_body_idx + 1) * (body_idx + 1);
-                        search(*body_idx, island, constraint_graph, bufs);
-                    }
-                    Edge::StaticConstraint { constr_idx } => {
-                        bufs.sorted_first_pass.constraints.push(*constr_idx);
-                        island.constr_count += 1;
-
-                        if !bufs.user_constraints[*constr_idx].can_sleep {
-                            island.can_sleep = false;
+                            search(other_idx, island, constraint_graph, bufs);
+                        } else {
+                            // no guarantee constr_idx is stable between frames,
+                            // but we still need to stop sleeping when any constraint changes.
+                            // adding a root_body_idx should do the job
+                            island.id.edge_sum += root_body_idx + 1;
                         }
-                        // no guarantee constr_idx is stable between frames,
-                        // but we still need to stop sleeping when any constraint changes.
-                        // adding a root_body_idx should do the job
-                        island.id.edge_sum += root_body_idx + 1;
                     }
-                    Edge::StaticContact { pair_idx } => {
-                        bufs.sorted_first_pass.coll_pairs.push(*pair_idx);
+                    ConstraintGraphEdge::Contact {
+                        other_body_idx,
+                        pair_idx,
+                        ..
+                    } => {
+                        bufs.sorted_first_pass.coll_pairs.push(pair_idx);
                         island.pair_count += 1;
 
-                        island.id.edge_sum += root_body_idx + 1;
+                        if let Some(other_idx) = other_body_idx {
+                            island.id.edge_sum += (root_body_idx + 1) * (other_idx + 1);
+
+                            search(other_idx, island, constraint_graph, bufs);
+                        } else {
+                            island.id.edge_sum += root_body_idx + 1;
+                        }
                     }
                 }
             }
@@ -804,23 +745,13 @@ impl PhysicsWorld {
             bufs.body_order[*body_slot] = sorted_idx;
         }
 
-        bufs.sorted_rope_views.clear();
-        bufs.sorted_rope_views
-            .extend(bufs.sorted_second_pass.ropes.iter().map(|idx| {
-                let rope = self.rope_set.ropes.get_by_slot(*idx as u32).unwrap().1;
-                let first_particle = rope.particles[0];
-                solver::RopeView {
-                    params: rope.params,
-                    start: bufs.body_order[first_particle.body.0.slot() as usize],
-                }
-            }));
-
+        // TODO: probably don't need to be cloning constraints here
         bufs.sorted_constraints.clear();
         bufs.sorted_constraints.extend(
             bufs.sorted_second_pass
                 .constraints
                 .iter()
-                .map(|&ci| bufs.user_constraints[ci]),
+                .map(|&ci| bufs.constraints[ci].clone()),
         );
 
         // store indices into neighboring particles for rope nodes
@@ -846,6 +777,9 @@ impl PhysicsWorld {
 
         bufs.old_poses.clear();
         bufs.old_poses.extend(bufs.bodies.iter().map(|b| b.pose));
+        bufs.inertial_poses.clear();
+        bufs.inertial_poses
+            .resize(bufs.bodies.len(), PhysicsPose::identity());
         // poses after velocity and constraints are applied, used for rope normal correction
         bufs.pre_contact_poses.clear();
         bufs.pre_contact_poses.extend_from_slice(&bufs.old_poses);
@@ -858,15 +792,6 @@ impl PhysicsWorld {
         bufs.ext_f_accelerations.clear();
         bufs.ext_f_accelerations
             .resize(bufs.sorted_second_pass.bodies.len(), uv::DVec2::default());
-
-        bufs.constraint_body_pairs.clear();
-        bufs.constraint_body_pairs
-            .extend(bufs.sorted_constraints.iter().map(|c| {
-                (
-                    bufs.body_order[c.owner.0.slot() as usize],
-                    c.target.map(|t| bufs.body_order[t.0.slot() as usize]),
-                )
-            }));
 
         bufs.sorted_coll_pairs.clear();
         bufs.sorted_coll_pairs.extend(
@@ -890,6 +815,25 @@ impl PhysicsWorld {
         bufs.contact_lambdas.clear();
         bufs.contact_lambdas
             .resize(bufs.sorted_coll_pairs.len(), 0.0);
+
+        // TODO: warm starting
+        // prior to this clear we still have the values from last frame,
+        // maybe we could just use that? needs associating to the right constraints though,
+        // maybe cleaner to put them in an arena keyed by ConstraintKey / ColliderKey
+
+        bufs.constraint_stiffnesses.clear();
+        bufs.constraint_stiffnesses
+            .resize(bufs.sorted_constraints.len(), self.consts.min_stiffness);
+        bufs.contact_stiffnesses.clear();
+        bufs.contact_stiffnesses
+            .resize(bufs.sorted_coll_pairs.len(), self.consts.min_stiffness);
+
+        bufs.constraint_lagrange_mults.clear();
+        bufs.constraint_lagrange_mults
+            .resize(bufs.sorted_constraints.len(), 0.);
+        bufs.contact_lagrange_mults.clear();
+        bufs.contact_lagrange_mults
+            .resize(bufs.sorted_coll_pairs.len(), 0.);
 
         drop(buf_span);
 
@@ -959,22 +903,18 @@ impl PhysicsWorld {
 
         let mut bodies_s = bufs.bodies.as_mut_slice();
         let mut old_poses_s = bufs.old_poses.as_mut_slice();
-        let mut pre_cont_poses_s = bufs.pre_contact_poses.as_mut_slice();
-        let mut old_vels_s = bufs.old_velocities.as_mut_slice();
-        let mut ext_f_acc_s = bufs.ext_f_accelerations.as_mut_slice();
-        let mut rope_s = bufs.sorted_rope_views.as_mut_slice();
-        let mut rope_next_p_s = bufs.rope_next_particles.as_mut_slice();
-        let mut rope_prev_p_s = bufs.rope_prev_particles.as_mut_slice();
-        let mut rope_lat_s = bufs.rope_lateral_corrections.as_mut_slice();
+        let mut inertial_pose_s = bufs.inertial_poses.as_mut_slice();
         let mut constr_s = bufs.sorted_constraints.as_slice();
-        let mut constr_bodies_s = bufs.constraint_body_pairs.as_mut_slice();
+        let mut constr_stiff_s = bufs.constraint_stiffnesses.as_mut_slice();
+        let mut constr_lambda_s = bufs.constraint_lagrange_mults.as_mut_slice();
         let mut coll_pairs_s = bufs.sorted_coll_pairs.as_mut_slice();
         let mut contacts_s = bufs.contacts.as_mut_slice();
+        let mut cont_stiff_s = bufs.contact_stiffnesses.as_mut_slice();
+        let mut cont_lambda_s = bufs.contact_lagrange_mults.as_mut_slice();
         let mut last_contacts_s = bufs.last_contacts.as_mut_slice();
-        let mut cont_angles_s = bufs.contact_angles.as_mut_slice();
-        let mut cont_lambda_s = bufs.contact_lambdas.as_mut_slice();
 
-        let mut island_start_idx = 0;
+        let mut body_index_offset = 0;
+        let mut constraint_index_offset = 0;
 
         for group in bufs
             .island_group_sizes
@@ -986,7 +926,6 @@ impl PhysicsWorld {
             })
         {
             let body_count = group.iter().map(|isl| isl.body_count).sum();
-            let rope_count = group.iter().map(|isl| isl.rope_count).sum();
             let constr_count = group.iter().map(|isl| isl.constr_count).sum();
             let pair_count = group.iter().map(|isl| isl.pair_count).sum();
 
@@ -994,45 +933,17 @@ impl PhysicsWorld {
             bodies_s = body_rest;
             let (old_poses, old_pose_rest) = old_poses_s.split_at_mut(body_count);
             old_poses_s = old_pose_rest;
-            let (pre_contact_poses, pcp_rest) = pre_cont_poses_s.split_at_mut(body_count);
-            pre_cont_poses_s = pcp_rest;
-            let (old_velocities, old_v_rest) = old_vels_s.split_at_mut(body_count);
-            old_vels_s = old_v_rest;
-            let (ext_f_accelerations, ext_f_rest) = ext_f_acc_s.split_at_mut(body_count);
-            ext_f_acc_s = ext_f_rest;
+            let (inertial_poses, inertial_pose_rest) = inertial_pose_s.split_at_mut(body_count);
+            inertial_pose_s = inertial_pose_rest;
 
-            let (ropes, ropes_rest) = rope_s.split_at_mut(rope_count);
-            rope_s = ropes_rest;
-            // shift indices by start of layer
-            for rope_view in ropes.iter_mut() {
-                rope_view.start -= island_start_idx;
-            }
-
-            let (rope_next_particles, rope_next_rest) = rope_next_p_s.split_at_mut(body_count);
-            rope_next_p_s = rope_next_rest;
-            for np in rope_next_particles.iter_mut().filter_map(Option::as_mut) {
-                *np -= island_start_idx;
-            }
-
-            let (rope_prev_particles, rope_prev_rest) = rope_prev_p_s.split_at_mut(body_count);
-            rope_prev_p_s = rope_prev_rest;
-            for pp in rope_prev_particles.iter_mut().filter_map(Option::as_mut) {
-                *pp -= island_start_idx;
-            }
-
-            let (rope_lateral_corrections, rope_lat_rest) = rope_lat_s.split_at_mut(body_count);
-            rope_lat_s = rope_lat_rest;
             let (constraints, constr_rest) = constr_s.split_at(constr_count);
             constr_s = constr_rest;
-            let (constraint_body_pairs, constr_bod_rest) =
-                constr_bodies_s.split_at_mut(constr_count);
-            constr_bodies_s = constr_bod_rest;
-            for (b1, b2) in constraint_body_pairs.iter_mut() {
-                *b1 -= island_start_idx;
-                if let Some(b2) = b2 {
-                    *b2 -= island_start_idx;
-                }
-            }
+            let (constraint_stiffnesses, constr_stiff_rest) =
+                constr_stiff_s.split_at_mut(constr_count);
+            constr_stiff_s = constr_stiff_rest;
+            let (constraint_lagrange_mults, constr_lambda_rest) =
+                constr_lambda_s.split_at_mut(constr_count);
+            constr_lambda_s = constr_lambda_rest;
 
             let (coll_pairs, coll_p_rest) = coll_pairs_s.split_at_mut(pair_count);
             coll_pairs_s = coll_p_rest;
@@ -1040,36 +951,34 @@ impl PhysicsWorld {
             contacts_s = contacts_rest;
             let (last_contacts, last_conts_rest) = last_contacts_s.split_at_mut(pair_count);
             last_contacts_s = last_conts_rest;
-            let (contact_angles, cont_angles_rest) = cont_angles_s.split_at_mut(pair_count);
-            cont_angles_s = cont_angles_rest;
-            let (contact_lambdas, cont_l_rest) = cont_lambda_s.split_at_mut(pair_count);
-            cont_lambda_s = cont_l_rest;
+
+            let (contact_stiffnesses, cont_stiff_rest) = cont_stiff_s.split_at_mut(pair_count);
+            cont_stiff_s = cont_stiff_rest;
+            let (contact_lagrange_mults, cont_lambda_rest) = cont_lambda_s.split_at_mut(pair_count);
+            cont_lambda_s = cont_lambda_rest;
 
             island_group_views.push(solver::DataView {
                 dt,
-                inv_dt,
-                inv_dt_sq,
-                island_offset: island_start_idx,
+                consts: &self.consts,
+                constraint_graph: &self.constraint_graph,
+                body_index_offset,
+                constraint_index_offset,
                 global_body_order: &bufs.body_order,
                 bodies,
                 old_poses,
-                pre_contact_poses,
-                old_velocities,
-                ext_f_accelerations,
-                ropes,
-                rope_next_particles,
-                rope_prev_particles,
-                rope_lateral_corrections,
+                inertial_poses,
                 constraints,
-                constraint_body_pairs,
+                constraint_stiffnesses,
+                constraint_lagrange_mults,
                 coll_pairs,
                 contacts,
+                contact_stiffnesses,
+                contact_lagrange_mults,
                 last_contacts,
-                contact_angles,
-                contact_lambdas,
             });
 
-            island_start_idx += body_count;
+            body_index_offset += body_count;
+            constraint_index_offset += constr_count;
         }
 
         //
@@ -1083,11 +992,9 @@ impl PhysicsWorld {
         let island_iter = island_group_views.iter_mut();
 
         island_iter.for_each(|island_view| {
-            for _substep in 0..substeps {
-                let _substep_span = tracy_client::span!("substep");
+            let _solve_span = tracy_client::span!("solve");
 
-                solver::solve(forcefield, island_view, &self.entity_set);
-            }
+            solver::solve(forcefield, island_view, &self.entity_set);
         });
 
         tracy_client::plot!(

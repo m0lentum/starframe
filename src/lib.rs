@@ -24,13 +24,13 @@ pub use graphics::{
 
 pub mod physics;
 pub use physics::{
-    body::{Body, ColliderInfo, Mass},
+    body::{Body, ColliderInfo},
     collision::{
         self, Collider, ColliderPolygon, ColliderShape, ColliderType, CollisionLayerMask,
         CollisionMaskMatrix, CompoundColliderSetup, Contact, ContactResult, PhysicsMaterial, Ray,
         AABB,
     },
-    constraint::{Constraint, ConstraintBuilder, ConstraintLimit, ConstraintType},
+    constraint::{Constraint, ConstraintBuilder, ConstraintType},
     forcefield,
     hecs_sync::{HecsSyncManager, HecsSyncOptions},
     BodyKey, CastHit, ColliderKey, ConstraintKey, ContactInfo, PhysicsWorld, Rope, RopeKey,

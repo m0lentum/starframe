@@ -545,7 +545,7 @@ impl sf::GameState for State {
                 .text("Camera zoom"),
             );
             ui.add(
-                egui::Slider::new(&mut game.physics.consts.substeps, 1..=15)
+                egui::Slider::new(&mut game.physics.consts.iterations, 1..=15)
                     .text("Physics substeps"),
             );
             ui.add(egui::Slider::new(&mut self.time_scale, 0.05..=2.0).text("Time scale"));

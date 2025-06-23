@@ -1,6 +1,10 @@
 //! Types of physical constraints.
 
-use crate::{math::uv, physics::BodyKey};
+use crate::{
+    math::{left_normal, uv},
+    physics::BodyKey,
+    PhysicsPose,
+};
 
 /// A constraint restricts the relative motion of two bodies,
 /// or the motion of a single body in the world.
@@ -8,23 +12,24 @@ use crate::{math::uv, physics::BodyKey};
 /// [`ConstraintBuilder`][self::ConstraintBuilder] is the preferred
 /// way to create these, but the fields are public to allow in-place editing
 /// for advanced users.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Constraint {
-    /// The body that owns this constraint.
-    pub owner: BodyKey,
-    /// The body this constraint is attached to.
-    /// `None` represents ground.
-    pub target: Option<BodyKey>,
-    /// Inverse of stiffness, or how much the constraint resists violation.
-    pub compliance: f64,
+    /// Bodies that are acted on by this constraint.
+    pub target: ConstraintTargets,
+    /// Stiffness, or how "hard" the constraint is.
+    ///   is completely hard, lower values allow some flexing.
+    ///
+    /// This is the inverse of _compliance_, which can be easier to think about
+    /// (zero compliance is a hard constraint, any nonzero amount allows some flexing).
+    pub stiffness: f64,
     /// Damping coefficient for linear velocity.
     pub linear_damping: f64,
     /// Damping coefficient for angular velocity.
     pub angular_damping: f64,
-    /// Offsets from each body's center of mass (or world origin).
-    pub offsets: [uv::DVec2; 2],
-    /// Which directions to enforce the constraint in.
-    pub limit: ConstraintLimit,
+    /// Minimum and maximum force to apply.
+    /// Usually either (-, ) for an equality constraint
+    /// or (0, ) for a one-sided constraint.
+    pub limits: (f64, f64),
     /// Type of the constraint.
     pub ty: ConstraintType,
     /// Whether or not this constraint can be set to sleep when at rest.
@@ -35,36 +40,99 @@ pub struct Constraint {
     pub can_sleep: bool,
 }
 
-/// Type-specific variables for constraints.
+/// Which Bodies a Constraint affects.
+#[derive(Clone, Debug)]
+pub enum ConstraintTargets {
+    Single(BodyKey),
+    Pair(BodyKey, BodyKey),
+    Multiple(Vec<BodyKey>),
+}
+
+impl ConstraintTargets {
+    /// Add another body to the constraint.
+    pub fn push(&mut self, body: BodyKey) {
+        match self {
+            Self::Single(b) => {
+                *self = Self::Pair(*b, body);
+            }
+            Self::Pair(b1, b2) => {
+                *self = Self::Multiple(vec![*b1, *b2, body]);
+            }
+            Self::Multiple(bodies) => {
+                bodies.push(body);
+            }
+        }
+    }
+
+    /// Iterate over the bodies participating in the constraint.
+    pub fn iter(&self) -> ConstraintTargetIter<'_> {
+        ConstraintTargetIter {
+            next_idx: 0,
+            targets: self,
+        }
+    }
+}
+
+/// Iterator over the bodies affected by a constraint.
+pub struct ConstraintTargetIter<'a> {
+    next_idx: usize,
+    targets: &'a ConstraintTargets,
+}
+
+impl<'a> Iterator for ConstraintTargetIter<'a> {
+    type Item = BodyKey;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let ret = match self.targets {
+            ConstraintTargets::Single(b) => {
+                if self.next_idx == 0 {
+                    Some(*b)
+                } else {
+                    None
+                }
+            }
+            ConstraintTargets::Pair(b1, b2) => {
+                if self.next_idx <= 1 {
+                    Some([*b1, *b2][self.next_idx])
+                } else {
+                    None
+                }
+            }
+            ConstraintTargets::Multiple(bs) => {
+                if self.next_idx < bs.len() {
+                    Some(bs[self.next_idx])
+                } else {
+                    None
+                }
+            }
+        };
+        self.next_idx += 1;
+        ret
+    }
+}
+
+/// Function that determines the behavior of a constraint.
 #[derive(Clone, Copy, Debug)]
 pub enum ConstraintType {
+    /// An attachment constraint is a special case of a distance constraint with distance zero,
+    /// attempting to make the given points overlap.
+    Attachment { offsets: [uv::DVec2; 2] },
     /// A distance constraint enforces a specific distance between two points.
     Distance {
         /// The desired distance.
         distance: f64,
+        /// Offsets from each body's center
+        /// for the points that are to be kept `distance` apart.
+        offsets: [uv::DVec2; 2],
     },
 }
 
-/// Some constraints can be set to only work in one direction,
-/// to e.g. set a maximum distance while allowing shorter distances.
-#[derive(Clone, Copy, Debug)]
-pub enum ConstraintLimit {
-    /// Always apply a correction to the constraint.
-    Eq,
-    /// Only apply a correction if the constraint value is less than the target.
-    Lt,
-    /// Only apply a correction if the constraint value is greater than the target.
-    Gt,
-}
-
-/// A builder that allows ergonomic construction of different constraints.
-#[derive(Clone, Copy, Debug)]
+/// A builder for constructing constraints.
+#[derive(Clone, Debug)]
 pub struct ConstraintBuilder {
-    owner: BodyKey,
-    target: Option<BodyKey>,
-    offsets: [uv::DVec2; 2],
-    limit: ConstraintLimit,
-    compliance: f64,
+    target: ConstraintTargets,
+    limits: (f64, f64),
+    stiffness: f64,
     linear_damping: f64,
     angular_damping: f64,
     can_sleep: bool,
@@ -73,16 +141,14 @@ pub struct ConstraintBuilder {
 impl ConstraintBuilder {
     /// Start building a constraint.
     ///
-    /// An owning body is required.
-    /// If you don't connect the constraint to another body with
-    /// `with_target`, it will be connected to ground, i.e. the world origin.
-    pub fn new(owner: BodyKey) -> Self {
+    /// At least one body must be given.
+    /// You can connect the constraint to one or more other bodies with `add_body`
+    /// (although most constraints only support at most two bodies).
+    pub fn new(target: BodyKey) -> Self {
         Self {
-            owner,
-            target: None,
-            offsets: [uv::DVec2::zero(); 2],
-            limit: ConstraintLimit::Eq,
-            compliance: 0.0,
+            target: ConstraintTargets::Single(target),
+            limits: (f64::NEG_INFINITY, f64::INFINITY),
+            stiffness: f64::INFINITY,
             linear_damping: 0.1,
             angular_damping: 0.0,
             can_sleep: true,
@@ -90,36 +156,21 @@ impl ConstraintBuilder {
     }
 
     /// Attach the constraint to another body.
-    pub fn with_target(mut self, target: BodyKey) -> Self {
-        self.target = Some(target);
+    pub fn add_body(mut self, target: BodyKey) -> Self {
+        self.target.push(target);
         self
     }
 
-    /// Set the origin point of the constraint on the owning body
-    /// relative to the center of mass.
-    ///
-    /// This has no effect on angular-only constraints.
-    pub fn with_origin(mut self, point: uv::DVec2) -> Self {
-        self.offsets[0] = point;
-        self
-    }
-
-    /// Set the origin point of the constraint on the target body
-    /// relative to the center of mass,
-    /// or in the world if the target is None.
-    ///
-    /// This has no effect on angular-only constraints.
-    pub fn with_target_origin(mut self, point: uv::DVec2) -> Self {
-        self.offsets[1] = point;
-        self
-    }
-
-    /// Add compliance (inverse stiffness) to the constraint.
+    /// Set the compliance (inverse stiffness) of the constraint.
     /// This makes it behave like a spring instead of a hard limit.
     ///
     /// Units of compliance are m/N.
     pub fn with_compliance(mut self, compliance: f64) -> Self {
-        self.compliance = compliance;
+        self.stiffness = if compliance == 0. {
+            f64::INFINITY
+        } else {
+            1. / compliance
+        };
         self
     }
 
@@ -137,9 +188,15 @@ impl ConstraintBuilder {
         self
     }
 
-    /// Set the limit for when to enforce the constraint.
-    pub fn with_limit(mut self, limit: ConstraintLimit) -> Self {
-        self.limit = limit;
+    /// Set the lower force limit for the constraint.
+    pub fn with_limit_min(mut self, limit: f64) -> Self {
+        self.limits.0 = limit;
+        self
+    }
+
+    /// Set the higher force limit for the constraint.
+    pub fn with_limit_max(mut self, limit: f64) -> Self {
+        self.limits.1 = limit;
         self
     }
 
@@ -151,28 +208,107 @@ impl ConstraintBuilder {
         self
     }
 
-    /// Build a distance constraint.
-    pub fn build_distance(self, distance: f64) -> Constraint {
-        self.build(ConstraintType::Distance { distance })
-    }
-
-    /// Build an attachment constraint, i.e. a distance constraint of zero,
-    /// forcing the origin points to overlap.
-    pub fn build_attachment(self) -> Constraint {
-        self.build(ConstraintType::Distance { distance: 0.0 })
-    }
-
-    fn build(self, ty: ConstraintType) -> Constraint {
+    /// Select the type of constraint and finish building.
+    pub fn build(self, ty: ConstraintType) -> Constraint {
         Constraint {
-            owner: self.owner,
             target: self.target,
-            compliance: self.compliance,
+            stiffness: self.stiffness,
             linear_damping: self.linear_damping,
             angular_damping: self.angular_damping,
-            offsets: self.offsets,
-            limit: self.limit,
+            limits: self.limits,
             can_sleep: self.can_sleep,
             ty,
+        }
+    }
+}
+
+/// Value, gradient, and Hessian of a constraint
+/// with respect to an individual body
+/// at a given point in state space.
+#[derive(Clone, Copy, Debug)]
+pub struct ConstraintDerivatives {
+    pub value: f64,
+    pub gradient: uv::DVec3,
+    pub hessian: uv::DMat3,
+}
+
+impl Constraint {
+    // TODO: there's some annoying duplication here, this can probably be done cleaner
+
+    /// Compute the value of the constraint.
+    ///
+    /// Poses must be given in an order that matches the order of bodies in the constraint target.
+    /// This one doesn't need the body index, since we're not computing derivatives.
+    pub(crate) fn compute_value(&self, poses: &[PhysicsPose]) -> f64 {
+        match self.ty {
+            ConstraintType::Attachment { offsets } | ConstraintType::Distance { offsets, .. } => {
+                let distance = match self.ty {
+                    ConstraintType::Attachment { .. } => 0.,
+                    ConstraintType::Distance { distance, .. } => distance,
+                };
+                let my_pose = poses[0];
+                let their_pose = match self.target {
+                    ConstraintTargets::Single(_) => PhysicsPose::default(),
+                    _ => poses[1],
+                };
+                let points_world = [my_pose * offsets[0], their_pose * offsets[1]];
+                let dist = points_world[1] - points_world[0];
+                let l = dist.mag();
+
+                distance - l
+            }
+        }
+    }
+
+    /// Compute the derivatives of the constraint for one body.
+    ///
+    /// Poses must be given in an order that matches the order of bodies in the constraint target.
+    /// The body_idx parameter is the index in that order of the body we're computing the constraints for.
+    pub(crate) fn compute_derivatives(
+        &self,
+        poses: &[PhysicsPose],
+        body_idx: usize,
+    ) -> ConstraintDerivatives {
+        match self.ty {
+            ConstraintType::Attachment { offsets } | ConstraintType::Distance { offsets, .. } => {
+                let distance = match self.ty {
+                    ConstraintType::Attachment { .. } => 0.,
+                    ConstraintType::Distance { distance, .. } => distance,
+                };
+                let my_pose = poses[0];
+                let their_pose = match self.target {
+                    ConstraintTargets::Single(_) => PhysicsPose::default(),
+                    _ => poses[1],
+                };
+                let points_world = [my_pose * offsets[0], their_pose * offsets[1]];
+                let dist = points_world[(body_idx + 1) % 2] - points_world[body_idx];
+                let l = dist.mag();
+                let l_cubed = l * l * l;
+
+                // tangential direction that rotation moves the offset point in,
+                // part of the angular derivative of the constraint
+                //
+                let rotating_dir = left_normal(poses[body_idx].rotation * offsets[body_idx]);
+
+                let value = distance - l;
+                // TODO: angular part
+                let gradient = uv::DVec3::new(dist.x / l, dist.y / l, 0.);
+
+                let h_00 = (dist.x * dist.x / l_cubed) - (1. / l);
+                let h_01 = dist.x * dist.y / l_cubed;
+                let h_11 = (dist.y * dist.y / l_cubed) - (1. / l);
+                let h_02 = 0.;
+                let h_12 = 0.;
+                let h_22 = 0.;
+                let hessian =
+                    uv::DMat3::from([[h_00, h_01, h_02], [h_01, h_11, h_12], [h_02, h_12, h_22]]);
+
+                ConstraintDerivatives {
+                    value,
+                    gradient,
+                    hessian,
+                }
+            }
         }
     }
 }
