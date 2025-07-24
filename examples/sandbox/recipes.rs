@@ -363,11 +363,7 @@ impl Recipe {
                             sf::ConstraintType::Attachment {
                                 offsets: [
                                     sf::DVec2::new(prev_block_offset + (spacing / 2.0), 0.0),
-                                    links
-                                        .iter()
-                                        .map(|p| sf::DVec2::new(p[0], p[1]))
-                                        .last()
-                                        .unwrap(),
+                                    sf::DVec2::from(links.last().unwrap()),
                                 ],
                             },
                         ),

@@ -546,7 +546,7 @@ impl sf::GameState for State {
             );
             ui.add(
                 egui::Slider::new(&mut game.physics.consts.iterations, 1..=15)
-                    .text("Physics substeps"),
+                    .text("Physics iterations"),
             );
             ui.add(egui::Slider::new(&mut self.time_scale, 0.05..=2.0).text("Time scale"));
 

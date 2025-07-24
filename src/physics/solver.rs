@@ -150,18 +150,18 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
                         }));
                         let c_vals = constr.compute_derivatives(&pose_buf, instance_idx);
 
+                        let scaled_lambda = stiffness * c_vals.value + lambda;
                         let force = if stiffness.is_infinite() {
-                            -(stiffness * c_vals.value + lambda)
-                                .clamp(constr.limits.0, constr.limits.1)
-                                * c_vals.gradient
+                            -scaled_lambda.clamp(constr.limits.0, constr.limits.1) * c_vals.gradient
                         } else {
                             -stiffness * c_vals.value * c_vals.gradient
                         };
                         total_force += force;
 
                         // TODO: test the diagonalized version of c_vals.hessian
-                        let hess =
-                            stiffness * symmetric_product_3(c_vals.gradient) + c_vals.hessian;
+                        // TODO: stiffness rescaling
+                        let hess = stiffness * symmetric_product_3(c_vals.gradient)
+                            + scaled_lambda * c_vals.hessian;
                         total_hessian += hess;
                     }
                 };
@@ -208,6 +208,9 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
                     *stiffness + data.consts.stiffness_growth_coef * c_val.abs(),
                 );
             }
+
+            *stiffness = f64::min(*stiffness, data.consts.max_stiffness);
+            *lambda = f64::min(*lambda, data.consts.max_lambda);
         }
 
         // TODO: same for contacts

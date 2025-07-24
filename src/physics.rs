@@ -211,7 +211,7 @@ struct WorkingBuffers {
     // two passes needed to first gather islands and then sort the islands
     sorted_first_pass: SortedIndices,
     sorted_second_pass: SortedIndices,
-    island_assigned: Vec<bool>,
+    body_island_assigned: Vec<bool>,
     islands: Vec<Island>,
     // islands grouped roughly evenly for efficient threading
     island_group_sizes: Vec<usize>,
@@ -550,8 +550,8 @@ impl PhysicsWorld {
         // Generate islands from graph
         //
 
-        bufs.island_assigned.clear();
-        bufs.island_assigned
+        bufs.body_island_assigned.clear();
+        bufs.body_island_assigned
             .resize(self.entity_set.body_slot_count, false);
         bufs.islands.clear();
         bufs.sorted_first_pass.clear();
@@ -565,10 +565,10 @@ impl PhysicsWorld {
             constraint_graph: &ConstraintGraph,
             bufs: &mut WorkingBuffers,
         ) {
-            if bufs.island_assigned[root_body_idx] {
+            if bufs.body_island_assigned[root_body_idx] {
                 return;
             }
-            bufs.island_assigned[root_body_idx] = true;
+            bufs.body_island_assigned[root_body_idx] = true;
             bufs.sorted_first_pass.bodies.push(root_body_idx);
             island.body_count += 1;
             for edge in constraint_graph.body_iter(root_body_idx) {
@@ -578,8 +578,12 @@ impl PhysicsWorld {
                         constr_idx,
                         ..
                     } => {
-                        bufs.sorted_first_pass.constraints.push(constr_idx);
-                        island.constr_count += 1;
+                        // TODO: this is inefficient but we'll eventually remove the sorting done here entirely,
+                        // probably (if not, do an island_assigned buffer like with bodies)
+                        if !bufs.sorted_first_pass.constraints.contains(&constr_idx) {
+                            bufs.sorted_first_pass.constraints.push(constr_idx);
+                            island.constr_count += 1;
+                        }
 
                         if !bufs.constraints[constr_idx].can_sleep {
                             island.can_sleep = false;
@@ -620,7 +624,7 @@ impl PhysicsWorld {
         }
 
         for (body_key, _) in self.entity_set.bodies.iter() {
-            if bufs.island_assigned[body_key.slot() as usize] {
+            if bufs.body_island_assigned[body_key.slot() as usize] {
                 continue;
             }
             let mut island = Island {

@@ -275,12 +275,14 @@ impl Constraint {
                     ConstraintType::Attachment { .. } => 0.,
                     ConstraintType::Distance { distance, .. } => distance,
                 };
-                let my_pose = poses[0];
-                let their_pose = match self.target {
-                    ConstraintTargets::Single(_) => PhysicsPose::default(),
-                    _ => poses[1],
-                };
-                let points_world = [my_pose * offsets[0], their_pose * offsets[1]];
+                let poses = [
+                    poses[0],
+                    match self.target {
+                        ConstraintTargets::Single(_) => PhysicsPose::default(),
+                        _ => poses[1],
+                    },
+                ];
+                let points_world = [poses[0] * offsets[0], poses[1] * offsets[1]];
                 let dist = points_world[(body_idx + 1) % 2] - points_world[body_idx];
                 let l = dist.mag();
                 let l_cubed = l * l * l;
