@@ -76,13 +76,11 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
             uv::DVec2::zero()
         };
 
+        *old_pose = body.pose;
         *inertial_pose = PhysicsPose {
             translation: body.pose.translation + data.dt * body.velocity.linear + dt_sq * ext_accel,
             rotation: uv::DRotor2::from_angle(data.dt * body.velocity.angular) * body.pose.rotation,
         };
-
-        *old_pose = body.pose;
-        body.pose = *inertial_pose;
     }
 
     // main part of the solver
@@ -100,6 +98,8 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
 
             let pos_diff = body.pose.translation - inertial_pose.translation;
             let rot_diff = body.pose.rotation * inertial_pose.rotation.reversed();
+
+            // TODO why is the thing not rotating at the speed I want
 
             let inertial_force = -inv_dt_sq
                 * uv::DVec3::new(
@@ -165,12 +165,14 @@ pub fn solve(forcefield: &impl ForceField, data: &mut DataView<'_>, entity_set: 
                         total_hessian += hess;
                     }
                 };
+            }
 
+            if total_hessian.determinant().abs() > 1e-3 {
                 let body = &mut data.bodies[local_body_idx];
                 let correction = total_hessian.inversed() * total_force;
                 body.pose.translation += correction.xy();
                 body.pose.rotation = (body.pose.rotation
-                    + uv::DRotor2::new(0., uv::DBivec2::new(0.5 * correction.z))
+                    - uv::DRotor2::new(0., uv::DBivec2::new(0.5 * correction.z))
                         * body.pose.rotation)
                     .normalized();
             }

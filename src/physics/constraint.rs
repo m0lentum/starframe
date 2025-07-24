@@ -225,7 +225,7 @@ impl ConstraintBuilder {
 /// Value, gradient, and Hessian of a constraint
 /// with respect to an individual body
 /// at a given point in state space.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct ConstraintDerivatives {
     pub value: f64,
     pub gradient: uv::DVec3,
@@ -242,7 +242,7 @@ impl Constraint {
     pub(crate) fn compute_value(&self, poses: &[PhysicsPose]) -> f64 {
         match self.ty {
             ConstraintType::Attachment { offsets } | ConstraintType::Distance { offsets, .. } => {
-                let distance = match self.ty {
+                let target_dist = match self.ty {
                     ConstraintType::Attachment { .. } => 0.,
                     ConstraintType::Distance { distance, .. } => distance,
                 };
@@ -255,7 +255,7 @@ impl Constraint {
                 let dist = points_world[1] - points_world[0];
                 let l = dist.mag();
 
-                distance - l
+                target_dist - l
             }
         }
     }
@@ -271,7 +271,7 @@ impl Constraint {
     ) -> ConstraintDerivatives {
         match self.ty {
             ConstraintType::Attachment { offsets } | ConstraintType::Distance { offsets, .. } => {
-                let distance = match self.ty {
+                let target_dist = match self.ty {
                     ConstraintType::Attachment { .. } => 0.,
                     ConstraintType::Distance { distance, .. } => distance,
                 };
@@ -285,23 +285,31 @@ impl Constraint {
                 let points_world = [poses[0] * offsets[0], poses[1] * offsets[1]];
                 let dist = points_world[(body_idx + 1) % 2] - points_world[body_idx];
                 let l = dist.mag();
+
+                let value = target_dist - l;
+
+                let l_squared = l * l;
                 let l_cubed = l * l * l;
 
-                // tangential direction that rotation moves the offset point in,
+                // tangential direction that rotation moves the point in,
                 // part of the angular derivative of the constraint
-                //
-                let rotating_dir = left_normal(poses[body_idx].rotation * offsets[body_idx]);
+                let offset_rotated = poses[body_idx].rotation * offsets[body_idx];
+                let rotating_dir = left_normal(offset_rotated);
+                let dist_unit = dist / l;
+                let angular_grad = rotating_dir.dot(dist_unit);
 
-                let value = distance - l;
-                // TODO: angular part
-                let gradient = uv::DVec3::new(dist.x / l, dist.y / l, 0.);
+                let gradient = uv::DVec3::new(dist_unit.x, dist_unit.y, angular_grad);
 
                 let h_00 = (dist.x * dist.x / l_cubed) - (1. / l);
                 let h_01 = dist.x * dist.y / l_cubed;
                 let h_11 = (dist.y * dist.y / l_cubed) - (1. / l);
-                let h_02 = 0.;
-                let h_12 = 0.;
-                let h_22 = 0.;
+                let h_02 =
+                    (-offset_rotated.y * l - dist.x * rotating_dir.dot(dist_unit)) / l_squared;
+                let h_12 =
+                    (offset_rotated.x * l - dist.y * rotating_dir.dot(dist_unit)) / l_squared;
+                let h_22 = (l * (-offset_rotated.dot(dist) - offset_rotated.mag_sq())
+                    + rotating_dir.dot(dist_unit) * offset_rotated.dot(dist_unit))
+                    / l_squared;
                 let hessian =
                     uv::DMat3::from([[h_00, h_01, h_02], [h_01, h_11, h_12], [h_02, h_12, h_22]]);
 

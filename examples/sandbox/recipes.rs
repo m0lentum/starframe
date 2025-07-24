@@ -183,7 +183,11 @@ fn spawn_body(game: &mut sf::Game, solid: Solid) -> sf::BodyKey {
     let center_of_mass = coll_setup.center_of_mass();
 
     let body = sf::Body::new_dynamic(coll_setup.info_around_point(center_of_mass), 0.5)
-        .with_pose(solid.pose.into());
+        .with_pose(solid.pose.into())
+        .with_velocity(sf::Velocity {
+            angular: 6.5,
+            ..Default::default()
+        });
     let body_key = game.physics.entity_set.insert_body(body);
 
     for mut coll in solid.colliders.iter().cloned() {
@@ -318,7 +322,7 @@ impl Recipe {
                         game,
                         Solid {
                             pose: sf::PoseBuilder::new()
-                                .with_position(center.to_precision())
+                                .with_position(center.to_precision() + sf::Vec2::new(0.5, 0.))
                                 .with_rotation(sf::Angle::Rad(orientation as f32))
                                 .into(),
                             colliders: &mut [sf::Collider::new_capsule(

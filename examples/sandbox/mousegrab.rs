@@ -42,7 +42,7 @@ impl MouseGrabber {
                         return;
                     };
                     let constr = sf::ConstraintBuilder::new(body_key)
-                        .with_compliance(0.01)
+                        // .with_compliance(0.01)
                         .with_linear_damping(10.0)
                         .with_angular_damping(0.5)
                         .disable_sleeping()

@@ -315,7 +315,7 @@ pub struct TuningConstants {
 impl Default for TuningConstants {
     fn default() -> Self {
         Self {
-            iterations: 5,
+            iterations: 1,
             sleep_vel_threshold: 0.001,
             min_stiffness: 10.,
             max_stiffness: 1e5,
